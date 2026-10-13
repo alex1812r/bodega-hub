@@ -13,7 +13,7 @@ type SidebarCollapseToggleProps = {
  * Fijo al borde del sidebar; posicion via CSS para animar junto al ancho del panel.
  */
 export function SidebarCollapseToggle({ collapsed, onToggle }: SidebarCollapseToggleProps) {
-  const label = collapsed ? "Expandir menu" : "Colapsar menu";
+  const label = collapsed ? "Expandir menú" : "Colapsar menú";
 
   return (
     <button

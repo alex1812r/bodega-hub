@@ -86,7 +86,7 @@ export async function fetchOfficialDollarRate(): Promise<OfficialDollarRate> {
       throw new ApiError(
         503,
         "INTERNAL_ERROR",
-        "La consulta de tasa oficial excedio el tiempo de espera.",
+        "La consulta de tasa oficial excedió el tiempo de espera.",
       );
     }
 

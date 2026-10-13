@@ -4,16 +4,29 @@ import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
   mockPayments,
-  mockPurchases,
   mockSales,
   type PaymentMethod,
   type PaymentMock,
 } from "@/shared/mocks/erp-data";
+import { findMockPurchase } from "@/modules/purchases/services/purchases.mock-server";
+import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { documentBalance as computeDocumentBalance } from "@/shared/payments/documentBalance";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import { resolvePaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+
+/**
+ * La compra de un pago, de la semilla o creada en esta ejecución (`createPurchase`
+ * del mock): `resolvePaymentRelatedDocument` la busca en esta lista.
+ */
+function relatedPurchases(payment: Pick<PaymentMock, "purchaseId">) {
+  const purchase = payment.purchaseId ? findMockPurchase(payment.purchaseId) : undefined;
+
+  return purchase ? [purchase] : [];
+}
 
 /** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
 export type PaymentDenominations = Partial<Record<"USD" | "VES", Record<string, number>>>;
@@ -33,6 +46,8 @@ export type PaymentInput = {
   bankName?: string;
   change?: PaymentChangeInput | null;
   changeDenominations?: PaymentDenominations | null;
+  /** Clave de idempotencia del intento (P4-3). */
+  clientRequestId?: string;
   currency?: "USD" | "VES";
   method: PaymentMethod;
   notes?: string;
@@ -73,8 +88,11 @@ export function listPayments(
 ) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
+  const from = searchParams.get("from");
+  const method = searchParams.get("method");
   const purchaseId = searchParams.get("purchaseId");
   const saleId = searchParams.get("saleId");
+  const to = searchParams.get("to");
 
   const items = mockPayments
     .filter((payment) => {
@@ -84,13 +102,16 @@ export function listPayments(
         (!direction || payment.direction === direction) &&
         (!saleId || payment.saleId === saleId) &&
         (!purchaseId || payment.purchaseId === purchaseId) &&
-        (!contactId || payment.contactId === contactId)
+        (!contactId || payment.contactId === contactId) &&
+        (!method || payment.method === method) &&
+        // Dias operativos Caracas, ambos inclusive.
+        isUtcTimestampInCaracasDateRange(payment.createdAt, from, to)
       );
     })
     .map((payment) => ({
       ...payment,
       contact: mockContacts.find((contact) => contact.id === payment.contactId),
-      relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
+      relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, relatedPurchases(payment)),
     }));
 
   return paginateList(items, searchParams);
@@ -110,13 +131,13 @@ function resolveMockDocumentBalance(
       href: `/sales/${sale.id}`,
       label: sale.invoiceNumber,
       paidVes: sale.paidVes,
-      pendingVes: Math.max(sale.totalVes - sale.paidVes, 0),
+      pendingVes: computeDocumentBalance({ ...sale, type: "sale" }).pendingVes,
       totalVes: sale.totalVes,
     };
   }
 
   if (payment.purchaseId) {
-    const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
+    const purchase = findMockPurchase(payment.purchaseId);
 
     if (!purchase) {
       return undefined;
@@ -127,11 +148,8 @@ function resolveMockDocumentBalance(
       label: formatPurchaseNumberDisplay(purchase.purchaseNumber),
       paidRef: purchase.paidRef ?? 0,
       paidVes: purchase.paidVes,
-      pendingRef: Math.max(
-        Math.round((purchase.totalRef - (purchase.paidRef ?? 0)) * 100) / 100,
-        0,
-      ),
-      pendingVes: Math.max(purchase.totalVes - purchase.paidVes, 0),
+      pendingRef: computeDocumentBalance({ ...purchase, type: "purchase" }).pendingRef,
+      pendingVes: computeDocumentBalance({ ...purchase, type: "purchase" }).pendingVes,
       totalRef: purchase.totalRef,
       totalVes: purchase.totalVes,
     };
@@ -151,7 +169,7 @@ export function getPaymentById(id: string, storeId: string) {
     contact: mockContacts.find((contact) => contact.id === payment.contactId),
     documentBalance,
     pendingBalanceVes: documentBalance?.pendingVes,
-    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
+    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, relatedPurchases(payment)),
   };
 }
 
@@ -178,13 +196,77 @@ export function updatePayment(id: string, input: PaymentUpdateInput, storeId: st
   return getPaymentById(id, storeId);
 }
 
+type CreatedPaymentMock = ReturnType<typeof registerMockPayment>;
+
+/**
+ * Pagos ya registrados por clave de idempotencia (`storeId:clientRequestId`), como
+ * hace `register_payment` en la base: la misma clave con el mismo contenido
+ * devuelve el pago original; con otro contenido se rechaza.
+ */
+function paymentsByClientRequest() {
+  return mockState(
+    "payments:byClientRequest",
+    () => new Map<string, { content: string; payment: CreatedPaymentMock }>(),
+  );
+}
+
+/** Contenido del envio sin la clave, con las propiedades en orden estable. */
+function paymentRequestContent(input: PaymentInput) {
+  const sortKeys = (_key: string, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : value;
+
+  return JSON.stringify({ ...input, clientRequestId: undefined }, sortKeys);
+}
+
 export function createPayment(input: PaymentInput, storeId: string) {
+  const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}` : null;
+  const previous = requestKey ? paymentsByClientRequest().get(requestKey) : undefined;
+
+  if (previous) {
+    const stored = mockPayments.find((item) => item.id === previous.payment.id);
+
+    // Como `payment_idempotent_replay`: otro contenido o un pago ya anulado.
+    if (previous.content !== paymentRequestContent(input) || stored?.status === "anulado") {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        "La clave de idempotencia ya se usó en otro pago. Revisa el pago registrado antes de reintentar.",
+      );
+    }
+
+    return previous.payment;
+  }
+
+  const payment = registerMockPayment(input, storeId);
+
+  if (requestKey) {
+    paymentsByClientRequest().set(requestKey, {
+      content: paymentRequestContent(input),
+      payment,
+    });
+  }
+
+  return payment;
+}
+
+/** Secuencia del id: dos pagos en el mismo milisegundo no comparten id. */
+function nextPaymentSequence() {
+  const sequence = mockState("payments:idSequence", () => ({ last: 0 }));
+
+  sequence.last += 1;
+
+  return sequence.last;
+}
+
+function registerMockPayment(input: PaymentInput, storeId: string) {
   const sale = input.saleId
     ? mockSales.find((candidate) => candidate.id === input.saleId)
     : undefined;
-  const purchase = input.purchaseId
-    ? mockPurchases.find((candidate) => candidate.id === input.purchaseId)
-    : undefined;
+  const purchase = input.purchaseId ? findMockPurchase(input.purchaseId) : undefined;
 
   if (sale) {
     assertMockStoreResource(sale, storeId, "Venta no encontrada.");
@@ -208,6 +290,11 @@ export function createPayment(input: PaymentInput, storeId: string) {
 
   if (sale) {
     sale.paidVes = Math.round((sale.paidVes + amountVes) * 100) / 100;
+
+    // Regla de `register_payment`, que solo cobra ventas pagadas o pendientes.
+    if (sale.status === "pagada" || sale.status === "pendiente_pago") {
+      sale.status = sale.paidVes >= sale.totalVes ? "pagada" : "pendiente_pago";
+    }
   }
 
   if (purchase) {
@@ -215,16 +302,18 @@ export function createPayment(input: PaymentInput, storeId: string) {
     purchase.paidRef = Math.round(((purchase.paidRef ?? 0) + amountRef) * 100) / 100;
   }
 
+  // El saldo que queda es el de Bs del documento, como en `payments.server` (GQ-07):
+  // antes el mock lo deducía del REF y daba 0 con céntimos de Bs aún por pagar.
   const pendingBalanceVes = purchase
-    ? Math.max(
-        Math.round(
-          ((purchase.totalRef - (purchase.paidRef ?? 0)) * refRateVes) * 100,
-        ) / 100,
-        0,
-      )
-    : Math.max(totalVes - paidVes - amountVes, 0);
+    ? computeDocumentBalance({ ...purchase, type: "purchase" }).pendingVes
+    : computeDocumentBalance({
+        paidVes: paidVes + amountVes,
+        status: sale?.status ?? "pendiente_pago",
+        totalVes,
+        type: "sale",
+      }).pendingVes;
 
-  return {
+  const payment = {
     amount: input.amount,
     amountRef,
     amountVes,
@@ -233,16 +322,35 @@ export function createPayment(input: PaymentInput, storeId: string) {
     createdAt: new Date().toISOString(),
     currency: input.currency,
     direction,
-    id: `pay-mock-${Date.now()}`,
+    id: `pay-mock-${Date.now()}-${nextPaymentSequence()}`,
     method: input.method,
+    notes: input.notes,
+    phone: input.phone,
     purchaseId: input.purchaseId,
     referenceCode: input.referenceCode,
     refRateVes,
     saleId: input.saleId,
     status: "activo",
     storeId,
-    pendingBalanceVes,
   } satisfies PaymentMock;
+
+  // El pago queda guardado, como la fila de `payments`: de aqui leen la lista, el
+  // detalle del documento y la anulacion. Sin documento en la semilla no hay saldo
+  // que abonar ni fila que colgarle. El saldo va solo en la respuesta: en la fila
+  // quedaria viejo con el siguiente pago.
+  if (sale || purchase) {
+    mockPayments.push(payment);
+  }
+
+  // Misma forma que `getPaymentById`: quien inserta la respuesta en una lista (la
+  // de `/payments`) necesita el contacto y el documento, no solo sus ids.
+  return {
+    ...payment,
+    contact: mockContacts.find((contact) => contact.id === payment.contactId),
+    documentBalance: resolveMockDocumentBalance(payment),
+    pendingBalanceVes,
+    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, relatedPurchases(payment)),
+  };
 }
 
 export function cancelPayment(id: string, storeId: string) {
@@ -269,7 +377,7 @@ export function cancelPayment(id: string, storeId: string) {
       throw new ApiError(400, "BAD_REQUEST", "El monto del pago excede lo registrado en la venta.");
     }
 
-    sale.paidVes -= payment.amountVes;
+    sale.paidVes = Math.round((sale.paidVes - payment.amountVes) * 100) / 100;
 
     if (sale.status !== "borrador") {
       sale.status = sale.paidVes >= sale.totalVes ? "pagada" : "pendiente_pago";
@@ -277,7 +385,7 @@ export function cancelPayment(id: string, storeId: string) {
   }
 
   if (payment.purchaseId) {
-    const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
+    const purchase = findMockPurchase(payment.purchaseId);
     assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
     if (purchase.status === "cancelado" || purchase.status === "devuelto") {
@@ -296,7 +404,7 @@ export function cancelPayment(id: string, storeId: string) {
       );
     }
 
-    purchase.paidVes -= payment.amountVes;
+    purchase.paidVes = Math.round((purchase.paidVes - payment.amountVes) * 100) / 100;
     purchase.paidRef = Math.max(
       0,
       Math.round(((purchase.paidRef ?? 0) - payment.amountRef) * 100) / 100,

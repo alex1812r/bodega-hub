@@ -8,20 +8,31 @@ import {
 } from "@/lib/supabase/errors";
 import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
 import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactions";
-import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
+import {
+  fetchListPage,
+  getPaginationRange,
+  listCountOptions,
+  toPaginatedList,
+} from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
+import { documentBalance as computeDocumentBalance } from "@/shared/payments/documentBalance";
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import type { PaymentDocumentBalance } from "../payment-details/types";
-import type { PaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+import {
+  mapPaymentRelatedDocument,
+  PAYMENT_RELATED_DOCUMENT_SELECT,
+  type PaymentRelatedDocumentRow,
+} from "../utils/resolvePaymentRelatedDocument";
 import type { PaymentInput } from "./payments.mock-server";
 
 const PAYMENT_SELECT = `
   *,
   contact:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at),
   created_by_profile:profiles!payments_created_by_fkey(id, full_name),
-  sale:sales(id, invoice_number),
-  purchase:purchases(id, purchase_number)
+  ${PAYMENT_RELATED_DOCUMENT_SELECT}
 `;
 
 export type PaymentUpdateInput = {
@@ -36,30 +47,11 @@ type PaymentCreatedByProfile = {
   id: string;
 };
 
-type PaymentRowWithContact = DbPaymentRow & {
-  contact?: DbContactRow | null;
-  created_by_profile?: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null;
-  purchase?: { id: string; purchase_number: string } | null;
-  sale?: { id: string; invoice_number: string } | null;
-};
-
-function mapPaymentRelatedDocument(row: PaymentRowWithContact): PaymentRelatedDocument | undefined {
-  if (row.sale?.id && row.sale.invoice_number) {
-    return {
-      href: `/sales/${row.sale.id}`,
-      label: row.sale.invoice_number,
-    };
-  }
-
-  if (row.purchase?.id && row.purchase.purchase_number) {
-    return {
-      href: `/purchases/${row.purchase.id}`,
-      label: formatPurchaseNumberDisplay(row.purchase.purchase_number),
-    };
-  }
-
-  return undefined;
-}
+type PaymentRowWithContact = DbPaymentRow &
+  PaymentRelatedDocumentRow & {
+    contact?: DbContactRow | null;
+    created_by_profile?: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null;
+  };
 
 function mapCreatedByProfile(
   profile: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null | undefined,
@@ -204,7 +196,7 @@ async function resolveDocumentBalance(
   if (payment.sale_id) {
     const { data, error } = await supabase
       .from("sales")
-      .select("id, invoice_number, total_ves, paid_ves")
+      .select("id, invoice_number, status, total_ves, paid_ves")
       .eq("id", payment.sale_id)
       .maybeSingle();
 
@@ -221,7 +213,8 @@ async function resolveDocumentBalance(
       href: `/sales/${data.id}`,
       label: data.invoice_number,
       paidVes,
-      pendingVes: Math.max(totalVes - paidVes, 0),
+      pendingVes: computeDocumentBalance({ paidVes, status: data.status, totalVes, type: "sale" })
+        .pendingVes,
       totalVes,
     };
   }
@@ -229,7 +222,7 @@ async function resolveDocumentBalance(
   if (payment.purchase_id) {
     const { data, error } = await supabase
       .from("purchases")
-      .select("id, purchase_number, total_ves, total_ref, paid_ves, paid_ref")
+      .select("id, purchase_number, status, total_ves, total_ref, paid_ves, paid_ref")
       .eq("id", payment.purchase_id)
       .maybeSingle();
 
@@ -243,14 +236,22 @@ async function resolveDocumentBalance(
     const paidVes = Number(data.paid_ves ?? 0);
     const totalRef = Number(data.total_ref ?? 0);
     const paidRef = Number(data.paid_ref ?? 0);
+    const balance = computeDocumentBalance({
+      paidRef,
+      paidVes,
+      status: data.status,
+      totalRef,
+      totalVes,
+      type: "purchase",
+    });
 
     return {
       href: `/purchases/${data.id}`,
       label: formatPurchaseNumberDisplay(data.purchase_number),
       paidRef,
       paidVes,
-      pendingRef: Math.max(Math.round((totalRef - paidRef) * 100) / 100, 0),
-      pendingVes: Math.max(totalVes - paidVes, 0),
+      pendingRef: balance.pendingRef,
+      pendingVes: balance.pendingVes,
       totalRef,
       totalVes,
     };
@@ -261,10 +262,13 @@ async function resolveDocumentBalance(
 
 function applyPaymentFilters<T extends {
   eq: (column: string, value: string) => T;
+  gte: (column: string, value: string) => T;
   is: (column: string, value: null) => T;
+  lt: (column: string, value: string) => T;
 }>(query: T, searchParams: URLSearchParams, salePaymentsOnly?: boolean) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
+  const method = searchParams.get("method");
   const purchaseId = searchParams.get("purchaseId");
   const saleId = searchParams.get("saleId");
 
@@ -290,7 +294,16 @@ function applyPaymentFilters<T extends {
     filteredQuery = filteredQuery.eq("contact_id", contactId);
   }
 
-  return filteredQuery;
+  if (method) {
+    filteredQuery = filteredQuery.eq("method", method);
+  }
+
+  // Dias operativos Caracas, ambos inclusive.
+  return applyCreatedAtCaracasRange(
+    filteredQuery,
+    searchParams.get("from"),
+    searchParams.get("to"),
+  );
 }
 
 export type PaymentAccessOptions = {
@@ -305,11 +318,18 @@ export async function listPayments(
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("payments").select(PAYMENT_SELECT, { count: "exact" }).eq("store_id", storeId);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) =>
+    applyPaymentFilters(
+      supabase.from("payments").select(PAYMENT_SELECT, listCountOptions(head)).eq("store_id", storeId),
+      searchParams,
+      options.salePaymentsOnly,
+    );
 
-  query = applyPaymentFilters(query, searchParams, options.salePaymentsOnly);
-
-  const result = await query.order("created_at", { ascending: false }).range(skip, to);
+  const result = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () => buildFilteredQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(searchParams, result as { count: number | null; data: PaymentRowWithContact[] | null; error: unknown }, (row) =>
     mapPaymentWithContact(row),
@@ -368,30 +388,38 @@ export function buildPaymentNotes(
 export async function createPayment(input: PaymentInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const changeAmount = input.change?.method ? Math.max(0, input.change.amount) : 0;
-  const { data, error } = await supabase.rpc("register_payment", {
-    p_amount: input.amount,
-    p_bank_name: input.bankName ?? null,
-    p_method: input.method,
-    p_notes: buildPaymentNotes(input),
-    p_phone: input.phone ?? null,
-    p_purchase_id: input.purchaseId ?? null,
-    p_reference_code: input.referenceCode ?? null,
-    p_sale_id: input.saleId ?? null,
-    // Solo se mandan cuando hay algo que registrar: asi un cobro simple sigue
-    // resolviendo la firma corta de `register_payment`.
-    ...(changeAmount > 0
-      ? {
-          p_change_amount: changeAmount,
-          p_change_method: input.change?.method ?? null,
-        }
-      : {}),
-    ...(input.changeDenominations
-      ? { p_change_denominations: input.changeDenominations }
-      : {}),
-    ...(input.receivedDenominations
-      ? { p_received_denominations: input.receivedDenominations }
-      : {}),
-  });
+  // P4-3: con `clientRequestId` la base devuelve el pago original en un
+  // reintento. Si aun no tiene la firma con la clave (PGRST202, parche
+  // 20261008a sin aplicar) se registra una vez sin idempotencia, nunca un 500.
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "register_payment",
+    {
+      p_amount: input.amount,
+      p_bank_name: input.bankName ?? null,
+      p_method: input.method,
+      p_notes: buildPaymentNotes(input),
+      p_phone: input.phone ?? null,
+      p_purchase_id: input.purchaseId ?? null,
+      p_reference_code: input.referenceCode ?? null,
+      p_sale_id: input.saleId ?? null,
+      // Solo se mandan cuando hay algo que registrar: asi un cobro simple sigue
+      // resolviendo la firma corta de `register_payment`.
+      ...(changeAmount > 0
+        ? {
+            p_change_amount: changeAmount,
+            p_change_method: input.change?.method ?? null,
+          }
+        : {}),
+      ...(input.changeDenominations
+        ? { p_change_denominations: input.changeDenominations }
+        : {}),
+      ...(input.receivedDenominations
+        ? { p_received_denominations: input.receivedDenominations }
+        : {}),
+    },
+    input.clientRequestId,
+  );
 
   throwIfRpcError(error);
 

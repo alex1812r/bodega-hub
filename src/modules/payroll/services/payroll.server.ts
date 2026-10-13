@@ -7,7 +7,12 @@ import {
 } from "@bodega/core";
 
 import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
-import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
+import {
+  fetchListPage,
+  getPaginationRange,
+  listCountOptions,
+  toPaginatedList,
+} from "@/lib/supabase/pagination";
 import {
   getSupabaseErrorMessage,
   mapSupabaseError,
@@ -396,12 +401,12 @@ export async function upsertPayrollEmployee(
 export async function listPayrollPeriods(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
-    .from("payroll_periods")
-    .select("*", { count: "exact" })
-    .eq("store_id", storeId)
-    .order("from_date", { ascending: false })
-    .range(skip, to);
+  const buildQuery = (head: boolean) =>
+    supabase.from("payroll_periods").select("*", listCountOptions(head)).eq("store_id", storeId);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("from_date", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(searchParams, result, (row) => mapPeriod(row as Row));
 }
@@ -659,13 +664,16 @@ export async function listMyPayrollItems(
 ) {
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
-    .from("payroll_items")
-    .select(`${ITEM_SELECT}, period:payroll_periods(*)`, { count: "exact" })
-    .eq("store_id", access.storeId)
-    .eq("profile_id", access.profileId)
-    .order("created_at", { ascending: false })
-    .range(skip, to);
+  const buildQuery = (head: boolean) =>
+    supabase
+      .from("payroll_items")
+      .select(`${ITEM_SELECT}, period:payroll_periods(*)`, listCountOptions(head))
+      .eq("store_id", access.storeId)
+      .eq("profile_id", access.profileId);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   const list = await toPaginatedList(searchParams, result, (row) => row as Row);
   const itemIds = list.items.map((row) => row.id as string);

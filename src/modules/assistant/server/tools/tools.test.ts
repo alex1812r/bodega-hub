@@ -109,8 +109,10 @@ describe("store tools", () => {
     );
 
     expect(result.range).toEqual({ from: "2026-05-17", to: "2026-05-18" });
+    // DEC-01: la venta en borrador del 17 (sale-003: 40 REF, 8 unidades) no es una
+    // venta; la herramienta hereda el criterio de las métricas del dashboard.
     expect(result.data).toMatchObject({
-      actual: { salesCount: 3, totalRef: 77.5, unitsSold: 11 },
+      actual: { salesCount: 2, totalRef: 37.5, unitsSold: 3 },
     });
 
     const compared = expectOk(

@@ -2,7 +2,7 @@
 
 import { MoreVertical } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { IconButton } from "@/shared/components/IconButton";
@@ -22,13 +22,55 @@ type ActionsMenuProps = {
   variant?: "ghost" | "secondary" | "outline" | "primary" | "danger";
 };
 
+/** Separación entre el disparador y el menú. */
+const TRIGGER_GAP = 4;
+/** Margen mínimo entre el menú y los bordes de la ventana. */
+const VIEWPORT_MARGIN = 8;
+
+type MenuPosition = {
+  left: number;
+  /** Solo cuando el menú no cabe entero ni debajo ni encima del disparador. */
+  maxHeight?: number;
+  top: number;
+};
+
+/**
+ * Coloca el menú (`position: fixed`) debajo del disparador y alineado a su
+ * borde derecho. Si no cabe debajo se abre hacia arriba; si tampoco cabe
+ * arriba se acota al alto de la ventana (con desplazamiento propio). En
+ * horizontal nunca se sale de la ventana.
+ */
+function getMenuPosition(
+  trigger: DOMRect,
+  menu: { height: number; width: number },
+  viewport: { height: number; width: number },
+): MenuPosition {
+  const maxLeft = viewport.width - VIEWPORT_MARGIN - menu.width;
+  const left = Math.max(VIEWPORT_MARGIN, Math.min(trigger.right - menu.width, maxLeft));
+  const below = trigger.bottom + TRIGGER_GAP;
+  const above = trigger.top - TRIGGER_GAP - menu.height;
+
+  if (below + menu.height <= viewport.height - VIEWPORT_MARGIN) {
+    return { left, top: below };
+  }
+
+  if (above >= VIEWPORT_MARGIN) {
+    return { left, top: above };
+  }
+
+  const maxHeight = Math.max(0, viewport.height - VIEWPORT_MARGIN * 2);
+  const maxTop = viewport.height - VIEWPORT_MARGIN - Math.min(menu.height, maxHeight);
+
+  return { left, maxHeight, top: Math.max(VIEWPORT_MARGIN, Math.min(below, maxTop)) };
+}
+
 export function ActionsMenu({
   actions,
   label = "Abrir acciones",
   variant = "ghost",
 }: ActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const [menuPosition, setMenuPosition] = useState<MenuPosition>({ left: 0, top: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
   const floatingMenuRef = useRef<HTMLDivElement>(null);
   const actionClassName = (variant: ActionMenuItem["variant"]) =>
@@ -65,22 +107,31 @@ export function ActionsMenu({
     };
   }, []);
 
-  useEffect(() => {
+  // Antes de pintar: el menú no llega a verse en una posición provisional.
+  useLayoutEffect(() => {
     if (!isOpen) {
       return;
     }
 
     function updateMenuPosition() {
       const rect = triggerRef.current?.getBoundingClientRect();
+      const menu = floatingMenuRef.current;
 
-      if (!rect) {
+      if (!rect || !menu) {
         return;
       }
 
-      setMenuPosition({
-        left: rect.right,
-        top: rect.bottom + 4,
-      });
+      const menuRect = menu.getBoundingClientRect();
+      // Alto natural aunque ya esté acotado por `max-height` (contenido + bordes).
+      const naturalHeight = menu.scrollHeight + menu.offsetHeight - menu.clientHeight;
+
+      setMenuPosition(
+        getMenuPosition(
+          rect,
+          { height: Math.max(menuRect.height, naturalHeight), width: menuRect.width },
+          { height: window.innerHeight, width: window.innerWidth },
+        ),
+      );
     }
 
     updateMenuPosition();
@@ -95,11 +146,12 @@ export function ActionsMenu({
 
   const menuContent = isOpen ? (
     <div
-      className="fixed z-50 min-w-36 -translate-x-full rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-800 dark:bg-slate-900"
+      className="fixed z-50 min-w-36 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-800 dark:bg-slate-900"
       ref={floatingMenuRef}
       role="menu"
       style={{
         left: menuPosition.left,
+        maxHeight: menuPosition.maxHeight,
         top: menuPosition.top,
       }}
     >

@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 
 import { ApiError, toErrorResponse } from "@/lib/api/apiError";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { createAssistantModel } from "@/modules/assistant/server/provider";
 import {
   assertUnderDailyLimit,
@@ -73,7 +74,7 @@ function messageText(message: z.infer<typeof messageSchema>) {
 }
 
 const PROVIDER_ERROR_MESSAGE =
-  "El servicio de IA no esta disponible en este momento. Intenta de nuevo en unos minutos.";
+  "El servicio de IA no está disponible en este momento. Intenta de nuevo en unos minutos.";
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
     const usage = await getAssistantUsage(ctx);
     assertUnderDailyLimit(usage);
 
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(await readJsonBody(request));
     const history = sanitizeMessages(body.messages).slice(-HISTORY_LIMIT);
 
     if (history.length === 0) {

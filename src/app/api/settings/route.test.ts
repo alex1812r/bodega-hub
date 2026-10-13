@@ -102,6 +102,7 @@ describe("/api/settings", () => {
       expect(response.status).toBe(200);
       expect(body.data).toEqual({
         businessName: "BodegaHub",
+        cashCloseDiffAlertVes: 0,
         defaultTaxRate: 16,
         enabledPaymentMethods: [
           "efectivo_ves",
@@ -112,6 +113,7 @@ describe("/api/settings", () => {
         ],
         invoicePrefix: "FAC",
         lowStockThreshold: 5,
+        pricing: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 },
       });
     });
 

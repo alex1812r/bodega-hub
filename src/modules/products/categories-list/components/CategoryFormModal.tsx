@@ -1,15 +1,19 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { FormActions } from "@/shared/components/FormActions";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
-import { Textarea } from "@/shared/components/Textarea";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import type { CategoryInput } from "../../hooks/useProducts";
+import {
+  CATEGORY_NAME_TAKEN_MESSAGE,
+  CategoryFormFields,
+  isCategoryNameTaken,
+  readCategoryForm,
+} from "./CategoryFormFields";
 
 type CategoryFormModalProps = {
   category?: CategoryMock;
@@ -17,6 +21,14 @@ type CategoryFormModalProps = {
   isSubmitting?: boolean;
   mode?: "create" | "edit";
   onOpenChange?: (open: boolean) => void;
+  /**
+   * Guarda. En edición `taxRate` solo llega si el usuario eligió otra alícuota:
+   * sin tocarla, la categoría conserva la que tenía. `defaultMarkupPct` llega
+   * con el % escrito, o `null` si se borró el que tenía. Si rechaza, el modal
+   * queda abierto (el consumidor muestra el motivo con `errorMessage`); el
+   * rechazo se captura aquí. Si rechaza con un 409 de nombre repetido, se
+   * muestra "Ya existe una categoría con ese nombre." en vez de `errorMessage`.
+   */
   onSubmit?: (input: CategoryInput) => Promise<void> | void;
   open?: boolean;
   trigger?: ReactNode;
@@ -37,11 +49,18 @@ export function CategoryFormModal({
   const isControlled = open !== undefined;
   const isOpen = isControlled ? open : internalOpen;
   const isEdit = mode === "edit";
+  // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
+  // segundo Enter o un clic en el mismo tick.
+  const isSubmitInFlightRef = useRef(false);
+  /** El último guardado se rechazó por nombre repetido (409). */
+  const [isNameTaken, setIsNameTaken] = useState(false);
 
   function handleOpenChange(nextOpen: boolean) {
     if (!isControlled) {
       setInternalOpen(nextOpen);
     }
+
+    setIsNameTaken(false);
 
     onOpenChange?.(nextOpen);
   }
@@ -49,17 +68,21 @@ export function CategoryFormModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const formData = new FormData(event.currentTarget);
-    const taxRateRaw = String(formData.get("taxRate") ?? "").trim();
-    const taxRate = taxRateRaw === "" ? 16 : Number(taxRateRaw);
-    const input: CategoryInput = {
-      description: String(formData.get("description") ?? "").trim() || undefined,
-      name: String(formData.get("name") ?? "").trim(),
-      taxRate: Number.isFinite(taxRate) ? Math.min(100, Math.max(0, taxRate)) : 16,
-    };
+    if (isSubmitInFlightRef.current) {
+      return;
+    }
 
-    await onSubmit?.(input);
-    handleOpenChange(false);
+    isSubmitInFlightRef.current = true;
+
+    try {
+      await onSubmit?.(readCategoryForm(event.currentTarget, isEdit ? category : undefined));
+      handleOpenChange(false);
+    } catch (error) {
+      // El modal sigue abierto; el consumidor muestra el motivo con `errorMessage`.
+      setIsNameTaken(isCategoryNameTaken(error));
+    } finally {
+      isSubmitInFlightRef.current = false;
+    }
   }
 
   return (
@@ -79,34 +102,10 @@ export function CategoryFormModal({
       trigger={trigger}
     >
       <form className="grid gap-4" id={formId} onSubmit={(event) => void handleSubmit(event)}>
-        <Input
-          defaultValue={category?.name}
-          label="Nombre"
-          name="name"
-          required
+        <CategoryFormFields
+          category={category}
+          errorMessage={isNameTaken ? CATEGORY_NAME_TAKEN_MESSAGE : errorMessage}
         />
-        <Input
-          defaultValue={category?.taxRate ?? 16}
-          helperText="Porcentaje de impuesto aplicable a productos de esta categoría (ej. 16 = IVA 16%)."
-          label="Impuesto (%)"
-          max={100}
-          min={0}
-          name="taxRate"
-          required
-          step="0.01"
-          type="number"
-        />
-        <Textarea
-          defaultValue={category?.description ?? ""}
-          label="Descripción (opcional)"
-          name="description"
-          rows={3}
-        />
-        {errorMessage ? (
-          <p className="text-sm text-destructive" role="alert">
-            {errorMessage}
-          </p>
-        ) : null}
       </form>
     </Modal>
   );

@@ -3,10 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Banknote, CircleDollarSign, Landmark } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { DashboardKpiCard } from "@/modules/dashboard/components/DashboardKpiCard";
 import { apiFetch } from "@/shared/api/apiFetch";
+import type { Permission, UserRole } from "@/shared/auth/permissions";
 import { ActionsMenu } from "@/shared/components/ActionsMenu";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
@@ -16,7 +17,10 @@ import { EntityListPage } from "@/shared/components/EntityListPage";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SelectField } from "@/shared/components/SelectField";
+import { useToast } from "@/shared/components/Toast";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import {
   useCashRegisters,
@@ -26,9 +30,32 @@ import {
   useUpdateCashRegister,
 } from "../hooks/useCash";
 import { useCashSessionClock } from "../hooks/useCashSessionClock";
+import { canBeAssignedCashRegister } from "../services/cashRegisterAssignee";
 import type { CashRegister, CashSession } from "../types";
 
-type User = { id: string; name: string; role: string };
+/** Lo que usa esta pantalla de `GET /api/users`. */
+type User = {
+  deniedPermissions?: Permission[];
+  grantedPermissions?: Permission[];
+  id: string;
+  isActive: boolean;
+  name: string;
+  role: UserRole;
+};
+
+/**
+ * `/cash/registers` no tiene búsqueda, filtros, orden ni paginación (lista
+ * corta y fija de cajas): no hay estado que conservar en la URL. El detalle
+ * vuelve a esta misma ruta con "Volver".
+ */
+const CASH_REGISTERS_LIST_HREF = "/cash/registers";
+
+function registerDetailHref(registerId: string) {
+  return withReturnTo(`/cash/registers/${registerId}`, CASH_REGISTERS_LIST_HREF);
+}
+
+const cardTitleLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function openedAtLabel(openedAt: string) {
   return new Date(openedAt).toLocaleTimeString("es-VE", {
@@ -45,8 +72,10 @@ export function CashRegistersListPage() {
     queryKey: ["users", "vendors"],
     queryFn: () => apiFetch<{ items: User[] }>("/api/users", { query: { limit: 100 } }),
   });
+  // Quien puede operar caja: vendedores, administradores con «El administrador
+  // puede vender» y permisos concedidos. El servidor valida lo mismo al asignar.
   const vendors = useMemo(
-    () => (users.data?.items ?? []).filter((user) => user.role === "vendedor"),
+    () => (users.data?.items ?? []).filter(canBeAssignedCashRegister),
     [users.data],
   );
 
@@ -97,6 +126,8 @@ export function CashRegistersListPage() {
   const isLoadingTotals = openSessions.isLoading;
   const activeCount = (registers.data ?? []).filter((item) => item.isActive).length;
 
+  useScrollRestoration(CASH_REGISTERS_LIST_HREF, { ready: !registers.isLoading });
+
   const columns = useMemo<DataTableColumn<CashRegister>[]>(
     () => [
       {
@@ -107,12 +138,12 @@ export function CashRegistersListPage() {
           <div className="min-w-0">
             <Link
               className="font-medium text-primary hover:underline"
-              href={`/cash/registers/${item.id}`}
+              href={registerDetailHref(item.id)}
             >
               {item.name}
             </Link>
             <p className="truncate text-xs text-on-surface-variant">
-              {item.assignedUserName ?? "Sin vendedor asignado"}
+              {item.assignedUserName ?? "Sin usuario asignado"}
             </p>
           </div>
         ),
@@ -167,7 +198,7 @@ export function CashRegistersListPage() {
         visibility: "lg",
       },
       {
-        header: "Vendedor asignado",
+        header: "Usuario asignado",
         key: "assignedUserId",
         render: (item) => <RegisterAssignment register={item} vendors={vendors} />,
         visibility: "md",
@@ -199,7 +230,7 @@ export function CashRegistersListPage() {
             Nueva caja
           </Button>
         }
-        description="Saldos en vivo de los turnos abiertos, asignacion de vendedores y estado de cada caja."
+        description="Saldos en vivo de los turnos abiertos, asignación de vendedores y estado de cada caja."
         layout="sections"
         title="Cajas"
       >
@@ -223,7 +254,7 @@ export function CashRegistersListPage() {
             label="Efectivo en cajas REF"
             trend={
               <p className="mt-1 text-xs text-muted-foreground">
-                Divisas fisicas en los cajones abiertos.
+                Divisas físicas en los cajones abiertos.
               </p>
             }
             value={isLoadingTotals ? "—" : formatRefUsd(totals.cashRef)}
@@ -235,7 +266,7 @@ export function CashRegistersListPage() {
             label="Cobros en cuenta Bs."
             trend={
               <p className="mt-1 text-xs text-muted-foreground">
-                Pago movil, transferencia y punto de los turnos abiertos.
+                Pago móvil, transferencia y punto de los turnos abiertos.
               </p>
             }
             value={isLoadingTotals ? "—" : formatVesBs(totals.accountVes)}
@@ -248,7 +279,7 @@ export function CashRegistersListPage() {
               <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-amber-600" />
               <div>
                 <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                  Hay efectivo cerrado que todavia no llega al baul.
+                  Hay efectivo cerrado que todavía no llega al baúl.
                 </p>
                 <p className="text-xs text-amber-800 dark:text-amber-300">
                   No entra en los saldos de arriba: esos solo cuentan turnos abiertos. Abre el
@@ -273,14 +304,18 @@ export function CashRegistersListPage() {
           </CardHeader>
           <CardContent className="p-0 sm:px-4 sm:pb-4">
             <DataTable
-              cardSubtitle={(item) => item.assignedUserName ?? "Sin vendedor asignado"}
-              cardTitle={(item) => item.name}
+              cardSubtitle={(item) => item.assignedUserName ?? "Sin usuario asignado"}
+              cardTitle={(item) => (
+                <Link className={cardTitleLinkClass} href={registerDetailHref(item.id)}>
+                  {item.name}
+                </Link>
+              )}
               columns={columns}
               data={registers.data ?? []}
               embedded
               emptyState={
                 <p className="p-6 text-center text-sm text-on-surface-variant">
-                  Aun no hay cajas registradas. Crea la primera con <strong>Nueva caja</strong>.
+                  Aún no hay cajas registradas. Crea la primera con <strong>Nueva caja</strong>.
                 </p>
               }
               getRowId={(item) => item.id}
@@ -306,6 +341,8 @@ function CreateCashRegisterModal({
   const create = useCreateCashRegister();
   const [name, setName] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // `isPending` llega con el siguiente render: el segundo clic del mismo gesto se corta aquí.
+  const submittingRef = useRef(false);
 
   function reset() {
     setName("");
@@ -313,10 +350,16 @@ function CreateCashRegisterModal({
   }
 
   async function handleSubmit() {
+    if (submittingRef.current) {
+      return;
+    }
+
     if (!name.trim()) {
       setErrorMessage("Escribe un nombre para la caja.");
       return;
     }
+
+    submittingRef.current = true;
 
     try {
       setErrorMessage(null);
@@ -325,12 +368,14 @@ function CreateCashRegisterModal({
       onOpenChange(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "No se pudo crear la caja.");
+    } finally {
+      submittingRef.current = false;
     }
   }
 
   return (
     <Modal
-      description="La caja queda activa y sin vendedor asignado."
+      description="La caja queda activa y sin usuario asignado."
       footer={({ close }) => (
         <>
           <Button
@@ -406,17 +451,58 @@ function RegisterCashCell({ session }: { session?: CashSession }) {
   );
 }
 
+/**
+ * Cambios de una caja desde la tabla (asignar, activar, desactivar): uno a la
+ * vez, y si el servidor lo rechaza se avisa con su motivo. El control muestra
+ * siempre el valor de la caja, así que tras un fallo vuelve solo al real.
+ */
+function useRegisterUpdate(registerId: string) {
+  const update = useUpdateCashRegister(registerId);
+  const { showToast } = useToast();
+  // `isPending` llega con el siguiente render: el segundo cambio del mismo gesto se corta aquí.
+  const inFlightRef = useRef(false);
+
+  async function run(
+    input: Partial<Pick<CashRegister, "assignedUserId" | "assignedUserName" | "isActive">>,
+    errorTitle: string,
+  ) {
+    if (inFlightRef.current) {
+      return;
+    }
+
+    inFlightRef.current = true;
+
+    try {
+      await update.mutateAsync(input);
+    } catch (error) {
+      showToast({
+        description: error instanceof Error ? error.message : undefined,
+        title: errorTitle,
+        tone: "error",
+      });
+    } finally {
+      inFlightRef.current = false;
+    }
+  }
+
+  return { isPending: update.isPending, run };
+}
+
 function RegisterRowActions({ register }: { register: CashRegister }) {
-  const update = useUpdateCashRegister(register.id);
+  const update = useRegisterUpdate(register.id);
 
   return (
     <ActionsMenu
       actions={[
-        { href: `/cash/registers/${register.id}`, label: "Ver detalle" },
+        { href: registerDetailHref(register.id), label: "Ver detalle" },
         {
           disabled: update.isPending,
           label: register.isActive ? "Desactivar caja" : "Activar caja",
-          onSelect: () => update.mutate({ isActive: !register.isActive }),
+          onSelect: () =>
+            void update.run(
+              { isActive: !register.isActive },
+              register.isActive ? "No se pudo desactivar la caja" : "No se pudo activar la caja",
+            ),
           variant: register.isActive ? "danger" : "default",
         },
       ]}
@@ -426,23 +512,34 @@ function RegisterRowActions({ register }: { register: CashRegister }) {
 }
 
 function RegisterAssignment({ register, vendors }: { register: CashRegister; vendors: User[] }) {
-  const update = useUpdateCashRegister(register.id);
+  const update = useRegisterUpdate(register.id);
+  const assignedUserId = register.assignedUserId ?? "";
+  // La asignación se conserva aunque el usuario ya no pueda operar caja (p. ej. un
+  // administrador tras apagar «El administrador puede vender»): se sigue mostrando.
+  const assignedOutsideOptions =
+    assignedUserId !== "" && !vendors.some((user) => user.id === assignedUserId)
+      ? [{ label: register.assignedUserName ?? "Usuario asignado", value: assignedUserId }]
+      : [];
 
   return (
     <SelectField
       aria-label={`Asignar ${register.name}`}
       disabled={update.isPending}
       onChange={(event) =>
-        update.mutate({
-          assignedUserId: event.target.value || null,
-          assignedUserName: vendors.find((user) => user.id === event.target.value)?.name ?? null,
-        })
+        void update.run(
+          {
+            assignedUserId: event.target.value || null,
+            assignedUserName: vendors.find((user) => user.id === event.target.value)?.name ?? null,
+          },
+          event.target.value ? "No se pudo asignar la caja" : "No se pudo desasignar la caja",
+        )
       }
       options={[
-        { label: "Sin asignar", value: "" },
+        { label: "Sin usuario asignado", value: "" },
         ...vendors.map((user) => ({ label: user.name, value: user.id })),
+        ...assignedOutsideOptions,
       ]}
-      value={register.assignedUserId ?? ""}
+      value={assignedUserId}
     />
   );
 }

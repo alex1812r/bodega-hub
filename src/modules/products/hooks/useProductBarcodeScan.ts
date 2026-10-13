@@ -73,14 +73,14 @@ export function useProductBarcodeScan(filters: ProductBarcodeScanFilters = {}) {
         });
 
         if (result.items.length === 0) {
-          const message = "No se encontro producto con ese codigo de barras.";
+          const message = "No se encontró producto con ese código de barras.";
           setScanError(message);
           callbacks.onNotFound?.(message);
           return;
         }
 
         if (result.items.length > 1) {
-          const message = "Hay mas de un producto con ese codigo de barras.";
+          const message = "Hay más de un producto con ese código de barras.";
           setScanError(message);
           callbacks.onAmbiguous?.();
           callbacks.onNotFound?.(message);

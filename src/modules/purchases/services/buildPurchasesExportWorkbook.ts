@@ -1,7 +1,13 @@
 import ExcelJS from "exceljs";
 
+import { formatRefUsd } from "@/shared/utils/currency";
+
 import type { PurchaseListRow } from "../hooks/usePurchases";
-import { purchasesListExportColumns } from "../utils/purchaseExportSheetColumns";
+import { getPurchaseBalanceRef } from "../purchases-list/utils/purchaseBalance";
+import {
+  purchasesListExportColumns,
+  type PurchaseExportColumn,
+} from "../utils/purchaseExportSheetColumns";
 import type { PurchasesExportFilters } from "./fetchPurchasesForExport";
 
 export type PurchasesExportWorkbookMetadata = {
@@ -10,6 +16,23 @@ export type PurchasesExportWorkbookMetadata = {
 };
 
 const SHEET_NAME = "Compras";
+
+/** Columnas de la lista más lo pagado y el saldo (vacío si la compra no está vigente). */
+const exportColumns: PurchaseExportColumn<PurchaseListRow>[] = [
+  ...purchasesListExportColumns,
+  {
+    header: "Pagado (REF)",
+    value: (row) => formatRefUsd(row.paidRef ?? 0),
+  },
+  {
+    header: "Saldo (REF)",
+    value: (row) => {
+      const balanceRef = getPurchaseBalanceRef(row);
+
+      return balanceRef === null ? "" : formatRefUsd(balanceRef);
+    },
+  },
+];
 
 function sanitizeSheetName(name: string) {
   return name.replace(/[*?:\\/[\]]/g, "").trim().slice(0, 31);
@@ -45,6 +68,10 @@ function buildPurchasesExportFilterNotes(filters: PurchasesExportFilters): strin
     notes.push(`Estado: ${filters.status.trim()}`);
   }
 
+  if (filters.pendingBalance === "1") {
+    notes.push("Solo compras con saldo pendiente");
+  }
+
   if (filters.supplierId?.trim()) {
     notes.push(`Proveedor ID: ${filters.supplierId.trim()}`);
   }
@@ -72,16 +99,16 @@ export async function buildPurchasesExportWorkbook(
   }
 
   worksheet.addRow([]);
-  worksheet.addRow(purchasesListExportColumns.map((column) => column.header));
+  worksheet.addRow(exportColumns.map((column) => column.header));
 
   for (const row of rows) {
-    worksheet.addRow(purchasesListExportColumns.map((column) => column.value(row)));
+    worksheet.addRow(exportColumns.map((column) => column.value(row)));
   }
 
   const headerRowNumber = 3 + filterNotes.length;
   const headerRow = worksheet.getRow(headerRowNumber);
   headerRow.font = { bold: true };
-  worksheet.columns = purchasesListExportColumns.map((column, index) => ({
+  worksheet.columns = exportColumns.map((column, index) => ({
     key: String(index),
     width: Math.max(column.header.length + 2, 14),
   }));

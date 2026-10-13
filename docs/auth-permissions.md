@@ -16,7 +16,7 @@ Ver [`frontend-api-guide.md`](frontend-api-guide.md#autenticación-y-permisos) y
 ## Roles Iniciales
 
 - `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`) mas `assistant.use`. Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
-- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, gestionar cajas/baúl y el resto de módulos.
+- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, **anularlas y devolverlas** (`sales.cancel`), gestionar cajas/baúl y el resto de módulos. Esos dos permisos se le pueden conceder con el interruptor [«El administrador puede vender»](#el-administrador-puede-vender).
 - `vendedor`: acceso a ventas y datos necesarios para vender.
 - `almacen`: acceso a compras, productos e inventario.
 - `contador`: acceso a pagos, reportes y lectura contable.
@@ -64,8 +64,13 @@ Login (POST /api/auth/login)
   → AuthenticatedAppShell (menú + requiredPermission por página)
   → cada page.tsx envuelve con permiso mínimo del módulo
   → API valida requirePermission en cada request (401/403)
-  → query-client redirige a /login ante 401
+  → apiFetch redirige a /login?next=<pantalla actual> ante 401
 ```
+
+- **Sesión caducada:** una sesión rota (refresh token inválido, revocado o ya usado, JWT caducado o manipulado) responde 401 en toda ruta del BFF, nunca 500; el cliente y `src/proxy.ts` llevan a `/login?next=` y, tras entrar, se vuelve a la pantalla (solo rutas internas seguras).
+- **Login rechazado:** un usuario inactivo, sin perfil o bloqueado recibe 403 de `POST /api/auth/login` y no queda con sesión.
+
+Detalle en [`modules-catalog.md`](modules-catalog.md#sesión-caducada-y-login).
 
 | Pieza | Archivo |
 |-------|---------|
@@ -75,7 +80,8 @@ Login (POST /api/auth/login)
 | Shell autenticado | `src/shared/components/AppShell/AuthenticatedAppShell.tsx` |
 | Redirect entrada | `src/app/page.tsx` |
 | Proxy sesión | `src/proxy.ts` |
-| Handler 401 global | `src/lib/query/query-client.ts` |
+| Handler 401 global | `src/shared/api/apiFetch.ts` + `src/shared/auth/loginRedirect.ts` (`src/lib/query/query-client.ts` como red de seguridad) |
+| Clasificación de errores de sesión | `src/lib/supabase/auth/sessionErrors.ts` |
 
 La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 
@@ -85,7 +91,8 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | --- | --- | --- | --- | --- |
 | `dashboard.view` | Si | Si | Si | Si |
 | `sales.view` | Si | Si | No | Si |
-| `sales.create` | No | Si | No | No |
+| `sales.create` | No (*) | Si | No | No |
+| `sales.cancel` | Si | Si | No | No |
 | `purchases.view` | Si | No | Si | Si |
 | `purchases.create` | Si | No | Si | No |
 | `inventory.view` | Si | No | Si | No |
@@ -97,7 +104,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `payments.view` | Si | Si | No | Si |
 | `payments.manage` | Si | No | No | Si |
 | `cash.view` | Si | Si | No | Si |
-| `cash.operate` | No | Si | No | No |
+| `cash.operate` | No (*) | Si | No | No |
 | `cash.manage` | Si | No | No | No |
 | `vault.view` | Si | No | No | Si |
 | `vault.manage` | Si | No | No | No |
@@ -108,8 +115,16 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `settings.view` | Si | No | No | No |
 | `users.manage` | Si | No | No | No |
 
+(*) Sí cuando la tienda tiene encendido [«El administrador puede vender»](#el-administrador-puede-vender).
+
 Notas de pagos:
 - El **vendedor** no tiene `payments.manage`, pero puede **registrar cobros de venta** (POS / `POST /api/payments` con `saleId`) con `sales.create`. No puede pagar compras ni anular pagos.
+- **Pagos de compras** (pagos a proveedores, `payments.purchase_id` no nulo): solo los ven **admin y contador**, que son los roles con `payments.view` y `purchases.view` a la vez (`canViewPurchasePayments` en `src/shared/auth/paymentAccess.ts`). Vale en las dos capas: la RLS de `payments` (parche `20261010c-payments-purchase-rls.sql`) devuelve 0 filas a vendedor y almacén aunque consulten PostgREST con su JWT, y el BFF no se los entrega. Los pagos de ventas se siguen leyendo por tienda.
+- **Almacén** ve la compra (`purchases.view`) pero no sus pagos: `GET /api/purchases/[id]` le responde `payments: []` y `paidRef` / `paidVes` de la cabecera de la compra (`purchases.paid_ref` / `paid_ves`, que mantiene `register_payment`); el detalle le muestra Pagado / Pendiente y, en el historial, «No tienes permiso para ver los pagos de esta compra». `vault_movements` (asientos `purchase_out` del baúl) queda fuera de esta regla.
+
+Notas de compras:
+- **Proveedor de una compra** (COM-F9): `GET /api/purchases/suppliers` se autoriza con `purchases.create` (admin y almacén), no con `contacts.view`, para que almacén pueda elegir proveedor sin leer contactos. Solo entrega `id`, `name`, `taxId` e `isActive` de contactos `proveedor` / `ambos` de la tienda; `/api/contacts` sigue exigiendo `contacts.view`.
+- Lee `contacts` con la sesión del usuario: la política «Authenticated users read contacts» (`20260716-multi-store.sql`) solo filtra por tienda, no por rol; quien acota los campos y el tipo es el BFF.
 
 Notas de nomina:
 - `payroll.manage` es del dueno: calcular, aprobar, pagar y anular quincenas.
@@ -132,6 +147,10 @@ El rol sigue siendo la plantilla base del usuario, pero un administrador puede r
 
 - `grantedPermissions`: permisos adicionales al rol.
 - `deniedPermissions`: permisos bloqueados aunque el rol los tenga.
+
+El rol `admin` **ignora** estas excepciones, con una sola salvedad: `sales.create` y `cash.operate` en `grantedPermissions` (`adminSellPermissions` en `packages/core/src/permissions.ts`). Ningún otro permiso concedido o bloqueado cambia lo que puede hacer un administrador.
+
+**Regla de arrastre de `sales.cancel`** (`getEffectivePermissions`, roles que no son admin): un usuario con `sales.create` en `deniedPermissions` tampoco recibe `sales.cancel` de su rol; solo lo tiene si `sales.cancel` está en sus `grantedPermissions`. Un `sales.cancel` en `deniedPermissions` lo quita siempre, como cualquier otro permiso. Detalle en [Quién puede anular y devolver ventas](#quién-puede-anular-y-devolver-ventas).
 
 En modo mock (sin sesión), los endpoints aceptan `x-demo-user-id` para probar excepciones. Ejemplo: `55555555-5555-4555-8555-555555555555` (`vendedor.contactos@example.com`) es rol `vendedor` con `contacts.manage` concedido.
 
@@ -233,7 +252,7 @@ with check (public.current_user_role() in ('admin', 'vendedor'));
 2. Login (`POST /api/auth/login`) → cookies → `useCurrentUser` invalida y carga perfil.
 3. `AuthenticatedAppShell` filtra menú con `permissions` efectivos de `/api/auth/me`.
 4. Cada `page.tsx` declara `requiredPermission`; componentes usan `Can` / `usePermission` donde aplica.
-5. La API valida `requirePermission` + RLS; 401 dispara redirect global en TanStack Query.
+5. La API valida `requirePermission` + RLS; un 401 dispara el redirect global a `/login?next=` (`apiFetch`).
 6. Logout (`POST /api/auth/logout`) limpia sesión, cache y redirige a `/login`.
 
 En dev con `ALLOW_DEMO_AUTH=true`, sin cookies se puede usar `x-demo-role` (ver sección demo).
@@ -245,7 +264,124 @@ El control en UI no reemplaza RLS ni `requirePermission` en el backend.
 | Permiso | Vendedor | Contador | Administrador |
 | --- | --- | --- | --- |
 | `cash.view` | Sí | Sí | Sí |
-| `cash.operate` | Sí | No | No |
+| `cash.operate` | Sí | No | No (sí con «El administrador puede vender») |
 | `cash.manage` | No | No | Sí |
 | `vault.view` | No | Sí | Sí |
 | `vault.manage` | No | No | Sí |
+
+## El administrador puede vender
+
+Para bodegas de un solo cajero, donde el dueño también atiende la caja (POS-02; cierra R21 / S3 de [`auditoria-producto-2026-10.md`](auditoria-producto-2026-10.md)). Es un interruptor en **Configuración → General / sistema → Ventas del administrador**. Apagado por defecto.
+
+### Qué otorga
+
+Encendido, los administradores de la tienda tienen además `sales.create` y `cash.operate`:
+
+- Ven «Ventas → POS» y «Mi caja» en el menú (el menú filtra por los permisos efectivos de `GET /api/auth/me`).
+- Pueden abrir caja, vender, cobrar y cerrar su caja. Para abrir caja hace falta una **caja asignada** (Cajas → asignar al administrador): sin ella el POS muestra el estado «sin caja» de siempre. Con el interruptor encendido y sin caja activa asignada, la tarjeta le muestra «Asígnate una caja en Cajas para poder vender» (solo con `cash.manage`).
+
+### A quién se asigna una caja
+
+El selector de **Cajas** y `PATCH /api/cash/registers/{id}` usan la misma regla (`canBeAssignedCashRegister` en `src/modules/cash/services/cashRegisterAssignee.ts`): usuario **activo** de la tienda con `cash.operate` **efectivo**. Son los vendedores, los administradores con el interruptor encendido y quien tenga el permiso concedido; un vendedor con `cash.operate` bloqueado queda fuera. Asignar a cualquier otro → 400 «Solo se puede asignar la caja a un usuario activo de la tienda que pueda operar caja.». Desasignar, renombrar y activar o desactivar la caja no se validan.
+
+Cada usuario tiene como mucho **una caja activa asignada** por tienda: asignarle otra → 409 `CONFLICT` «Ese usuario ya tiene otra caja activa asignada. Desasígnala antes de asignarle esta.» (POS-F7; antes un 409 genérico). La pantalla Cajas («Usuario asignado») muestra el motivo del servidor en un `Toast` y el selector vuelve al valor real.
+
+Al apagar el interruptor **no se borran** las asignaciones: la caja sigue asignada al administrador (así puede cerrar su turno), Cajas lo sigue mostrando en el selector aunque ya no sea una opción elegible, y volver a asignársela responde 400 hasta encenderlo de nuevo.
+
+### Abrir y cerrar caja: las mismas reglas que el vendedor
+
+`open_cash_session` y `close_cash_session` solo limitan al rol `vendedor` (caja asignada a él; cerrar lo que abrió) y al `admin` le aceptan cualquier caja y cualquier turno. Como las RPC no cambian, el BFF aplica al administrador que opera caja la regla del vendedor (POS-F3):
+
+- **Abrir** (`POST /api/cash/session/open`): solo la caja **asignada a quien la abre** (`cash_registers.assigned_user_id`). La de otro usuario o una sin asignar → 403 «La caja no está asignada al usuario actual.». Cada usuario tiene una sola caja activa asignada (índice `cash_registers_one_active_assignment_per_store_idx`) y cada caja un solo turno abierto, así que hay **un turno abierto por usuario**: con uno propio abierto en otra caja → 409 `CONFLICT` «Ya tienes una caja abierta. Ciérrala antes de abrir otra.». Reabrir la misma caja sigue dando el 400 del RPC. Son dos lecturas en el camino de abrir caja; el cobro no cambia.
+- **Cerrar** (`POST /api/cash/session/close`): cada quien cierra **solo el turno que abrió** (`cash_sessions.opened_by`), tenga `cash.operate` o solo `cash.manage`. Uno ajeno → 403; uno inexistente o de otra tienda → 404. Se decide por el `sessionId`, no por «el turno actual».
+- **Turnos de otros:** un administrador ya no cierra por esta ruta la caja abierta de un vendedor. Le queda el cierre automático de fin de jornada; `/cash/registers` es de solo lectura.
+- **Estado heredado:** si un administrador quedó con varios turnos abiertos antes de esta regla, `GET /api/cash/session` devuelve el más reciente (antes 404) y puede cerrarlos uno a uno, con el interruptor encendido o apagado.
+- **Límite conocido:** las comprobaciones de apertura son lecturas previas al RPC, no un candado en la base: dos aperturas simultáneas del mismo administrador sobre dos cajas distintas (solo posible si le reasignan la caja en ese instante) no se excluyen entre sí.
+
+No cambia nada más: nómina (`payroll.view_own` sigue bloqueado para el admin), ni los permisos de los demás roles, ni ninguna RPC. Las RPC de venta y de caja (`create_sale*`, `open_cash_session`, `close_cash_session`) ya aceptaban el rol `admin` en la base; lo que impedía vender al administrador era el permiso en el BFF y en la UI.
+
+### Cómo se guarda
+
+No hay un ajuste de tienda ni SQL nuevo: el estado **son** los `granted_permissions` de los perfiles `admin` de la tienda.
+
+- **Encendido** = todos los administradores **activos** de la tienda tienen los dos permisos concedidos. Si solo los tienen algunos, el interruptor se muestra apagado con el aviso «Solo algunos administradores pueden vender» y se puede igualar en un sentido u otro.
+- `PUT /api/settings/admin-can-sell` `{ "enabled": boolean }` concede o retira los dos permisos a **todos** los perfiles `admin` de la tienda (también los inactivos, para que al reactivarlos no desentonen), sin tocar el resto de sus excepciones. Es idempotente. Los administradores con las mismas excepciones se escriben en una sola sentencia (lo habitual); si tienen excepciones distintas hay una sentencia por grupo y, si una falla, basta repetir la operación.
+- `GET /api/settings/admin-can-sell` devuelve `{ enabled, admins: [{ id, name, canSell }] }` (solo administradores activos).
+- Ambos exigen `users.manage`: solo el admin de **esa** tienda (vendedor, almacén y contador → 403; el superadmin no opera tiendas → 403). La tienda sale de la sesión, nunca del cliente.
+- La UI confirma con `ConfirmActionModal`: «Vender en el POS: No → Sí», «Operar caja: No → Sí» y la lista de administradores afectados.
+
+### Administradores nuevos y cambios de rol
+
+- Un administrador **creado** en Configuración (`POST /api/users`) nace con el estado de la tienda.
+- Un usuario que **pasa a admin** (`PATCH /api/users/{id}` con `role`) queda como los demás administradores activos: recibe los dos permisos si el interruptor está encendido y los pierde si está apagado.
+- Un administrador que **deja de serlo** pierde los dos permisos concedidos (no se quedan colgados en un contador o un almacén). Si pasa a vendedor los conserva por su rol.
+- Si el `PATCH` trae `grantedPermissions` explícitos, mandan ellos.
+- **No cubierto:** un administrador creado desde el panel de plataforma (superadmin) en una tienda que ya tiene el interruptor encendido nace sin los permisos; la tienda queda en estado parcial hasta que un administrador vuelva a confirmar el interruptor.
+- **Migración:** un perfil `admin` que ya tuviera `sales.create` y/o `cash.operate` en `granted_permissions` (antes se ignoraban) pasa a tenerlos efectivos. Conviene revisarlo antes de desplegar:
+
+```sql
+select id, full_name, store_id, granted_permissions
+from public.profiles
+where role = 'admin'
+  and (granted_permissions ? 'sales.create' or granted_permissions ? 'cash.operate');
+```
+
+### Riesgo al desplegar
+
+El interruptor no tiene SQL: lo que cambia es `getEffectivePermissions` (`@bodega/core`), que ahora respeta `sales.create` y `cash.operate` concedidos a un administrador. Un perfil `admin` que ya los tuviera en `granted_permissions` (antes ignorados) **empieza a vender y a operar caja en cuanto se despliega el BFF**, sin que nadie encienda nada, y la tarjeta puede mostrarse apagada o «Solo algunos». La consulta de «Administradores nuevos y cambios de rol» (arriba) los lista: correrla **antes** de desplegar y vaciar esos permisos donde no se quieran. Está también en las comprobaciones previas de [`despliegue-ux-mejoras.md`](despliegue-ux-mejoras.md#1-comprobaciones-previas).
+
+Límites conocidos, sin corregir:
+
+- Quien tiene `users.manage` puede conceder los dos permisos a un administrador con `PATCH /api/users/{id}` aunque el interruptor esté apagado (es el mismo rol que puede encenderlo).
+- Con el interruptor apagado, un administrador puede vender y abrir o cerrar caja llamando las RPC por PostgREST con su sesión: `create_sale*`, `open_cash_session` y `close_cash_session` aceptan el rol `admin`. El interruptor es una regla del BFF y de la interfaz, no de la base.
+
+### Quién puede anular y devolver ventas
+
+Decisión del dueño (DEC-02): **el administrador anula y devuelve ventas siempre; el interruptor no hace falta para eso, porque gobierna vender y operar caja, no corregir una venta.**
+
+`PATCH /api/sales/{id}/cancel`, `POST /api/sales/{id}/return`, `GET /api/sales/{id}/impact` y las acciones «Anular venta» / «Devolución» (menú del detalle) y «Anular» / «Devolver» (fila de `/sales`) exigen el permiso **`sales.cancel`**, no `sales.create`:
+
+| Rol | Anular / devolver una venta | Vender (`sales.create`) |
+| --- | --- | --- |
+| Vendedor | Sí | Sí |
+| Administrador, interruptor **apagado** | **Sí** | No (403) |
+| Administrador, interruptor encendido | Sí | Sí |
+| Almacén, contador | No (403; la interfaz no ofrece la acción) | No |
+
+Reglas de concesión de `sales.cancel` (`getEffectivePermissions` en `packages/core/src/permissions.ts`):
+
+- Lo traen de base los roles `admin` y `vendedor`. El administrador lo tiene siempre: ignora las excepciones por usuario y el interruptor no lo toca (`adminSellPermissions` sigue siendo solo `sales.create` + `cash.operate`).
+- **Arrastre.** Un usuario que tiene `sales.create` en `deniedPermissions` **no** recibe `sales.cancel` de su rol. Así, un vendedor al que se le quitó vender cuando anular dependía de `sales.create` no gana la anulación al desplegar. Para que anule sin vender hay que concederle `sales.cancel` en `grantedPermissions`.
+- `sales.cancel` en `deniedPermissions` lo quita siempre (también si está concedido): un vendedor puede vender y no anular.
+- Un contador o un almacén con `sales.cancel` concedido a mano pasa el BFF, pero las RPC `cancel_sale` (`20261006g`) y `return_sale` (`20261006b`) solo aceptan los roles `admin` y `vendedor` y responden `PT403`. No cambian con esta decisión: ya aceptaban al administrador.
+- El cambio es aditivo para quien consume `@bodega/core` (la app móvil): no se renombra ni se quita ningún permiso; `sales.cancel` se inserta después de `sales.create` en la lista.
+
+El flujo es el de siempre: anular una venta con pagos activos se rechaza y el modal remite a anular antes cada pago (exige `payments.manage`: el administrador lo tiene, el vendedor no), y la devolución es siempre total.
+
+
+### Apagarlo con una caja abierta
+
+Al apagar, el administrador deja de poder vender (`POST /api/sales` → 403) y de abrir un turno nuevo (`POST /api/cash/session/open` → 403) de inmediato. Un turno que ya tuviera abierto **no queda atrapado**:
+
+- `POST /api/cash/session/close` acepta `cash.operate` **o** `cash.manage`, y en ambos casos cierra únicamente un turno **abierto por quien llama** (ver arriba); el de otro usuario → 403. La RPC `close_cash_session` no cambia.
+- La confirmación de apagar avisa de los turnos abiertos por un administrador. El turno es de quien lo abrió: el propio sale de `GET /api/cash/session` («Tienes una caja abierta: podrás cerrarla, pero no vender») y el de los demás de `openedBy` en `GET /api/cash/session/open` (la caja de un turno no trae a quién está asignada).
+- Como «Mi caja» deja de estar en el menú, la tarjeta del interruptor muestra al administrador «Tienes abierta la caja …» con el botón **Cerrar mi caja** (el mismo diálogo de cierre de siempre).
+- Si no la cierra, el cierre automático de fin de jornada sigue aplicando.
+
+
+## Mis recibos (`payroll.view_own`)
+
+La entrada «Mis recibos» del menú (`/payroll/mine`) se decide por el permiso `payroll.view_own`, no por el rol (`appShellNav.ts`). De base solo lo tiene el vendedor; un usuario de otro rol al que se le conceda lo ve, y un vendedor al que se le bloquee deja de verlo. El administrador lo tiene bloqueado (`adminBlockedPermissions`) también con «El administrador puede vender» encendido.
+
+## Lecturas con service role en los `impact`
+
+Los tres endpoints que calculan el efecto de una acción antes de confirmarla (`GET /api/sales/{id}/impact`, `/api/purchases/{id}/impact`, `/api/payments/{id}/impact`) son el único uso nuevo de service role del plan ux-mejoras. Hacen falta porque la RLS oculta al usuario asientos de caja y baúl que la RPC sí va a revertir, y el modal tiene que decirlos.
+
+Cómo están acotados (`*Impact.server.ts`, `{ privileged: createAdminSupabaseClient, user }`):
+
+1. **Permiso de la acción real, primero**: `sales.cancel`, `purchases.create` o `payments.manage` + acceso al pago (`requireStorePermission`).
+2. **El documento se lee con la sesión del usuario** y con el `store_id` del servidor. Inexistente o de otra tienda → 404. Nada del cliente decide la tienda.
+3. **Solo entonces** la lectura privilegiada, filtrada por ese `store_id` y por el id ya validado. Solo `select`: ningún `impact` escribe.
+4. **Lo que viaja depende de los permisos de quien pregunta**: los saldos del baúl solo con `vault.view`, el detalle de la caja solo con `cash.view`, y los pagos de una compra solo para quien puede ver pagos de compra (`canViewPurchasePayments`: admin y contador). Sin el permiso esas cifras no viajan (los saldos salen vacíos); el valor por defecto es cerrado.
+
+Regla para un `impact` nuevo: mismo orden (permiso → documento con la sesión → lectura privilegiada acotada) y nunca devolver una cifra que el usuario no podría leer por su propio endpoint.

@@ -32,7 +32,7 @@ export const Atencion: Story = {
   args: { commissionRef: 360 },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Atencion")).toBeVisible();
+    await expect(canvas.getByText("Atención")).toBeVisible();
   },
 };
 

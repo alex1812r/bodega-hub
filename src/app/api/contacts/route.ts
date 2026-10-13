@@ -2,8 +2,10 @@ import { z } from "zod";
 
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getContactsService } from "@/modules/contacts/services";
+import { safeText } from "@/modules/purchases/schemas/safeText";
 import {
   assertCanQueryContactType,
   assertCanWriteContactType,
@@ -11,11 +13,11 @@ import {
 } from "@/shared/auth/contactAccess";
 
 const contactSchema = z.object({
-  address: z.string().optional(),
+  address: safeText().optional(),
   email: z.email().optional(),
-  name: z.string().min(1),
-  phone: z.string().optional(),
-  taxId: z.string().optional(),
+  name: safeText().min(1),
+  phone: safeText().optional(),
+  taxId: safeText().optional(),
   type: z.enum(["cliente", "proveedor", "ambos"]).default("cliente"),
 });
 
@@ -37,7 +39,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "contacts.manage");
-    const input = contactSchema.parse(await request.json());
+    const input = contactSchema.parse(await readJsonBody(request));
     assertCanWriteContactType(auth.role, input.type);
     return jsonCreated(await getContactsService().createContact(input, auth.storeId));
   } catch (error) {

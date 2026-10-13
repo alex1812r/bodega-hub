@@ -32,7 +32,7 @@ export function PosPaymentMethods({
 
   return (
     <fieldset className="min-w-0 space-y-2">
-      <legend className="text-sm font-medium text-foreground">Metodo de pago</legend>
+      <legend className="text-sm font-medium text-foreground">Método de pago</legend>
       <div className="min-w-0 overflow-hidden">
         <div
           className={cn(

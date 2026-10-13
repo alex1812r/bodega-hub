@@ -1,21 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "bodega-hub:sidebar-collapsed";
 
-export function useSidebarCollapsed() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
+function readStoredCollapsed() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
-  useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(STORAGE_KEY) === "true");
-    } catch {
-      setCollapsed(false);
-    }
-    setHydrated(true);
-  }, []);
+function subscribeToNothing() {
+  return () => {};
+}
+
+export function useSidebarCollapsed() {
+  // La preferencia se lee una sola vez al montar. Durante SSR/hidratación se
+  // devuelve `false` (hydrated = false) para no desajustar el HTML del servidor.
+  const [collapsed, setCollapsed] = useState(readStoredCollapsed);
+  const hydrated = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
 
   useEffect(() => {
     if (!hydrated) {

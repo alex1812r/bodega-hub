@@ -84,6 +84,19 @@ try {
 
 Códigos frecuentes: `400` entrada inválida, `401` sin sesión, `403` sin permiso, `404` no encontrado, `409` conflicto (unicidad).
 
+Ante un `401` que no sea el de `POST /api/auth/login`, `apiFetch` lleva a `/login?next=<ruta + query actual>` (`redirectToLoginOnSessionExpired`, una sola navegación aunque fallen varias peticiones); tras iniciar sesión se vuelve a esa pantalla.
+
+## Convenciones del BFF
+
+Reglas que toda ruta nueva de `src/app/api/**` debe cumplir. Cada una tiene un test de barrido que descubre las rutas por el sistema de archivos: una ruta nueva que no la cumpla lo hace fallar.
+
+| Regla | Cómo | Test |
+|-------|------|------|
+| Cuerpo vacío o que no es JSON → `400 BAD_REQUEST` («El cuerpo de la solicitud no es un JSON válido.»), nunca 500 | Leer el cuerpo solo con `readJsonBody(request)` o, si es opcional, `readOptionalJsonBody(request)` (sin cuerpo = `{}`), de [`src/lib/api/readJsonBody.ts`](../src/lib/api/readJsonBody.ts). Nada de `request.json()` / `request.text()` directos | `src/app/api/jsonBodySweep.test.ts` |
+| Lista con `skip` mayor que el total → `200` con `items: []` y el `total` real, nunca 500 | En `*.server.ts`, ejecutar la página con `fetchListPage({ rows, count })` de [`src/lib/supabase/pagination.ts`](../src/lib/supabase/pagination.ts) (`count` es la misma consulta con `listCountOptions(true)` y solo se ejecuta si la página queda fuera de rango); el mock ya lo hace con `paginateList` | tests de cada servicio |
+| Sesión caducada o rota → `401 UNAUTHORIZED` con el mensaje único del BFF, nunca 500 | Autenticar **antes** de validar la entrada (`requireStorePermission` / `requirePermission` / `requireStoreAnyPermission` como primera línea del handler). Un handler sin sesión de usuario se declara en `PUBLIC_HANDLERS` del test, con su motivo | `src/lib/supabase/auth/sessionExpired.routes.test.ts` |
+| Contrato OpenAPI al día | Cada `route.ts` tiene su `route.test.ts` y su ruta en `public/openapi.yml` (sin duplicados); toda operación documenta una respuesta `2xx` en `responses` y, si tiene cuerpo, también `400` | `src/app/api/api-contract.test.ts` |
+
 ## Listados paginados
 
 Todos los endpoints de listado devuelven:
@@ -105,6 +118,7 @@ Convenciones:
 |----------|---------|
 | Tipo | `PaginatedList<T>` en [`src/lib/api/pagination.ts`](../src/lib/api/pagination.ts) |
 | Defaults | `skip=0`, `limit=10`, máximo `limit=100` |
+| `skip` > total | `200` con `items: []` y el `total` real (ver [Convenciones del BFF](#convenciones-del-bff)) |
 | Hooks | Tipar respuesta como `PaginatedList<T>`, no `T[]` |
 | UI | Extraer filas con `getPaginatedItems(data)` del mismo módulo |
 | Componente | [`Pagination`](../src/shared/components/Pagination/Pagination.tsx) — listo en Storybook/Jest |
@@ -143,7 +157,7 @@ const products = useProducts({ ...filters, skip, limit });
 | Logout | `useLogout` → `POST /api/auth/logout` |
 | Perfil | `useCurrentUser` → `GET /api/auth/me` |
 | Shell | `AuthenticatedAppShell` + `requiredPermission` por página |
-| 401 global | `query-client.ts` → `/login` |
+| 401 global | `apiFetch` (y `query-client.ts` como red de seguridad) → `/login?next=` |
 | Tasa header | `useCurrentExchangeRate` en shell |
 | Pendiente | MFA (proxy de sesión ya en `src/proxy.ts`) |
 
@@ -201,7 +215,7 @@ Rutas privadas actuales (cada `page.tsx` envuelve con `AuthenticatedAppShell`):
 /contacts, /payments, /reports, /settings
 ```
 
-Sin sesión, la API responde 401 y el cliente redirige a `/login`. En dev con demo headers, la API puede aceptar `x-demo-role`.
+Sin sesión (o con la sesión caducada), la API responde 401 y el cliente redirige a `/login?next=<pantalla actual>`; `src/proxy.ts` hace lo mismo con las páginas privadas. Un usuario inactivo o bloqueado recibe 403 en el login y no obtiene sesión. En dev con demo headers, la API puede aceptar `x-demo-role`.
 
 ## Módulos (resumen)
 
@@ -286,6 +300,8 @@ Invalidar `["dashboard"]` tras ventas, pagos, inventario.
 
 Invalidar `productsQueryKeys.all` tras crear/editar/precio. Crear producto con `currentStock: 0` y cargar stock vía inventario o compra.
 
+- `sku` (`GET /api/products`): coincidencia exacta de SKU (trim + minúsculas, como al crear); igual que `barcode`, si se envía se ignora `search`; vacío no filtra.
+
 **Importación masiva Excel:** ruta `/products/import`, hook `useProductBulkImport`. Ver [`frontend-product-bulk-import.md`](frontend-product-bulk-import.md).
 
 ### Inventario
@@ -295,17 +311,25 @@ Invalidar `productsQueryKeys.all` tras crear/editar/precio. Crear producto con `
 | `useInventory` | GET | `/api/inventory?lowStock=true` | `inventory.view` |
 | `useInventoryMovements` | GET | `/api/inventory/movements?productId=` | `inventory.view` |
 | `useStockCard` | GET | `/api/inventory/stock-card?productId=` | `inventory.view` |
+| `useProductKardex` | GET | `/api/inventory/kardex?productId=` | `inventory.view` |
 | `useAdjustInventory` | POST | `/api/inventory/adjustments` | `inventory.manage` |
+| `useConvertPackToUnits` | POST | `/api/inventory/conversions` | `inventory.manage` |
 
 Tipos de ajuste: `inventario_inicial`, `ajuste_entrada`, `ajuste_salida`, `devolucion_cliente`, `devolucion_proveedor`.
 
 Invalidar `inventoryQueryKeys.all` y `["products"]` si cambia stock visible en producto.
 
+Formularios que mueven stock (ajuste y conversión; filtros y parámetros completos en [`modules-catalog.md`](modules-catalog.md#inventario)):
+
+- **Clave de idempotencia:** `const attempt = useRequestAttempt({ renewOnContentChange: true })` ([`requestAttempt.ts`](../src/modules/inventory/utils/requestAttempt.ts)). `begin` devuelve el `clientRequestId` a enviar, o `null` si ya hay un envío en vuelo. La clave queda atada al contenido que la estrenó: el reintento del mismo contenido tras un error de resultado incierto (red, 5xx, 409) repite la clave; otro contenido estrena una. Llamar a `attempt.discard()` al cerrar el modal o desmontar el formulario.
+- **Sin red:** las mutaciones que mueven stock van con `networkMode: "always"` y `retry: false`. Con el modo por defecto TanStack Query deja la mutación en pausa y la envía sola al volver la conexión, cuando el usuario ya no la espera.
+- **Volver encadenado:** en una lista a la que se llega con `returnTo`, los enlaces de fila se arman con `withChainedReturnTo(href, urlDeLaLista)` ([`chainedReturnTo.ts`](../src/modules/inventory/utils/chainedReturnTo.ts)) en vez de `withReturnTo`, para que el destino vuelva a la lista y la lista siga sabiendo volver a su origen.
+
 ### Contactos
 
 | Hook | Método | Endpoint | Permiso |
 |------|--------|----------|---------|
-| `useContacts` | GET | `/api/contacts?type=&search=` | `contacts.view` |
+| `useContacts` | GET | `/api/contacts?type=&search=&isActive=` | `contacts.view` |
 | `useContact` | GET | `/api/contacts/[id]` | `contacts.view` |
 | `useCreateContact` | POST | `/api/contacts` | `contacts.manage` |
 | `useUpdateContact` | PATCH | `/api/contacts/[id]` | `contacts.manage` |
@@ -315,6 +339,8 @@ Invalidar `inventoryQueryKeys.all` y `["products"]` si cambia stock visible en p
 | `useContactPayments` | GET | `/api/contacts/[id]/payments` | `contacts.view` |
 
 Tipos: `cliente`, `proveedor`, `ambos`. `taxId` duplicado → 409. **No hay DELETE** de contactos.
+
+- `isActive` (`GET /api/contacts`): `true` solo activos, `false` solo inactivos; sin el parámetro devuelve ambos (igual en mock y Supabase).
 
 ### Proveedor–producto
 
@@ -361,6 +387,7 @@ Body `POST /api/purchases`:
 ```
 
 - `status: "recibido"` — entra stock de inmediato (RPC `create_purchase`).
+- IVA de cada línea: `taxRateCode` (el `code` de una alícuota activa de `GET /api/tax-rates?active=true`), `taxRate` (su porcentaje) o ambos; al menos uno es obligatorio. Preferir `taxRateCode`: el porcentaje lo pone el servidor. Con solo `taxRate`, debe ser el `pct` de una alícuota activa; si se envían los dos y no coinciden, o la alícuota no existe o está inactiva → 400 con el motivo en `error.message`. Al leer la compra cada línea trae `taxRate` (porcentaje congelado) y `taxRateCode`.
 - `status: "pedido"` — sin stock; luego `PATCH .../receive`.
 
 Tras crear/recibir/cancelar/devolver: invalidar `purchases`, `inventory`, `products`, `contacts`, `dashboard`, `reports`.
@@ -411,9 +438,10 @@ La tasa viene de `useCurrentExchangeRate` (`rateVes`); conversiones con `refToVe
 
 | Hook | Método | Endpoint | Permiso |
 |------|--------|----------|---------|
-| `usePayments` | GET | `/api/payments?direction=&saleId=&purchaseId=&contactId=` | `payments.view` |
+| `usePayments` | GET | `/api/payments?direction=&method=&from=&to=&saleId=&purchaseId=&contactId=` | `payments.view` |
 | `usePayment` | GET | `/api/payments/[id]` | `payments.view` |
 | `useCreatePayment` | POST | `/api/payments` | `payments.manage` **o** `sales.create` (solo pagos de venta) |
+| `useOpenDocuments` | GET | `/api/payments/open-documents?type=&search=&contactId=&from=&to=&olderThanDays=` | `payments.manage` **o** `sales.create` (compras: `payments.manage` y rol que vea pagos de compra) |
 
 Body común:
 
@@ -434,6 +462,7 @@ Reglas:
 - Exactamente uno de `saleId` o `purchaseId`.
 - Respuesta incluye `pendingBalanceVes` respecto al total de la venta/compra.
 - Varios pagos parciales hasta cubrir el total; la venta puede pasar a `pagada`.
+- `clientRequestId` (uuid, opcional): clave de idempotencia por intento. Misma clave y mismo contenido → 201 con el pago original; misma clave con otro contenido → 409. Requiere el parche `20261008a` (ver [`modules-catalog.md`](modules-catalog.md#pagos)).
 
 | Método | Campos obligatorios |
 |--------|---------------------|
@@ -443,7 +472,7 @@ Reglas:
 | `transferencia` | `bankName`, `referenceCode` |
 | `punto_venta` | `referenceCode` opcional |
 
-`useCreatePayment` invalida: `payments`, `sales`, `purchases`, `contacts`, `dashboard`, `reports`.
+`useCreatePayment` invalida: `payments` (incluye `open-documents`), `sales`, `purchases`, `contacts`, `dashboard`, `reports`, caja y baúl.
 
 ### Tasas ref/VES
 
@@ -463,6 +492,32 @@ En formularios de venta/compra: leer tasa vigente con `useCurrentExchangeRate` y
 | `useUpdateSettings` | PATCH | `/api/settings` | `users.manage` |
 | `useUsers` | GET | `/api/users` | `users.manage` |
 | `useUpdateUser` | PATCH | `/api/users/[id]` | `users.manage` |
+
+### Alícuotas de IVA (`/api/tax-rates`)
+
+El IVA es un catálogo, no un número libre. Servicio: `src/modules/settings/services/taxRates.*` (aún sin hooks de UI).
+
+| Método | Endpoint | Permiso |
+|--------|----------|---------|
+| GET | `/api/tax-rates` (`?active=true` solo activas) | uno de `products.view`, `purchases.view`, `settings.view` |
+| POST | `/api/tax-rates` | `users.manage` (admin) |
+| PATCH | `/api/tax-rates/[id]` | `users.manage` (admin) |
+
+`GET` responde `{ data: { items: TaxRate[] } }` (sin paginar, ordenado por `sortOrder`):
+
+```json
+{ "id": "uuid", "code": "general", "label": "General", "pct": 16, "isActive": true, "isDefault": false, "isGlobal": true, "sortOrder": 30 }
+```
+
+- `isGlobal`: semilla común a todas las tiendas (`exento` 0, `reducida` 8, `general` 16). `isDefault`: es la alícuota por defecto de la tienda.
+- `POST` body `{ "label": "Lujo", "pct": 31, "code": "lujo" }` (`code` opcional: se genera desde `label`). `code` repetido para la tienda, propio o global → 409. Nunca se envía `storeId`.
+- `PATCH` body con al menos uno de `label`, `pct`, `isActive`, `sortOrder` (`code` no se puede cambiar → 400). El cambio es atómico (RPC `override_tax_rate_for_store`).
+- **PATCH sobre una global:** la global no se toca; la tienda recibe su propia fila con el mismo `code` y la respuesta trae un **`id` nuevo** con `isGlobal: false`. Las categorías y la alícuota por defecto de la tienda pasan a esa fila. El `id` de la global responde 404 desde entonces: usar el `id` devuelto e invalidar la lista.
+- **Desactivar** (`isActive: false`) una alícuota que usan categorías activas o que es la por defecto → 409; `error.message` dice cuántas categorías la usan y qué hacer: mostrarlo tal cual. No hay DELETE.
+- Cambiar `pct` actualiza `taxRate` de las categorías que usan la alícuota y `defaultTaxRate` de la configuración; las compras ya guardadas no cambian.
+- Campos nuevos de solo lectura: `taxRateId` en cada categoría (`/api/categories`) y `defaultTaxRateId` en `GET /api/settings`. Guardar en una categoría un `taxRate` que no sea el `pct` de una alícuota de la tienda → 400.
+
+Tras crear o cambiar una alícuota: invalidar la lista de alícuotas, `categories` y `settings`.
 
 ### Reportes
 

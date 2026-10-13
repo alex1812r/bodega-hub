@@ -5,10 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
-import { useMyCashSession } from "@/modules/cash/hooks/useCash";
+import { cashKeys, useMyCashSession } from "@/modules/cash/hooks/useCash";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
-import { useAllProducts, useCategories } from "@/modules/products/hooks/useProducts";
+import { useAllCategories, useAllProducts } from "@/modules/products/hooks/useProducts";
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { sortPosCatalogProducts } from "@/modules/sales/sale-create/utils/sortPosCatalogProducts";
 import { getSaleByClientRequestId } from "@/modules/sales/services/sales.client";
@@ -17,6 +17,7 @@ import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
+import { ProcessGuardModal, useProcessGuard } from "@/shared/components/ProcessGuard";
 import type { PaymentMethod, SaleMock } from "@/shared/mocks/erp-data";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
@@ -41,6 +42,7 @@ import { PosSingleMethodDetailsModal } from "./components/PosSingleMethodDetails
 import { PosWorkspace } from "./components/PosWorkspace";
 import { posCatalogQueryOptions } from "./constants/posCatalogCache";
 import { usePosCart } from "./hooks/usePosCart";
+import { usePosCartDraft } from "./hooks/usePosCartDraft";
 import { toDenominationsPayload } from "./utils/denominations";
 import {
   getPaymentCurrency,
@@ -50,6 +52,7 @@ import {
   type PosCheckout,
   type PosSinglePaymentDetails,
 } from "./utils/mixedPayments";
+import { describeSaleInProgress } from "./utils/posCartDraft";
 import {
   clearSaleAttempt,
   isDefinitiveRejection,
@@ -59,11 +62,16 @@ import {
   saleFingerprint,
   writeSaleAttempt,
 } from "./utils/saleAttempt";
+import { deriveSaleRequestId } from "./utils/saleRequestId";
 
 const UNRESOLVED_SALE_MESSAGE =
   "La venta pudo haberse registrado; verifica antes de volver a cobrar.";
 const SALE_NOT_REGISTERED_MESSAGE =
-  "El servidor confirmo que ese cobro no quedo guardado. Puedes volver a pulsar «Procesar venta».";
+  "El servidor confirmó que ese cobro no quedó guardado. Puedes volver a pulsar «Procesar venta».";
+const CART_CHARGED_ELSEWHERE_MESSAGE =
+  "Este carrito ya se cobró en otra pestaña y no se puede cobrar otra vez. Vacíalo si es la misma venta; si es otra venta con los mismos productos, pulsa «Es una venta nueva».";
+const CART_CHARGING_ELSEWHERE_MESSAGE =
+  "Este carrito se está cobrando en otra pestaña. Espera a que termine: si allí queda cobrado, aquí no hay que cobrarlo otra vez.";
 
 type AttemptLookup =
   | { kind: "absent" }
@@ -114,7 +122,7 @@ export function SaleCreatePage() {
 
 function SaleCreatePosWorkspace() {
   const contacts = useContacts({ limit: 100 }, posCatalogQueryOptions);
-  const categories = useCategories({}, posCatalogQueryOptions);
+  const categories = useAllCategories({}, posCatalogQueryOptions);
   // Catálogo completo: con `limit: 100` el POS dejaba fuera todo producto que
   // cayera pasado el corte alfabético, y la búsqueda filtra en cliente.
   const products = useAllProducts({ isActive: true }, posCatalogQueryOptions);
@@ -187,6 +195,7 @@ function SaleCreatePosWorkspace() {
       paymentMethod &&
       !isPaymentMethodEnabled(paymentMethod, enabledPaymentMethods)
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- si la tienda deshabilita el metodo elegido se descarta el pago en curso al llegar la configuracion; cobro del POS, no se reordena
       setPaymentMethod(null);
       setPaymentDetails(null);
       setPaymentDetailsModalOpen(false);
@@ -202,6 +211,7 @@ function SaleCreatePosWorkspace() {
         !isPaymentMethodEnabled(checkout.change.method, enabledPaymentMethods));
 
     if (hasDisabledMethod) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- un cobro mixto con un metodo ya deshabilitado se descarta al llegar la configuracion; cobro del POS, no se reordena
       setCheckout(null);
     }
   }, [checkout, enabledPaymentMethods]);
@@ -235,9 +245,53 @@ function SaleCreatePosWorkspace() {
 
   useEffect(() => {
     if (!customerId && defaultCustomerId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- el cliente por defecto se asigna cuando carga la lista de contactos y cada vez que la venta queda sin cliente; depende de datos asincronos del POS
       setCustomerId(defaultCustomerId);
     }
   }, [customerId, defaultCustomerId]);
+
+  // Carrito recuperable (CNF-16): se guarda solo, fuera del camino de escaneo y cobro, y
+  // vuelve revalidado contra el catalogo al reentrar con la misma caja abierta.
+  const draftCatalog = useMemo(
+    () =>
+      products.data && contacts.data
+        ? { customers, products: getPaginatedItems(products.data) }
+        : null,
+    [contacts.data, customers, products.data],
+  );
+  const cartDraft = usePosCartDraft({
+    cashSessionId: cashSession.data?.id,
+    catalog: draftCatalog,
+    customerId,
+    items: cart.items,
+    onDiscard: () => void handleClearOrder(),
+    onRestore: (restoration) => {
+      cart.restoreItems(restoration.items);
+      if (restoration.customerId) {
+        setCustomerId(restoration.customerId);
+      }
+    },
+    registerId: cashSession.data?.registerId,
+    storeId: currentUser.data?.storeId,
+    userId: currentUser.data?.user.id,
+  });
+  // Guardia de salida (CNF-15): solo pregunta al SALIR del POS con lineas en el carrito.
+  // Abrir el cobro, el cliente o el escaner no navega, y al cobrar el carrito queda vacio.
+  const guard = useProcessGuard({
+    active: cart.items.length > 0,
+    description: cartDraft.saveFailed
+      ? "Este navegador no dejó guardar el carrito (almacenamiento lleno o bloqueado): si sales, esta venta se pierde."
+      : cartDraft.settledElsewhere
+        ? "Este carrito es copia de uno que ya se cobró o se vació en otra pestaña: no se guarda y, si sales, se pierde."
+        : undefined,
+    label: describeSaleInProgress({
+      customerName: customers.find((customer) => customer.id === customerId)?.name,
+      lineCount: cart.items.length,
+      totalRef,
+    }),
+    onLeave: cartDraft.saveFailed || cartDraft.settledElsewhere ? "discard" : "draft",
+    onSaveDraft: cartDraft.saveNow,
+  });
 
   const cartQuantitiesByProductId = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -416,6 +470,8 @@ function SaleCreatePosWorkspace() {
     paymentsSent: boolean,
   ) {
     clearSaleAttempt(attemptStorageKey);
+    // Solo anota (sin leer ni escribir) que este carrito se vendió, para sus copias en otras pestañas.
+    cartDraft.markCharged();
     resetAfterSuccessfulSale();
     setFormError(undefined);
     setNeedsVerification(false);
@@ -426,6 +482,30 @@ function SaleCreatePosWorkspace() {
       pendingPayment: paymentsSent && sale.status === "pendiente_pago",
     });
     createSale.reset();
+  }
+
+  /**
+   * La clave quedó gastada en una venta ANULADA: el servidor responde 409 a todo cobro que
+   * la repita. Como la clave se deriva del carrito (POS-H6), el siguiente cobro de este
+   * mismo carrito la volvería a calcular; se deja guardada una nueva para ese cobro.
+   */
+  function retireVoidedSaleKey() {
+    // Primero se retira el intento gastado, también de lo compartido entre pestañas.
+    clearSaleAttempt(attemptStorageKey);
+    writeSaleAttempt(attemptStorageKey, {
+      clientRequestId: crypto.randomUUID(),
+      sent: [],
+      unresolved: false,
+    });
+  }
+
+  /**
+   * Una venta registrada cambia el efectivo del cajón, que es contra lo que se valida el
+   * vuelto del siguiente cobro. Se vuelve a pedir en segundo plano y solo DESPUÉS de que
+   * el servidor confirma la venta: nada se añade antes del `POST /api/sales`.
+   */
+  function refreshCashDrawer() {
+    void queryClient.invalidateQueries({ queryKey: cashKeys.session });
   }
 
   function showUnresolvedAttempt() {
@@ -446,6 +526,7 @@ function SaleCreatePosWorkspace() {
 
     // La respuesta perdida no paso por `onSuccess` de la mutacion.
     invalidateAfterSaleRegistered(queryClient);
+    refreshCashDrawer();
 
     if (isThisCart) {
       completeSale(sale, content.payments.length > 0);
@@ -457,7 +538,7 @@ function SaleCreatePosWorkspace() {
     clearSaleAttempt(attemptStorageKey);
     setNeedsVerification(false);
     setFormError(
-      `El cobro anterior si quedo registrado como venta ${sale.invoiceNumber}${
+      `El cobro anterior sí quedó registrado como venta ${sale.invoiceNumber}${
         sale.status === "pendiente_pago" ? " (pendiente de pago)" : ""
       }. Si este carrito es esa misma venta, limpia la orden: no la cobres otra vez.`,
     );
@@ -479,12 +560,14 @@ function SaleCreatePosWorkspace() {
         settleRegisteredAttempt(outcome.sale, attempt);
         return "stop";
       case "voided":
-        clearSaleAttempt(attemptStorageKey);
+        retireVoidedSaleKey();
+        cartDraft.endCharge();
         setNeedsVerification(false);
         return "continue";
       case "absent":
         // Se conserva la clave: si aquel envio llegara tarde, el servidor la reconoce.
         writeSaleAttempt(attemptStorageKey, { ...attempt, unresolved: false });
+        cartDraft.endCharge();
         setNeedsVerification(false);
         return "continue";
     }
@@ -628,17 +711,17 @@ function SaleCreatePosWorkspace() {
         return;
       }
     } else if (!paymentMethod) {
-      setFormError("Selecciona un metodo de pago antes de procesar la venta.");
+      setFormError("Selecciona un método de pago antes de procesar la venta.");
       return;
     } else if (!isPaymentMethodEnabled(paymentMethod, enabledPaymentMethods)) {
-      setFormError("El metodo de pago seleccionado ya no esta habilitado.");
+      setFormError("El método de pago seleccionado ya no está habilitado.");
       setPaymentMethod(null);
       setPaymentDetails(null);
       return;
     } else if (methodRequiresPaymentDetails(paymentMethod)) {
       const validation = validateSinglePaymentDetails(paymentMethod, paymentDetails);
       if (!validation.isValid) {
-        setFormError(validation.errors[0] ?? "Completa los datos del metodo de pago.");
+        setFormError(validation.errors[0] ?? "Completa los datos del método de pago.");
         setPaymentDetailsModalOpen(true);
         return;
       }
@@ -646,7 +729,7 @@ function SaleCreatePosWorkspace() {
 
     // Un escaneo en vuelo todavia puede agregar una linea: cobrar ahora venderia sin ella.
     if (scanInFlightRef.current > 0) {
-      setFormError("Espera a que termine la busqueda del producto escaneado.");
+      setFormError("Espera a que termine la búsqueda del producto escaneado.");
       return;
     }
 
@@ -682,7 +765,21 @@ function SaleCreatePosWorkspace() {
         attempt = null;
       }
 
-      const clientRequestId = attempt?.clientRequestId ?? crypto.randomUUID();
+      // Justo antes de enviar (CNF-F8): la copia de un carrito que otra pestaña ya cobró, o
+      // que está cobrando ahora, no se cobra aquí. Un carrito sin copias posibles no lee nada.
+      const chargeGate = cartDraft.beginCharge();
+      if (chargeGate !== "libre") {
+        if (chargeGate === "cobrando") {
+          setFormError(CART_CHARGING_ELSEWHERE_MESSAGE);
+        }
+        return;
+      }
+
+      // Sin intento guardado, la clave se DERIVA del carrito (POS-H6): otra pestaña con una
+      // copia de este carrito calcula la misma, pase o no pase la barrera de arriba, y el
+      // servidor registra una sola venta. Con otro método de pago allí, responde 409.
+      const clientRequestId =
+        attempt?.clientRequestId ?? deriveSaleRequestId(cartDraft.chargeIdentity(), content);
       const sentBefore = attempt?.sent ?? [];
       const sent = sentBefore.includes(fingerprint) ? sentBefore : [...sentBefore, fingerprint];
 
@@ -707,6 +804,7 @@ function SaleCreatePosWorkspace() {
             sent: sentBefore,
             unresolved: false,
           });
+          cartDraft.endCharge();
           setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
           return;
         }
@@ -726,28 +824,32 @@ function SaleCreatePosWorkspace() {
               // 409 con venta en esa clave (C4): la venta existente NO es este cobro.
               // Se muestra como error, nunca como «Venta registrada».
               clearSaleAttempt(attemptStorageKey);
+              cartDraft.endCharge();
               lastAttemptRef.current = null;
               setFormError(
-                `${conflictMessage} Ya existe la venta ${outcome.sale.invoiceNumber} con ese intento de cobro: verificala en Ventas antes de volver a cobrar.`,
+                `${conflictMessage} Ya existe la venta ${outcome.sale.invoiceNumber} con ese intento de cobro: verifícala en Ventas antes de volver a cobrar.`,
               );
               return;
             }
             settleRegisteredAttempt(outcome.sale, { clientRequestId, sent, unresolved: true });
             return;
           case "voided":
-            clearSaleAttempt(attemptStorageKey);
+            retireVoidedSaleKey();
+            cartDraft.endCharge();
             setFormError(
               conflictMessage ??
-                `El cobro no se completo y la venta ${outcome.sale.invoiceNumber} quedo anulada. Puedes volver a cobrar.`,
+                `El cobro no se completo y la venta ${outcome.sale.invoiceNumber} quedó anulada. Puedes volver a cobrar.`,
             );
             return;
           case "absent":
             writeSaleAttempt(attemptStorageKey, { clientRequestId, sent, unresolved: false });
+            cartDraft.endCharge();
             setFormError(conflictMessage ?? SALE_NOT_REGISTERED_MESSAGE);
             return;
         }
       }
 
+      refreshCashDrawer();
       completeSale(sale, content.payments.length > 0);
     } finally {
       submitLockRef.current = false;
@@ -809,6 +911,14 @@ function SaleCreatePosWorkspace() {
           className="min-h-0 flex-1"
           cart={({ onRequestClose }) => (
             <PosCartPanel
+              chargeBlock={
+                cartDraft.chargedElsewhere
+                  ? {
+                      message: CART_CHARGED_ELSEWHERE_MESSAGE,
+                      onStartNewSale: cartDraft.startNewSale,
+                    }
+                  : undefined
+              }
               checkout={checkout}
               className="h-full border-t lg:border-t-0"
               customerId={customerId}
@@ -910,6 +1020,7 @@ function SaleCreatePosWorkspace() {
         onOpenChange={setPaymentDetailsModalOpen}
         open={paymentDetailsModalOpen}
       />
+      <ProcessGuardModal guard={guard} />
     </div>
   );
 }

@@ -8,6 +8,8 @@ import {
   mockSales,
   type ContactMock,
 } from "@/shared/mocks/erp-data";
+import { resolvePaymentRelatedDocument } from "@/modules/payments/utils/resolvePaymentRelatedDocument";
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 export type ContactInput = Partial<
@@ -18,6 +20,8 @@ export type ContactAccessOptions = {
   /** Solo contactos con type exacto `cliente` (excluye proveedor y ambos). */
   customersOnly?: boolean;
 };
+
+let lastMockContactSequence = 0;
 
 export function listContacts(
   searchParams: URLSearchParams,
@@ -63,18 +67,25 @@ export function createContact(input: ContactInput, storeId: string) {
     throw new ApiError(409, "CONFLICT", "Ya existe un contacto con este RIF/CI.");
   }
 
-  return {
+  lastMockContactSequence += 1;
+
+  const contact: ContactMock = {
     address: input.address ?? "",
     email: input.email ?? "",
-    id: `cont-mock-${Date.now()}`,
+    id: `cont-mock-${Date.now()}-${lastMockContactSequence}`,
     isActive: true,
     isPosDefault: false,
     name: input.name ?? "Contacto mock",
     phone: input.phone ?? "",
     storeId,
-    taxId: input.taxId ?? `MOCK-${Date.now()}`,
+    // Como el servidor: sin RIF queda vacio (`tax_id` null), no uno inventado.
+    taxId: input.taxId ?? "",
     type: input.type ?? "cliente",
-  } satisfies ContactMock;
+  };
+
+  mockContacts.push(contact);
+
+  return contact;
 }
 
 export function updateContact(id: string, input: ContactInput, storeId: string) {
@@ -95,11 +106,21 @@ export function updateContact(id: string, input: ContactInput, storeId: string) 
     throw new ApiError(409, "CONFLICT", "Ya existe un contacto con este RIF/CI.");
   }
 
-  return {
-    ...current,
-    ...input,
-    isPosDefault: current.isPosDefault,
-  };
+  // Como el `update` del servidor: solo se escriben los campos que llegan.
+  if (input.address !== undefined) current.address = input.address;
+  if (input.email !== undefined) current.email = input.email;
+  if (input.isActive !== undefined) current.isActive = input.isActive;
+  if (input.name !== undefined) current.name = input.name;
+  if (input.phone !== undefined) current.phone = input.phone;
+  if (input.taxId !== undefined) current.taxId = input.taxId;
+  if (input.type !== undefined) current.type = input.type;
+
+  return current;
+}
+
+/** Mismo orden que el servidor real (`created_at` descendente): las páginas coinciden. */
+function newestFirst<T extends { createdAt: string }>(items: T[]) {
+  return [...items].sort((first, second) => second.createdAt.localeCompare(first.createdAt));
 }
 
 export function getContactSales(id: string, searchParams: URLSearchParams, storeId: string) {
@@ -108,7 +129,7 @@ export function getContactSales(id: string, searchParams: URLSearchParams, store
     (sale) => sale.customerId === id && (sale.storeId ?? DEFAULT_STORE_ID) === storeId,
   );
 
-  return paginateList(items, searchParams);
+  return paginateList(newestFirst(items), searchParams);
 }
 
 export function getContactPurchases(id: string, searchParams: URLSearchParams, storeId: string) {
@@ -118,7 +139,7 @@ export function getContactPurchases(id: string, searchParams: URLSearchParams, s
       purchase.supplierId === id && (purchase.storeId ?? DEFAULT_STORE_ID) === storeId,
   );
 
-  return paginateList(items, searchParams);
+  return paginateList(newestFirst(items), searchParams);
 }
 
 export function getContactPayments(
@@ -136,7 +157,22 @@ export function getContactPayments(
         (!payment.purchaseId && payment.direction !== "salida")),
   );
 
-  return paginateList(items, searchParams);
+  // Con el número de su venta o compra, como el servicio real.
+  return paginateList(
+    newestFirst(items).map((payment) => {
+      const purchase = payment.purchaseId ? findMockPurchase(payment.purchaseId) : undefined;
+
+      return {
+        ...payment,
+        relatedDocument: resolvePaymentRelatedDocument(
+          payment,
+          mockSales,
+          purchase ? [purchase] : [],
+        ),
+      };
+    }),
+    searchParams,
+  );
 }
 
 export function getContactActivity(
@@ -185,9 +221,8 @@ export function getContactActivity(
       type: "payment" as const,
     }));
 
-  const items = [...sales, ...purchases, ...payments].sort((first, second) =>
-    first.createdAt.localeCompare(second.createdAt),
-  );
+  // Lo más reciente primero: la página 1 es la actividad reciente, no la más antigua.
+  const items = newestFirst([...sales, ...purchases, ...payments]);
 
   return paginateList(items, searchParams);
 }

@@ -45,7 +45,9 @@ export function ProductNameWithThumb({
       </span>
       <span
         className={cn(
-          "line-clamp-2 min-w-0 text-sm leading-snug",
+          // `anywhere` también cuenta para el ancho mínimo: un nombre largo sin
+          // espacios corta en vez de ensanchar la tabla (QA: 115 caracteres → 1750 px).
+          "line-clamp-2 min-w-0 text-sm leading-snug [overflow-wrap:anywhere]",
           isActive ? "text-foreground" : "text-outline",
         )}
         title={name}

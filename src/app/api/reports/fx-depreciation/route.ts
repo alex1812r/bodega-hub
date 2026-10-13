@@ -4,11 +4,14 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getFxDepreciationReport as getFxDepreciationReportMock } from "@/modules/reports/services/fxDepreciationReport.mock-server";
 import { getFxDepreciationReport as getFxDepreciationReportServer } from "@/modules/reports/services/fxDepreciationReport.server";
+import { assertReportDateParams } from "@/modules/reports/services/reportParams";
 
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "reports.view");
     const searchParams = new URL(request.url).searchParams;
+    // 400 si `from`/`to`/`date` no son fechas válidas o `from > to`.
+    assertReportDateParams(searchParams);
     const data =
       resolveDataSource() === "supabase"
         ? await getFxDepreciationReportServer(searchParams, [auth.storeId])

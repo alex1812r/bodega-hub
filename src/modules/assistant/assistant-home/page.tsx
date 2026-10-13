@@ -40,7 +40,7 @@ export function AssistantHomePage() {
         actions={<AssistantUsageBadge usage={usage.data} />}
         description={
           isSuperadmin
-            ? "Pregunta por el desempeno de todas las tiendas. Cada cifra viene de un reporte, nunca del modelo."
+            ? "Pregunta por el desempeño de todas las tiendas. Cada cifra viene de un reporte, nunca del modelo."
             : "Pregunta por el estado de tu tienda. Cada cifra viene de un reporte, nunca del modelo."
         }
         title="Asistente"
@@ -83,7 +83,7 @@ export function AssistantHomePage() {
 
         <AssistantComposer
           disabled={limitReached}
-          disabledReason="Alcanzaste el limite de consultas de hoy."
+          disabledReason="Alcanzaste el límite de consultas de hoy."
           inputRef={inputRef}
           isBusy={chat.isBusy}
           onSend={chat.ask}

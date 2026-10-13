@@ -1,8 +1,10 @@
 "use client";
 
 import { Receipt, ShoppingCart, Wallet } from "lucide-react";
+import Link from "next/link";
 import { type ReactNode } from "react";
 
+import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { formatVesBs } from "@/shared/utils/currency";
@@ -71,11 +73,17 @@ export function ContactActivityTimeline({
   }
 
   if (items.length === 0) {
-    return <p className="text-sm text-on-surface-variant">Sin actividad registrada.</p>;
+    return (
+      <EmptyState
+        description="Aquí aparecerán sus ventas, compras y pagos."
+        title="Sin actividad registrada"
+      />
+    );
   }
 
   return (
     <div
+      aria-busy={isFetching || undefined}
       className={cn(
         "relative ml-4 flex flex-col gap-8 border-l-2 border-outline-variant/30 py-2",
         isFetching && "opacity-70",
@@ -110,6 +118,8 @@ export function buildActivityTimelineItems(
   rows: {
     amountVes: number;
     createdAt: string;
+    /** Detalle del documento; sin él, el código se pinta como texto. */
+    href?: string;
     id: string;
     type: "venta" | "compra" | "pago";
   }[],
@@ -132,6 +142,7 @@ export function buildActivityTimelineItems(
 
   return rows.map((row) => {
     const copy = typeCopy[row.type];
+    const code = `${copy.prefix}-${row.id.slice(-4).toUpperCase()}`;
 
     return {
       amountVes: row.amountVes,
@@ -142,9 +153,13 @@ export function buildActivityTimelineItems(
       title: (
         <>
           {copy.action}:{" "}
-          <span className="text-primary">
-            {copy.prefix}-{row.id.slice(-4).toUpperCase()}
-          </span>
+          {row.href ? (
+            <Link className="text-primary hover:underline dark:text-indigo-300" href={row.href}>
+              {code}
+            </Link>
+          ) : (
+            <span className="text-primary dark:text-indigo-300">{code}</span>
+          )}
         </>
       ),
       type: row.type,

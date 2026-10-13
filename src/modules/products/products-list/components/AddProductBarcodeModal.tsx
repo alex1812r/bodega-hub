@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { useAddProductBarcode, type ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import { normalizeBarcode } from "@/modules/products/services/productSearch";
@@ -26,23 +26,24 @@ export function AddProductBarcodeModal({
   const [cameraOpen, setCameraOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) {
-      setBarcode("");
-      setCameraOpen(false);
-      setErrorMessage(null);
-      return;
-    }
+  // Al abrir, cerrar o cambiar de producto el formulario vuelve a cero
+  // (ajuste durante el render).
+  const productId = product?.id;
+  const [syncedOpen, setSyncedOpen] = useState(open);
+  const [syncedProductId, setSyncedProductId] = useState(productId);
 
+  if (open !== syncedOpen || productId !== syncedProductId) {
+    setSyncedOpen(open);
+    setSyncedProductId(productId);
     setBarcode("");
     setCameraOpen(false);
     setErrorMessage(null);
-  }, [open, product?.id]);
+  }
 
   async function handleSubmit() {
     const normalized = normalizeBarcode(barcode);
     if (!normalized) {
-      setErrorMessage("Ingresa o escanea un codigo de barras.");
+      setErrorMessage("Ingresa o escanea un código de barras.");
       return;
     }
 
@@ -56,7 +57,7 @@ export function AddProductBarcodeModal({
       onOpenChange(false);
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "No se pudo guardar el codigo de barras.",
+        error instanceof Error ? error.message : "No se pudo guardar el código de barras.",
       );
     }
   }
@@ -66,8 +67,8 @@ export function AddProductBarcodeModal({
       contentClassName="sm:max-w-lg"
       description={
         product
-          ? `Asigna el codigo de barras a “${product.name}”. Solo se puede agregar si aun no tiene uno.`
-          : "Asigna el codigo de barras del producto."
+          ? `Asigna el código de barras a “${product.name}”. Solo se puede agregar si aún no tiene uno.`
+          : "Asigna el código de barras del producto."
       }
       footer={({ close }) => (
         <>
@@ -87,7 +88,7 @@ export function AddProductBarcodeModal({
             onClick={() => void handleSubmit()}
             type="button"
           >
-            {addBarcode.isPending ? "Guardando..." : "Guardar codigo"}
+            {addBarcode.isPending ? "Guardando..." : "Guardar código"}
           </Button>
         </>
       )}
@@ -100,21 +101,21 @@ export function AddProductBarcodeModal({
         onOpenChange(nextOpen);
       }}
       open={open}
-      title="Agregar codigo de barras"
+      title="Agregar código de barras"
     >
       <div className="grid gap-3">
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
             <Input
               autoComplete="off"
-              label="Codigo de barras"
+              label="Código de barras"
               onChange={(event) => setBarcode(event.target.value)}
-              placeholder="Escribe o escanea el codigo"
+              placeholder="Escribe o escanea el código"
               value={barcode}
             />
           </div>
           <Button
-            aria-label={cameraOpen ? "Cerrar camara" : "Abrir camara para escanear"}
+            aria-label={cameraOpen ? "Cerrar cámara" : "Abrir cámara para escanear"}
             aria-pressed={cameraOpen}
             className="shrink-0"
             onClick={() => setCameraOpen((current) => !current)}
@@ -136,7 +137,7 @@ export function AddProductBarcodeModal({
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Apunta la camara al codigo. Al detectarlo se completa el campo.
+              Apunta la cámara al código. Al detectarlo se completa el campo.
             </p>
           </div>
         ) : null}

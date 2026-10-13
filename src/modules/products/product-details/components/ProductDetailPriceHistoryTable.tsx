@@ -1,27 +1,78 @@
+import { type ReactNode } from "react";
+
+import { Badge } from "@/shared/components/Badge";
 import { formatRefUsd } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
+import {
+  PRICE_BASELINE_REASON,
+  PRICE_KEEP_REASON,
+  type PriceHistoryKind,
+} from "../../services/priceReview";
 import { ProductDetailSectionCard } from "./ProductDetailSectionCard";
 
 export type ProductPriceHistoryRow = {
   changedBy: string;
   date: string;
   id: string;
+  /**
+   * `change`: cambio de precio (anterior → nuevo). `keep`: "Mantener precio",
+   * el precio no cambió. `baseline`: línea base de ganancia del producto.
+   */
+  kind: PriceHistoryKind;
   newPriceRef: number;
-  oldPriceRef: number;
+  /** `null`: la fila no registró precio anterior. */
+  oldPriceRef: number | null;
   reason: string;
 };
 
+/** Motivo que el servidor pone solo en cada tipo de fila: repetirlo junto a la etiqueta no aporta. */
+const DEFAULT_REASON_BY_KIND: Partial<Record<PriceHistoryKind, string>> = {
+  baseline: PRICE_BASELINE_REASON,
+  keep: PRICE_KEEP_REASON,
+};
+
+function HistoryReason({ kind, reason }: Pick<ProductPriceHistoryRow, "kind" | "reason">) {
+  if (kind === "change") {
+    return reason;
+  }
+
+  const ownReason = reason === DEFAULT_REASON_BY_KIND[kind] ? null : reason;
+
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      {kind === "keep" ? (
+        <Badge variant="info">Precio mantenido</Badge>
+      ) : (
+        <span className="text-xs text-outline">Línea base</span>
+      )}
+      {ownReason ? <span>{ownReason}</span> : null}
+    </span>
+  );
+}
+
 type ProductDetailPriceHistoryTableProps = {
+  /** Paginación de la lista, bajo la tabla. */
+  footer?: ReactNode;
+  /** La primera fila es el precio vigente (solo en la primera página). Por defecto, sí. */
+  highlightFirst?: boolean;
+  isLoading?: boolean;
   rows: ProductPriceHistoryRow[];
 };
 
 export function ProductDetailPriceHistoryTable({
+  footer,
+  highlightFirst = true,
+  isLoading = false,
   rows,
 }: ProductDetailPriceHistoryTableProps) {
   return (
     <ProductDetailSectionCard title="Historial de precios">
-      {rows.length === 0 ? (
+      {isLoading ? (
+        <p className="px-5 py-8 text-center text-sm text-on-surface-variant">
+          Cargando historial de precios...
+        </p>
+      ) : rows.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-on-surface-variant">
           Aún no hay cambios de precio registrados para este producto.
         </p>
@@ -39,7 +90,7 @@ export function ProductDetailPriceHistoryTable({
             </thead>
             <tbody className="divide-y divide-border/50 dark:divide-slate-800">
               {rows.map((row, index) => {
-                const isLatest = index === 0;
+                const isLatest = highlightFirst && index === 0;
 
                 return (
                   <tr
@@ -47,9 +98,15 @@ export function ProductDetailPriceHistoryTable({
                     key={row.id}
                   >
                     <td className="px-5 py-3 text-foreground">{row.date}</td>
-                    <td className="px-5 py-3 text-outline line-through tabular-nums">
-                      {formatRefUsd(row.oldPriceRef)}
-                    </td>
+                    {/* Solo un cambio tiene precio anterior que tachar: en "keep" y
+                        "baseline" el precio no se movió. */}
+                    {row.kind === "change" && row.oldPriceRef !== null ? (
+                      <td className="px-5 py-3 text-outline line-through tabular-nums">
+                        {formatRefUsd(row.oldPriceRef)}
+                      </td>
+                    ) : (
+                      <td className="px-5 py-3 text-outline">—</td>
+                    )}
                     <td
                       className={cn(
                         "px-5 py-3 font-medium tabular-nums",
@@ -59,7 +116,9 @@ export function ProductDetailPriceHistoryTable({
                       {formatRefUsd(row.newPriceRef)}
                     </td>
                     <td className="px-5 py-3 text-foreground">{row.changedBy}</td>
-                    <td className="px-5 py-3 text-on-surface-variant">{row.reason}</td>
+                    <td className="px-5 py-3 text-on-surface-variant">
+                      <HistoryReason kind={row.kind} reason={row.reason} />
+                    </td>
                   </tr>
                 );
               })}
@@ -67,6 +126,7 @@ export function ProductDetailPriceHistoryTable({
           </table>
         </div>
       )}
+      {footer}
     </ProductDetailSectionCard>
   );
 }

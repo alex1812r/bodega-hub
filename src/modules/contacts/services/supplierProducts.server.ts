@@ -4,19 +4,35 @@ import { assertContactType } from "@/lib/supabase/contacts";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import {
   computeVariationPercent,
+  mapSaveProductSuppliersResult,
   mapSupplierProduct,
   mapSupplierProductPackUnit,
   mapSupplierProductPriceHistory,
+  type DbSaveProductSuppliersResult,
   type DbSupplierProductPackUnitRow,
   type DbSupplierProductPriceHistoryRow,
   type DbSupplierProductRow,
 } from "@/lib/supabase/mappers/supplierProducts";
-import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
+import {
+  fetchListPage,
+  getPaginationRange,
+  listCountOptions,
+  toPaginatedList,
+} from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import { SUPPLIER_PRODUCT_SELECT } from "./contacts.server";
 import { applySupplierProductSort } from "./supplierProductSort";
-import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
+import {
+  buildIlikeOrFilter,
+  buildProductSearchOrFilter,
+  escapeIlike,
+  normalizeProductSearch,
+} from "@/modules/products/services/productSearch";
+import type {
+  ProductPreferredSupplier,
+  ProductSupplierInput,
+} from "@/modules/products/services/productSuppliers";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 
 import type {
@@ -47,23 +63,15 @@ function isMissingPackUnitsSchema(error: unknown) {
   return message.includes("supplier_product_pack_units");
 }
 
-function escapeIlike(value: string) {
-  return value.replace(/[%_,]/g, "");
-}
-
 async function findProductIdsMatchingSearch(
   supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
   search: string,
 ) {
-  const term = escapeIlike(search.trim());
-  if (!term) {
-    return [];
-  }
-
+  // El helper común normaliza y escapa el término: aquí viaja tal cual se tecleó.
   const { data, error } = await supabase
     .from("products")
     .select("id")
-    .or(buildProductSearchOrFilter(term));
+    .or(buildProductSearchOrFilter(search));
 
   throwIfSupabaseError(error);
 
@@ -74,15 +82,14 @@ async function resolveSupplierProductSearch(
   supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
   search: string | null,
 ) {
-  const term = search?.trim();
+  const term = normalizeProductSearch(search);
   if (!term) {
     return null;
   }
 
-  const escapedTerm = escapeIlike(term);
   const productIds = await findProductIdsMatchingSearch(supabase, term);
 
-  return { productIds, term: escapedTerm };
+  return { productIds, term };
 }
 
 function applySupplierProductSearchFilter<TQuery extends {
@@ -93,11 +100,13 @@ function applySupplierProductSearchFilter<TQuery extends {
   filter: { productIds: string[]; term: string },
 ): TQuery {
   if (filter.productIds.length === 0) {
-    return query.ilike("supplier_sku", `%${filter.term}%`);
+    return query.ilike("supplier_sku", `%${escapeIlike(filter.term)}%`);
   }
 
   const quotedIds = filter.productIds.map((id) => `"${id}"`).join(",");
-  return query.or(`supplier_sku.ilike.%${filter.term}%,product_id.in.(${quotedIds})`);
+  return query.or(
+    `${buildIlikeOrFilter(["supplier_sku"], filter.term)},product_id.in.(${quotedIds})`,
+  );
 }
 
 async function deleteSupplierProductRow(id: string) {
@@ -302,26 +311,38 @@ export async function listSupplierProducts(searchParams: URLSearchParams, storeI
   const search = searchParams.get("search");
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("supplier_products").select(SUPPLIER_PRODUCT_SELECT, { count: "exact" }).eq("store_id", storeId);
-
-  if (productId) {
-    query = query.eq("product_id", productId);
-  }
-
-  if (supplierId) {
-    query = query.eq("supplier_id", supplierId);
-  }
-
-  if (isActive != null && isActive !== "") {
-    query = query.eq("is_active", isActive.toLowerCase() === "true");
-  }
-
   const searchFilter = await resolveSupplierProductSearch(supabase, search);
-  if (searchFilter) {
-    query = applySupplierProductSearchFilter(query, searchFilter);
-  }
 
-  const result = await applySupplierProductSort(query, searchParams).range(skip, to);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("supplier_products")
+      .select(SUPPLIER_PRODUCT_SELECT, listCountOptions(head))
+      .eq("store_id", storeId);
+
+    if (productId) {
+      query = query.eq("product_id", productId);
+    }
+
+    if (supplierId) {
+      query = query.eq("supplier_id", supplierId);
+    }
+
+    if (isActive != null && isActive !== "") {
+      query = query.eq("is_active", isActive.toLowerCase() === "true");
+    }
+
+    if (searchFilter) {
+      query = applySupplierProductSearchFilter(query, searchFilter);
+    }
+
+    return query;
+  };
+
+  const result = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () => applySupplierProductSort(buildFilteredQuery(false), searchParams).range(skip, to),
+  });
   const rows = (result.data ?? []) as DbSupplierProductRow[];
   const ids = rows.map((row) => row.id);
   const historyMap = await fetchLatestHistoryBySupplierProductIds(ids);
@@ -395,7 +416,7 @@ export async function createSupplierProduct(input: SupplierProductCreateInput, s
 
   if (existing) {
     if (existing.is_active !== false) {
-      throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+      throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
     }
 
     const reactivated = await reactivateSupplierProductRow(existing.id, input);
@@ -429,7 +450,7 @@ export async function createSupplierProduct(input: SupplierProductCreateInput, s
       }, storeId);
     }
 
-    throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+    throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
   }
 
   throwIfSupabaseError(error);
@@ -471,7 +492,7 @@ export async function updateSupplierProduct(id: string, input: SupplierProductMe
     .single();
 
   if (isUniqueViolation(error)) {
-    throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+    throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
   }
 
   throwIfSupabaseError(error);
@@ -526,12 +547,15 @@ export async function listSupplierProductPriceHistory(id: string, searchParams: 
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
-    .from("supplier_product_price_history")
-    .select("*", { count: "exact" })
-    .eq("supplier_product_id", id)
-    .order("created_at", { ascending: false })
-    .range(skip, to);
+  const buildQuery = (head: boolean) =>
+    supabase
+      .from("supplier_product_price_history")
+      .select("*", listCountOptions(head))
+      .eq("supplier_product_id", id);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(
     searchParams,
@@ -652,6 +676,86 @@ export async function deactivateSupplierProductPackUnit(supplierProductId: strin
     isActive: false,
     isDefault: false,
   }, storeId);
+}
+
+/**
+ * Estado deseado de los vínculos activos de un producto (RPC
+ * `save_product_suppliers`, parche 20261009e): una sola llamada y una sola
+ * transacción. La RPC crea o reactiva vínculos, registra el costo con su
+ * historial, desactiva los que no vienen y fija el habitual; sus rechazos
+ * (`PT400` / `PT403` / `PT404`) llegan con el mensaje ya redactado.
+ */
+export async function saveProductSuppliers(
+  productId: string,
+  input: ProductSupplierInput[],
+  storeId: string,
+) {
+  await assertSupabaseStoreResource("products", productId, storeId, "Producto no encontrado.");
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("save_product_suppliers", {
+    p_product_id: productId,
+    p_suppliers: input.map((item) => ({
+      ...(item.costRef === undefined ? {} : { cost_ref: item.costRef }),
+      is_preferred: item.isPreferred,
+      supplier_id: item.supplierId,
+      ...(item.supplierSku === undefined ? {} : { supplier_sku: item.supplierSku }),
+    })),
+  });
+
+  throwIfSupabaseError(error);
+
+  if (!data) {
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudieron guardar los proveedores del producto.");
+  }
+
+  return mapSaveProductSuppliersResult(data as DbSaveProductSuppliersResult);
+}
+
+/** La base aún no tiene `supplier_products.is_preferred` (parche 20261009e sin aplicar). */
+function isMissingPreferredColumn(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "42703";
+}
+
+type PreferredSupplierRow = {
+  product_id: string;
+  supplier?: { id: string; name: string } | { id: string; name: string }[] | null;
+};
+
+/**
+ * Proveedor habitual de cada producto pedido, en UNA consulta (los que no
+ * tienen no aparecen). Sin la columna devuelve vacío: el listado de productos
+ * no depende del parche.
+ */
+export async function listPreferredSuppliersByProduct(productIds: string[], storeId: string) {
+  const preferred = new Map<string, ProductPreferredSupplier>();
+
+  if (productIds.length === 0) {
+    return preferred;
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("supplier_products")
+    .select("product_id, supplier:contacts(id, name)")
+    .eq("store_id", storeId)
+    .eq("is_preferred", true)
+    .in("product_id", productIds);
+
+  if (isMissingPreferredColumn(error)) {
+    return preferred;
+  }
+
+  throwIfSupabaseError(error);
+
+  for (const row of (data ?? []) as PreferredSupplierRow[]) {
+    const supplier = Array.isArray(row.supplier) ? row.supplier[0] : row.supplier;
+
+    if (supplier) {
+      preferred.set(row.product_id, { id: supplier.id, name: supplier.name });
+    }
+  }
+
+  return preferred;
 }
 
 export type SupplierProductInput = SupplierProductCreateInput;

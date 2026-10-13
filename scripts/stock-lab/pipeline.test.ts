@@ -95,6 +95,30 @@ describe("one-shot de resincronizacion de stock (STK-702)", () => {
   });
 });
 
+describe("carpeta supabase/patches/deploy (DEC-03)", () => {
+  const PATCHES_DIR = resolve(__dirname, "..", "..", "supabase", "patches");
+  const realPatches = readdirSync(PATCHES_DIR);
+  const deployFiles = readdirSync(resolve(PATCHES_DIR, "deploy"));
+
+  it("existe junto a los parches, con los dos archivos concatenados de despliegue", () => {
+    expect(realPatches).toContain("deploy");
+    expect(deployFiles.sort()).toEqual(["ux-mejoras-01-antes-del-bff.sql", "ux-mejoras-02-despues-del-bff.sql"]);
+  });
+
+  it("el pipeline del laboratorio no la recoge ni rompe por ella: la carpeta no es un parche y su contenido no se lista", () => {
+    const selected = selectStructuralPatches(realPatches);
+
+    expect(isStructuralPatch("deploy")).toBe(false);
+    expect(selected).not.toContain("deploy");
+    // db-up lista supabase/patches sin recursión: los concatenados no llegan a la selección…
+    expect(selected.filter((name) => deployFiles.includes(name) || /ux-mejoras|deploy/.test(name))).toEqual([]);
+    // …y los parches que contienen se siguen aplicando uno a uno, incluido el último del plan.
+    expect(selected).toContain("20261018a-reports-exclude-draft-sales.sql");
+    expect(selected).toContain("20261010c-payments-purchase-rls.sql");
+    expect(selected.every((name) => name.endsWith(".sql"))).toBe(true);
+  });
+});
+
 describe("applyStockLabConfig", () => {
   const generated = [
     "# comment",

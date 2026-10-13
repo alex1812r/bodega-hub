@@ -97,3 +97,51 @@ describe("purchaseItem.schema", () => {
     });
   });
 });
+
+describe("disassembleOnReceive (COM-14)", () => {
+  const line = {
+    costCurrency: "ref",
+    entryMode: "unit",
+    productId: "prod-pack",
+    quantity: 3,
+    subtotalRef: 27,
+    subtotalVes: 13770,
+    taxRate: 0,
+    taxRef: 0,
+    taxVes: 0,
+    unitCostRef: 9,
+    unitCostVes: 4590,
+  };
+
+  it("la marca es opcional y debe ser un booleano", () => {
+    expect(purchaseItemInputSchema.parse(line)).not.toHaveProperty("disassembleOnReceive");
+    expect(purchaseItemInputSchema.parse({ ...line, disassembleOnReceive: true }).disassembleOnReceive).toBe(true);
+    expect(purchaseItemInputSchema.safeParse({ ...line, disassembleOnReceive: "si" }).success).toBe(false);
+  });
+
+  it("solo viaja a la RPC cuando es true: sin marca o con false el payload es el de siempre", () => {
+    const plain = toRpcPurchaseItem(purchaseItemInputSchema.parse(line));
+
+    expect(toRpcPurchaseItem(purchaseItemInputSchema.parse({ ...line, disassembleOnReceive: true }))).toEqual({
+      ...plain,
+      disassemble_on_receive: true,
+    });
+    expect(toRpcPurchaseItem(purchaseItemInputSchema.parse({ ...line, disassembleOnReceive: false }))).toEqual(plain);
+    expect(plain).not.toHaveProperty("disassemble_on_receive");
+  });
+
+  it("una línea por empaque marcada también la lleva", () => {
+    const pack = purchaseItemInputSchema.parse({
+      ...line,
+      disassembleOnReceive: true,
+      entryMode: "pack",
+      packCostRef: 9,
+      packCostVes: 4590,
+      packCount: 3,
+      packLabel: "Caja",
+      unitsPerPack: 6,
+    });
+
+    expect(toRpcPurchaseItem(pack)).toMatchObject({ disassemble_on_receive: true, entry_mode: "pack" });
+  });
+});

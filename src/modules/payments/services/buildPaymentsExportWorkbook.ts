@@ -10,6 +10,8 @@ import type { PaymentsExportFilters } from "./fetchPaymentsForExport";
 
 export type PaymentsExportWorkbookMetadata = {
   exportedAt: string;
+  /** Texto humano de los filtros por id (los chips de la lista); ver `buildPaymentsExportContextLabel`. */
+  filterLabels?: readonly string[];
   filters: PaymentsExportFilters;
 };
 
@@ -48,7 +50,7 @@ export async function buildPaymentsExportWorkbook(
 
   addDataSheet(
     workbook,
-    buildPaymentsExportContextLabel(metadata.filters),
+    buildPaymentsExportContextLabel(metadata.filters, metadata.filterLabels),
     paymentsListExportColumns,
     rows,
   );

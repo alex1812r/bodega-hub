@@ -20,7 +20,7 @@ type PaymentMethodDetailsCardProps = {
 const methodLabels: Record<PaymentMethodDetails["method"], string> = {
   efectivo_ves: "Efectivo VES",
   efectivo_usd: "Efectivo USD",
-  pago_movil: "Pago movil",
+  pago_movil: "Pago móvil",
   punto_venta: "Punto de venta",
   transferencia: "Transferencia",
 };
@@ -28,17 +28,17 @@ const methodLabels: Record<PaymentMethodDetails["method"], string> = {
 export function PaymentMethodDetailsCard({ payment }: PaymentMethodDetailsCardProps) {
   return (
     <DetailSection
-      description="Datos visuales del metodo, moneda y referencia del pago."
+      description="Datos visuales del método, moneda y referencia del pago."
       title="Detalle del pago"
     >
       <InfoGrid
         items={[
-          { label: "Metodo", value: methodLabels[payment.method] },
+          { label: "Método", value: methodLabels[payment.method] },
           { label: "Moneda", value: <Badge variant="info">{payment.currency}</Badge> },
           { label: "Monto ref", value: formatRef(payment.amountRef) },
           { label: "Monto VES", value: formatVes(payment.amountVes) },
           { label: "Banco", value: payment.bankName ?? "No aplica" },
-          { label: "Telefono", value: payment.phone ?? "No aplica" },
+          { label: "Teléfono", value: payment.phone ?? "No aplica" },
           { label: "Referencia", value: payment.referenceCode ?? "No aplica" },
         ]}
       />

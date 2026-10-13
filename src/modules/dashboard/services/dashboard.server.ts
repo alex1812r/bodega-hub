@@ -2,7 +2,11 @@ import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
+import { fetchAllRows, fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
+import { getDailySalesReport } from "@/modules/reports/services/reports.server";
 import { normalizeStoreIds } from "@/modules/reports/services/storeScope";
+import { COUNTED_SALE_STATUSES } from "@/shared/sales/countedSaleStatuses";
 import {
   applyCreatedAtCaracasRange,
   getCaracasIsoDate,
@@ -11,6 +15,13 @@ import {
 
 import { shiftIsoDate } from "../utils/businessDate";
 import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
+import {
+  type DashboardSalesTrend,
+  readSalesTrendFromStartTo,
+  salesTrendFromSeries,
+  toSalesTrendFromStartParams,
+  toSalesTrendSeriesParams,
+} from "./salesTrend";
 
 type DbSale = {
   created_at: string;
@@ -47,7 +58,22 @@ export type DashboardQueryOptions = {
   useAdmin?: boolean;
 };
 
-const METRICS_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"] as const;
+/** Ventas que cuentan en el resumen y en las métricas: el criterio único (un `borrador` no). */
+const METRICS_SALE_STATUSES = COUNTED_SALE_STATUSES;
+
+type DbMetricsSale = {
+  id: string;
+  paid_ves: number | string;
+  total_ref: number | string;
+  total_ves: number | string;
+};
+
+type DbSummarySale = {
+  created_at: string;
+  id: string;
+  total_ref: number | string | null;
+  total_ves: number | string | null;
+};
 
 function todayIsoDate() {
   return getCaracasIsoDate();
@@ -97,21 +123,33 @@ export async function getDashboardSummary(
   const today = todayIsoDate();
   const yesterday = shiftIsoDate(today, -1);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("created_at, total_ref, total_ves")
-    .not("status", "in", "(cancelada,devuelta)");
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, yesterday, today);
+  // Paginado hasta agotar: PostgREST corta cada respuesta en 1.000 filas y con
+  // más ventas entre hoy y ayer el resumen quedaba a medias.
+  const salesRows = await fetchAllRows<DbSummarySale>(
+    async (rangeFrom, rangeTo) => {
+      let salesQuery = supabase
+        .from("sales")
+        .select("id, created_at, total_ref, total_ves", { count: "exact" })
+        .in("status", [...METRICS_SALE_STATUSES]);
+      salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
+      salesQuery = applyCreatedAtRange(salesQuery, yesterday, today);
 
-  const { data: salesRows, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
+      // Orden de creación con `id` (único) de desempate: no cambia entre páginas.
+      const { count, data, error, status } = await salesQuery
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
+
+      return { count, data: data as DbSummarySale[] | null, error, status };
+    },
+    { getKey: (sale) => sale.id },
+  );
 
   const todayTotals = { salesCount: 0, totalRef: 0, totalVes: 0 };
   let previousDayTotalRef = 0;
 
-  for (const row of salesRows ?? []) {
-    const createdAt = row.created_at as string;
+  for (const row of salesRows) {
+    const createdAt = row.created_at;
     const totalRef = Number(row.total_ref ?? 0);
     const totalVes = Number(row.total_ves ?? 0);
 
@@ -172,29 +210,40 @@ export async function getDashboardMetrics(
   const { from, to } = parseDashboardMetricsDateParams(searchParams);
   const supabase = await getDashboardClient(options);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("id, total_ref, total_ves, paid_ves")
-    .in("status", [...METRICS_SALE_STATUSES]);
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, from, to);
+  // Paginado hasta agotar: PostgREST corta cada respuesta en 1.000 filas.
+  const salesRows = await fetchAllRows<DbMetricsSale>(
+    async (rangeFrom, rangeTo) => {
+      let salesQuery = supabase
+        .from("sales")
+        .select("id, total_ref, total_ves, paid_ves", { count: "exact" })
+        .in("status", [...METRICS_SALE_STATUSES]);
+      salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
+      salesQuery = applyCreatedAtRange(salesQuery, from, to);
 
-  const { data: sales, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
+      // Orden de creación con `id` (único) de desempate: no cambia entre páginas.
+      const { count, data, error, status } = await salesQuery
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
 
-  const salesRows = sales ?? [];
-  const saleIds = salesRows.map((sale) => sale.id);
-  let unitsSold = 0;
+      return { count, data: data as DbMetricsSale[] | null, error, status };
+    },
+    { getKey: (sale) => sale.id },
+  );
 
-  if (saleIds.length > 0) {
-    const { data: items, error: itemsError } = await supabase
-      .from("sale_items")
-      .select("quantity")
-      .in("sale_id", saleIds);
-
-    throwIfSupabaseError(itemsError);
-    unitsSold = (items ?? []).reduce((total, item) => total + item.quantity, 0);
-  }
+  // Las líneas se piden por lotes de ventas: todos los ids en una URL dan "URI too long".
+  const items = await fetchAllRowsByIds<{ id: string; quantity: number }>(
+    salesRows.map((sale) => sale.id),
+    async (saleIdChunk, rangeFrom, rangeTo) =>
+      supabase
+        .from("sale_items")
+        .select("id, quantity", { count: "exact" })
+        .in("sale_id", saleIdChunk)
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo),
+    { getKey: (item) => item.id },
+  );
+  const unitsSold = items.reduce((total, item) => total + item.quantity, 0);
 
   const totalRef = salesRows.reduce((total, sale) => total + Number(sale.total_ref), 0);
   const totalVes = salesRows.reduce((total, sale) => total + Number(sale.total_ves), 0);
@@ -232,11 +281,57 @@ function mapRecentSale(row: DbSaleWithCustomer, storeName?: string) {
   };
 }
 
+/**
+ * Primer día con ventas hasta `to`, leído de la misma vista que alimenta la
+ * serie (`daily_sales_summary`), o `null` si no hay ninguna.
+ */
+async function findFirstSaleDay(
+  storeIds: string[],
+  to: string,
+  options?: DashboardQueryOptions,
+): Promise<string | null> {
+  const supabase = await getDashboardClient(options);
+
+  let query = supabase
+    .from("daily_sales_summary")
+    .select("sale_date")
+    .order("sale_date", { ascending: true })
+    .limit(1);
+  query = applyStoreIdsFilter(query, storeIds);
+
+  const { data, error } = await query.lte("sale_date", to);
+  throwIfSupabaseError(error);
+
+  return data?.[0]?.sale_date ?? null;
+}
+
+/**
+ * Flujo de ventas. Con `from` + `to` la serie la calcula el servicio de ventas
+ * diarias de Reportes (un solo cálculo para dashboard y reportes: sin huecos,
+ * paginado sin tope, agrupación automática y, con `compare=1`, el periodo
+ * anterior). Con `fromStart` + `to` la serie va del primer día con ventas a
+ * `to`, sin periodo anterior. Sin rango responde como antes: los días con
+ * ventas, sin serie.
+ */
 export async function getDashboardSalesTrend(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
   options?: DashboardQueryOptions,
-) {
+): Promise<DashboardSalesTrend> {
+  const fromStartTo = readSalesTrendFromStartTo(searchParams);
+  const seriesParams = fromStartTo
+    ? toSalesTrendFromStartParams(
+        fromStartTo,
+        await findFirstSaleDay(normalizeStoreIds(storeIdOrIds), fromStartTo, options),
+      )
+    : toSalesTrendSeriesParams(searchParams);
+
+  if (seriesParams) {
+    const report = await getDailySalesReport(seriesParams, storeIdOrIds, options);
+
+    return salesTrendFromSeries(report.series);
+  }
+
   const storeIds = normalizeStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
@@ -249,7 +344,8 @@ export async function getDashboardSalesTrend(
     .limit(2000);
   query = applyStoreIdsFilter(query, storeIds);
 
-  // daily_sales_summary.sale_date is UTC date_trunc, not Caracas operational day.
+  // daily_sales_summary.sale_date es el día operativo de Caracas desde el parche
+  // 20261013a (antes, día UTC): `from` / `to` se comparan tal cual.
   if (from) {
     query = query.gte("sale_date", from);
   }
@@ -286,6 +382,7 @@ export async function getDashboardSalesTrend(
     items: [...byDate.values()].sort((first, second) =>
       first.saleDate.localeCompare(second.saleDate),
     ),
+    series: null,
   };
 }
 
@@ -298,15 +395,24 @@ export async function getRecentSales(
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getDashboardClient(options);
 
-  let query = supabase
-    .from("sales")
-    .select("id, invoice_number, created_at, status, total_ref, store_id, contacts(name)", {
-      count: "exact",
-    })
-    .order("created_at", { ascending: false });
-  query = applyStoreIdsFilter(query, storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase
+      .from("sales")
+      .select(
+        "id, invoice_number, created_at, status, total_ref, store_id, contacts(name)",
+        listCountOptions(head),
+      );
+    query = applyStoreIdsFilter(query, storeIds);
 
-  const { data, error, count } = await query.range(skip, skip + limit - 1);
+    return query;
+  };
+  const { data, error, count } = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false)
+        .order("created_at", { ascending: false })
+        .range(skip, skip + limit - 1),
+  });
   throwIfSupabaseError(error);
 
   const rows = (data ?? []) as DbSaleWithCustomer[];
@@ -343,13 +449,21 @@ export async function getDashboardLowStock(
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getDashboardClient(options);
 
-  let query = supabase
-    .from("low_stock_products")
-    .select("id, name, sku, current_stock, min_stock, store_id", { count: "exact" })
-    .order("name", { ascending: true });
-  query = applyStoreIdsFilter(query, storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase
+      .from("low_stock_products")
+      .select("id, name, sku, current_stock, min_stock, store_id", listCountOptions(head));
+    query = applyStoreIdsFilter(query, storeIds);
 
-  const { data, error, count } = await query.range(skip, skip + limit - 1);
+    return query;
+  };
+  const { data, error, count } = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false)
+        .order("name", { ascending: true })
+        .range(skip, skip + limit - 1),
+  });
   throwIfSupabaseError(error);
 
   const rows = (data ?? []) as DbProduct[];

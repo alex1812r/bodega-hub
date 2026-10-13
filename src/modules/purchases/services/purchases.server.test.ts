@@ -7,8 +7,10 @@ jest.mock("../../../lib/supabase/admin-client");
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import { getPurchaseActions } from "../utils/purchaseActions";
 import {
   cancelPurchase,
   createPurchase,
@@ -189,7 +191,213 @@ describe("purchases.server", () => {
     });
   });
 
-  it("receives a purchase through receive_purchase RPC", async () => {
+  // COM-16: los pagos individuales de una compra solo van a quien puede ver pagos de compras.
+  describe("purchase detail payments by access (COM-16)", () => {
+    const headerRow = { ...purchaseRow, paid_ref: 7.5, paid_ves: 3825, purchase_items: [] };
+    const paymentRows = [
+      {
+        amount: 2040,
+        amount_ref: 4,
+        amount_ves: 2040,
+        contact_id: purchaseRow.supplier_id,
+        created_at: "2026-05-17T17:00:00.000Z",
+        currency: "VES",
+        direction: "salida",
+        id: "44444444-4444-4444-4444-444444444444",
+        method: "transferencia",
+        purchase_id: purchaseRow.id,
+        ref_rate_ves: 510,
+        reference_code: "TRX-1",
+      },
+      {
+        amount: 1020,
+        amount_ref: 0,
+        amount_ves: 1020,
+        contact_id: purchaseRow.supplier_id,
+        created_at: "2026-05-17T16:30:00.000Z",
+        currency: "VES",
+        direction: "salida",
+        id: "55555555-5555-5555-5555-555555555555",
+        method: "efectivo_ves",
+        purchase_id: purchaseRow.id,
+        ref_rate_ves: 510,
+      },
+    ];
+
+    function mockDetail() {
+      const purchaseBuilder = createQueryBuilder({ data: headerRow, error: null });
+      const paymentsBuilder = {
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockResolvedValue({ data: paymentRows, error: null }),
+        select: jest.fn().mockReturnThis(),
+      };
+      const from = jest.fn((table: string) =>
+        table === "purchases" ? purchaseBuilder : paymentsBuilder,
+      );
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
+
+      return { from, paymentsBuilder };
+    }
+
+    // GQ-06: closed by default. A caller that does not say who is looking gets no payments.
+    it.each([
+      ["without access", { canViewPayments: false }],
+      ["with default access", undefined],
+    ] as const)("%s: never queries payments, returns no payments and the header paid amounts", async (_label, access) => {
+      const { from } = mockDetail();
+
+      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, access);
+
+      expect(from.mock.calls.map(([table]) => table)).toEqual(["purchases"]);
+      expect(purchase.payments).toEqual([]);
+      expect(purchase.paidRef).toBe(7.5);
+      expect(purchase.paidVes).toBe(3825);
+      expect(purchase.id).toBe(purchaseRow.id);
+      expect(purchase.items).toEqual([]);
+    });
+
+    it("with explicit access: payments by purchase_id and the header paid amounts", async () => {
+      const { from, paymentsBuilder } = mockDetail();
+
+      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, {
+        canViewPayments: true,
+      });
+
+      expect(from.mock.calls.map(([table]) => table)).toEqual(["purchases", "payments"]);
+      expect(paymentsBuilder.eq).toHaveBeenCalledWith("purchase_id", purchaseRow.id);
+      expect(paymentsBuilder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+      expect(purchase.payments.map((payment) => payment.id)).toEqual(
+        paymentRows.map((row) => row.id),
+      );
+      // GQ-10: la cabecera (7.5 / 3825), no la suma de la lista de pagos (6 REF; 3060 Bs).
+      expect(purchase.paidRef).toBe(7.5);
+      expect(purchase.paidVes).toBe(3825);
+    });
+  });
+
+  // GQ-10: un pago anulado sigue en el historial pero no cuenta como pagado.
+  describe("purchase detail with voided payments (GQ-10)", () => {
+    const voidedPayment = {
+      amount: 8160,
+      amount_ref: 16,
+      amount_ves: 8160,
+      contact_id: purchaseRow.supplier_id,
+      created_at: "2026-05-17T17:00:00.000Z",
+      currency: "VES",
+      direction: "salida",
+      id: "66666666-6666-6666-6666-666666666666",
+      method: "efectivo_ves",
+      purchase_id: purchaseRow.id,
+      ref_rate_ves: 510,
+      status: "anulado",
+    };
+    const activePayment = {
+      ...voidedPayment,
+      amount: 2040,
+      amount_ref: 4,
+      amount_ves: 2040,
+      id: "77777777-7777-7777-7777-777777777777",
+      status: "activo",
+    };
+
+    /** Columnas de primer nivel de un `select` de PostgREST (sin las relaciones embebidas). */
+    function selectedColumns(select: string) {
+      return select
+        .replace(/\w+:\w+\([^)]*\)/g, "")
+        .split(",")
+        .map((column) => column.trim())
+        .filter(Boolean);
+    }
+
+    /** Como PostgREST: de cada pago solo vuelven las columnas que pide el `select`. */
+    function mockDetail(header: { paid_ref: number; paid_ves: number }, rows: Array<Record<string, unknown>>) {
+      const purchaseBuilder = createQueryBuilder({
+        data: { ...purchaseRow, ...header, purchase_items: [] },
+        error: null,
+      });
+      let columns: string[] = [];
+      const paymentsBuilder = {
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn(async () => ({
+          data: rows.map((row) =>
+            Object.fromEntries(Object.entries(row).filter(([column]) => columns.includes(column))),
+          ),
+          error: null,
+        })),
+        select: jest.fn(function select(this: unknown, value: string) {
+          columns = selectedColumns(value);
+
+          return this;
+        }),
+      };
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+        from: jest.fn((table: string) => (table === "purchases" ? purchaseBuilder : paymentsBuilder)),
+      });
+
+      return { paymentsBuilder };
+    }
+
+    function balanceOf(purchase: Awaited<ReturnType<typeof getPurchaseById>>) {
+      return documentBalance({
+        paidRef: purchase.paidRef,
+        paidVes: purchase.paidVes,
+        refRateVes: purchase.refRateVes,
+        status: purchase.status,
+        totalRef: purchase.totalRef,
+        totalVes: purchase.totalVes,
+        type: "purchase",
+      });
+    }
+
+    const admin = { can: () => true, role: "admin" as const };
+
+    it("asks for the status column of each payment", async () => {
+      const { paymentsBuilder } = mockDetail({ paid_ref: 0, paid_ves: 0 }, []);
+
+      await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, { canViewPayments: true });
+
+      expect(selectedColumns(paymentsBuilder.select.mock.calls[0][0])).toContain("status");
+    });
+
+    it("one active and one voided payment: paid is only the active one, both stay listed", async () => {
+      mockDetail({ paid_ref: 4, paid_ves: 2040 }, [voidedPayment, activePayment]);
+
+      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, {
+        canViewPayments: true,
+      });
+
+      expect(purchase.payments.map((payment) => [payment.id, payment.status])).toEqual([
+        [voidedPayment.id, "anulado"],
+        [activePayment.id, "activo"],
+      ]);
+      expect(purchase.paidRef).toBe(4);
+      expect(purchase.paidVes).toBe(2040);
+      expect(balanceOf(purchase)).toMatchObject({ paymentStatus: "parcial", pendingVes: 8160 });
+    });
+
+    it("every payment voided: paid 0, pending is the total, unpaid and payable", async () => {
+      mockDetail({ paid_ref: 0, paid_ves: 0 }, [voidedPayment]);
+
+      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, {
+        canViewPayments: true,
+      });
+
+      expect(purchase.payments.map((payment) => payment.status)).toEqual(["anulado"]);
+      expect(purchase.paidRef).toBe(0);
+      expect(purchase.paidVes).toBe(0);
+      expect(balanceOf(purchase)).toMatchObject({
+        paymentStatus: "pendiente",
+        pendingRef: purchaseRow.total_ref,
+        pendingVes: purchaseRow.total_ves,
+        settled: false,
+      });
+      expect(getPurchaseActions(purchase, admin).canPay).toBe(true);
+    });
+  });
+
+  it("receives a purchase through the receive_purchase_and_disassemble RPC", async () => {
     const rpc = jest.fn().mockResolvedValue({
       data: { ...purchaseRow, status: "recibido" },
       error: null,
@@ -223,7 +431,9 @@ describe("purchases.server", () => {
 
     const result = await receivePurchase(purchaseRow.id, DEFAULT_STORE_ID);
 
-    expect(rpc).toHaveBeenCalledWith("receive_purchase", { p_purchase_id: purchaseRow.id });
+    expect(rpc).toHaveBeenCalledWith("receive_purchase_and_disassemble", {
+      p_purchase_id: purchaseRow.id,
+    });
     expect(result.status).toBe("recibido");
   });
 

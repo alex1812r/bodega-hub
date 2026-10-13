@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Button } from "@/shared/components/Button";
@@ -29,11 +29,16 @@ export function CreateStoreAdminPage() {
     storeId: presetStoreId,
   });
 
-  useEffect(() => {
+  // Si cambia el storeId de la URL, se aplica al formulario (ajuste durante el render).
+  const [appliedPresetStoreId, setAppliedPresetStoreId] = useState(presetStoreId);
+
+  if (presetStoreId !== appliedPresetStoreId) {
+    setAppliedPresetStoreId(presetStoreId);
+
     if (presetStoreId) {
       setForm((current) => ({ ...current, storeId: presetStoreId }));
     }
-  }, [presetStoreId]);
+  }
 
   const storeOptions = useMemo(
     () => [
@@ -72,7 +77,7 @@ export function CreateStoreAdminPage() {
           Nuevo administrador de tienda
         </Typography>
         <Typography className="mt-1" variant="muted">
-          El superadmin solo puede crear administradores. Los demas roles los gestiona cada admin
+          El superadmin solo puede crear administradores. Los demás roles los gestiona cada admin
           de tienda.
         </Typography>
       </div>
@@ -105,8 +110,8 @@ export function CreateStoreAdminPage() {
           />
           <Input
             className="sm:col-span-2"
-            helperText="Minimo 8 caracteres."
-            label="Contrasena temporal"
+            helperText="Mínimo 8 caracteres."
+            label="Contraseña temporal"
             minLength={8}
             onChange={update("password")}
             required

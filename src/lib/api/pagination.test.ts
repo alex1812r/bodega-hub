@@ -13,6 +13,14 @@ describe("pagination", () => {
     expect(parsePagination(new URLSearchParams("limit=3"))).toEqual({ limit: 10, skip: 0 });
   });
 
+  it("keeps a skip of hundreds of digits as a finite number", () => {
+    const result = paginateList([1, 2, 3], new URLSearchParams(`skip=${"9".repeat(400)}`));
+
+    expect(result.items).toEqual([]);
+    expect(result.total).toBe(3);
+    expect(JSON.parse(JSON.stringify(result)).skip).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it("extracts items from paginated responses", () => {
     expect(getPaginatedItems(undefined)).toEqual([]);
     expect(

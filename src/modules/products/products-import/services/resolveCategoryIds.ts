@@ -16,7 +16,7 @@ export function resolveCategoryIdByName(
 
   if (!match) {
     return {
-      error: `La categoria "${trimmed}" no existe. Seleccione un valor del listado de la plantilla.`,
+      error: `La categoría "${trimmed}" no existe. Seleccione un valor del listado de la plantilla.`,
     };
   }
 

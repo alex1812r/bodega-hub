@@ -20,12 +20,51 @@ describe("/api/contacts", () => {
     process.env.API_DATA_SOURCE = originalDataSource;
   });
 
+  // POS-H2: una página más allá del total es una lista vacía con el total real, no un error.
+  it.each(["skip=999999", "skip=999999&limit=20&type=cliente", "skip=2147483648"])(
+    "%s → 200 con lista vacía y el total real",
+    async (query) => {
+      const filters = query.includes("type=") ? "&type=cliente" : "";
+      const firstPage = await GET(new Request(`http://localhost/api/contacts?limit=10${filters}`));
+      const firstBody = await firstPage.json();
+      const response = await GET(new Request(`http://localhost/api/contacts?${query}`));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.items).toEqual([]);
+      expect(firstBody.data.total).toBeGreaterThan(0);
+      expect(body.data.total).toBe(firstBody.data.total);
+      expect(body.data.skip).toBe(Number(new URLSearchParams(query).get("skip")));
+    },
+  );
+
   it("returns contacts", async () => {
     const response = await GET(new Request("http://localhost/api/contacts"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.data.items).toEqual(expect.any(Array));
+  });
+
+  it("filters contacts by isActive and returns both states without the parameter", async () => {
+    const active = await GET(new Request("http://localhost/api/contacts?isActive=true&limit=100"));
+    const inactive = await GET(new Request("http://localhost/api/contacts?isActive=false&limit=100"));
+    const all = await GET(new Request("http://localhost/api/contacts?limit=100"));
+    const activeBody = await active.json();
+    const inactiveBody = await inactive.json();
+    const allBody = await all.json();
+
+    expect(activeBody.data.items.length).toBeGreaterThan(0);
+    expect(activeBody.data.items.every((contact: { isActive: boolean }) => contact.isActive)).toBe(
+      true,
+    );
+    expect(inactiveBody.data.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "cont-inactive" })]),
+    );
+    expect(
+      inactiveBody.data.items.every((contact: { isActive: boolean }) => !contact.isActive),
+    ).toBe(true);
+    expect(allBody.data.total).toBe(activeBody.data.total + inactiveBody.data.total);
   });
 
   it("creates a simulated contact", async () => {
@@ -128,8 +167,9 @@ describe("/api/contacts", () => {
 
   describe("supabase data source", () => {
     const mockRange = jest.fn();
+    const mockEq = jest.fn().mockReturnThis();
     const mockSelect = jest.fn(() => ({
-      eq: jest.fn().mockReturnThis(),
+      eq: mockEq,
       in: jest.fn().mockReturnThis(),
       or: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
@@ -175,6 +215,15 @@ describe("/api/contacts", () => {
       ]);
       expect(body.data.total).toBe(1);
       expect(mockRange).toHaveBeenCalledWith(0, 9);
+      expect(mockEq).not.toHaveBeenCalledWith("is_active", expect.anything());
+    });
+
+    it("applies isActive in supabase like the mock does", async () => {
+      const response = await GET(new Request("http://localhost/api/contacts?isActive=true&limit=8"));
+
+      expect(response.status).toBe(200);
+      expect(mockEq).toHaveBeenCalledWith("is_active", true);
+      expect(mockEq).toHaveBeenCalledWith("store_id", "00000000-0000-4000-8000-000000000001");
     });
   });
 });

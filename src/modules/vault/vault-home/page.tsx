@@ -17,11 +17,12 @@ import type { VaultMovement } from "../types";
 import { VaultDepositModal } from "./components/VaultDepositModal";
 import { VaultTransferFromCashModal } from "./components/VaultTransferFromCashModal";
 import { VaultWithdrawalModal } from "./components/VaultWithdrawalModal";
+import { vaultBucketLabels } from "./utils/vaultEffect";
 
 const movementTypeLabels: Record<VaultMovement["type"], string> = {
   adjustment: "Ajuste",
-  deposit: "Deposito efectivo",
-  payroll_out: "Nomina",
+  deposit: "Depósito efectivo",
+  payroll_out: "Nómina",
   purchase_out: "Pago compra",
   sale_in: "Ingreso cuenta",
   transfer_in: "Transferencia caja",
@@ -102,35 +103,35 @@ export function VaultHomePage() {
                   onSelect: () => setActiveModal("transfer"),
                 },
               ]}
-              label="Operaciones del baul"
+              label="Operaciones del baúl"
               variant="secondary"
             />
           </Can>
         }
-        description="Centro financiero: efectivo fisico, saldo de cuenta y REF."
+        description="Centro financiero: efectivo físico, saldo de cuenta y REF."
         layout="sections"
-        title="Baul"
+        title="Baúl"
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DashboardKpiCard
             accentClassName="bg-amber-500/15"
             icon={Banknote}
             iconClassName="text-amber-600"
-            label="Efectivo Bs."
+            label={vaultBucketLabels.efectivoVes}
             value={balanceEfectivoVes}
           />
           <DashboardKpiCard
             accentClassName="bg-emerald-500/15"
             icon={Building2}
             iconClassName="text-emerald-600"
-            label="Cuenta Bs."
+            label={vaultBucketLabels.cuentaVes}
             value={balanceCuentaVes}
           />
           <DashboardKpiCard
             accentClassName="bg-primary/15"
             icon={CircleDollarSign}
             iconClassName="text-primary"
-            label="Saldo REF"
+            label={vaultBucketLabels.efectivoRef}
             value={balanceRef}
           />
         </div>
@@ -143,7 +144,7 @@ export function VaultHomePage() {
             emptyState={
               <EmptyState
                 className="py-10"
-                description="Las operaciones del menu se reflejaran aqui."
+                description="Las operaciones del menú se reflejarán aquí."
                 title="Sin movimientos"
               />
             }
@@ -153,18 +154,21 @@ export function VaultHomePage() {
         </section>
       </EntityListPage>
 
-      <VaultDepositModal
-        onOpenChange={(open) => setActiveModal(open ? "deposit" : null)}
-        open={activeModal === "deposit"}
-      />
-      <VaultWithdrawalModal
-        onOpenChange={(open) => setActiveModal(open ? "withdrawal" : null)}
-        open={activeModal === "withdrawal"}
-      />
-      <VaultTransferFromCashModal
-        onOpenChange={(open) => setActiveModal(open ? "transfer" : null)}
-        open={activeModal === "transfer"}
-      />
+      {/* Solo para quien opera el baúl: montados piden datos que exigen `vault.manage`. */}
+      <Can permission="vault.manage">
+        <VaultDepositModal
+          onOpenChange={(open) => setActiveModal(open ? "deposit" : null)}
+          open={activeModal === "deposit"}
+        />
+        <VaultWithdrawalModal
+          onOpenChange={(open) => setActiveModal(open ? "withdrawal" : null)}
+          open={activeModal === "withdrawal"}
+        />
+        <VaultTransferFromCashModal
+          onOpenChange={(open) => setActiveModal(open ? "transfer" : null)}
+          open={activeModal === "transfer"}
+        />
+      </Can>
     </>
   );
 }

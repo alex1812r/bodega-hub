@@ -40,7 +40,7 @@ export function VenezuelanBankField({
 
   return (
     <SearchAutocomplete
-      emptyMessage="No se encontro ese banco."
+      emptyMessage="No se encontró ese banco."
       error={error}
       helperText={helperText}
       label={label}
@@ -51,7 +51,7 @@ export function VenezuelanBankField({
         setQuery("");
       }}
       options={options}
-      placeholder="Buscar por codigo o nombre (ej. 0134 o Banesco)"
+      placeholder="Buscar por código o nombre (ej. 0134 o Banesco)"
       query={query}
       required={required}
       selectedLabel={selectedLabel}

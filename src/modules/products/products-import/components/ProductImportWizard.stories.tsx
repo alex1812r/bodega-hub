@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
 import { ProductImportStep1Template } from "./step1-template/ProductImportStep1Template";
 import { ProductImportStep2File } from "./step2-file/ProductImportStep2File";
@@ -85,7 +85,7 @@ export const Step3Preview: Story = {
             sku: "PRD-002",
             name: "Harina",
             status: "error",
-            messages: ["precio_ref debe ser un numero valido."],
+            messages: ["precio_ref debe ser un número válido."],
           },
         ]}
         warningCount={0}

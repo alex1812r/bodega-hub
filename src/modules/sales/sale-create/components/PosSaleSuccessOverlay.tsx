@@ -33,6 +33,7 @@ export function PosSaleSuccessOverlay({
 
   useEffect(() => {
     didAutoContinueRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- la cuenta atras se reinicia en el mismo efecto que arma el intervalo y rearma didAutoContinueRef; separarlos cambia el orden que dispara la nueva venta
     setSecondsLeft(AUTO_CONTINUE_SECONDS);
 
     if (pendingPayment) {
@@ -74,8 +75,8 @@ export function PosSaleSuccessOverlay({
           <CardDescription>
             Factura <span className="font-medium text-foreground">{invoiceNumber}</span>.{" "}
             {pendingPayment
-              ? "Quedo pendiente de pago: no la vuelvas a crear, registra el cobro desde Ventas."
-              : `Nueva venta en ${secondsLeft}s si no eliges otra opcion.`}
+              ? "Quedó pendiente de pago: no la vuelvas a crear, registra el cobro desde Ventas."
+              : `Nueva venta en ${secondsLeft}s si no eliges otra opción.`}
           </CardDescription>
         </CardHeader>
 

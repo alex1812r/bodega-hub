@@ -144,6 +144,6 @@ describe("validateProductImportRows", () => {
     const row4 = updated.find((row) => row.rowIndex === 4);
 
     expect(row4?.status).toBe("error");
-    expect(row4?.messages[0]).toContain("Codigo de barras");
+    expect(row4?.messages[0]).toContain("Código de barras");
   });
 });

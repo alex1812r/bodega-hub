@@ -101,9 +101,9 @@ describe("PayrollSettingsPage — simulador", () => {
     const result = screen.getByTestId("payroll-simulator-result");
 
     expect(result).toHaveTextContent("Con ventas de ref 1000.00 al 3.00 %");
-    expect(result).toHaveTextContent("la comision seria ref 30.00");
+    expect(result).toHaveTextContent("la comisión sería ref 30.00");
     expect(result).toHaveTextContent(
-      "eso es 1.50 % de la ganancia bruta promedio de las ultimas 3 quincenas (ref 2000.00)",
+      "eso es 1.50 % de la ganancia bruta promedio de las últimas 3 quincenas (ref 2000.00)",
     );
   });
 
@@ -111,7 +111,7 @@ describe("PayrollSettingsPage — simulador", () => {
     const user = userEvent.setup();
     renderPage();
 
-    const pctInput = screen.getByLabelText("Comision (%)");
+    const pctInput = screen.getByLabelText("Comisión (%)");
 
     await user.clear(pctInput);
     await user.type(pctInput, "10");
@@ -119,7 +119,7 @@ describe("PayrollSettingsPage — simulador", () => {
     // 1000 REF al 10 % = 100 REF; 100 / 2000 = 5 %.
     const result = screen.getByTestId("payroll-simulator-result");
 
-    expect(result).toHaveTextContent("la comision seria ref 100.00");
+    expect(result).toHaveTextContent("la comisión sería ref 100.00");
     expect(result).toHaveTextContent("eso es 5.00 %");
   });
 });

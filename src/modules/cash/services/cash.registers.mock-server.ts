@@ -1,8 +1,15 @@
 import { ApiError } from "@/lib/api/apiError";
+import { isStoreUserRole } from "@/shared/auth/permissions";
+import { mockUserProfiles } from "@/shared/mocks/erp-data";
 
 import type { CashRegister } from "../types";
+import { canBeAssignedCashRegister, CASH_REGISTER_ASSIGNEE_MESSAGE } from "./cashRegisterAssignee";
 
 const registers: CashRegister[] = [];
+
+/** Un usuario tiene como mucho una caja activa por tienda (índice único en la base). */
+export const CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE =
+  "Ese usuario ya tiene otra caja activa asignada. Desasígnala antes de asignarle esta.";
 
 function now() {
   return new Date().toISOString();
@@ -33,7 +40,7 @@ export function createCashRegister(input: CashRegisterInput, storeId: string) {
   const createdAt = now();
   const register: CashRegister = {
     createdAt,
-    id: `cash-register-${Date.now()}`,
+    id: `cash-register-${Date.now()}-${registers.length}`,
     isActive: true,
     name: input.name.trim(),
     storeId,
@@ -43,17 +50,37 @@ export function createCashRegister(input: CashRegisterInput, storeId: string) {
   return register;
 }
 
+/**
+ * Misma regla que el servicio real: usuario activo de la tienda con `cash.operate`.
+ * Los usuarios demo por rol (`user-<rol>`, ver `getDemoUserProfile`) no siempre
+ * tienen perfil mock: valen por su rol.
+ */
+export function assertCashRegisterAssignee(userId: string, storeId: string) {
+  const demoRole = userId.startsWith("user-") ? userId.slice("user-".length) : "";
+  const profile =
+    mockUserProfiles.find((item) => item.id === userId && item.storeId === storeId) ??
+    (isStoreUserRole(demoRole) ? { isActive: true, role: demoRole } : undefined);
+
+  if (!profile || !canBeAssignedCashRegister(profile)) {
+    throw new ApiError(400, "BAD_REQUEST", CASH_REGISTER_ASSIGNEE_MESSAGE);
+  }
+}
+
 export function updateCashRegister(id: string, input: CashRegisterUpdateInput, storeId: string) {
   const register = getCashRegister(id, storeId);
-  if (input.assignedUserId && input.isActive !== false) {
+  // Misma regla que el índice único de la base: se mira cómo quedaría la caja.
+  const nextAssignedUserId =
+    input.assignedUserId !== undefined ? input.assignedUserId : register.assignedUserId;
+  const nextIsActive = input.isActive ?? register.isActive;
+  if (nextAssignedUserId && nextIsActive) {
     const assigned = registers.find(
       (item) =>
         item.id !== id &&
         item.storeId === storeId &&
         item.isActive &&
-        item.assignedUserId === input.assignedUserId,
+        item.assignedUserId === nextAssignedUserId,
     );
-    if (assigned) throw new ApiError(409, "CONFLICT", "El usuario ya tiene una caja activa asignada.");
+    if (assigned) throw new ApiError(409, "CONFLICT", CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE);
   }
   Object.assign(register, input, { updatedAt: now() });
   return register;

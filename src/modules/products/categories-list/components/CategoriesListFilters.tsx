@@ -8,30 +8,14 @@ import {
 } from "@/shared/styles/form-controls";
 import { cn } from "@/shared/utils/cn";
 
-import type { CategoriesFilters } from "../../hooks/useProducts";
+import type { CategoriesListFilterState } from "../categoriesListParams";
 
 type CategoriesListFiltersProps = {
-  filters: Pick<CategoriesFilters, "isActive" | "search">;
-  onChange: (patch: Partial<CategoriesFilters>) => void;
+  onChange: (patch: Partial<CategoriesListFilterState>) => void;
+  state: CategoriesListFilterState;
 };
 
-function isActiveFilterValue(isActive: CategoriesFilters["isActive"]) {
-  if (isActive === true || isActive === "true") {
-    return "true";
-  }
-
-  if (isActive === false || isActive === "false") {
-    return "false";
-  }
-
-  if (isActive === "all") {
-    return "all";
-  }
-
-  return "all";
-}
-
-export function CategoriesListFilters({ filters, onChange }: CategoriesListFiltersProps) {
+export function CategoriesListFilters({ onChange, state }: CategoriesListFiltersProps) {
   return (
     <section className="w-full min-w-0 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
       <div className="grid gap-4 md:grid-cols-2">
@@ -47,12 +31,10 @@ export function CategoriesListFilters({ filters, onChange }: CategoriesListFilte
             <input
               className={cn(stitchListFilterFieldClassName, "w-full min-w-0 pl-10")}
               id="categories-search"
-              onChange={(event) =>
-                onChange({ search: event.target.value.trim() || undefined })
-              }
+              onChange={(event) => onChange({ search: event.target.value })}
               placeholder="Buscar por nombre..."
               type="search"
-              value={filters.search ?? ""}
+              value={state.search}
             />
           </div>
         </div>
@@ -63,18 +45,14 @@ export function CategoriesListFilters({ filters, onChange }: CategoriesListFilte
           <select
             className={cn(stitchListFilterFieldClassName, "w-full min-w-0")}
             id="categories-status"
-            onChange={(event) => {
-              const value = event.target.value;
-              onChange({
-                isActive:
-                  value === "true" ? true : value === "false" ? false : "all",
-              });
-            }}
-            value={isActiveFilterValue(filters.isActive)}
+            onChange={(event) =>
+              onChange({ status: event.target.value as CategoriesListFilterState["status"] })
+            }
+            value={state.status}
           >
             <option value="all">Estado: Todos</option>
-            <option value="true">Activo</option>
-            <option value="false">Inactivo</option>
+            <option value="active">Activo</option>
+            <option value="inactive">Inactivo</option>
           </select>
         </div>
       </div>

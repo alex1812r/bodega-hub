@@ -11,32 +11,50 @@ type ProductDetailSuppliersSummaryCardsProps = {
   salePriceRef: number;
 };
 
+/**
+ * Vínculos activos CON costo registrado, del más barato al más caro. Un vínculo
+ * sin costo (ausente o 0) no compite por "más económico / mejor precio": no es
+ * un proveedor gratis, es uno del que aún no se sabe el precio.
+ */
+export function sortSupplierLinksByCost(rows: SupplierProduct[]) {
+  return rows
+    .filter((row) => row.isActive !== false && (row.lastCostRef ?? 0) > 0)
+    .sort((first, second) => (first.lastCostRef ?? 0) - (second.lastCostRef ?? 0));
+}
+
 export function ProductDetailSuppliersSummaryCards({
   rows,
   salePriceRef,
 }: ProductDetailSuppliersSummaryCardsProps) {
-  const activeRows = rows.filter((row) => row.isActive !== false);
+  const hasActiveRows = rows.some((row) => row.isActive !== false);
 
   const summary = useMemo(() => {
-    if (activeRows.length === 0) {
+    const sorted = sortSupplierLinksByCost(rows);
+    const best = sorted[0];
+    const worst = sorted[sorted.length - 1];
+
+    if (!best || !worst) {
       return null;
     }
 
-    const sorted = [...activeRows].sort(
-      (first, second) => (first.lastCostRef ?? 0) - (second.lastCostRef ?? 0),
-    );
-    const best = sorted[0];
-    const worst = sorted[sorted.length - 1];
     const margin =
-      salePriceRef > 0 && best?.lastCostRef != null
+      salePriceRef > 0 && best.lastCostRef != null
         ? Number((((salePriceRef - best.lastCostRef) / salePriceRef) * 100).toFixed(1))
         : null;
 
     return { best, margin, worst };
-  }, [activeRows, salePriceRef]);
+  }, [rows, salePriceRef]);
+
+  if (!hasActiveRows) {
+    return null;
+  }
 
   if (!summary) {
-    return null;
+    return (
+      <p className="border-b border-outline-variant px-5 py-4 text-sm text-on-surface-variant">
+        Sin costos registrados.
+      </p>
+    );
   }
 
   return (

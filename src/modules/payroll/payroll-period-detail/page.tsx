@@ -24,15 +24,12 @@ import {
   payrollPeriodStatusLabels,
   payrollPeriodStatusVariants,
 } from "../components/payrollLabels";
-import {
-  useApprovePayrollPeriod,
-  usePayrollPeriod,
-  useRecomputePayrollPeriod,
-} from "../hooks/usePayroll";
+import { usePayrollPeriod, useRecomputePayrollPeriod } from "../hooks/usePayroll";
 import { exportPayrollReceiptPdf } from "../payroll-receipt/services/exportPayrollReceiptPdf";
 import type { PayrollItem } from "../types";
 import { formatPeriodLabel } from "../utils/quincena";
 
+import { PayrollApproveConfirmModal } from "./components/PayrollApproveConfirmModal";
 import { PayrollCancelPaymentModal } from "./components/PayrollCancelPaymentModal";
 import { PayrollPayModal } from "./components/PayrollPayModal";
 import { PayrollVaultPanel } from "./components/PayrollVaultPanel";
@@ -44,12 +41,12 @@ type PayrollPeriodDetailPageProps = {
 export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPageProps) {
   const detailQuery = usePayrollPeriod(periodId);
   const recompute = useRecomputePayrollPeriod(periodId);
-  const approve = useApprovePayrollPeriod(periodId);
   const appSettings = useSettings();
   const exchangeRate = useCurrentExchangeRate();
   const [cancelItem, setCancelItem] = useState<PayrollItem | null>(null);
   const [salesItem, setSalesItem] = useState<PayrollItem | null>(null);
   const [payItems, setPayItems] = useState<PayrollItem[]>([]);
+  const [isApproveOpen, setIsApproveOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const detail = detailQuery.data;
@@ -88,7 +85,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
       await action();
     } catch (error) {
       setActionError(
-        error instanceof Error ? error.message : "No pudimos completar la operacion.",
+        error instanceof Error ? error.message : "No pudimos completar la operación.",
       );
     }
   }
@@ -111,7 +108,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
       <PageHeader
         actions={
           <>
-            <PageBackButton href="/payroll" label="Volver a nomina" size="sm" />
+            <PageBackButton href="/payroll" label="Volver a nómina" size="sm" />
             <Can permission="payroll.manage">
               <>
                 {period.status === "borrador" ? (
@@ -125,11 +122,14 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
                       {recompute.isPending ? "Recalculando..." : "Recalcular"}
                     </Button>
                     <Button
-                      disabled={approve.isPending}
-                      onClick={() => void runAction(() => approve.mutateAsync())}
+                      disabled={recompute.isPending}
+                      onClick={() => {
+                        setActionError(null);
+                        setIsApproveOpen(true);
+                      }}
                       size="sm"
                     >
-                      {approve.isPending ? "Aprobando..." : "Aprobar"}
+                      Aprobar
                     </Button>
                   </>
                 ) : null}
@@ -180,7 +180,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
           accentClassName="bg-emerald-500/15"
           icon={Percent}
           iconClassName="text-emerald-600"
-          label="Comision"
+          label="Comisión"
           value={formatRefUsd(period.commissionRef)}
         />
         <DashboardKpiCard
@@ -194,7 +194,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
           accentClassName="bg-amber-500/15"
           icon={HandCoins}
           iconClassName="text-amber-600"
-          label="Total nomina"
+          label="Total nómina"
           value={formatRefUsd(period.totalRef)}
         />
       </div>
@@ -211,13 +211,13 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
 
           <Card>
             <CardHeader>
-              <CardTitle>Comision por cajero</CardTitle>
+              <CardTitle>Comisión por cajero</CardTitle>
             </CardHeader>
             <CardContent>
               {items.length === 0 ? (
                 <EmptyState
                   className="py-8"
-                  description="Ningun cajero elegible genero ventas comisionables en esta quincena."
+                  description="Ningún cajero elegible generó ventas comisionables en esta quincena."
                   title="Sin items"
                 />
               ) : (
@@ -238,7 +238,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
                           %
                         </th>
                         <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Comision
+                          Comisión
                         </th>
                         <th className="hidden px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground lg:table-cell">
                           Reversos
@@ -301,6 +301,13 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
         open={payItems.length > 0}
       />
 
+      <PayrollApproveConfirmModal
+        items={items}
+        onOpenChange={setIsApproveOpen}
+        open={isApproveOpen && period.status === "borrador"}
+        period={period}
+      />
+
       <PayrollCancelPaymentModal
         item={cancelItem}
         onOpenChange={(open) => {
@@ -308,6 +315,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
             setCancelItem(null);
           }
         }}
+        periodStatus={period.status}
       />
     </div>
   );

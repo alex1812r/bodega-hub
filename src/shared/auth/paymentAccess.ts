@@ -1,13 +1,20 @@
 import { ApiError } from "@/lib/api/apiError";
 
-import type { UserRole } from "./permissions";
+import { getRolePermissions, type UserRole } from "./permissions";
 
 export const PURCHASE_PAYMENTS_FORBIDDEN_MESSAGE =
   "No tienes permiso para acceder a pagos de compras.";
 
-/** El vendedor solo puede ver/operar pagos vinculados a ventas. */
+/**
+ * Ve / opera pagos de compras el rol que tiene a la vez `payments.view` y
+ * `purchases.view`: admin y contador. El vendedor solo ve pagos de ventas y
+ * almacén ve la compra, pero no sus pagos. Es la misma regla que la política
+ * de lectura de `payments` (parche 20261010c).
+ */
 export function canViewPurchasePayments(role: UserRole) {
-  return role !== "vendedor";
+  const granted = getRolePermissions(role);
+
+  return granted.includes("payments.view") && granted.includes("purchases.view");
 }
 
 export function isPurchasePayment(payment: {

@@ -9,12 +9,7 @@ import {
   useState,
 } from "react";
 
-import {
-  applyTheme,
-  getStoredTheme,
-  type Theme,
-  themeStorageKey,
-} from "./theme";
+import { applyTheme, getStoredTheme, storeTheme, type Theme } from "./theme";
 
 type ThemeContextValue = {
   setTheme: (theme: Theme) => void;
@@ -33,7 +28,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   useEffect(() => {
     applyTheme(theme);
-    window.localStorage.setItem(themeStorageKey, theme);
+    storeTheme(theme);
   }, [theme]);
 
   const value = useMemo<ThemeContextValue>(

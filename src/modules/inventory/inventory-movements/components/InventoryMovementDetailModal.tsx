@@ -10,14 +10,16 @@ import { formatDateTimeShort } from "@/shared/utils/date";
 import { formatTruncatedCode } from "@/shared/utils/truncatedCode";
 
 import type { InventoryMovement } from "../../hooks/useInventory";
+import { InventoryMovementDocumentCell } from "./InventoryMovementDocumentCell";
 import { InventoryMovementQuantityCell } from "./InventoryMovementQuantityCell";
-import { InventoryMovementReferenceCell } from "./InventoryMovementReferenceCell";
 import { InventoryMovementTypeBadge } from "./InventoryMovementTypeBadge";
 
 type InventoryMovementDetailModalProps = {
   movement: InventoryMovement | null;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  /** URL de la lista: el detalle de la venta o compra vuelve a ella. */
+  returnTo?: string;
 };
 
 function DetailField({
@@ -45,6 +47,7 @@ export function InventoryMovementDetailModal({
   movement,
   onOpenChange,
   open,
+  returnTo,
 }: InventoryMovementDetailModalProps) {
   const stockBefore =
     movement != null ? movement.stockAfter - movement.quantityDelta : undefined;
@@ -110,25 +113,19 @@ export function InventoryMovementDetailModal({
             <DetailField
               label="Stock final"
               value={
-                <span className="text-base font-bold tabular-nums">{movement.stockAfter}</span>
+                <span
+                  className={cn(
+                    "text-base font-bold tabular-nums",
+                    movement.stockAfter < 0 && "text-error",
+                  )}
+                >
+                  {movement.stockAfter}
+                </span>
               }
             />
             <DetailField
-              label="Referencia"
-              value={
-                movement.saleId || movement.purchaseId ? (
-                  <InventoryMovementReferenceCell
-                    purchaseId={movement.purchaseId}
-                    saleId={movement.saleId}
-                  />
-                ) : movement.conversionId ? (
-                  <span className="font-mono text-[13px]">
-                    Conv. {formatTruncatedCode(movement.conversionId)}
-                  </span>
-                ) : (
-                  <span className="text-on-surface-variant">Manual</span>
-                )
-              }
+              label="Documento"
+              value={<InventoryMovementDocumentCell movement={movement} returnTo={returnTo} />}
             />
           </div>
 

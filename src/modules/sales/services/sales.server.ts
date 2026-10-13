@@ -8,9 +8,11 @@ import {
   throwIfSupabaseError,
 } from "@/lib/supabase/errors";
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { buildPaymentNotes, createPayment } from "@/modules/payments/services/payments.server";
 
+import type { PaymentStatus } from "@/shared/mocks/erp-data";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import type { SaleInput, SaleUpdateInput } from "./sales.mock-server";
@@ -84,6 +86,7 @@ type PaymentRow = {
   reference_code: string | null;
   ref_rate_ves: number;
   sale_id: string | null;
+  status?: PaymentStatus | null;
 };
 
 type StockMovementRow = {
@@ -184,6 +187,7 @@ function mapPaymentRow(row: PaymentRow) {
     referenceCode: mapNullableString(row.reference_code),
     refRateVes: Number(row.ref_rate_ves),
     saleId: row.sale_id ?? undefined,
+    status: row.status ?? undefined,
   };
 }
 
@@ -304,34 +308,42 @@ export async function listSales(searchParams: URLSearchParams, storeId: string):
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
 
-  let query = supabase
-    .from("sales")
-    .select(
-      "*, customer:contacts!sales_customer_id_fkey(id, name, type, email, phone, address), sale_items(count)",
-      { count: "exact" },
-    )
-    .eq("store_id", storeId);
-
   const status = searchParams.get("status");
-  if (status) {
-    query = query.eq("status", status);
-  }
-
   const customerId = searchParams.get("customerId");
-  if (customerId) {
-    query = query.eq("customer_id", customerId);
-  }
-
   const search = searchParams.get("search")?.trim();
-  if (search) {
-    query = query.ilike("invoice_number", `%${search}%`);
-  }
 
-  query = applyCreatedAtCaracasRange(query, searchParams.get("from"), searchParams.get("to"));
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("sales")
+      .select(
+        "*, customer:contacts!sales_customer_id_fkey(id, name, type, email, phone, address), sale_items(count)",
+        listCountOptions(head),
+      )
+      .eq("store_id", storeId);
 
-  const { count, data, error } = await query
-    .order("created_at", { ascending: false })
-    .range(skip, skip + limit - 1);
+    if (status) {
+      query = query.eq("status", status);
+    }
+
+    if (customerId) {
+      query = query.eq("customer_id", customerId);
+    }
+
+    if (search) {
+      query = query.ilike("invoice_number", `%${search}%`);
+    }
+
+    return applyCreatedAtCaracasRange(query, searchParams.get("from"), searchParams.get("to"));
+  };
+
+  const { count, data, error } = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () =>
+      buildFilteredQuery(false)
+        .order("created_at", { ascending: false })
+        .range(skip, skip + limit - 1),
+  });
 
   throwIfSupabaseError(error);
 
@@ -575,13 +587,13 @@ async function createSaleThenPayments(
       const cancelMessage = getSupabaseErrorMessage(cancelError);
 
       console.error(
-        `[sales] la venta ${sale.invoice_number} (${sale.id}) quedo viva: fallo el cobro (${paymentMessage}) y no se pudo anular (${cancelMessage}).`,
+        `[sales] la venta ${sale.invoice_number} (${sale.id}) quedó viva: falló el cobro (${paymentMessage}) y no se pudo anular (${cancelMessage}).`,
       );
 
       throw new ApiError(
         409,
         "CONFLICT",
-        `El cobro fallo (${paymentMessage}) y la venta ${sale.invoice_number} NO se pudo anular: quedo registrada con el stock descontado. No la repitas; revisala en Ventas (id ${sale.id}).`,
+        `El cobro fallo (${paymentMessage}) y la venta ${sale.invoice_number} NO se pudo anular: quedó registrada con el stock descontado. No la repitas; revísala en Ventas (id ${sale.id}).`,
         {
           cancelError: cancelMessage,
           invoiceNumber: sale.invoice_number,

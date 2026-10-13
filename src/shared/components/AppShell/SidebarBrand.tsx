@@ -53,7 +53,7 @@ export function SidebarBrand({
       </div>
       {onClose ? (
         <Button
-          aria-label="Cerrar menu"
+          aria-label="Cerrar menú"
           className="absolute top-1/2 right-3 h-8 w-8 shrink-0 -translate-y-1/2 p-0 text-sidebar-muted hover:bg-white/10 hover:text-sidebar-foreground lg:hidden"
           onClick={onClose}
           type="button"

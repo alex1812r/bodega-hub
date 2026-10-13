@@ -3,6 +3,7 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as mock from "@/modules/payroll/services/payroll.mock-server";
 import * as server from "@/modules/payroll/services/payroll.server";
@@ -27,7 +28,7 @@ export async function POST(request: Request, context: ItemRouteContext) {
   try {
     const auth = await requireStorePermission(request, "payroll.manage");
     const { id } = await context.params;
-    const input = schema.parse(await request.json());
+    const input = schema.parse(await readJsonBody(request));
 
     return jsonData(await service().payPayrollItem(id, input, auth.storeId));
   } catch (error) {

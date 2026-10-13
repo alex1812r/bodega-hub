@@ -1,12 +1,13 @@
 "use client";
 
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 import { FormActions } from "@/shared/components/FormActions";
 import { GenerateSkuIconButton } from "@/shared/components/GenerateSkuIconButton";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 
 import type { ProductImportRowDraft } from "../../services/validateProductImportRows";
@@ -30,13 +31,21 @@ export function ProductImportRowEditModal({
   row,
 }: ProductImportRowEditModalProps) {
   const formId = useId();
-  const [draft, setDraft] = useState<ProductImportRowDraft | null>(null);
+  const [draft, setDraft] = useState<ProductImportRowDraft | null>(() =>
+    row && open ? validatedRowToDraft(row) : null,
+  );
+  // Al abrir o al cambiar de fila se recarga el borrador (ajuste durante el render).
+  const [syncedOpen, setSyncedOpen] = useState(open);
+  const [syncedRow, setSyncedRow] = useState(row);
 
-  useEffect(() => {
+  if (open !== syncedOpen || row !== syncedRow) {
+    setSyncedOpen(open);
+    setSyncedRow(row);
+
     if (row && open) {
       setDraft(validatedRowToDraft(row));
     }
-  }, [open, row]);
+  }
 
   if (!row || !draft) {
     return null;
@@ -47,6 +56,22 @@ export function ProductImportRowEditModal({
     if (!draft) {
       return;
     }
+
+    // Un stock con decimales no se guarda: el campo ya muestra su aviso y recibe el foco.
+    const invalidStock = (["stock_inicial", "stock_minimo"] as const).find((key) =>
+      getNumberInputError(draft[key], { decimals: 0 }),
+    );
+
+    if (invalidStock) {
+      const field = event.currentTarget.elements.namedItem(invalidStock);
+
+      if (field instanceof HTMLElement) {
+        field.focus();
+      }
+
+      return;
+    }
+
     onSave(draft);
     onOpenChange(false);
   }
@@ -87,7 +112,7 @@ export function ProductImportRowEditModal({
           value={draft.sku}
         />
         <Input
-          label="Codigo de barras"
+          label="Código de barras"
           name="codigo_barras"
           onChange={(event) => updateField("codigo_barras", event.target.value)}
           placeholder="Opcional"
@@ -114,43 +139,35 @@ export function ProductImportRowEditModal({
           value={draft.categoryId}
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={2}
             label="Precio ref (USD)"
-            min={0}
             name="precio_ref"
             onChange={(event) => updateField("precio_ref", event.target.value)}
             required
-            step="0.01"
-            type="number"
             value={draft.precio_ref}
           />
-          <Input
+          <NumberInput
+            decimals={2}
             label="Costo ref (USD)"
-            min={0}
             name="costo_ref"
             onChange={(event) => updateField("costo_ref", event.target.value)}
-            step="0.01"
-            type="number"
             value={draft.costo_ref}
           />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={0}
             label="Stock inicial"
-            min={0}
             name="stock_inicial"
             onChange={(event) => updateField("stock_inicial", event.target.value)}
-            step="1"
-            type="number"
             value={draft.stock_inicial}
           />
-          <Input
+          <NumberInput
+            decimals={0}
             label="Stock mínimo"
-            min={0}
             name="stock_minimo"
             onChange={(event) => updateField("stock_minimo", event.target.value)}
-            step="1"
-            type="number"
             value={draft.stock_minimo}
           />
         </div>

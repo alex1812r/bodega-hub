@@ -48,7 +48,7 @@ export const payrollCommissionKindVariants: Record<
 };
 
 export const payrollSemaphoreLabels: Record<PayrollSemaphoreLevel, string> = {
-  ambar: "Atencion",
+  ambar: "Atención",
   rojo: "Alto",
   "sin-datos": "Sin datos",
   verde: "Saludable",
@@ -61,4 +61,4 @@ export const payrollPaidCurrencyLabels: Record<PayrollPaidCurrency, string> = {
 
 /** Texto de ayuda del semáforo, fijado en §3 del plan de nómina. */
 export const PAYROLL_SEMAPHORE_HELP =
-  "Lo que queda despues de comisiones es lo disponible para gastos, reinversion y reserva.";
+  "Lo que queda después de comisiones es lo disponible para gastos, reinversión y reserva.";

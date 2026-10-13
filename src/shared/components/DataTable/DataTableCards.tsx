@@ -24,6 +24,8 @@ type DataTableCardsProps<TData> = {
   isLoading?: boolean;
   loadingRows?: number;
   onRetry?: () => void;
+  /** Contenido expandido de una tarjeta, al pie; `null`, `undefined` o `false` = cerrada. */
+  renderExpandedRow?: (row: TData) => ReactNode;
 };
 
 export function DataTableCards<TData>({
@@ -40,6 +42,7 @@ export function DataTableCards<TData>({
   isLoading = false,
   loadingRows = 5,
   onRetry,
+  renderExpandedRow,
 }: DataTableCardsProps<TData>) {
   const errorMessage = error instanceof Error ? error.message : error;
   const hasRows = data.length > 0;
@@ -85,6 +88,7 @@ export function DataTableCards<TData>({
         <ul className={cn("flex flex-col gap-3", embedded ? null : "p-4")}>
           {data.map((row) => {
             const rowActions = actions?.(row);
+            const expandedContent = renderExpandedRow?.(row);
 
             return (
               <li
@@ -129,6 +133,13 @@ export function DataTableCards<TData>({
                     </div>
                   ))}
                 </dl>
+                {expandedContent === null ||
+                expandedContent === undefined ||
+                expandedContent === false ? null : (
+                  <div className="-mx-4 -mb-4 mt-3 overflow-hidden rounded-b-xl border-t border-border dark:border-slate-800">
+                    {expandedContent}
+                  </div>
+                )}
               </li>
             );
           })}
@@ -137,7 +148,7 @@ export function DataTableCards<TData>({
         <div className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
           {emptyState ?? (
             <EmptyState
-              description="Cuando existan datos, se mostraran aqui."
+              description="Cuando existan datos, se mostrarán aquí."
               title="No hay registros para mostrar"
             />
           )}

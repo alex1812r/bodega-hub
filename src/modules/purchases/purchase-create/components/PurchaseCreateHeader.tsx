@@ -12,7 +12,8 @@ export function PurchaseCreateHeader() {
           Ingreso de mercancía al inventario
         </p>
       </div>
-      <PageBackButton className="shrink-0" href="/purchases" />
+      {/* Vuelve a la lista de origen (`returnTo`) con sus filtros; sin atajos, como siempre. */}
+      <PageBackButton className="shrink-0" fallbackHref="/purchases" shortcuts={false} />
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/components/Card";
-import { Input } from "@/shared/components/Input";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { formatRefUsd } from "@/shared/utils/currency";
 
 import { commissionForSale, shareOfGrossProfit } from "../../utils/payrollMath";
@@ -44,23 +44,18 @@ export function PayrollSimulator({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={2}
             helperText="Ventas cobradas del cajero en la quincena."
             label="Ventas (REF)"
-            min="0"
             onChange={(event) => setSalesRef(event.target.value)}
-            step="0.01"
-            type="number"
             value={salesRef}
           />
-          <Input
-            helperText="Porcentaje de comision a simular."
-            label="Comision (%)"
-            max="100"
-            min="0"
+          <NumberInput
+            decimals={2}
+            helperText="Porcentaje de comisión a simular."
+            label="Comisión (%)"
             onChange={(event) => setCommissionPct(event.target.value)}
-            step="0.01"
-            type="number"
             value={commissionPct}
           />
         </div>
@@ -69,11 +64,11 @@ export function PayrollSimulator({
           className="rounded-md bg-indigo-50 px-3 py-2 text-sm leading-6 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
           data-testid="payroll-simulator-result"
         >
-          Con ventas de {formatRefUsd(salesNumber)} al {pctNumber.toFixed(2)} %, la comision seria{" "}
+          Con ventas de {formatRefUsd(salesNumber)} al {pctNumber.toFixed(2)} %, la comisión sería{" "}
           <strong className="tabular-nums">{formatRefUsd(commissionRef)}</strong>
           {sharePct == null
-            ? "; todavia no tenemos ganancia bruta promedio para comparar."
-            : `; eso es ${sharePct.toFixed(2)} % de la ganancia bruta promedio de las ultimas ${String(periodsInAverage)} quincenas (${formatRefUsd(averageGrossProfitRef ?? 0)}).`}
+            ? "; todavía no tenemos ganancia bruta promedio para comparar."
+            : `; eso es ${sharePct.toFixed(2)} % de la ganancia bruta promedio de las últimas ${String(periodsInAverage)} quincenas (${formatRefUsd(averageGrossProfitRef ?? 0)}).`}
         </p>
       </CardContent>
     </Card>

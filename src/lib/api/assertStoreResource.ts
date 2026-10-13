@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api/apiError";
 import { assertStoreAccess } from "@/lib/api/storeAccess";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
-import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { INVALID_DATA_MESSAGE, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 type StoreScopedRow = {
@@ -32,6 +32,12 @@ export async function assertSupabaseStoreResource(
   storeId: string,
   notFoundMessage: string,
 ) {
+  // Un NUL corta el texto del filtro: `<uuid>\0` encontraba la fila de `<uuid>` y
+  // daba por buena la pertenencia de un id que no es el que sigue viaje a la RPC.
+  if (id.includes("\u0000")) {
+    throw new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
+  }
+
   const admin = createAdminSupabaseClient();
   const { data, error } = await admin
     .from(table)

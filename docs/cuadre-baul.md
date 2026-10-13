@@ -181,3 +181,12 @@ where cs.store_id = '<store_id>'
   and cs.absorbed_by_session_id is not null
 order by cs.closed_at;
 ```
+
+## 6. Hallazgos del plan ux-mejoras (2026-10)
+
+Añadido el 2026-10-13. El plan ux-mejoras no cambió ninguna RPC de caja ni de baúl. Sus pruebas encontraron lo siguiente, que **no se corrigió** y sigue igual en la rama `feat/ux-mejoras`. La tabla completa, con severidad y motivo, está en [`despliegue-ux-mejoras.md` §4](despliegue-ux-mejoras.md#4-hallazgos-fuera-de-alcance).
+
+- **Anular un pago recorta el baúl a 0** (alto). `cancel_payment_apply` (`20261006h`) deja el saldo de la cubeta en 0 aunque la suma de sus movimientos dé negativo: el saldo deja de cuadrar con `vault_movements`.
+- **Lecturas directas por PostgREST** (alto). Las políticas RLS de `vault_movements` y `store_vaults` solo filtran por tienda: un vendedor o un almacén leen con su sesión los movimientos y saldos del baúl, incluidos los pagos a proveedores. El BFF sí lo niega.
+- **Tienda sin fila en `store_vaults`** (medio). Baúl responde 404 y la primera apertura de caja no admite fondo inicial.
+- **Pago extra de Bs 0,01** (bajo). Una compra ya saldada admite por API un pago más de un céntimo (`20260904-payment-guards.sql:311`, holgura `+ 0.01`): salen Bs 0,01 del baúl y `paid_ves` queda por encima del total. Ninguna pantalla lo ofrece.

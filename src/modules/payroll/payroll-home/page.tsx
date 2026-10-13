@@ -73,7 +73,7 @@ export function PayrollHomePage() {
       },
       {
         align: "right",
-        header: "Comision",
+        header: "Comisión",
         key: "commissionRef",
         render: (period) => (
           <span className="tabular-nums text-on-surface-variant">
@@ -84,7 +84,7 @@ export function PayrollHomePage() {
       },
       {
         align: "right",
-        header: "Total nomina",
+        header: "Total nómina",
         key: "totalRef",
         render: (period) => (
           <strong className="tabular-nums">{formatRefUsd(period.totalRef)}</strong>
@@ -109,13 +109,13 @@ export function PayrollHomePage() {
 
   return (
     <EntityListPage
-      description="Comision de los cajeros por quincena: calcular, aprobar y pagar."
+      description="Comisión de los cajeros por quincena: calcular, aprobar y pagar."
       layout="sections"
-      title="Nomina"
+      title="Nómina"
     >
       {showNoEmployeesWarning ? (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-          Ningun empleado tiene porcentaje de comision configurado, asi que la quincena saldra en
+          Ningún empleado tiene porcentaje de comisión configurado, así que la quincena saldrá en
           cero.{" "}
           <Link className="font-medium underline" href="/payroll/settings">
             Configurar comisiones
@@ -158,7 +158,7 @@ export function PayrollHomePage() {
             ) : (
               <>
                 <p className="text-sm text-on-surface-variant">
-                  Todavia no calculamos esta quincena. Al calcular se crea un borrador que puedes
+                  Todavía no calculamos esta quincena. Al calcular se crea un borrador que puedes
                   recalcular hasta aprobarlo.
                 </p>
                 <Button
@@ -181,7 +181,7 @@ export function PayrollHomePage() {
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>Quincena en curso</CardTitle>
-              <Badge variant="info">Estimacion</Badge>
+              <Badge variant="info">Estimación</Badge>
             </div>
             <CardDescription>
               {current
@@ -194,7 +194,7 @@ export function PayrollHomePage() {
               {currentQuery.isLoading ? "—" : formatRefUsd(current?.estimateTotalRef ?? 0)}
             </p>
             <p className="text-xs text-on-surface-variant">
-              Estimacion viva: cambia con cada venta cobrada y no escribe nada todavia. La
+              Estimación viva: cambia con cada venta cobrada y no escribe nada todavía. La
               quincena solo se puede calcular cuando termina.
             </p>
             {current && current.estimate.length > 0 ? (
@@ -235,7 +235,7 @@ export function PayrollHomePage() {
             emptyState={
               <EmptyState
                 className="py-10"
-                description="Las quincenas calculadas apareceran aqui."
+                description="Las quincenas calculadas aparecerán aquí."
                 title="Sin quincenas"
               />
             }

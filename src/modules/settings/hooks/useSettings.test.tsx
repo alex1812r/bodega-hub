@@ -3,6 +3,8 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
+  useCashCloseSettings,
+  usePricingSettings,
   useSettings,
   useUpdateSettings,
   useUpdateUser,
@@ -46,6 +48,62 @@ describe("settings hooks", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     global.fetch = fetchMock;
+  });
+
+  it("loads the pricing settings from the read-only endpoint of product viewers", async () => {
+    const pricing = { chipsPct: [5, 50], greenFromPct: 40, yellowFromPct: 10 };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: pricing }));
+
+    const { result } = renderHook(() => usePricingSettings(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(pricing);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/settings/pricing");
+  });
+
+  it("loads the cash close threshold from the read-only endpoint of cash operators", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { cashCloseDiffAlertVes: 150 } }));
+
+    const { result } = renderHook(() => useCashCloseSettings(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual({ cashCloseDiffAlertVes: 150 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/settings/cash-close");
+  });
+
+  it("saving the settings refreshes the cached cash close threshold without another request", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { cashCloseDiffAlertVes: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            businessName: "BodegaHub",
+            cashCloseDiffAlertVes: 75,
+            enabledPaymentMethods: ["efectivo_ves"],
+            pricing: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 },
+          },
+        }),
+      );
+
+    const { result } = renderHook(
+      () => ({ cashClose: useCashCloseSettings(), update: useUpdateSettings() }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.cashClose.data).toEqual({ cashCloseDiffAlertVes: 0 }));
+
+    result.current.update.mutate({ cashCloseDiffAlertVes: 75 });
+
+    await waitFor(() => expect(result.current.cashClose.data).toEqual({ cashCloseDiffAlertVes: 75 }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/settings",
+      expect.objectContaining({ method: "PATCH" }),
+    );
   });
 
   it("loads settings and users", async () => {

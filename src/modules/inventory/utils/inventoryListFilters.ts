@@ -13,6 +13,8 @@ export type InventoryListQueryFilters = {
   lowStock?: boolean;
   maxPriceRef?: number;
   minPriceRef?: number;
+  /** Filtro exacto por id de producto (enlace desde `/products`). */
+  productId?: string;
   search?: string;
   stockStatus?: InventoryStockStatus[];
 };
@@ -29,6 +31,7 @@ export function parseInventoryListFilters(
     lowStock: searchParams.get("lowStock") === "true" ? true : undefined,
     maxPriceRef,
     minPriceRef,
+    productId: searchParams.get("productId")?.trim() || undefined,
     search: searchParams.get("search")?.trim() || undefined,
     stockStatus,
   };
@@ -41,6 +44,10 @@ export function matchesInventoryListFilters(
   const search = filters.search?.toLowerCase();
 
   if (search && !matchesProductSearch(product, search)) {
+    return false;
+  }
+
+  if (filters.productId && product.id !== filters.productId) {
     return false;
   }
 

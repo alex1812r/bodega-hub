@@ -35,6 +35,7 @@ describe("buildPaymentsExportWorkbook", () => {
   it("creates a single worksheet with list columns and filter context", async () => {
     const buffer = await buildPaymentsExportWorkbook([samplePayment], {
       exportedAt: "2026-05-20T12:00:00.000Z",
+      filterLabels: ["Contacto: Cliente Demo"],
       filters: {
         contactId: "cont-customer",
         direction: "entrada",
@@ -45,12 +46,14 @@ describe("buildPaymentsExportWorkbook", () => {
     await workbook.xlsx.load(buffer);
 
     expect(workbook.worksheets).toHaveLength(1);
+    // PAG-F2: el contacto sale con su nombre (el del chip), no con su id.
     expect(workbook.getWorksheet("Pagos")?.getCell("A1").value).toBe(
-      "Listado de pagos | Contacto: cont-customer | Tipo: Entrada",
+      "Listado de pagos | Contacto: Cliente Demo | Tipo: Entrada",
     );
+    // PAG-F2: la primera columna se llama como en la lista, no "ID Pago".
     expect(workbook.getWorksheet("Pagos")?.getRow(3).values).toEqual([
       ,
-      "ID Pago",
+      "Comprobante",
       "Contacto",
       "Referencia",
       "Fecha",
@@ -65,5 +68,17 @@ describe("buildPaymentsExportWorkbook", () => {
       "Cliente Demo (J-12345678-9)",
     );
     expect(workbook.getWorksheet("Pagos")?.getRow(4).getCell(9).value).toBe("Entrada");
+  });
+
+  it("sin el texto humano de un filtro por id, el titulo no muestra el id (PAG-F2)", async () => {
+    const buffer = await buildPaymentsExportWorkbook([samplePayment], {
+      exportedAt: "2026-05-20T12:00:00.000Z",
+      filters: { contactId: "cont-customer", saleId: "sale-001" },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+
+    expect(workbook.getWorksheet("Pagos")?.getCell("A1").value).toBe("Listado de pagos");
   });
 });

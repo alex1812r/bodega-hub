@@ -30,12 +30,12 @@ function demoHeaders() {
 
 const ERROR_MESSAGES: Record<string, string> = {
   ASSISTANT_LIMIT_REACHED:
-    "Alcanzaste el limite de consultas por hoy. El contador se reinicia manana.",
+    "Alcanzaste el límite de consultas por hoy. El contador se reinicia mañana.",
   ASSISTANT_PROVIDER_ERROR:
-    "El servicio de IA no esta disponible en este momento. Intenta de nuevo en unos minutos.",
-  BAD_REQUEST: "No pude leer esa pregunta. Reformulala e intenta otra vez.",
+    "El servicio de IA no está disponible en este momento. Intenta de nuevo en unos minutos.",
+  BAD_REQUEST: "No pude leer esa pregunta. Reformúlala e intenta otra vez.",
   FORBIDDEN: "Tu rol no tiene acceso al asistente.",
-  UNAUTHORIZED: "Tu sesion expiro. Vuelve a iniciar sesion.",
+  UNAUTHORIZED: "Tu sesión expiró. Vuelve a iniciar sesión.",
 };
 
 /** Traduce el error del transporte (que llega como texto) a espanol. */

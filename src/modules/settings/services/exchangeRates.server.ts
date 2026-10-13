@@ -11,6 +11,7 @@ import {
 } from "@/lib/exchange-rates/officialRateCache";
 import { mapExchangeRate, type ExchangeRateRow } from "@/lib/supabase/mappers/settings";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { ExchangeRateMock } from "@/shared/mocks/erp-data";
@@ -25,15 +26,22 @@ export async function listExchangeRates(searchParams: URLSearchParams, storeId: 
   const from = searchParams.get("from");
   const to = searchParams.get("to");
 
-  let query = supabase
-    .from("exchange_rates")
-    .select(exchangeRateSelect, { count: "exact" })
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false });
-
-  query = applyCreatedAtCaracasRange(query, from, to);
-
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
+  const buildQuery = (head: boolean) =>
+    applyCreatedAtCaracasRange(
+      supabase
+        .from("exchange_rates")
+        .select(exchangeRateSelect, listCountOptions(head))
+        .eq("store_id", storeId),
+      from,
+      to,
+    );
+  const { count, data, error } = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false)
+        .order("created_at", { ascending: false })
+        .range(skip, skip + limit - 1),
+  });
 
   throwIfSupabaseError(error);
 

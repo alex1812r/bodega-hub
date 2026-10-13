@@ -4,7 +4,8 @@
  *
  * Garantias:
  *   - No crea ningun objeto: las 9 comprobaciones de las vistas de integridad
- *     (parches 20261005 + 20261006d) van como SELECT inline.
+ *     (parches 20261005 + 20261006d, y 20261009d para las conversiones de
+ *     recetas con varios componentes) van como SELECT inline.
  *   - Toda sentencia pasa por `createReadOnlyQuery`, que solo deja salir
  *     `SELECT` / `WITH ... SELECT`, `BEGIN ... READ ONLY` y `ROLLBACK`.
  *   - La sesion completa va dentro de una transaccion READ ONLY que termina
@@ -197,6 +198,7 @@ const SCHEMA_TABLES = [
   "purchases",
   "purchase_items",
   "product_pack_conversions",
+  "product_pack_components",
   "stores",
 ] as const;
 
@@ -696,7 +698,95 @@ from purchase_docs d
 where (d.is_reverted and d.reversal_delta <> -d.original_delta)
    or (not d.is_reverted and (d.cancel_delta <> 0 or -d.reversal_delta > d.original_delta))`;
 
-const CONVERSION_MISMATCHES_SQL = `with pairs as (
+/** Columnas del modelo de recetas (20261009d). Si falta alguna, la base aun tiene el par 1 a 1 de 20261006d. */
+const RECIPE_COLUMNS = [
+  "product_pack_conversions.id",
+  "product_pack_conversions.total_units",
+  "product_pack_components.conversion_id",
+  "product_pack_components.unit_product_id",
+];
+
+export function hasPackRecipes(caps: Capabilities): boolean {
+  return RECIPE_COLUMNS.every((column) => caps.columns.has(column));
+}
+
+/** 20261009d: una conversion tiene una salida y una entrada por componente de la receta. */
+const CONVERSION_MISMATCHES_RECIPE_SQL = `with pairs as (
+  select
+    m.conversion_id,
+    max(m.store_id::text)::uuid as movement_store_id,
+    max(case when m.type = 'conversion_salida' then m.product_id::text end)::uuid as pack_product_id,
+    max(case when m.type = 'conversion_entrada' then m.product_id::text end)::uuid as unit_product_id,
+    sum(case when m.type = 'conversion_salida' then m.quantity_delta end) as pack_delta,
+    sum(case when m.type = 'conversion_entrada' then m.quantity_delta end) as unit_delta
+  from public.stock_movements m
+  where m.conversion_id is not null
+    and m.type in ('conversion_salida', 'conversion_entrada')
+  group by m.conversion_id
+),
+linked as (
+  select
+    pr.*,
+    coalesce(pp.store_id, up.store_id, pr.movement_store_id) as store_id,
+    case
+      when pr.pack_delta < 0 and pr.unit_delta > 0 and pr.unit_delta % (-pr.pack_delta) = 0
+        then (pr.unit_delta / (-pr.pack_delta))::integer
+    end as recorded_units_per_pack,
+    (
+      select c.total_units
+      from public.product_pack_conversions c
+      where c.pack_product_id = pr.pack_product_id
+        and exists (
+          select 1
+          from public.product_pack_components pc
+          where pc.conversion_id = c.id
+            and pc.unit_product_id = pr.unit_product_id
+        )
+      order by c.is_active desc, c.updated_at desc nulls last, c.created_at desc
+      limit 1
+    ) as current_units_per_pack,
+    (
+      select count(distinct e.product_id)
+      from public.stock_movements e
+      where e.conversion_id = pr.conversion_id
+        and e.type = 'conversion_entrada'
+        and not exists (
+          select 1
+          from public.product_pack_components pc
+          join public.product_pack_conversions c on c.id = pc.conversion_id
+          where c.pack_product_id = pr.pack_product_id
+            and pc.unit_product_id = e.product_id
+        )
+    ) as unlinked_components
+  from pairs pr
+  left join public.products pp on pp.id = pr.pack_product_id
+  left join public.products up on up.id = pr.unit_product_id
+)
+select
+  l.conversion_id,
+  l.store_id,
+  l.pack_product_id,
+  l.unit_product_id,
+  l.pack_delta::integer as pack_delta,
+  l.unit_delta::integer as unit_delta,
+  l.recorded_units_per_pack as units_per_pack,
+  case
+    when l.pack_product_id is null then 'missing_salida'
+    when l.unit_product_id is null then 'missing_entrada'
+    when l.current_units_per_pack is null or l.unlinked_components > 0 then 'missing_link'
+    else 'ratio_mismatch'
+  end::text as issue,
+  l.current_units_per_pack
+from linked l
+where l.pack_product_id is null
+   or l.unit_product_id is null
+   or l.current_units_per_pack is null
+   or l.unlinked_components > 0
+   or l.recorded_units_per_pack is null
+   or l.recorded_units_per_pack < 2`;
+
+/** 20261006d: par empaque -> unidad 1 a 1 (base sin product_pack_components). */
+const CONVERSION_MISMATCHES_PAIR_SQL = `with pairs as (
   select
     m.conversion_id,
     max(m.store_id::text)::uuid as movement_store_id,
@@ -833,7 +923,7 @@ export function planChecks(caps: Capabilities): CheckPlans {
           },
     movements_without_document: { sql: MOVEMENTS_WITHOUT_DOCUMENT_SQL, degraded: [] },
     reversal_mismatches: { sql: REVERSAL_MISMATCHES_SQL, degraded: [] },
-    conversion_mismatches: { sql: CONVERSION_MISMATCHES_SQL, degraded: [] },
+    conversion_mismatches: { sql: hasPackRecipes(caps) ? CONVERSION_MISMATCHES_RECIPE_SQL : CONVERSION_MISMATCHES_PAIR_SQL, degraded: [] },
     negative_stock: { sql: NEGATIVE_STOCK_SQL, degraded: [] },
     cross_store_movements: { sql: CROSS_STORE_MOVEMENTS_SQL, degraded: [] },
   };

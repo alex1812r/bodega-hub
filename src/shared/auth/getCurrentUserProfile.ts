@@ -48,11 +48,11 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile | null
   }
 
   if (profile.is_active === false) {
-    throw new Error("Tu usuario esta inactivo.");
+    throw new Error("Tu usuario está inactivo.");
   }
 
   if (!isUserRole(profile.role)) {
-    throw new Error("Tu usuario no tiene un rol valido.");
+    throw new Error("Tu usuario no tiene un rol válido.");
   }
 
   return {

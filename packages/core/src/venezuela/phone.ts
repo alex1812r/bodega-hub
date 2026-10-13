@@ -58,13 +58,13 @@ export function parseVeMobilePhone(raw: string): ParseVeMobilePhoneResult {
   const digits = digitsOnly(raw);
 
   if (!digits) {
-    return { ok: false, error: "Indica el telefono." };
+    return { ok: false, error: "Indica el teléfono." };
   }
 
   if (digits.length !== 11) {
     return {
       ok: false,
-      error: "El telefono debe tener 11 digitos (prefijo + 7 digitos).",
+      error: "El teléfono debe tener 11 dígitos (prefijo + 7 dígitos).",
     };
   }
 
@@ -81,7 +81,7 @@ export function parseVeMobilePhone(raw: string): ParseVeMobilePhoneResult {
   if (subscriber.length !== 7) {
     return {
       ok: false,
-      error: "El numero debe tener 7 digitos despues del prefijo.",
+      error: "El número debe tener 7 dígitos después del prefijo.",
     };
   }
 

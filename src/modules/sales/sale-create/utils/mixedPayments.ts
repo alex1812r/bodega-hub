@@ -145,7 +145,7 @@ export function validateSinglePaymentDetails(
   }
 
   if (!details) {
-    errors.push("Completa los datos del metodo de pago.");
+    errors.push("Completa los datos del método de pago.");
     return { errors, isValid: false };
   }
 
@@ -156,17 +156,17 @@ export function validateSinglePaymentDetails(
   }
 
   if (needsPhone(method) && !details.phone.trim()) {
-    errors.push("Indica el telefono.");
+    errors.push("Indica el teléfono.");
   } else if (needsPhone(method) && !isValidVeMobilePhone(details.phone)) {
-    errors.push("Telefono invalido (ej. 0412 555-1234).");
+    errors.push("Teléfono inválido (ej. 0412 555-1234).");
   }
 
   if (method === "pago_movil") {
     if (!/^\d{4}$/.test(details.referenceCode.trim())) {
-      errors.push("La referencia de pago movil debe tener 4 digitos.");
+      errors.push("La referencia de pago móvil debe tener 4 dígitos.");
     }
   } else if (method === "transferencia" && !details.referenceCode.trim()) {
-    errors.push("Indica el numero de transferencia.");
+    errors.push("Indica el número de transferencia.");
   }
 
   return {
@@ -580,19 +580,19 @@ export function validateMixedPayments(
   if (lines.length < minLines) {
     errors.push(
       minLines === 1
-        ? "Agrega al menos un metodo de pago."
-        : `Agrega al menos ${minLines} metodos de pago.`,
+        ? "Agrega al menos un método de pago."
+        : `Agrega al menos ${minLines} métodos de pago.`,
     );
   }
 
   if (lines.length > maxLines) {
-    errors.push(`El maximo es ${maxLines} metodos de pago.`);
+    errors.push(`El máximo es ${maxLines} métodos de pago.`);
   }
 
   for (const line of lines) {
     if (!enabled.includes(line.method)) {
       errors.push(
-        `El metodo ${paymentMethodLabels[line.method]} no esta habilitado en la tienda.`,
+        `El método ${paymentMethodLabels[line.method]} no está habilitado en la tienda.`,
       );
     }
   }
@@ -602,7 +602,7 @@ export function validateMixedPayments(
   }
 
   lines.forEach((line, index) => {
-    const label = `Linea ${index + 1}`;
+    const label = `Línea ${index + 1}`;
 
     if (!Number.isFinite(line.amount) || line.amount <= 0) {
       errors.push(`${label}: indica un monto mayor a cero.`);
@@ -615,16 +615,16 @@ export function validateMixedPayments(
     }
 
     if (needsPhone(line.method) && !line.phone?.trim()) {
-      errors.push(`${label}: indica el telefono.`);
+      errors.push(`${label}: indica el teléfono.`);
     } else if (needsPhone(line.method) && !isValidVeMobilePhone(line.phone ?? "")) {
-      errors.push(`${label}: telefono invalido (ej. 0412 555-1234).`);
+      errors.push(`${label}: teléfono inválido (ej. 0412 555-1234).`);
     }
 
     if (needsReference(line.method)) {
       const reference = line.referenceCode?.trim() ?? "";
       if (line.method === "pago_movil") {
         if (!/^\d{4}$/.test(reference)) {
-          errors.push(`${label}: la referencia de pago movil debe tener 4 digitos.`);
+          errors.push(`${label}: la referencia de pago móvil debe tener 4 dígitos.`);
         }
       } else if (!reference) {
         errors.push(`${label}: indica la referencia.`);
@@ -634,7 +634,7 @@ export function validateMixedPayments(
 
   const methods = lines.map((line) => line.method);
   if (new Set(methods).size !== methods.length) {
-    errors.push("Cada metodo de pago solo puede usarse una vez.");
+    errors.push("Cada método de pago solo puede usarse una vez.");
   }
 
   if (options.change && options.change.amount < 0) {
@@ -643,7 +643,7 @@ export function validateMixedPayments(
 
   if (change && !enabled.includes(change.method)) {
     errors.push(
-      `El vuelto por ${paymentMethodLabels[change.method]} no esta habilitado en la tienda.`,
+      `El vuelto por ${paymentMethodLabels[change.method]} no está habilitado en la tienda.`,
     );
   }
 
@@ -673,7 +673,7 @@ export function validateMixedPayments(
       );
     } else if (!pickChangeCarrierLineId(lines, rateVes, changeVes)) {
       errors.push(
-        `Ninguna linea recibida alcanza para devolver ${formatVes(changeVes)}.`,
+        `Ninguna línea recibida alcanza para devolver ${formatVes(changeVes)}.`,
       );
     } else {
       const rounding = roundMoney(overage - changeVes);
@@ -750,7 +750,7 @@ export function validateChangeAgainstDrawer(
   const available = roundMoney(drawer.ref + receivedRef);
   if (roundMoney(change.amount) > available + 0.01) {
     return [
-      `No hay suficiente efectivo en dolares en la caja para el vuelto: disponible ${formatRef(available)}, vuelto ${formatRef(change.amount)}.`,
+      `No hay suficiente efectivo en dólares en la caja para el vuelto: disponible ${formatRef(available)}, vuelto ${formatRef(change.amount)}.`,
     ];
   }
   return [];

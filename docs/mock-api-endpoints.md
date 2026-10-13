@@ -93,8 +93,9 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/contacts/[id]/sales` | `GET` | `contacts.view` | Ventas del cliente paginadas |
 | `/api/contacts/[id]/purchases` | `GET` | `contacts.view` | Compras del proveedor paginadas |
 | `/api/contacts/[id]/payments` | `GET` | `contacts.view` | Pagos del contacto paginados |
-| `/api/payments` | `GET` | `payments.view` | Lista pagos paginada (`payments` + contacto) |
+| `/api/payments` | `GET` | `payments.view` | Lista pagos paginada (`payments` + contacto). Filtros: `direction`, `method`, `from`, `to` (dia Caracas, inclusive), `saleId`, `purchaseId`, `contactId`. Vendedor solo cobros de venta. |
 | `/api/payments` | `POST` | `payments.manage` o `sales.create` | Registra pago (`register_payment` RPC). Vendedor solo ventas. |
+| `/api/payments/open-documents` | `GET` | `payments.manage` o `sales.create` | Ventas por cobrar y compras por pagar con saldo, mas antiguas primero (`type`, `search`, `contactId`, `from`, `to`, `olderThanDays`, paginacion) + `totals`. Compras: `payments.manage` y rol distinto de vendedor. |
 | `/api/payments/[id]` | `GET` | `payments.view` | Detalle con saldo pendiente |
 | `/api/payments/[id]` | `PATCH` | `payments.manage` | Actualiza notas y referencia bancaria |
 | `/api/reports/daily-sales` | `GET` | `reports.view` | Vista `daily_sales_summary` (`from`, `to`, paginacion) |
@@ -108,6 +109,14 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/reports/top-customers` | `GET` | `reports.view` | Agregado Supabase de ventas por cliente |
 | `/api/reports/purchases` | `GET` | `reports.view` | Listado Supabase de compras con filtros |
 | `/api/reports/payment-methods` | `GET` | `reports.view` | Pagos de venta activos agrupados por metodo (`from`, `to`, Caracas) |
+| `/api/reports/sales-by-hour` | `GET` | `reports.view` | Vista `report_sales_by_hour`: matriz dia de la semana x hora (`from`, `to` obligatorios) |
+| `/api/reports/sales-by-category` | `GET` | `reports.view` | Vista `report_sales_by_category`: ventas y margen por categoria (`from`, `to` obligatorios) |
+| `/api/reports/receivables-aging` | `GET` | `reports.view` + (`payments.manage` o `sales.create`) | Ventas por cobrar con antiguedad (`bucket` 0-7\|8-30\|30+, `contactId`, paginacion) + `summary` |
+| `/api/reports/payables-aging` | `GET` | `reports.view` + `payments.manage` y rol que vea pagos de compra | Compras por pagar con antiguedad (`bucket` 0-7\|8-30\|30+, `contactId`, paginacion) + `summary` |
+| `/api/reports/cash-close-differences` | `GET` | `reports.view` + `cash.view` | Vista `report_cash_close_differences`: contado, teorico y diferencia por cierre (`from`, `to`, `currency` ves\|ref, paginacion) + `totals` |
+| `/api/reports/dead-stock` | `GET` | `reports.view` + `inventory.view` | Vista `report_product_last_movement`: productos sin vender en `days` dias (1–3650, default 30; `categoryId`, paginacion) + `summary` |
+| `/api/reports/stock-turnover` | `GET` | `reports.view` + `inventory.view` | Rotacion por producto o categoria (`from`, `to` obligatorios; `groupBy` product\|category, paginacion) + `totals` |
+| `/api/reports/stock-adjustments` | `GET` | `reports.view` + `inventory.view` | Vista `report_stock_adjustments`: ajustes manuales por motivo y periodo (`from`, `to` obligatorios; `groupBy` day\|week\|month\|auto, paginacion) + `byReason`, `series`, `totals` |
 | `/api/exchange-rates` | `GET` | `dashboard.view` | Lista tasas ref/VES (mock o `exchange_rates`) |
 | `/api/exchange-rates/current` | `GET` | `dashboard.view` | Tasa vigente oficial: servidor consulta [DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial) (`promedio` → `rateVes`), cache ~15 min, persistencia diaria en `exchange_rates`. No usa ultimo POST manual. Errores 502/503 si el proveedor falla. |
 | `/api/exchange-rates` | `POST` | `payments.manage` | Registro manual solo historial (no redefine tasa vigente) |
@@ -152,6 +161,8 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 - `/api/payments?saleId=sale-001`: filtra pagos por venta.
 - `/api/payments?purchaseId=purchase-001`: filtra pagos por compra.
 - `/api/payments?contactId=cont-customer`: filtra pagos por contacto.
+- `/api/payments?method=pago_movil`: filtra pagos por metodo (400 si el metodo no existe).
+- `/api/payments?from=2026-05-17&to=2026-05-18`: filtra pagos por rango de dias operativos Caracas, ambos inclusive (400 si una fecha no es valida o `from` es posterior a `to`).
 - `/api/reports/stock-card?productId=prod-cable`: filtra kardex por producto.
 - `/api/reports/top-products?from=2026-05-18&to=2026-05-18`: filtra productos mas vendidos por rango.
 - `/api/reports/top-customers?from=2026-05-18&to=2026-05-18`: filtra clientes principales por rango.

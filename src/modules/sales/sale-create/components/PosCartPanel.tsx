@@ -25,6 +25,11 @@ import {
 } from "./PosPaymentMethods";
 
 type PosCartPanelProps = {
+  /**
+   * El carrito en pantalla no se puede cobrar (copia de una venta ya cobrada en otra
+   * pestaña): se dice por qué y se ofrece vaciarlo o declararlo venta nueva.
+   */
+  chargeBlock?: { message: string; onStartNewSale: () => void };
   checkout: PosCheckout | null;
   className?: string;
   customerId: string;
@@ -59,6 +64,7 @@ type PosCartPanelProps = {
 };
 
 export function PosCartPanel({
+  chargeBlock,
   checkout,
   className,
   customerId,
@@ -153,8 +159,8 @@ export function PosCartPanel({
         {items.length === 0 ? (
           <EmptyState
             className="py-10"
-            description="Toca un producto del catalogo para agregarlo."
-            title="Carrito vacio"
+            description="Toca un producto del catálogo para agregarlo."
+            title="Carrito vacío"
           />
         ) : (
           <ul className="flex flex-col gap-2">
@@ -270,9 +276,31 @@ export function PosCartPanel({
           </p>
         ) : null}
 
+        {chargeBlock ? (
+          <div
+            className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="status"
+          >
+            <p>{chargeBlock.message}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={isSubmitting} onClick={onClearOrder} size="sm" variant="outline">
+                Vaciar carrito
+              </Button>
+              <Button
+                disabled={isSubmitting}
+                onClick={chargeBlock.onStartNewSale}
+                size="sm"
+                variant="outline"
+              >
+                Es una venta nueva
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <Button
           className="w-full gap-2 border-transparent bg-[var(--secondary)] text-white hover:bg-[color-mix(in_srgb,var(--secondary)_85%,black)] hover:text-white"
-          disabled={isSubmitting || isScanPending || !canProcessSale}
+          disabled={isSubmitting || isScanPending || !canProcessSale || chargeBlock != null}
           onClick={onProcessSale}
           type="button"
           variant="primary"

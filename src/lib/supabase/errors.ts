@@ -11,17 +11,19 @@ function isSupabaseLikeError(error: unknown): error is SupabaseLikeError {
   return typeof error === "object" && error !== null && "message" in error;
 }
 
-const INVALID_DATA_MESSAGE = "Los datos enviados no son validos.";
+export const INVALID_DATA_MESSAGE ="Los datos enviados no son válidos.";
+/** Lo único que ve el cliente de un error sin mapear: su texto es de Postgres o de la red. */
+export const UNEXPECTED_ERROR_MESSAGE = "Ocurrió un error inesperado. Intenta de nuevo.";
 const RETRYABLE_CONFLICT_MESSAGE =
-  "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.";
+  "La operación chocó con otra en curso y no se aplicó. Intenta de nuevo.";
 
 // SQLSTATE que lanzan las RPC para rechazos de negocio (`errcode = 'PT4xx'`):
 // PostgREST responde con ese HTTP y el mensaje ya viene redactado para el usuario.
 const BUSINESS_REJECTIONS: Record<string, { code: ApiErrorCode; fallback: string; status: number }> = {
   PT400: { code: "BAD_REQUEST", fallback: INVALID_DATA_MESSAGE, status: 400 },
-  PT403: { code: "FORBIDDEN", fallback: "No autorizado para esta operacion.", status: 403 },
+  PT403: { code: "FORBIDDEN", fallback: "No autorizado para esta operación.", status: 403 },
   PT404: { code: "NOT_FOUND", fallback: "Recurso no encontrado.", status: 404 },
-  PT409: { code: "CONFLICT", fallback: "La operacion no es valida en el estado actual.", status: 409 },
+  PT409: { code: "CONFLICT", fallback: "La operación no es válida en el estado actual.", status: 409 },
 };
 
 export function getSupabaseErrorMessage(error: unknown) {
@@ -34,6 +36,20 @@ export function getSupabaseErrorMessage(error: unknown) {
   }
 
   return "Unexpected Supabase error.";
+}
+
+/** Lo que se anota de un error sin mapear: nunca viaja en la respuesta. */
+function describeUnmappedError(error: unknown) {
+  if (isSupabaseLikeError(error)) {
+    return {
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      message: error.message,
+    };
+  }
+
+  return { message: getSupabaseErrorMessage(error) };
 }
 
 /**
@@ -61,11 +77,14 @@ export function mapSupabaseErrorByCode(error: unknown): ApiError | null {
     case "PGRST116":
       return new ApiError(404, "NOT_FOUND", "Recurso no encontrado.");
     case "23503":
-      return new ApiError(400, "BAD_REQUEST", "Referencia invalida.");
+      return new ApiError(400, "BAD_REQUEST", "Referencia inválida.");
     // El texto de estos errores es de Postgres (columnas, relaciones, tipos, nombres
     // de constraint, el valor enviado): no se reenvia.
     case "23514":
     case "22P02":
+    // 22P05 / 22021: carácter nulo (U+0000) en un texto o en un `jsonb`.
+    case "22P05":
+    case "22021":
     case "23502":
     case "22003":
     case "22007":
@@ -76,7 +95,7 @@ export function mapSupabaseErrorByCode(error: unknown): ApiError | null {
     case "40001":
       return new ApiError(409, "CONFLICT", RETRYABLE_CONFLICT_MESSAGE, { retryable: true });
     case "42501":
-      return new ApiError(403, "FORBIDDEN", "No autorizado para esta operacion.");
+      return new ApiError(403, "FORBIDDEN", "No autorizado para esta operación.");
     default:
       return null;
   }
@@ -97,7 +116,7 @@ export function mapSupabaseError(error: unknown): ApiError {
     const message = error.message?.toLowerCase() ?? "";
 
     if (message.includes("invalid login credentials")) {
-      return new ApiError(401, "UNAUTHORIZED", "Credenciales invalidas.");
+      return new ApiError(401, "UNAUTHORIZED", "Credenciales inválidas.");
     }
 
     if (message.includes("email not confirmed")) {
@@ -116,20 +135,20 @@ export function mapSupabaseError(error: unknown): ApiError {
       return new ApiError(
         400,
         "BAD_REQUEST",
-        "El producto ya tiene codigo de barras; no se puede modificar desde esta accion.",
+        "El producto ya tiene código de barras; no se puede modificar desde esta acción.",
       );
     }
 
     if (message.includes("ya existe un producto con este codigo de barras")) {
-      return new ApiError(409, "CONFLICT", "Ya existe un producto con este codigo de barras.");
+      return new ApiError(409, "CONFLICT", "Ya existe un producto con este código de barras.");
     }
 
     if (message.includes("no autorizado para agregar codigo de barras")) {
-      return new ApiError(403, "FORBIDDEN", "No autorizado para agregar codigo de barras.");
+      return new ApiError(403, "FORBIDDEN", "No autorizado para agregar código de barras.");
     }
 
     if (message.includes("el codigo de barras es obligatorio")) {
-      return new ApiError(400, "BAD_REQUEST", "El codigo de barras es obligatorio.");
+      return new ApiError(400, "BAD_REQUEST", "El código de barras es obligatorio.");
     }
 
     if (message.includes("ajuste de stock no puede ser cero")) {
@@ -142,7 +161,11 @@ export function mapSupabaseError(error: unknown): ApiError {
     }
   }
 
-  return new ApiError(500, "INTERNAL_ERROR", getSupabaseErrorMessage(error));
+  // Código sin mapear: el texto original nombra columnas, relaciones y filtros. Se
+  // queda en el log del servidor y el cliente recibe un mensaje genérico.
+  console.error("[supabase] error sin mapear", describeUnmappedError(error));
+
+  return new ApiError(500, "INTERNAL_ERROR", UNEXPECTED_ERROR_MESSAGE);
 }
 
 export function throwIfSupabaseError(error: unknown): void {

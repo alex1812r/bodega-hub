@@ -21,8 +21,8 @@ export type FreeInventoryAdjustmentType = Exclude<
 export const movementTypeOptions: Array<{ label: string; value: StockMovementType }> = [
   { label: "Ajuste entrada", value: "ajuste_entrada" },
   { label: "Ajuste salida", value: "ajuste_salida" },
-  { label: "Conversion entrada", value: "conversion_entrada" },
-  { label: "Conversion salida", value: "conversion_salida" },
+  { label: "Conversión entrada", value: "conversion_entrada" },
+  { label: "Conversión salida", value: "conversion_salida" },
   { label: "Venta", value: "venta" },
   { label: "Compra", value: "compra" },
   { label: "Devolución cliente", value: "devolucion_cliente" },

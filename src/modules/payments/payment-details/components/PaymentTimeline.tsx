@@ -15,7 +15,7 @@ export function PaymentTimeline({ items }: PaymentTimelineProps) {
   return (
     <DetailSection
       description="Eventos visuales relacionados con el registro del pago."
-      title="Linea de tiempo"
+      title="Línea de tiempo"
     >
       <ol className="space-y-4">
         {items.map((item) => (

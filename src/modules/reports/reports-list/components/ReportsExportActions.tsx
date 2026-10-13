@@ -1,27 +1,68 @@
 "use client";
 
 import { Eye, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 
+import type { ChartImage } from "../../services/captureChartImage";
+import {
+  captureChartImageWhenReady,
+  type ChartCapture,
+} from "../../services/captureChartImageWhenReady";
 import {
   fetchReportsForExport,
   type ReportsExportDataset,
   type ReportsExportFilters,
 } from "../../services/fetchReportsForExport";
+import { readReportsExportView } from "../../utils/reportExportView";
+import { toReportErrorMessage } from "../reportQueryState";
 import { ReportsExportPreviewModal } from "./ReportsExportPreviewModal";
 
 type ReportsExportActionsProps = {
   exportFilters: ReportsExportFilters;
 };
 
+/** Lo que se exporta: se fija al abrir la vista previa y no cambia hasta cerrarla. */
+type ExportPreview = {
+  chartImage: ChartImage | null;
+  /** Por qué falta la imagen en un reporte que debería llevarla. */
+  chartMissing: ChartCapture["missing"];
+  data: ReportsExportDataset;
+  exportedAt: string;
+  filters: ReportsExportFilters;
+};
+
+const NO_CHART: ChartCapture = { image: null, missing: null };
+
+const STALE_PREVIEW_NOTICE =
+  "Los filtros cambiaron mientras se generaba la vista previa. Vuelve a generarla.";
+
+/**
+ * Lo que define un exporte: los filtros que recibe el botón y la URL (reporte
+ * abierto, rango, página). Dos lecturas iguales = se exporta lo mismo.
+ */
+function readExportStateKey(exportFilters: ReportsExportFilters) {
+  return JSON.stringify([exportFilters, window.location.search]);
+}
+
+const CHART_MISSING_NOTICES: Record<NonNullable<ChartCapture["missing"]>, string> = {
+  failed: "El gráfico no se incluirá: no se pudo capturar la imagen.",
+  loading: "El gráfico no se incluirá: aún se estaba cargando.",
+};
+
 export function ReportsExportActions({ exportFilters }: ReportsExportActionsProps) {
+  const { permissions, role } = usePermission();
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewData, setPreviewData] = useState<ReportsExportDataset | null>(null);
-  const [exportedAt, setExportedAt] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ExportPreview | null>(null);
+  // Los filtros vigentes, para compararlos al terminar de generar la vista previa.
+  const latestExportFilters = useRef(exportFilters);
+
+  useEffect(() => {
+    latestExportFilters.current = exportFilters;
+  }, [exportFilters]);
 
   const exportDisabled =
     isLoadingPreview ||
@@ -33,27 +74,69 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
     setPreviewError(null);
 
     try {
-      const nextExportedAt = new Date().toISOString();
-      const data = await fetchReportsForExport(exportFilters);
-      setExportedAt(nextExportedAt);
-      setPreviewData(data);
-      setPreviewOpen(true);
+      const startedWith = readExportStateKey(exportFilters);
+      const exportedAt = new Date().toISOString();
+      // Por tienda, el reporte abierto y sus filtros salen de la URL (regla 15):
+      // el archivo lleva el encabezado, el nombre y el gráfico de lo que se ve.
+      // Plataforma (`scope`) exporta como siempre, sin imagen.
+      const filters: ReportsExportFilters =
+        exportFilters.scope || exportFilters.view
+          ? exportFilters
+          : {
+              ...exportFilters,
+              view: readReportsExportView(window.location.search, { permissions, role }),
+            };
+      // El gráfico se captura ahora, antes de que el modal lo tape. Si aún está
+      // cargando se le espera (plazo acotado): capturar al instante daba un
+      // archivo sin imagen y sin aviso.
+      const [data, chart] = await Promise.all([
+        fetchReportsForExport(filters),
+        filters.view && !filters.scope ? captureChartImageWhenReady() : NO_CHART,
+      ]);
+
+      // Los datos son los del clic, pero el gráfico se captura (hasta 5 s después)
+      // de lo que haya en pantalla: si mientras tanto cambió el rango o el reporte,
+      // el archivo mezclaría tablas de un rango con el gráfico de otro. Se descarta.
+      if (readExportStateKey(latestExportFilters.current) !== startedWith) {
+        setPreviewError(STALE_PREVIEW_NOTICE);
+        return;
+      }
+
+      setPreview({ chartImage: chart.image, chartMissing: chart.missing, data, exportedAt, filters });
     } catch (error) {
-      setPreviewError(
-        error instanceof Error
-          ? error.message
-          : "No se pudo generar la vista previa de reportes.",
-      );
+      // Solo un error de negocio del servidor enseña su mensaje.
+      setPreviewError(toReportErrorMessage(error, "No se pudo generar la vista previa de reportes."));
     } finally {
       setIsLoadingPreview(false);
     }
   }
 
+  /**
+   * Vuelve a capturar el gráfico con la vista previa abierta (el modal no lo
+   * quita del documento). `timeoutMs` 0 = sin esperar, para el momento de
+   * descargar.
+   */
+  async function retryChartCapture(timeoutMs?: number) {
+    const chart = await captureChartImageWhenReady({ timeoutMs });
+
+    setPreview((current) =>
+      current
+        ? {
+            ...current,
+            chartImage: chart.image ?? current.chartImage,
+            chartMissing: chart.image ? null : chart.missing,
+          }
+        : current,
+    );
+
+    return chart.image;
+  }
+
+  const canCaptureChart = Boolean(preview?.filters.view && !preview.filters.scope);
+
   function handlePreviewOpenChange(open: boolean) {
-    setPreviewOpen(open);
     if (!open) {
-      setPreviewData(null);
-      setExportedAt(null);
+      setPreview(null);
     }
   }
 
@@ -79,11 +162,14 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
       ) : null}
 
       <ReportsExportPreviewModal
-        data={previewData}
-        exportedAt={exportedAt}
-        filters={exportFilters}
+        chartImage={preview?.chartImage ?? null}
+        chartNotice={preview?.chartMissing ? CHART_MISSING_NOTICES[preview.chartMissing] : null}
+        data={preview?.data ?? null}
+        exportedAt={preview?.exportedAt ?? null}
+        filters={preview?.filters ?? exportFilters}
         onOpenChange={handlePreviewOpenChange}
-        open={previewOpen}
+        onRetryChartCapture={canCaptureChart ? retryChartCapture : undefined}
+        open={preview !== null}
       />
     </div>
   );

@@ -7,6 +7,8 @@ import * as reportsMock from "@/modules/reports/services/reports.mock-server";
 import * as reportsServer from "@/modules/reports/services/reports.server";
 import { getDailyCloseSummary as getDailyCloseSummaryMock } from "@/modules/reports/services/dailyCloseSummary.mock-server";
 import { getDailyCloseSummary as getDailyCloseSummaryServer } from "@/modules/reports/services/dailyCloseSummary.server";
+import { assertReportDateParams, assertReportIdParams } from "@/modules/reports/services/reportParams";
+import { assertReportSeriesParams, parseReportSeriesParams } from "@/modules/reports/services/reportSeries";
 
 const reportHandlers = {
   "customer-purchases": {
@@ -65,6 +67,36 @@ const reportHandlers = {
 
 type PlatformReportId = keyof typeof reportHandlers;
 
+/**
+ * Validación de entrada de cada reporte: la MISMA que hace su ruta de tienda
+ * (`/api/reports/<reporte>`, REP-F7) antes de llamar al servicio. 400 si una
+ * fecha no es un día real con el año en 2000..actual+1, si `from > to` o si un
+ * id no tiene forma de id. `low-stock` no recibe fechas ni ids.
+ */
+const reportValidators: Record<PlatformReportId, (searchParams: URLSearchParams) => void> = {
+  "customer-purchases": assertReportDateParams,
+  "daily-close": assertReportDateParams,
+  "daily-sales": assertReportSeriesParams,
+  "fx-depreciation": assertReportDateParams,
+  "gross-profit": assertReportSeriesParams,
+  "low-stock": () => undefined,
+  "payment-methods": (searchParams) => {
+    parseReportSeriesParams(searchParams);
+  },
+  "product-profitability": assertReportDateParams,
+  purchases: (searchParams) => {
+    assertReportIdParams(searchParams, { supplierId: "El proveedor" });
+    assertReportSeriesParams(searchParams);
+  },
+  "stock-card": (searchParams) => {
+    assertReportDateParams(searchParams);
+    assertReportIdParams(searchParams, { productId: "El producto" });
+  },
+  "supplier-purchases": assertReportDateParams,
+  "top-customers": assertReportDateParams,
+  "top-products": assertReportDateParams,
+};
+
 type RouteContext = { params: Promise<{ report: string }> };
 
 function isPlatformReportId(value: string): value is PlatformReportId {
@@ -81,6 +113,7 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const searchParams = new URL(request.url).searchParams;
+    reportValidators[report](searchParams);
     const storeIds = await resolvePlatformReportStoreIds(searchParams);
     const handler = reportHandlers[report];
     const data =

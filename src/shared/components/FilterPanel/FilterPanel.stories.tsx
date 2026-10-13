@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
+import { DateRangeField } from "@/shared/components/DateRangeField";
 import { Input } from "@/shared/components/Input";
 
 import { FilterPanel } from "./FilterPanel";
@@ -12,7 +13,13 @@ const meta = {
       <>
         <Input label="Nombre" placeholder="Buscar por nombre" />
         <Input label="Estado" placeholder="Activo, pendiente..." />
-        <Input label="Fecha" type="date" />
+        <DateRangeField
+          label="Rango de fechas"
+          onChange={() => undefined}
+          size="sm"
+          today="2026-10-09"
+          value={{ preset: "last_month" }}
+        />
       </>
     ),
   },

@@ -41,6 +41,8 @@ export type SupplierProductPriceInput = z.infer<typeof supplierProductPriceInput
 export type SupplierProduct = {
   id: string;
   isActive: boolean;
+  /** Proveedor habitual del producto: como mucho uno por producto y nunca un vínculo inactivo. */
+  isPreferred?: boolean;
   lastCostRef?: number;
   lastCostVes?: number;
   lastPackCostRef?: number;

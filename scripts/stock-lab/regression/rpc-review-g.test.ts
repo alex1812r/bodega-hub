@@ -335,7 +335,9 @@ describe("tienda · las RPC de precios y de proveedor-producto solo alcanzan la 
     const history = await sql(
       db,
       "historial de precio",
-      "select old_sale_price_ref::float8 as antes, new_sale_price_ref::float8 as despues, changed_by from public.product_price_history where product_id = $1",
+      // Sin la línea base de ganancia con la que nace el producto (20261009c): solo los cambios de precio.
+      `select old_sale_price_ref::float8 as antes, new_sale_price_ref::float8 as despues, changed_by
+       from public.product_price_history where product_id = $1 and reason is distinct from 'Línea base de ganancia'`,
       [productId],
     );
     return { precio: p.precio, historial: history };

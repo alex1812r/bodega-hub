@@ -43,6 +43,7 @@ function createQueryBuilder(result: { count?: number; data?: unknown; error?: un
   const builder = {
     eq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
     lt: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),

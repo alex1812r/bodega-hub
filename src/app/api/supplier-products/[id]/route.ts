@@ -1,5 +1,6 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { supplierProductUpdateSchema } from "@/modules/contacts/services/supplierProducts.schemas";
@@ -27,7 +28,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/suppli
     const auth = await requireStorePermission(request, "products.manage");
     assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
-    const input = updateSupplierProductSchema.parse(await request.json());
+    const input = updateSupplierProductSchema.parse(await readJsonBody(request));
     return jsonData(await getSupplierProductsService().updateSupplierProduct(id, input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);

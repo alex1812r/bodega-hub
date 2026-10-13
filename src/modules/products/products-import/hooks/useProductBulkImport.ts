@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from "react";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { productsQueryKeys } from "../../hooks/useProducts";
+import { buildProductImportResults } from "../services/buildProductImportResults";
 import { downloadProductImportTemplateFromApi } from "../services/buildProductImportTemplate";
 import { fetchExistingSkus } from "../services/fetchExistingSkus";
 import { logProductImportParseSummary } from "../services/logProductImportValidation";
@@ -120,7 +121,7 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
       const importable = validatedRows.filter((row) => row.status !== "error" && row.input);
 
       if (importable.length === 0) {
-        setErrorMessage("No hay filas validas para importar.");
+        setErrorMessage("No hay filas válidas para importar.");
         return;
       }
 
@@ -144,7 +145,7 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
           onProgress: setProgress,
         });
 
-        setResults(jobResults);
+        setResults(buildProductImportResults(validatedRows, jobResults));
         await queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
 
         if (abortRef.current.signal.aborted) {
@@ -157,7 +158,7 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
       } catch (error) {
         setStatus("error");
         setErrorMessage(
-          error instanceof Error ? error.message : "La importacion fallo inesperadamente.",
+          error instanceof Error ? error.message : "La importación falló inesperadamente.",
         );
         setStep("preview");
       } finally {

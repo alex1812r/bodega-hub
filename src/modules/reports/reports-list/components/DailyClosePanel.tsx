@@ -6,9 +6,16 @@ import type { DailyCloseSummary } from "@/modules/reports/services/dailyCloseSum
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 
+import { ReportQueryError } from "./money/ReportStates";
+
+const REPORT_NAME = "Cierre del día";
+
 type DailyClosePanelProps = {
   data?: DailyCloseSummary;
+  /** Error ya normalizado con `getReportQueryError` (negocio, genérico o sin red). */
+  error?: Error | null;
   isLoading?: boolean;
+  onRetry?: () => void;
   periodLabel?: string;
 };
 
@@ -22,11 +29,26 @@ function Stat({ hint, label, value }: { hint?: string; label: string; value: str
   );
 }
 
-export function DailyClosePanel({ data, isLoading, periodLabel }: DailyClosePanelProps) {
+export function DailyClosePanel({
+  data,
+  error,
+  isLoading,
+  onRetry,
+  periodLabel,
+}: DailyClosePanelProps) {
+  // Sin esto un fallo se quedaba en «Cargando…» para siempre.
+  if (error && !isLoading && !data) {
+    return (
+      <section className="rounded-xl border border-border bg-surface-container-lowest shadow-sm">
+        <ReportQueryError error={error} onRetry={onRetry ?? (() => undefined)} reportName={REPORT_NAME} />
+      </section>
+    );
+  }
+
   if (isLoading || !data) {
     return (
       <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-        Cargando cierre del dia...
+        Cargando cierre del día…
       </p>
     );
   }
@@ -34,9 +56,9 @@ export function DailyClosePanel({ data, isLoading, periodLabel }: DailyClosePane
   return (
     <section className="space-y-4 rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Cierre del dia</h2>
+        <h2 className="text-lg font-semibold text-foreground">Cierre del día</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Dia operativo Caracas{periodLabel ? ` · ${periodLabel}` : ""}.
+          Día operativo Caracas{periodLabel ? ` · ${periodLabel}` : ""}.
         </p>
       </div>
 
@@ -70,10 +92,10 @@ export function DailyClosePanel({ data, isLoading, periodLabel }: DailyClosePane
       <div>
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
           <TrendingDown aria-hidden className="h-4 w-4 text-amber-600" />
-          Perdida FX de tenencias VES
+          Pérdida FX de tenencias VES
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Stat hint={`Tasa ${formatVes(data.fx.valuationRateVes)}`} label="Perdida REF" value={formatRef(data.fx.vesLossRef)} />
+          <Stat hint={`Tasa ${formatVes(data.fx.valuationRateVes)}`} label="Pérdida REF" value={formatRef(data.fx.vesLossRef)} />
           <Stat label="Capital REF hoy" value={formatRef(data.fx.capitalRefToday)} />
           <Stat hint={`${data.fx.depreciationPctOnVes}% sobre VES`} label="VES expuesto" value={formatVes(data.fx.vesExposed)} />
         </div>
@@ -82,24 +104,24 @@ export function DailyClosePanel({ data, isLoading, periodLabel }: DailyClosePane
       <div>
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
           <Landmark aria-hidden className="h-4 w-4 text-primary" />
-          Caja y baul
+          Caja y baúl
         </div>
         {data.vault || data.cash ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data.vault ? (
               <>
-                <Stat label="Baul REF" value={formatRef(data.vault.balanceRef)} />
-                <Stat label="Baul cuenta VES" value={formatVes(data.vault.balanceVes)} />
-                <Stat label="Baul efectivo VES" value={formatVes(data.vault.balanceEfectivoVes)} />
+                <Stat label="Baúl REF" value={formatRef(data.vault.balanceRef)} />
+                <Stat label="Baúl cuenta VES" value={formatVes(data.vault.balanceVes)} />
+                <Stat label="Baúl efectivo VES" value={formatVes(data.vault.balanceEfectivoVes)} />
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Sin snapshot de baul.</p>
+              <p className="text-sm text-muted-foreground">Sin snapshot de baúl.</p>
             )}
             {data.cash ? (
               <>
                 <Stat
                   hint={`${data.cash.openSessionCount} sesiones abiertas`}
-                  label="Caja teorica REF"
+                  label="Caja teórica REF"
                   value={formatRef(data.cash.theoreticalOpenRef)}
                 />
                 <Stat
@@ -114,7 +136,7 @@ export function DailyClosePanel({ data, isLoading, periodLabel }: DailyClosePane
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No hay saldos de caja/baul disponibles para este alcance.
+            No hay saldos de caja/baúl disponibles para este alcance.
           </p>
         )}
       </div>

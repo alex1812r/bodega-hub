@@ -69,7 +69,7 @@ export async function resolvePlatformReportStoreIds(
 
   const unknown = selected.filter((id) => !allIds.includes(id));
   if (unknown.length > 0) {
-    throw new ApiError(400, "BAD_REQUEST", "Una o mas tiendas no existen.");
+    throw new ApiError(400, "BAD_REQUEST", "Una o más tiendas no existen.");
   }
 
   return selected;

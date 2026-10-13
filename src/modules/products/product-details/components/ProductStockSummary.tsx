@@ -23,8 +23,8 @@ export function ProductStockSummary({ stock }: ProductStockSummaryProps) {
       <InfoGrid
         items={[
           { label: "Stock actual", value: `${stock.stock} unidades` },
-          { label: "Stock minimo", value: `${stock.minimumStock} unidades` },
-          { label: "Ultimo movimiento", value: stock.lastMovement },
+          { label: "Stock mínimo", value: `${stock.minimumStock} unidades` },
+          { label: "Último movimiento", value: stock.lastMovement },
           {
             label: "Estado",
             value: (

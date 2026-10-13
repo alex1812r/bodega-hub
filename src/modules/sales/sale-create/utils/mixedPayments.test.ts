@@ -218,7 +218,7 @@ describe("mixedPayments utils", () => {
     );
 
     expect(result.isValid).toBe(false);
-    expect(result.errors.some((error) => error.includes("4 digitos"))).toBe(true);
+    expect(result.errors.some((error) => error.includes("4 dígitos"))).toBe(true);
   });
 
   it("flags pago movil and transferencia as requiring payment details", () => {

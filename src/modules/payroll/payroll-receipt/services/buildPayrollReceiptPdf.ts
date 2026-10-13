@@ -46,7 +46,7 @@ function drawPageFooter(doc: jsPDF, receiptLabel: string, exportedAtLabel: strin
   doc.setTextColor(120, 128, 140);
   doc.text(`BodegaHub · ${receiptLabel} · ${exportedAtLabel}`, PAGE_MARGIN_MM, footerY);
   doc.text(
-    `Pagina ${String(doc.getCurrentPageInfo().pageNumber)}`,
+    `Página ${String(doc.getCurrentPageInfo().pageNumber)}`,
     PAGE_WIDTH_MM - PAGE_MARGIN_MM,
     footerY,
     { align: "right" },
@@ -60,7 +60,7 @@ function drawDocumentHeader(doc: jsPDF, input: PayrollReceiptPdfInput, exportedA
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.setTextColor(20, 24, 31);
-  doc.text("Recibo de comision", PAGE_MARGIN_MM, cursorY);
+  doc.text("Recibo de comisión", PAGE_MARGIN_MM, cursorY);
 
   cursorY += 7;
   doc.setFont("helvetica", "normal");
@@ -103,10 +103,10 @@ export function buildPayrollReceiptPdf(
 
   autoTable(doc, {
     body: [
-      ["Numero de ventas", String(item.salesCount)],
+      ["Número de ventas", String(item.salesCount)],
       ["Ventas comisionables (REF)", formatRefUsd(item.salesRef)],
-      ["Porcentaje de comision", `${item.commissionPct.toFixed(2)} %`],
-      ["Comision (REF)", formatRefUsd(item.commissionRef)],
+      ["Porcentaje de comisión", `${item.commissionPct.toFixed(2)} %`],
+      ["Comisión (REF)", formatRefUsd(item.commissionRef)],
       ["Reversos (REF)", formatRefUsd(item.reversalRef)],
       ["Total a pagar (REF)", formatRefUsd(item.totalRef)],
       ["Estado", item.status === "pagado" ? "Pagado" : "Pendiente"],
@@ -116,7 +116,7 @@ export function buildPayrollReceiptPdf(
         "Tasa aplicada",
         item.paidRateVes == null ? "—" : `1 REF = ${item.paidRateVes.toFixed(2)} VES`,
       ],
-      ["Metodo", item.paidMethod ? paymentMethodLabels[item.paidMethod] : "—"],
+      ["Método", item.paidMethod ? paymentMethodLabels[item.paidMethod] : "—"],
       ["Referencia", item.paidReference ?? "—"],
       ["Fecha de pago", item.paidAt ? formatDateTimeShort(item.paidAt) : "—"],
     ],
@@ -177,7 +177,7 @@ export function buildPayrollReceiptPdf(
       3: { halign: "right" },
       4: { halign: "right" },
     },
-    head: [["Venta", "Fecha", "Tipo", "Total (REF)", "Comision (REF)"]],
+    head: [["Venta", "Fecha", "Tipo", "Total (REF)", "Comisión (REF)"]],
     headStyles: {
       fillColor: TABLE_HEAD_FILL,
       fontSize: 9,

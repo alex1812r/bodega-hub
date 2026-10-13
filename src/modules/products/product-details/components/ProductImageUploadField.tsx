@@ -38,9 +38,13 @@ export function ProductImageUploadField({
   const [cropOpen, setCropOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
+  // La vista previa sigue a `imageUrl` cuando cambia (ajuste durante el render).
+  const [syncedImageUrl, setSyncedImageUrl] = useState(imageUrl);
+
+  if (imageUrl !== syncedImageUrl) {
+    setSyncedImageUrl(imageUrl);
     setPreviewUrl(imageUrl ?? null);
-  }, [imageUrl]);
+  }
 
   useEffect(() => {
     return () => {
@@ -140,8 +144,10 @@ export function ProductImageUploadField({
           </Button>
         ) : null}
       </div>
+      {/* El control es el botón de arriba: este input no es parada de Tab ni se anuncia. */}
       <input
         accept="image/jpeg,image/png,image/webp"
+        aria-hidden
         className="sr-only"
         disabled={disabled || isUploading}
         onChange={(event) => {
@@ -153,6 +159,7 @@ export function ProductImageUploadField({
           }
         }}
         ref={inputRef}
+        tabIndex={-1}
         type="file"
       />
       {isUploading ? (

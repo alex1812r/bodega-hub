@@ -75,6 +75,37 @@ export const WithPageSizeSelector: Story = {
   },
 };
 
+/**
+ * Variante `stitch` (listas): en escritorio, "Anterior", números y "Siguiente".
+ * Estrecha la ventana a 390 px: quedan dos flechas y "Página X de Y", y el
+ * resumen pasa a su propia línea; nada desborda.
+ */
+export const Stitch: Story = {
+  args: {
+    entityLabel: "productos",
+    skip: 90,
+    total: 250,
+    variant: "stitch",
+  },
+};
+
+/** La misma variante dentro de un contenedor de 358 px (ventana de 390 px con sus márgenes). */
+export const StitchNarrowContainer: Story = {
+  args: {
+    entityLabel: "productos",
+    skip: 90,
+    total: 250,
+    variant: "stitch",
+  },
+  decorators: [
+    (StoryComponent) => (
+      <div className="w-[358px] border border-dashed border-border">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+};
+
 export const Disabled: Story = {
   args: {
     isDisabled: true,

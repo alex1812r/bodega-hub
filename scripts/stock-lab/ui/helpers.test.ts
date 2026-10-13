@@ -423,7 +423,7 @@ describe("judgeLostResponse (respuesta perdida tras el commit, plan §8.3 flujo 
 
   it("pass: tras recargar el aviso sigue y la UI nombra la venta ya registrada en vez de cobrar otra", () => {
     const final = view({
-      text: "El cobro anterior si quedo registrado como venta V-1. Si este carrito es esa misma venta, limpia la orden: no la cobres otra vez.",
+      text: "El cobro anterior sí quedó registrado como venta V-1. Si este carrito es esa misma venta, limpia la orden: no la cobres otra vez.",
       verifyOffered: false,
     });
     expect(judgeLostResponse(base({ onReturn: view(), final })).verdict).toBe("pass");

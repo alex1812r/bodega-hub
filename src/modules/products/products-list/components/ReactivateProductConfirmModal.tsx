@@ -1,7 +1,9 @@
 "use client";
 
-import { Button } from "@/shared/components/Button";
-import { Modal } from "@/shared/components/Modal";
+import {
+  ConfirmActionModal,
+  type ConfirmActionEffect,
+} from "@/shared/components/ConfirmActionModal";
 
 import { useUpdateProduct, type ProductWithCategory } from "../../hooks/useProducts";
 
@@ -11,6 +13,19 @@ type ReactivateProductConfirmModalProps = {
   open: boolean;
   product: ProductWithCategory | null;
 };
+
+const reactivateEffects: ConfirmActionEffect[] = [
+  { after: "Activo", before: "Inactivo", label: "Estado en el catálogo", tone: "positive" },
+  { label: "Podrá venderse de nuevo en POS y listados", tone: "positive" },
+];
+
+function getErrorMessage(error: unknown) {
+  if (!error) {
+    return null;
+  }
+
+  return error instanceof Error ? error.message : "No se pudo reactivar el producto.";
+}
 
 export function ReactivateProductConfirmModal({
   onOpenChange,
@@ -31,27 +46,18 @@ export function ReactivateProductConfirmModal({
   }
 
   return (
-    <Modal
+    <ConfirmActionModal
+      confirmLabel="Reactivar producto"
       description="El producto volverá al catálogo activo y podrá venderse de nuevo en POS y listados."
-      footer={({ close }) => (
-        <>
-          <Button disabled={updateProduct.isPending} onClick={close} type="button" variant="outline">
-            Cancelar
-          </Button>
-          <Button
-            disabled={updateProduct.isPending}
-            onClick={() => void handleConfirm()}
-            type="button"
-          >
-            {updateProduct.isPending ? "Procesando..." : "Reactivar producto"}
-          </Button>
-        </>
-      )}
+      effects={reactivateEffects}
+      error={getErrorMessage(updateProduct.error)}
+      isPending={updateProduct.isPending}
+      onConfirm={handleConfirm}
       onOpenChange={onOpenChange}
       open={open}
       title="Confirmar reactivación"
     >
-      <p className="text-sm text-on-surface-variant">
+      <p>
         <span className="font-medium text-foreground">{product?.name ?? "Producto"}</span>
         {product?.sku ? (
           <>
@@ -61,13 +67,6 @@ export function ReactivateProductConfirmModal({
         ) : null}{" "}
         quedará activo.
       </p>
-      {updateProduct.error ? (
-        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-          {updateProduct.error instanceof Error
-            ? updateProduct.error.message
-            : "No se pudo reactivar el producto."}
-        </p>
-      ) : null}
-    </Modal>
+    </ConfirmActionModal>
   );
 }

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { cn } from "@/shared/utils/cn";
 
 const avatarToneClasses = [
@@ -21,10 +23,12 @@ function getAvatarTone(name: string) {
 }
 
 type ContactNameCellProps = {
+  /** Perfil del contacto (con `returnTo`): el nombre es el enlace que lo abre. */
+  href: string;
   name: string;
 };
 
-export function ContactNameCell({ name }: ContactNameCellProps) {
+export function ContactNameCell({ href, name }: ContactNameCellProps) {
   const initials = getInitials(name) || "?";
 
   return (
@@ -38,7 +42,12 @@ export function ContactNameCell({ name }: ContactNameCellProps) {
       >
         {initials}
       </div>
-      <span className="truncate font-medium text-on-surface">{name}</span>
+      <Link
+        className="truncate rounded-md font-medium text-on-surface hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        href={href}
+      >
+        {name}
+      </Link>
     </div>
   );
 }

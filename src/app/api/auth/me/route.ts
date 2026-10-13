@@ -1,4 +1,4 @@
-import { ApiError, toErrorResponse } from "@/lib/api/apiError";
+import { toErrorResponse, unauthenticatedError } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { resolveUserProfile } from "@/lib/api/requirePermission";
 import {
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const profile = await resolveUserProfile(request);
 
     if (!profile) {
-      throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+      throw unauthenticatedError();
     }
 
     return jsonData({

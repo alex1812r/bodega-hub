@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { CashSessionCountdown } from "@/modules/cash/components/CashSessionCountdown";
@@ -17,6 +17,8 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 
+import { purgePosCartDrafts } from "../utils/posCartDraft";
+
 type PosCashSessionGateProps = {
   children: ReactNode;
 };
@@ -30,6 +32,17 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
   const clock = useCashSessionClock(session.data?.openedAt);
 
   const userId = currentUser.data?.user.id;
+  const storeId = currentUser.data?.storeId ?? null;
+  // El servidor respondio que no hay caja abierta, o la abierta ya vencio.
+  const cashClosed =
+    !session.isLoading && !session.error && (session.data ? clock.expired : session.isSuccess);
+
+  useEffect(() => {
+    // Cerrar caja invalida el carrito recuperable (CNF-16): el de un turno no reaparece en otro.
+    if (cashClosed && userId) {
+      purgePosCartDrafts({ storeId, userId });
+    }
+  }, [cashClosed, storeId, userId]);
   const register =
     session.data?.register ??
     registers.data?.find(
@@ -41,7 +54,7 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
       <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
         <PosGateHeader />
         <div className="flex flex-1 items-center justify-center p-6">
-          <LoadingState description="Verificando si tu caja esta abierta." title="Cargando caja..." />
+          <LoadingState description="Verificando si tu caja está abierta." title="Cargando caja..." />
         </div>
       </div>
     );
@@ -124,7 +137,7 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
             <>
               <h2 className="text-lg font-semibold text-foreground">Caja cerrada</h2>
               <p className="max-w-md text-sm text-on-surface-variant">
-                Abre la caja <strong>{register.name}</strong> para cargar el catalogo y registrar
+                Abre la caja <strong>{register.name}</strong> para cargar el catálogo y registrar
                 ventas.
               </p>
               <Button onClick={() => setOpenModal(true)} size="lg" type="button">

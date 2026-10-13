@@ -11,7 +11,7 @@ describe("LoginForm", () => {
 
     expect(getByLabelText(/correo/i)).toBeVisible();
     expect(getByLabelText(/clave/i)).toBeVisible();
-    expect(getByRole("button", { name: /iniciar sesion/i })).toBeVisible();
+    expect(getByRole("button", { name: /iniciar sesión/i })).toBeVisible();
   });
 
   it("shows submit state", () => {
@@ -20,5 +20,11 @@ describe("LoginForm", () => {
     );
 
     expect(getByRole("button", { name: /entrando/i })).toBeDisabled();
+  });
+
+  it("never submits natively with GET, so credentials cannot reach the URL before hydration", () => {
+    const { container } = render(<LoginForm onSubmit={jest.fn()} />);
+
+    expect(container.querySelector("form")).toHaveAttribute("method", "post");
   });
 });

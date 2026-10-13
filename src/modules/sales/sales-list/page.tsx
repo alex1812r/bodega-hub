@@ -2,21 +2,39 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import { Can } from "@/shared/auth/Can";
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
+import { parseDateRangeParams } from "@/shared/components/DateRangeField";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
+import { useToast } from "@/shared/components/Toast";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
+import { SaleCancelConfirmModal } from "../components/SaleCancelConfirmModal";
+import { SaleReturnConfirmModal } from "../components/SaleReturnConfirmModal";
 import {
   type SaleListItem,
-  type SalesFilters,
   useCancelSale,
   useReturnSale,
   useSales,
@@ -25,6 +43,10 @@ import { SalesExportActions } from "./components/SalesExportActions";
 import { SalesListFilters } from "./components/SalesListFilters";
 import { estimatePaidRef, SalesMoneyCell } from "./components/SalesMoneyCell";
 import { SalesStatusBadge } from "./components/SalesStatusBadge";
+import { salesListSchema, toSalesFilters } from "./salesListParams";
+
+const detailLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function formatInvoiceNumber(invoiceNumber: string) {
   return invoiceNumber.startsWith("#") ? invoiceNumber : `#${invoiceNumber}`;
@@ -33,19 +55,35 @@ function formatInvoiceNumber(invoiceNumber: string) {
 function isPartiallyPaid(sale: SaleListItem) {
   return (
     sale.status === "pendiente_pago" &&
-    sale.paidVes > 0 &&
-    sale.paidVes < sale.totalVes
+    documentBalance({ ...sale, type: "sale" }).paymentStatus === "parcial"
   );
 }
 
-const columns: DataTableColumn<SaleListItem>[] = [
-  {
+/** `cancel_sale` y `return_sale` solo aceptan ventas vivas: ni borrador, ni anulada, ni devuelta. */
+function canCancelOrReturn(sale: SaleListItem) {
+  return sale.status === "pagada" || sale.status === "pendiente_pago";
+}
+
+type SaleConfirmation = { action: "cancel" | "return"; sale: SaleListItem };
+
+/** Columna del número; `detailHref` lleva a la venta con la URL de la lista en `returnTo`. */
+function buildInvoiceColumn(
+  detailHref: (saleId: string) => string,
+): DataTableColumn<SaleListItem> {
+  return {
     cellClassName: "font-medium text-primary",
     header: "N° Factura",
     hideInCard: true,
     key: "invoice",
-    render: (sale) => formatInvoiceNumber(sale.invoiceNumber),
-  },
+    render: (sale) => (
+      <Link className={detailLinkClass} href={detailHref(sale.id)}>
+        {formatInvoiceNumber(sale.invoiceNumber)}
+      </Link>
+    ),
+  };
+}
+
+const staticColumns: DataTableColumn<SaleListItem>[] = [
   {
     cellClassName: "text-on-surface-variant",
     header: "Fecha y Hora",
@@ -99,46 +137,95 @@ const columns: DataTableColumn<SaleListItem>[] = [
   },
 ];
 
-export function SalesListPage() {
-  const [filters, setFilters] = useState<SalesFilters>({});
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    filters.search,
-    filters.status,
-    filters.from,
-    filters.to,
-  ]);
+function SalesList() {
+  // Búsqueda, filtros, página y tamaño viven en la URL: recarga, "atrás" y volver del detalle los conservan.
+  const list = useUrlListState(salesListSchema);
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+  // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
+  const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
+  const today = getBusinessTodayIsoDate();
+  const { from: urlFrom, preset: urlPreset, to: urlTo } = list.state;
+  // Rango efectivo: un `preset` relativo de la URL se recalcula con el hoy operativo.
+  const range = useMemo(
+    () => parseDateRangeParams({ from: urlFrom, preset: urlPreset, to: urlTo }, today),
+    [today, urlFrom, urlPreset, urlTo],
+  );
+  const filters = toSalesFilters(list.state, debouncedSearch, range);
   const sales = useSales({ ...filters, limit, skip });
   const cancelSale = useCancelSale();
   const returnSale = useReturnSale();
   const salesItems = getPaginatedItems(sales.data);
   const totalSales = sales.data?.total ?? 0;
+  const { href: listHref, setState: setListState } = list;
+  // El detalle vuelve a esta URL exacta (filtros y página) con "Volver".
+  const columns = useMemo(
+    () => [
+      buildInvoiceColumn((saleId) => withReturnTo(`/sales/${saleId}`, listHref)),
+      ...staticColumns,
+    ],
+    [listHref],
+  );
+  const lastPage = getTotalPages(totalSales, limit);
+  const isPastLastPage = sales.isSuccess && !sales.isFetching && list.state.page > lastPage;
 
-  function handleFilterChange(patch: Partial<SalesFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
-    setSkip(0);
+  // Una página más allá de la última (`?page=9999`, o un enlace viejo) cae en la
+  // última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
+
+  useScrollRestoration(listHref, { ready: !sales.isLoading });
+
+  // Anular y devolver se confirman con su efecto a la vista (CNF-02/03).
+  const [confirmation, setConfirmation] = useState<SaleConfirmation | null>(null);
+  const { can } = usePermission();
+  const canCancelAndReturn = can("sales.cancel");
+  const { showToast } = useToast();
+  const confirmingSale = confirmation?.sale;
+
+  function openConfirmation(action: SaleConfirmation["action"], sale: SaleListItem) {
+    // Un rechazo de otra venta o de un intento anterior no pertenece a esta apertura.
+    cancelSale.reset();
+    returnSale.reset();
+    setConfirmation({ action, sale });
   }
 
-  async function handleCancelSale(saleId: string) {
-    await cancelSale.mutateAsync(saleId);
+  // Si la RPC rechaza (carrera entre el efecto y la ejecución), `mutateAsync`
+  // rechaza: el modal sigue abierto y muestra el mensaje.
+  async function handleConfirm() {
+    if (!confirmation) {
+      return;
+    }
+
+    const { action, sale } = confirmation;
+
+    await (action === "cancel" ? cancelSale : returnSale).mutateAsync(sale.id);
+    setConfirmation(null);
+    showToast({
+      title: `Venta ${formatInvoiceNumber(sale.invoiceNumber)} ${action === "cancel" ? "anulada" : "devuelta"}`,
+      tone: "success",
+    });
   }
 
-  async function handleReturnSale(saleId: string) {
-    await returnSale.mutateAsync(saleId);
+  function closeConfirmation(open: boolean) {
+    if (!open) {
+      setConfirmation(null);
+    }
   }
+
+  const confirmingPaymentsHref =
+    confirmingSale && can("payments.view")
+      ? withReturnTo(`/payments?saleId=${confirmingSale.id}`, listHref)
+      : undefined;
 
   return (
     <div className="mx-auto w-full max-w-7xl">
       <EntityListPage
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-start">
-            <SalesExportActions
-              exportFilters={{
-                from: filters.from,
-                search: filters.search,
-                status: filters.status,
-                to: filters.to,
-              }}
-            />
+            <SalesExportActions exportFilters={filters} />
             <Can permission="sales.create">
               <Button asChild className="w-full gap-1 sm:w-auto" size="sm">
                 <Link href="/sales/create">
@@ -153,28 +240,37 @@ export function SalesListPage() {
         layout="sections"
         title="Ventas"
       >
-        <SalesListFilters filters={filters} onChange={handleFilterChange} />
+        <SalesListFilters onChange={list.setState} range={range} state={list.state} today={today} />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
             actions={(sale) => [
-              { href: `/sales/${sale.id}`, label: "Ver detalle" },
+              { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver detalle" },
               { href: `/payments?saleId=${sale.id}`, label: "Registrar pago" },
-              { href: `/sales/${sale.id}`, label: "Ver recibo" },
-              {
-                disabled: cancelSale.isPending || sale.status === "cancelada",
-                label: "Anular",
-                onSelect: () => void handleCancelSale(sale.id),
-                variant: "danger",
-              },
-              {
-                disabled: returnSale.isPending || sale.status === "devuelta",
-                label: "Devolver",
-                onSelect: () => void handleReturnSale(sale.id),
-              },
+              { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver recibo" },
+              // Como en el detalle: anular y devolver exigen `sales.cancel`.
+              ...(canCancelAndReturn
+                ? [
+                    {
+                      disabled: cancelSale.isPending || !canCancelOrReturn(sale),
+                      label: "Anular",
+                      onSelect: () => openConfirmation("cancel", sale),
+                      variant: "danger" as const,
+                    },
+                    {
+                      disabled: returnSale.isPending || !canCancelOrReturn(sale),
+                      label: "Devolver",
+                      onSelect: () => openConfirmation("return", sale),
+                    },
+                  ]
+                : []),
             ]}
             cardSubtitle={(sale) => sale.customer?.name ?? sale.customerId}
-            cardTitle={(sale) => formatInvoiceNumber(sale.invoiceNumber)}
+            cardTitle={(sale) => (
+              <Link className={detailLinkClass} href={withReturnTo(`/sales/${sale.id}`, listHref)}>
+                {formatInvoiceNumber(sale.invoiceNumber)}
+              </Link>
+            )}
             columns={columns}
             data={salesItems}
             embedded
@@ -191,7 +287,7 @@ export function SalesListPage() {
                 title="No hay ventas para mostrar"
               />
             }
-            error={sales.error ?? cancelSale.error ?? returnSale.error}
+            error={sales.error}
             getRowId={(sale) => sale.id}
             isFetching={sales.isFetching}
             isLoading={sales.isLoading}
@@ -213,6 +309,33 @@ export function SalesListPage() {
           </div>
         </div>
       </EntityListPage>
+
+      <SaleCancelConfirmModal
+        error={cancelSale.error?.message}
+        isPending={cancelSale.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={closeConfirmation}
+        onUseReturn={() => {
+          if (confirmingSale) {
+            openConfirmation("return", confirmingSale);
+          }
+        }}
+        open={confirmation?.action === "cancel"}
+        paymentsHref={confirmingPaymentsHref}
+        saleId={confirmingSale?.id}
+      />
+      <SaleReturnConfirmModal
+        error={returnSale.error?.message}
+        isPending={returnSale.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={closeConfirmation}
+        open={confirmation?.action === "return"}
+        paymentsHref={confirmingPaymentsHref}
+        saleId={confirmingSale?.id}
+      />
     </div>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const SalesListPage = withUrlListBoundary(SalesList);

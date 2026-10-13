@@ -149,7 +149,7 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
 
     expect(mapped.status).toBe(400);
     expect(mapped.code).toBe("BAD_REQUEST");
-    expect(mapped.message).toBe("Los datos enviados no son validos.");
+    expect(mapped.message).toBe("Los datos enviados no son válidos.");
   });
 
   it("mantiene en 500 un error desconocido sin código", () => {

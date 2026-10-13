@@ -53,6 +53,30 @@ export const WithActions: Story = {
   },
 };
 
+/**
+ * Tabla `stitch` (ancho mínimo de 720 px) en un contenedor de 560 px, como en
+ * una ventana de 1024 px con el menú lateral abierto: la tabla hace scroll
+ * horizontal dentro de su contenedor y la columna "Acciones" queda fijada a la
+ * derecha, con el menú "…" siempre a la vista.
+ */
+export const StickyActionsNarrowContainer: Story = {
+  args: {
+    actions: () => [
+      { label: "Ver detalle", onSelect: fn() },
+      { label: "Editar", onSelect: fn() },
+    ],
+    layout: "table",
+    variant: "stitch",
+  },
+  decorators: [
+    (StoryComponent) => (
+      <div className="w-[560px]">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+};
+
 export const Empty: Story = {
   args: {
     data: [],
@@ -77,6 +101,22 @@ export const Error: Story = {
     data: [],
     error: "El servidor no respondio a tiempo.",
     onRetry: fn(),
+  },
+};
+
+/**
+ * `renderExpandedRow`: la fila "Harina PAN" lleva su contenido expandido en una
+ * fila a todo el ancho (al pie de la tarjeta en móvil). Qué fila está abierta y
+ * el botón que la abre los pone quien usa la tabla.
+ */
+export const ExpandedRow: Story = {
+  args: {
+    renderExpandedRow: (row) =>
+      row.id === "P-002" ? (
+        <div className="bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant dark:bg-slate-950">
+          Últimos movimientos de {row.name}: 3 unidades en existencia.
+        </div>
+      ) : null,
   },
 };
 

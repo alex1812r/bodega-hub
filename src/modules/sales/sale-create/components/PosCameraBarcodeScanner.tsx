@@ -38,15 +38,15 @@ function createReader() {
 
 function cameraErrorMessage(error: unknown): string {
   if (error instanceof DOMException && error.name === "NotAllowedError") {
-    return "Permiso de camara denegado. Activalo en el navegador para escanear.";
+    return "Permiso de cámara denegado. Actívalo en el navegador para escanear.";
   }
   if (error instanceof DOMException && error.name === "NotFoundError") {
-    return "No se encontro una camara disponible en este dispositivo.";
+    return "No se encontró una cámara disponible en este dispositivo.";
   }
   if (error instanceof DOMException && error.name === "NotReadableError") {
-    return "La camara esta en uso por otra aplicacion. Cierra esa app e intenta de nuevo.";
+    return "La cámara está en uso por otra aplicación. Cierra esa app e intenta de nuevo.";
   }
-  return "No se pudo iniciar la camara. Usa HTTPS o localhost e intenta de nuevo.";
+  return "No se pudo iniciar la cámara. Usa HTTPS o localhost e intenta de nuevo.";
 }
 
 function waitForVideoFrame(
@@ -232,7 +232,7 @@ export function PosCameraBarcodeScanner({
         </div>
         {isStarting && !cameraError ? (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 text-sm text-white">
-            Iniciando camara...
+            Iniciando cámara...
           </div>
         ) : null}
         {paused && !cameraError ? (
@@ -248,7 +248,7 @@ export function PosCameraBarcodeScanner({
         </p>
       ) : (
         <p className="text-center text-xs text-muted-foreground">
-          Apunta al codigo de barras o QR. Al leerlo se agrega el producto como con el lector USB.
+          Apunta al código de barras o QR. Al leerlo se agrega el producto como con el lector USB.
         </p>
       )}
     </div>

@@ -1,5 +1,6 @@
-import { ApiError } from "@/lib/api/apiError";
+import { ApiError, unauthenticatedError } from "@/lib/api/apiError";
 import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
+import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
 import {
   getEffectivePermissions,
   hasEffectivePermission,
@@ -49,14 +50,22 @@ export function getDemoUserProfile(request: Request): UserProfileMock {
 
   const role = getDemoRole(request);
   const storeHeader = request.headers.get("x-demo-store-id");
+  const demoStoreId = role === "superadmin" ? null : (storeHeader ?? DEFAULT_STORE_ID);
+  // El perfil demo por rol hereda las excepciones del perfil mock con su mismo id
+  // y tienda (hoy solo `user-admin`): asi «El administrador puede vender» surte efecto.
+  const stored = mockUserProfiles.find(
+    (profile) => profile.id === `user-${role}` && (profile.storeId ?? null) === demoStoreId,
+  );
 
   return {
+    deniedPermissions: stored?.deniedPermissions,
     email: `${role}@example.com`,
+    grantedPermissions: stored?.grantedPermissions,
     id: `user-${role}`,
     isActive: true,
     name: `Usuario ${role}`,
     role,
-    storeId: role === "superadmin" ? null : (storeHeader ?? DEFAULT_STORE_ID),
+    storeId: demoStoreId,
   };
 }
 
@@ -105,6 +114,20 @@ export async function resolveAuthProfile(request: Request) {
   return toPermissionProfile(await resolveUserProfile(request));
 }
 
+/**
+ * Un id de la URL con el carácter nulo (`%00`) no es de ningún recurso y Postgres
+ * no lo admite en `text` ni como parámetro de una RPC (22P05 → 500). Se rechaza
+ * aquí, tras autenticar y antes de que la ruta llame a su servicio, para cubrir
+ * cualquier ruta con un segmento dinámico.
+ */
+function assertPathWithoutNul(request: Request) {
+  const path = request.url.split("?")[0] ?? "";
+
+  if (path.includes("%00")) {
+    throw new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
+  }
+}
+
 export async function requirePermission(
   request: Request,
   permission: Permission,
@@ -112,12 +135,14 @@ export async function requirePermission(
   const profile = await resolveAuthProfile(request);
 
   if (!profile) {
-    throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+    throw unauthenticatedError();
   }
 
   if (!profile.isActive || !hasEffectivePermission(profile, permission)) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
+
+  assertPathWithoutNul(request);
 
   const isSuperadmin = isSuperadminRole(profile.role);
 
@@ -126,7 +151,7 @@ export async function requirePermission(
   }
 
   if (!isSuperadmin && isPlatformPermission(permission)) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
 
   return {
@@ -159,7 +184,7 @@ export async function requireStoreAnyPermission(
   const profile = await resolveAuthProfile(request);
 
   if (!profile) {
-    throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+    throw unauthenticatedError();
   }
 
   const allowed = permissions.some((permission) =>
@@ -167,7 +192,7 @@ export async function requireStoreAnyPermission(
   );
 
   if (!profile.isActive || !allowed) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
 
   const isSuperadmin = isSuperadminRole(profile.role);
@@ -175,6 +200,8 @@ export async function requireStoreAnyPermission(
   if (isSuperadmin) {
     throw new ApiError(403, "FORBIDDEN", SUPERADMIN_ERP_FORBIDDEN_MESSAGE);
   }
+
+  assertPathWithoutNul(request);
 
   return toStoreAuthContext({
     isSuperadmin,

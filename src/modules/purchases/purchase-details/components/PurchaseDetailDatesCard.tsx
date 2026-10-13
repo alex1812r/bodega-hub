@@ -1,23 +1,24 @@
-import { Calendar } from "lucide-react";
 import moment from "moment";
 
 import { DATE_FORMATS, formatDate } from "@/shared/utils/date";
-
-import { PurchaseDetailInfoCard } from "./PurchaseDetailInfoCard";
 
 type PurchaseDetailDatesCardProps = {
   createdAt: string;
 };
 
-export function PurchaseDetailDatesCard({ createdAt }: PurchaseDetailDatesCardProps) {
-  const createdLabel = moment(createdAt).locale("es").format("D MMM");
+/** Día y mes de creación, como lo resume la sección «Fechas» cerrada. */
+export function formatPurchaseCreatedLabel(createdAt: string) {
+  return moment(createdAt).locale("es").format("D MMM");
+}
 
+/** Contenido de la sección «Fechas». */
+export function PurchaseDetailDatesCard({ createdAt }: PurchaseDetailDatesCardProps) {
   return (
-    <PurchaseDetailInfoCard icon={Calendar} title="Fechas">
-      <p className="text-sm text-foreground">Creada el {createdLabel}</p>
+    <div>
+      <p className="text-sm text-foreground">Creada el {formatPurchaseCreatedLabel(createdAt)}</p>
       <p className="mt-1 text-sm text-on-surface-variant">
         {formatDate(createdAt, DATE_FORMATS.time)} hrs
       </p>
-    </PurchaseDetailInfoCard>
+    </div>
   );
 }

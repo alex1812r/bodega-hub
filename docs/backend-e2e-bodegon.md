@@ -79,6 +79,8 @@ Definido en [`scripts/e2e-bodegon/data.ts`](../scripts/e2e-bodegon/data.ts):
 ## Pruebas negativas incluidas
 
 - SKU / categoría / `taxId` duplicado → 409
+- Vínculo proveedor–producto repetido: sobre uno **activo** → 409; sobre uno **desactivado** → 201 (lo reactiva)
+- Venta por debajo del precio de lista → 400 (regla C19): la fase 4 sube el arroz a 1,90 y las fases 10–13 lo venden a ese precio
 - Stock insuficiente en venta y ajuste → 400
 - `pago_movil` sin teléfono → 400
 - Vendedor → `POST /api/purchases` → 403

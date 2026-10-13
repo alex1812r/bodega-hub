@@ -13,8 +13,8 @@ import {
 } from "../utils/denominations";
 
 const currencyWords: Record<DenominationCurrency, string> = {
-  USD: "dolares",
-  VES: "bolivares",
+  USD: "dólares",
+  VES: "bolívares",
 };
 
 const currencyPrefixes: Record<DenominationCurrency, string> = {
@@ -48,7 +48,7 @@ export function PosBillPad({
       return;
     }
 
-    // Se difiere: el dialogo mueve el foco al montar su contenido.
+    // Se difiere: el diálogo mueve el foco al montar su contenido.
     const frame = requestAnimationFrame(() => firstBillRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [autoFocus]);

@@ -1,5 +1,6 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { supplierProductInputSchema } from "@/modules/contacts/services/supplierProducts.schemas";
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "products.manage");
     assertCanAccessSupplierContacts(auth.role);
-    const input = supplierProductInputSchema.parse(await request.json());
+    const input = supplierProductInputSchema.parse(await readJsonBody(request));
     return jsonCreated(await getSupplierProductsService().createSupplierProduct(input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);

@@ -37,7 +37,9 @@ export function PaymentDetailsPage({
     return <DetailSkeleton itemsPerSection={4} />;
   }
 
-  if (payment.error || !payment.data) {
+  // Solo sin datos: si falla un re-pedido con el pago ya cargado, el detalle (y el
+  // modal de «Registrar otro pago» abierto) siguen en pantalla.
+  if (!payment.data) {
     return (
       <ErrorState
         description={
@@ -54,10 +56,24 @@ export function PaymentDetailsPage({
   const data = payment.data;
   const linkedDocument = data.relatedDocument ?? data.documentBalance;
   const isCancelled = data.status === "anulado";
+  // Otro pago solo tiene sentido sobre el mismo documento (una venta o una compra).
+  const canRegisterAnotherPayment =
+    !isCancelled && Boolean(data.saleId) !== Boolean(data.purchaseId);
 
-  async function handleCancelPayment() {
-    await cancelPayment.mutateAsync(paymentId);
-    setIsCancelModalOpen(false);
+  function handleCancelPayment() {
+    // `mutate` no rechaza: si falla, el modal sigue abierto y muestra `cancelPayment.error`.
+    cancelPayment.mutate(paymentId, {
+      onSuccess: () => setIsCancelModalOpen(false),
+    });
+  }
+
+  function handleCancelModalOpenChange(open: boolean) {
+    setIsCancelModalOpen(open);
+
+    if (!open) {
+      // Que el rechazo no reaparezca al volver a abrir el modal.
+      cancelPayment.reset();
+    }
   }
 
   return (
@@ -69,7 +85,7 @@ export function PaymentDetailsPage({
         onCancel={() => setIsCancelModalOpen(true)}
         paymentId={data.id}
         registerPaymentAction={
-          !isCancelled ? (
+          canRegisterAnotherPayment ? (
             <RegisterPaymentModal
               purchaseId={data.purchaseId}
               saleId={data.saleId}
@@ -86,9 +102,10 @@ export function PaymentDetailsPage({
       />
 
       <PaymentCancelConfirmModal
+        error={cancelPayment.error?.message}
         isConfirming={cancelPayment.isPending}
         onConfirm={handleCancelPayment}
-        onOpenChange={setIsCancelModalOpen}
+        onOpenChange={handleCancelModalOpenChange}
         open={isCancelModalOpen}
         paymentId={data.id}
       />
@@ -117,17 +134,6 @@ export function PaymentDetailsPage({
           />
         </div>
       </div>
-
-      {cancelPayment.error ? (
-        <ErrorState
-          description={
-            cancelPayment.error instanceof Error
-              ? cancelPayment.error.message
-              : "No se pudo anular el pago."
-          }
-          title="No pudimos anular el pago"
-        />
-      ) : null}
     </div>
   );
 }

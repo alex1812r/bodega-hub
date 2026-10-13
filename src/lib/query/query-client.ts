@@ -5,39 +5,16 @@ import {
 } from "@tanstack/react-query";
 
 import { ClientApiError } from "@/shared/api/apiFetch";
+import { redirectToLoginOnSessionExpired } from "@/shared/auth/loginRedirect";
 
-function shouldRedirectToLogin() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const { pathname } = window.location;
-
-  if (pathname === "/login") {
-    return false;
-  }
-
-  if (pathname.startsWith("/api-docs") || pathname.startsWith("/dev/")) {
-    return false;
-  }
-
-  return true;
-}
-
+/**
+ * Red de seguridad: `apiFetch` ya redirige en cualquier 401. La redirección es
+ * idempotente (`redirectToLoginOnSessionExpired`), así que no se duplica.
+ */
 function handleUnauthorized(error: unknown) {
-  if (!(error instanceof ClientApiError) || error.status !== 401) {
-    return;
+  if (error instanceof ClientApiError && error.status === 401) {
+    redirectToLoginOnSessionExpired();
   }
-
-  if (!shouldRedirectToLogin()) {
-    return;
-  }
-
-  const next = encodeURIComponent(
-    `${window.location.pathname}${window.location.search}`,
-  );
-
-  window.location.assign(`/login?next=${next}`);
 }
 
 export function createQueryClient() {

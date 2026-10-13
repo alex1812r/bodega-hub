@@ -3,11 +3,32 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
+import type { AdminCanSellState } from "@/modules/settings/services/adminCanSell";
+import type { BusinessSettings } from "@/modules/settings/services/businessSettings";
+import type { CashCloseSettings } from "@/modules/settings/services/cashCloseSettings.schemas";
 import { apiFetch } from "@/shared/api/apiFetch";
-import type { AppSettingsMock, UserProfileMock } from "@/shared/mocks/erp-data";
+import type {
+  AppSettingsMock,
+  PricingSettingsMock,
+  UserProfileMock,
+} from "@/shared/mocks/erp-data";
 import type { StoreUserRole } from "@/shared/auth/permissions";
 
-export type SettingsInput = Partial<AppSettingsMock>;
+/**
+ * Configuración de la tienda tal como la devuelve `/api/settings`:
+ * `cashCloseDiffAlertVes` es el faltante en Bs (≥ 0, por defecto 0) que el
+ * cierre de caja debe SUPERAR para pedir confirmación explícita.
+ */
+export type AppSettings = AppSettingsMock & CashCloseSettings;
+export type { CashCloseSettings };
+/**
+ * `pricing` se envía completo (umbrales y chips); `defaultTaxRateId` debe ser una
+ * alícuota activa de la tienda; `cashCloseDiffAlertVes` es un monto en Bs ≥ 0.
+ */
+export type SettingsInput = Partial<AppSettings>;
+/** Semáforo de ganancia y chips de % de la tienda. */
+export type PricingSettings = PricingSettingsMock;
 export type UserUpdateInput = Partial<
   Pick<
     UserProfileMock,
@@ -22,16 +43,46 @@ export type CreateUserInput = {
 };
 
 export const settingsQueryKeys = {
+  adminCanSell: () => [...settingsQueryKeys.all, "admin-can-sell"] as const,
   all: ["settings"] as const,
+  business: () => [...settingsQueryKeys.all, "business"] as const,
+  cashClose: () => [...settingsQueryKeys.all, "cash-close"] as const,
   detail: () => [...settingsQueryKeys.all, "detail"] as const,
   paymentMethods: () => [...settingsQueryKeys.all, "payment-methods"] as const,
+  pricing: () => [...settingsQueryKeys.all, "pricing"] as const,
   users: () => [...settingsQueryKeys.all, "users"] as const,
 };
 
 export function useSettings() {
   return useQuery({
     queryKey: settingsQueryKeys.detail(),
-    queryFn: () => apiFetch<AppSettingsMock>("/api/settings"),
+    queryFn: () => apiFetch<AppSettings>("/api/settings"),
+  });
+}
+
+/**
+ * Nombre del negocio para los recibos (`GET /api/settings/business`): lo leen
+ * quien ve ventas y quien ve sus recibos de nómina, que no tienen
+ * `settings.view`. Mientras carga, o si falla, el recibo usa su nombre por defecto.
+ */
+export function useBusinessSettings() {
+  return useQuery({
+    queryKey: settingsQueryKeys.business(),
+    queryFn: () => apiFetch<BusinessSettings>("/api/settings/business"),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Umbral de faltante al cerrar caja para quien opera o ve la caja
+ * (`GET /api/settings/cash-close`; el cajero no tiene `settings.view`). Mientras
+ * carga, o si falla, quien lo use debe tratarlo como 0: cualquier faltante confirma.
+ */
+export function useCashCloseSettings() {
+  return useQuery({
+    queryKey: settingsQueryKeys.cashClose(),
+    queryFn: () => apiFetch<CashCloseSettings>("/api/settings/cash-close"),
+    staleTime: 60_000,
   });
 }
 
@@ -48,12 +99,26 @@ export function useEnabledPaymentMethods() {
   });
 }
 
+/**
+ * Semáforo de ganancia y chips de % de la tienda para quien ve productos
+ * (`GET /api/settings/pricing`, permiso `products.view`; `useSettings` exige
+ * `settings.view`). Mientras carga, `getProductPricingOptions(undefined)` da los
+ * valores por defecto.
+ */
+export function usePricingSettings() {
+  return useQuery({
+    queryKey: settingsQueryKeys.pricing(),
+    queryFn: () => apiFetch<PricingSettings>("/api/settings/pricing"),
+    staleTime: 60_000,
+  });
+}
+
 export function useUpdateSettings() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (input: SettingsInput) =>
-      apiFetch<AppSettingsMock>("/api/settings", {
+      apiFetch<AppSettings>("/api/settings", {
         body: input,
         method: "PATCH",
       }),
@@ -71,6 +136,61 @@ export function useUpdateSettings() {
         queryKey: settingsQueryKeys.paymentMethods(),
         refetchType: "none",
       });
+      queryClient.setQueryData<CashCloseSettings>(settingsQueryKeys.cashClose(), {
+        cashCloseDiffAlertVes: settings.cashCloseDiffAlertVes,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.cashClose(),
+        refetchType: "none",
+      });
+      queryClient.setQueryData<BusinessSettings>(settingsQueryKeys.business(), {
+        businessName: settings.businessName,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.business(),
+        refetchType: "none",
+      });
+      queryClient.setQueryData(settingsQueryKeys.pricing(), settings.pricing);
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.pricing(),
+        refetchType: "none",
+      });
+    },
+  });
+}
+
+export type { AdminCanSellState };
+
+/**
+ * «El administrador puede vender» (`GET /api/settings/admin-can-sell`, permiso
+ * `users.manage`): si todos los administradores activos pueden vender y operar
+ * caja, y cuáles son.
+ */
+export function useAdminCanSell(enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: settingsQueryKeys.adminCanSell(),
+    queryFn: () => apiFetch<AdminCanSellState>("/api/settings/admin-can-sell"),
+  });
+}
+
+/**
+ * Concede o retira la venta a los administradores de la tienda. Al guardar se
+ * refresca el perfil propio: el menú («Ventas → POS», «Mi caja») sale de ahí.
+ */
+export function useSetAdminCanSell() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiFetch<AdminCanSellState>("/api/settings/admin-can-sell", {
+        body: { enabled },
+        method: "PUT",
+      }),
+    onSuccess: (state) => {
+      queryClient.setQueryData(settingsQueryKeys.adminCanSell(), state);
+      void queryClient.invalidateQueries({ queryKey: settingsQueryKeys.users() });
+      void queryClient.invalidateQueries({ queryKey: authQueryKeys.me() });
     },
   });
 }
@@ -99,6 +219,10 @@ export function useUpdateUser(id: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.users(),
+      });
+      // Un cambio de rol o de estado mueve quiénes son los administradores activos.
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.adminCanSell(),
       });
     },
   });

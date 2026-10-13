@@ -43,6 +43,21 @@ describe("/api/products/[id]/price-history", () => {
     );
   });
 
+  it("returns the previous price, the reason and the kind of each entry (PRO-11)", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products/prod-drill/price-history?limit=50"),
+      context("prod-drill"),
+    );
+    const body = await response.json();
+
+    expect(body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "price-drill-002", kind: "change", previousSalePriceRef: 14, reason: null, salePriceRef: 15 }),
+        expect.objectContaining({ kind: "baseline", reason: "Línea base de ganancia" }),
+      ]),
+    );
+  });
+
   describe("supabase data source", () => {
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "supabase";

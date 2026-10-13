@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api/apiError";
+import { ApiError, unauthenticatedError } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { resolveAuthProfile } from "@/lib/api/requirePermission";
 import { hasEffectivePermission, isSuperadminRole } from "@/shared/auth/permissions";
@@ -21,7 +21,7 @@ export async function resolveAssistantContext(request: Request): Promise<Assista
   const profile = await resolveAuthProfile(request);
 
   if (!profile) {
-    throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+    throw unauthenticatedError();
   }
 
   if (!profile.isActive || !hasEffectivePermission(profile, "assistant.use")) {

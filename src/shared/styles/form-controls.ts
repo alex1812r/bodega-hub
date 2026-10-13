@@ -20,5 +20,16 @@ export const formHelperClassName = "text-xs text-muted-foreground";
 
 export const formHelperErrorClassName = "text-red-600 dark:text-red-400";
 
+/** Aviso no bloqueante bajo un campo (p. ej. el de miles de `NumberInput`). */
+export const formNoticeClassName = "text-xs text-amber-800 dark:text-amber-300";
+
+/** Borde del campo mientras tiene un aviso (sin error, que manda). */
+export const formControlNoticeClassName =
+  "border-amber-500 focus:border-amber-500 focus:ring-amber-200 dark:border-amber-600 dark:focus:ring-amber-950";
+
+/** El mismo aviso anclado al campo con `position: fixed` (`FloatingFieldNotice`). */
+export const formFloatingNoticeClassName =
+  "pointer-events-none fixed z-[60] w-56 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-left text-xs font-normal text-amber-800 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
+
 export const formTextareaClassName =
   "min-h-24 w-full rounded border border-border bg-surface-container-lowest px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container disabled:text-muted-foreground";

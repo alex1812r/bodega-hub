@@ -253,7 +253,8 @@ describe("payments.server", () => {
 
     async function expectCreateError(
       rpcError: { code?: string; message: string },
-      expected: { code: string; status: number },
+      // `message`: solo cuando el cliente NO recibe el texto del RPC tal cual.
+      expected: { code: string; message?: string; status: number },
     ) {
       mockRpcError(rpcError);
 
@@ -264,7 +265,7 @@ describe("payments.server", () => {
         ),
       ).rejects.toMatchObject({
         code: expected.code,
-        message: rpcError.message,
+        message: expected.message ?? rpcError.message,
         status: expected.status,
       });
     }
@@ -332,10 +333,22 @@ describe("payments.server", () => {
     });
 
     it("deja en 500 lo que de verdad es un fallo inesperado", async () => {
-      await expectCreateError(
-        { code: "XX000", message: "connection reset by peer" },
-        { code: "INTERNAL_ERROR", status: 500 },
-      );
+      // AUD-04: el texto de un error sin mapear se queda en el log del servidor.
+      const logged = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+      try {
+        await expectCreateError(
+          { code: "XX000", message: "connection reset by peer" },
+          {
+            code: "INTERNAL_ERROR",
+            message: "Ocurrió un error inesperado. Intenta de nuevo.",
+            status: 500,
+          },
+        );
+        expect(JSON.stringify(logged.mock.calls)).toContain("connection reset by peer");
+      } finally {
+        logged.mockRestore();
+      }
     });
 
     // STK-517 · R6: los errores crudos de Postgres pasan por `mapSupabaseError`

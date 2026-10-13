@@ -11,9 +11,15 @@ export { mapContact, type DbContactRow } from "./contacts";
 export {
   mapProduct,
   mapProductPriceHistory,
+  mapProductPriceReview,
+  mapProductPriceReviewItem,
   mapProductSummary,
   type DbProductSummaryRow,
   type ProductPriceHistoryRow,
+  type ProductPriceReview,
+  type ProductPriceReviewItem,
+  type ProductPriceReviewPurchase,
+  type ProductPriceReviewRow,
   type ProductRow,
 } from "./products";
 export { mapPermissionList } from "./permissions";

@@ -32,8 +32,8 @@ describe("productSearch", () => {
   });
 
   describe("escapeIlike", () => {
-    it("removes ilike wildcard characters", () => {
-      expect(escapeIlike("100%_off")).toBe("100off");
+    it("turns what ilike and PostgREST would interpret into single-character wildcards", () => {
+      expect(escapeIlike('100%_off*a\\b"c')).toBe("100__off_a_b_c");
     });
   });
 
@@ -85,7 +85,7 @@ describe("productSearch", () => {
 
     it("escapes special characters in search term", () => {
       expect(buildProductSearchOrFilter("100%")).toBe(
-        "name.ilike.%100%,sku.ilike.%100%,barcode.ilike.%100%",
+        "name.ilike.%100_%,sku.ilike.%100_%,barcode.ilike.%100_%",
       );
     });
   });

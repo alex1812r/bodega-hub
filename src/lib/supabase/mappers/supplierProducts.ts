@@ -6,6 +6,10 @@ import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 import type { SupplierProductPriceOrigin } from "@/shared/mocks/erp-data";
 
 import type { SupplierProductPackUnit } from "@/modules/contacts/services/supplierProducts.schemas";
+import type {
+  ProductSupplierLink,
+  SaveProductSuppliersResult,
+} from "@/modules/products/services/productSuppliers";
 
 export type DbSupplierProductPackUnitRow = {
   created_at?: string | null;
@@ -22,6 +26,8 @@ export type DbSupplierProductRow = {
   created_at?: string | null;
   id: string;
   is_active?: boolean | null;
+  /** Proveedor habitual del producto (parche 20261009e); sin la columna, `false`. */
+  is_preferred?: boolean | null;
   last_cost_ref?: number | string | null;
   last_cost_ves?: number | string | null;
   last_pack_cost_ref?: number | string | null;
@@ -106,6 +112,7 @@ export function mapSupplierProduct(
     ...mapBaseEntity(row),
     defaultPackUnit,
     isActive: mapBoolean(row.is_active, true),
+    isPreferred: mapBoolean(row.is_preferred, false),
     lastCostRef: toNumber(row.last_cost_ref),
     lastCostVes: toOptionalNumber(row.last_cost_ves),
     lastPackCostRef: toOptionalNumber(row.last_pack_cost_ref),
@@ -119,6 +126,58 @@ export function mapSupplierProduct(
     supplierId: row.supplier_id,
     supplierSku: normalizeOptionalSku(mapNullableString(row.supplier_sku)) ?? undefined,
     variationPercent: extras?.variationPercent ?? null,
+  };
+}
+
+/** Fila de `suppliers` en la respuesta de la RPC `save_product_suppliers`. */
+export type DbProductSupplierLinkRow = {
+  cost_ref?: number | string | null;
+  id: string;
+  is_preferred?: boolean | null;
+  last_purchased_at?: string | null;
+  supplier_id: string;
+  supplier_is_active?: boolean | null;
+  supplier_name?: string | null;
+  supplier_sku?: string | null;
+  updated_at?: string | null;
+};
+
+/** Respuesta de la RPC `save_product_suppliers` (parche 20261009e). */
+export type DbSaveProductSuppliersResult = {
+  preferred_auto_assigned?: boolean | null;
+  preferred_changed?: boolean | null;
+  preferred_supplier_id?: string | null;
+  previous_preferred_supplier_id?: string | null;
+  suppliers?: DbProductSupplierLinkRow[] | null;
+};
+
+export function mapProductSupplierLink(row: DbProductSupplierLinkRow): ProductSupplierLink {
+  const supplierSku = normalizeOptionalSku(mapNullableString(row.supplier_sku));
+  const lastPurchasedAt = mapNullableString(row.last_purchased_at);
+  const updatedAt = mapNullableString(row.updated_at);
+
+  return {
+    costRef: toNumber(row.cost_ref),
+    id: row.id,
+    isPreferred: mapBoolean(row.is_preferred, false),
+    ...(lastPurchasedAt ? { lastPurchasedAt } : {}),
+    supplierId: row.supplier_id,
+    supplierIsActive: mapBoolean(row.supplier_is_active, true),
+    supplierName: row.supplier_name ?? "",
+    ...(supplierSku ? { supplierSku } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+  };
+}
+
+export function mapSaveProductSuppliersResult(
+  result: DbSaveProductSuppliersResult,
+): SaveProductSuppliersResult {
+  return {
+    preferredAutoAssigned: mapBoolean(result.preferred_auto_assigned, false),
+    preferredChanged: mapBoolean(result.preferred_changed, false),
+    preferredSupplierId: result.preferred_supplier_id ?? null,
+    previousPreferredSupplierId: result.previous_preferred_supplier_id ?? null,
+    suppliers: (result.suppliers ?? []).map(mapProductSupplierLink),
   };
 }
 

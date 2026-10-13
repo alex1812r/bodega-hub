@@ -50,6 +50,7 @@ export function RegisterSupplierPriceModal({
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- el costo a registrar se vacia solo al abrir o cambiar de producto (no al cerrar); se conserva el momento exacto del reinicio del monto
     setInputMode("unit");
     setInputValue("");
     setNotes("");

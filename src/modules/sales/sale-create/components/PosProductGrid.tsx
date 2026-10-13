@@ -26,7 +26,7 @@ export function PosProductGrid({
     return (
       <LoadingState
         className="py-16"
-        description="Estamos cargando el catalogo de productos."
+        description="Estamos cargando el catálogo de productos."
         title="Cargando productos"
         variant="inline"
       />
@@ -37,7 +37,7 @@ export function PosProductGrid({
     return (
       <EmptyState
         className="py-16"
-        description="Prueba otra categoria o ajusta la busqueda."
+        description="Prueba otra categoría o ajusta la búsqueda."
         title="No hay productos para mostrar"
       />
     );

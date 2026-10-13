@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { useSettings } from "@/modules/settings/hooks/useSettings";
+import { useBusinessSettings } from "@/modules/settings/hooks/useSettings";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/components/Card";
@@ -37,7 +37,8 @@ function ReceiptFigure({ label, value }: { label: string; value: string }) {
 export function PayrollMinePage() {
   const receiptsQuery = useMyPayrollItems();
   const currentQuery = useMyPayrollCurrent();
-  const appSettings = useSettings();
+  // Solo el nombre del negocio: el cajero no puede leer `/api/settings`.
+  const appSettings = useBusinessSettings();
   const [salesReceipt, setSalesReceipt] = useState<PayrollMineItem | null>(null);
 
   const receipts = receiptsQuery.data?.items ?? [];
@@ -45,7 +46,7 @@ export function PayrollMinePage() {
 
   return (
     <EntityListPage
-      description="Tu comision por quincena, con el detalle de las ventas que la generaron."
+      description="Tu comisión por quincena, con el detalle de las ventas que la generaron."
       layout="sections"
       title="Mis recibos"
     >
@@ -53,7 +54,7 @@ export function PayrollMinePage() {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Quincena en curso</CardTitle>
-            <Badge variant="info">Estimacion</Badge>
+            <Badge variant="info">Estimación</Badge>
           </div>
           <CardDescription>
             {currentQuery.data
@@ -66,7 +67,7 @@ export function PayrollMinePage() {
             {currentQuery.isLoading ? "—" : formatRefUsd(estimate?.totalRef ?? 0)}
           </p>
           <p className="text-xs text-on-surface-variant">
-            Estimacion viva: sube con cada venta tuya que se cobra y baja si alguna se cancela.
+            Estimación viva: sube con cada venta tuya que se cobra y baja si alguna se cancela.
             No es un pago aprobado.
           </p>
           {estimate ? (
@@ -90,8 +91,8 @@ export function PayrollMinePage() {
           ) : receipts.length === 0 ? (
             <EmptyState
               className="py-8"
-              description="Cuando se apruebe una quincena veras aqui tu recibo."
-              title="Sin recibos todavia"
+              description="Cuando se apruebe una quincena verás aquí tu recibo."
+              title="Sin recibos todavía"
             />
           ) : (
             receipts.map((receipt) => (
@@ -121,7 +122,7 @@ export function PayrollMinePage() {
                     value={formatRefUsd(receipt.item.salesRef)}
                   />
                   <ReceiptFigure
-                    label="Comision"
+                    label="Comisión"
                     value={`${receipt.item.commissionPct.toFixed(2)} %`}
                   />
                   <ReceiptFigure

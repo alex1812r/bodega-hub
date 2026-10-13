@@ -24,7 +24,8 @@ export function InventorySkuCell({ className, sku }: InventorySkuCellProps) {
   }
 
   return (
-    <div className={cn("flex min-w-0 max-w-[5.5rem] items-center gap-0.5", className)}>
+    // `span`: la celda también va dentro del `<p>` de subtítulo de la tarjeta de móvil.
+    <span className={cn("flex min-w-0 max-w-[5.5rem] items-center gap-0.5", className)}>
       <span
         className="min-w-0 flex-1 truncate font-mono text-[13px] leading-[18px] text-outline"
         title={sku}
@@ -43,6 +44,6 @@ export function InventorySkuCell({ className, sku }: InventorySkuCellProps) {
           <Copy aria-hidden className="size-3.5" />
         )}
       </button>
-    </div>
+    </span>
   );
 }

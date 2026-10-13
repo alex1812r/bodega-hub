@@ -35,15 +35,15 @@ export function PayrollVaultPanel({ pendingRef, rateVes }: PayrollVaultPanelProp
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Disponible en baul</CardTitle>
+        <CardTitle>Disponible en baúl</CardTitle>
         <CardDescription>
-          Saldos con los que se paga la nomina. El pago descuenta de la cubeta del metodo elegido.
+          Saldos con los que se paga la nómina. El pago descuenta de la cubeta del método elegido.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {vault.error ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-            No pudimos cargar los saldos del baul.
+            No pudimos cargar los saldos del baúl.
           </p>
         ) : null}
 
@@ -70,14 +70,14 @@ export function PayrollVaultPanel({ pendingRef, rateVes }: PayrollVaultPanelProp
             </p>
           ) : (
             <p className="text-xs text-on-surface-variant">
-              Sin tasa del dia no podemos estimar el equivalente en Bs.
+              Sin tasa del día no podemos estimar el equivalente en Bs.
             </p>
           )}
         </div>
 
         {showWarning ? (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-            El baul no alcanza para cubrir lo pendiente. Deposita o transfiere cierres antes de
+            El baúl no alcanza para cubrir lo pendiente. Deposita o transfiere cierres antes de
             pagar.
           </p>
         ) : null}

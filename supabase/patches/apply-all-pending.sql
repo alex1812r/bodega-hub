@@ -4,6 +4,20 @@
 -- Uso: pegar en Supabase Dashboard → SQL Editor → Run
 -- Idempotente: se puede re-ejecutar sin romper datos existentes.
 -- Ver: docs/supabase-setup.md (seccion patches)
+--
+-- ORDEN DE DESPLIEGUE del plan ux-mejoras (20261007a ... 20261018a): el orden de
+-- los bloques de este archivo es el de los nombres, NO el de despliegue. La unica
+-- fuente del orden es docs/despliegue-ux-mejoras.md, seccion 2:
+--   20261007a, 7b, 8a, 9a-9f, 10a, 10b, 10d, 10e, 10f, 11a, 11b, 11c, 12a, 12b,
+--   13a, 13b, 15a, 17a, 18a -> verify -> BFF -> 20261010c -> 20261011d -> verify.
+-- Forma recomendada de ejecutarlo: los dos archivos ya concatenados en ese orden,
+--   supabase/patches/deploy/ux-mejoras-01-antes-del-bff.sql   (-> verify -> BFF)
+--   supabase/patches/deploy/ux-mejoras-02-despues-del-bff.sql (-> verify)
+-- que genera "npm run deploy:sql" (scripts/build-deploy-sql.mjs).
+-- 20261010c y 20261011d van DESPUES del BFF. En el primer verify quedan en fail
+-- tres filas, y solo esas: la de 20261010c, la de privilegios de 20261011d y la
+-- de RLS de product_pack_components de 20261009d. En el segundo, fail = 0.
+-- 20261008a y 20261015a: orden con el BFF indistinto (van antes por simplicidad).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -403,3 +417,458 @@ notify pgrst, 'reload schema';
 -- OJO: para borrar o cambiar de tipo una columna numeric hay que soltar antes los triggers
 -- trg_zz_reject_non_finite_numeric_ins / _upd de su tabla; despues de eso, o de anadir una columna numeric nueva,
 -- volver a aplicar este parche (regenera los triggers desde el catalogo; verify-patches lo detecta si falta).
+-- -----------------------------------------------------------------------------
+-- 20261007a — tax rates (SHR-10): catalogo de alicuotas de IVA tax_rates (globales + por tienda; semilla exento 0,
+--             reducida 8, general 16), categories.tax_rate_id sincronizada por trigger con tax_rate,
+--             app_settings.default_tax_rate_id, purchase_items.tax_rate_code y create_purchase con tax_rate_code por linea
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261007a-tax-rates.sql
+-- Requiere 20260716, 20260809 y la serie 20261006a … i completa. Idempotente, una transaccion. La firma de create_purchase
+-- no cambia. Reaplicar 20261006c, f o h reinstala el create_purchase anterior: volver a aplicar este parche despues.
+-- OJO: migra datos la primera vez (categories.tax_rate_id, app_settings.default_tax_rate_id y purchase_items.tax_rate_code
+-- por porcentaje; tax_rate no se toca). Un porcentaje que no sea 0, 8 ni 16 crea en su tienda la alicuota 'otro-<pct>'
+-- INACTIVA: revisar despues de aplicar con  select * from public.tax_rates_pending_review;
+-- OJO: create_purchase responde PT400 si el tax_rate de una linea no es el pct de una alicuota ACTIVA de la tienda (las
+-- compras nuevas de productos cuya categoria quedo en 'otro-<pct>' se rechazan hasta activar esa alicuota o reasignar la
+-- categoria), y categories responde PT400 al guardar un tax_rate sin alicuota. Las alicuotas no se borran: se desactivan.
+-- -----------------------------------------------------------------------------
+-- 20261007b — tax rates store override (SHR-10): RPC override_tax_rate_for_store, unico camino del BFF para cambiar una
+--             alicuota (PATCH /api/tax-rates/{id}); crea la fila de la tienda a partir de la global y le traspasa
+--             categorias y alicuota por defecto en una sola transaccion
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261007b-tax-rates-store-override.sql
+-- Requiere 20261007a. Idempotente, una transaccion. Solo crea la funcion: no migra ni toca filas, stock ni dinero.
+-- Solo admin (PT403); PT404 si la alicuota no existe para la tienda; PT409 al desactivar una alicuota que usan
+-- categorias activas o que es la alicuota por defecto; PT400 con label vacio o pct fuera de 0..100.
+-- -----------------------------------------------------------------------------
+-- ORDEN DE DESPLIEGUE (SHR-10): aplicar 20261007a y 20261007b ANTES de desplegar el BFF de la rama feat/ux-mejoras.
+-- Ese BFF ya pide las columnas nuevas en sus select (categories.tax_rate_id, app_settings.default_tax_rate_id,
+-- purchase_items.tax_rate_code) y llama a tax_rates_for_store y override_tax_rate_for_store: sin los dos parches,
+-- categorias, configuracion, detalle de compra y /api/tax-rates responden error. Los parches si son compatibles con el
+-- BFF anterior (create_purchase sigue aceptando solo tax_rate), asi que el orden seguro es parches -> verify -> BFF.
+-- -----------------------------------------------------------------------------
+-- 20261008a — register_payment idempotency (PAG-06a, P4-3): clave opcional p_client_request_id en register_payment
+--             (payments.client_request_id + client_request_hash, unica por tienda); el reintento con la misma clave
+--             devuelve el pago original sin tocar documento, caja ni baul; otro contenido responde PT409
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261008a-register-payment-idempotency.sql
+-- Requiere 20261006c (stock_request_hash) y 20261006h (register_payment vigente). Idempotente, una transaccion. No migra
+-- ni toca filas: anade dos columnas nullable y un indice unico parcial a payments. La semantica monetaria no cambia (el
+-- cuerpo es copia del de 20261006h); sin clave la RPC se comporta igual y create_sale_with_payments no se toca.
+-- OJO: firma nueva de 13 argumentos; el parche elimina la de 12 (PGRST203). Reaplicar 20261006b, c, f, g o h reinstala
+-- la de 12 y deja dos sobrecargas: volver a aplicar este parche despues (verify-patches lo detecta).
+-- Orden con el BFF: indistinto. El BFF que envia la clave sobre una base sin el parche recibe PGRST202 y registra el
+-- pago una vez sin idempotencia (queda en el log); el BFF anterior funciona sobre la base ya parcheada.
+-- -----------------------------------------------------------------------------
+-- 20261009a — product margin pct (PRO-07): columna generada almacenada products.margin_pct (% de ganancia sobre el costo
+--             en REF; NULL con costo 0) + indice (store_id, margin_pct) para filtrar y ordenar el listado por ganancia
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009a-product-margin-pct.sql
+-- No requiere otros parches. Idempotente, una transaccion. No migra datos, no toca stock, dinero ni RPC: Postgres calcula
+-- la columna a partir de sale_price_ref y current_cost_ref (que ya incluye IVA) y la mantiene sola.
+-- OJO: reescribe la tabla products con bloqueo exclusivo mientras dura (aplicar fuera de hora pico).
+-- ORDEN DE DESPLIEGUE (PRO-07): aplicar ANTES de desplegar el BFF: GET /api/products?margin=... y sortBy=marginPct
+-- filtran y ordenan por margin_pct; sin el parche esas dos consultas responden error (el resto del listado no la usa).
+-- -----------------------------------------------------------------------------
+-- 20261009b — pricing settings (PRO-09): semaforo de ganancia y chips de % por tienda en app_settings
+--             (margin_yellow_from_pct 15, margin_green_from_pct 25, markup_chips_pct {12,20,30}) y % de ganancia sugerido
+--             por categoria (categories.default_markup_pct, opcional)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009b-pricing-settings.sql
+-- Requiere 20260716, 20261006i y 20261007a. Idempotente, una transaccion. No migra datos (las tiendas existentes reciben
+-- los valores por defecto de las columnas), no toca stock, dinero, precios, RPC, politicas ni grants. Regenera los
+-- triggers trg_zz_reject_non_finite_numeric_* de app_settings y categories para cubrir las columnas numeric nuevas.
+-- La alicuota por defecto para categorias nuevas ya existe (app_settings.default_tax_rate_id, 20261007a): no se duplica.
+-- ORDEN DE DESPLIEGUE (PRO-09): aplicar ANTES de desplegar el BFF: /api/settings, /api/settings/pricing, /api/categories
+-- y /api/products ya piden las columnas nuevas en sus select; sin el parche responden error.
+-- -----------------------------------------------------------------------------
+-- 20261009c — price review (PRO-11): cola "Por revisar" de precios. product_price_history guarda el costo y la banda de
+--             ganancia de cada precio fijado (cost_ref_snapshot, margin_band_snapshot, snapshot_seq), update_product_price
+--             los rellena, RPC keep_product_price ("Mantener precio"), linea base por producto (backfill + trigger en las
+--             altas) y vista products_price_review (security_invoker) con la compra que subio el costo
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009c-price-review.sql
+-- Requiere 20261006a, 20261006h, 20261006i, 20261009a y 20261009b. Idempotente, una transaccion. Ninguna firma cambia:
+-- update_product_price valida, bloquea, falla y escribe products igual que en 20261006h; solo anade la instantanea a la
+-- fila de historial que ya insertaba. No toca stock, dinero, precios, politicas ni las RPC de compras.
+-- OJO: inserta UNA fila de historial "Línea base de ganancia" (precio anterior = nuevo = actual) por cada producto que
+-- no tenga ninguna instantanea, y cada producto nuevo nace con la suya (trigger trg_products_price_baseline). Las filas
+-- de historial anteriores quedan sin instantanea (no se inventa el costo historico). Reaplicar no inserta mas filas.
+-- OJO: las instantaneas consumen numeros de public.stock_movements_seq (orden exacto frente a las compras recibidas);
+-- no escriben ni leen stock. Un script que reinicie esa secuencia debe vaciar tambien product_price_history
+-- (reset-data.sql y reset-purchases-and-costs.sql ya lo hacen) y reaplicar este parche para recrear las lineas base.
+-- OJO: reaplicar 20261006g o 20261006h reinstala update_product_price sin la instantanea: volver a aplicar este parche.
+-- ORDEN DE DESPLIEGUE (PRO-11): aplicar ANTES de desplegar el BFF: /api/products (listado y detalle),
+-- /api/products/price-review, /api/products/{id}/keep-price y /api/products/{id}/price-history ya leen la vista y las
+-- columnas nuevas; sin el parche responden error.
+-- -----------------------------------------------------------------------------
+-- 20261009d — assorted pack (PRO-12): la conversion empaque -> unidad pasa a RECETA de N componentes.
+--             product_pack_conversions = cabecera (label, total_units) + product_pack_components (unit_product_id,
+--             units_per_pack, cost_weight); convert_pack_to_units gana p_components (reparto real de la apertura) y
+--             reparte el costo por unidades x cost_weight; conversion_mismatches suma las entradas de los componentes;
+--             vista product_pack_roles + relacion calculada pack_role(products)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009d-assorted-pack.sql
+-- Requiere 20260811, 20261006a, 20261006c, 20261006d, 20261006i y 20261007a. Idempotente, una transaccion. Migra datos la
+-- primera vez: cada fila de product_pack_conversions queda como cabecera (total_units = units_per_pack) + 1 componente
+-- (cost_weight 1). Con recetas de 1 componente nada cambia: mismo stock, costo, movimientos y resultado al abrir un
+-- empaque, misma compra en modo empaque y mismas filas en conversion_mismatches.
+-- Firmas: convert_pack_to_units pasa de 4 a 5 argumentos (p_components jsonb al final, con default; se elimina la de 4);
+-- create_purchase conserva la de 14 y solo cambia como lee la receta en modo empaque (componentes / total_units).
+-- Se elimina el indice unico uq_product_pack_conversions_unit_active (un producto unidad puede salir de varios empaques);
+-- se mantiene uq_product_pack_conversions_pack_active (una receta activa por empaque).
+-- Compatibilidad: product_pack_conversions.units_per_pack (= total_units) y unit_product_id (componente unico o NULL en un
+-- surtido) se mantienen por trigger; el BFF que aun lee y escribe el par 1 a 1 sigue funcionando sobre la base parcheada.
+-- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Hasta 20261011d un usuario podia
+-- escribirla por PostgREST (cabecera inactiva, componentes, activar); desde 20261011d solo por la RPC save_pack_recipe.
+-- OJO (INV-L2): este parche concede a authenticated insert / update / delete sobre product_pack_components (seccion 8).
+-- Sobre una base que ya tiene 20261011d, REAPLICAR este parche reabre la escritura directa de los componentes: volver a
+-- aplicar 20261011d-pack-recipe-write-lockdown.sql justo despues y correr verify-patches.sql (la fila de RLS de 20261009d
+-- y la de 20261011d quedan en fail hasta entonces).
+-- OJO: reaplicar 20261006c deja dos sobrecargas de convert_pack_to_units; reaplicar 20261006c / f / h o 20261007a
+-- reinstala create_purchase sin la lectura de componentes; reaplicar 20261006d reinstala conversion_mismatches del modelo
+-- 1 a 1. En los tres casos: volver a aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (PRO-12): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada; el BFF que
+-- envia p_components o lee product_pack_components / pack_role necesita el parche.
+-- -----------------------------------------------------------------------------
+-- 20261009e — supplier preferred (PRO-14): proveedor habitual del producto. supplier_products.is_preferred (como mucho uno
+--             por producto y nunca un vinculo inactivo ni de un proveedor inactivo), triggers "primer vinculo = habitual"
+--             y relevo al desactivar / borrar el habitual o al desactivar su proveedor, backfill de un habitual por
+--             producto y RPC save_product_suppliers (estado deseado de los vinculos del producto en una transaccion)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009e-supplier-preferred.sql
+-- Requiere 20260716 y 20261006h. Idempotente, una transaccion. No toca stock, products (ni current_cost_ref), precios de
+-- venta, compras, politicas ni las RPC existentes: create_purchase / receive_purchase, register_supplier_product_price y
+-- el formulario de contactos siguen igual y los triggers marcan el habitual por ellos. No anade columnas numeric (los
+-- triggers de 20261006i no se regeneran).
+-- OJO: backfill. Cada producto con vinculos activos y sin habitual recibe UNO: el de compra mas reciente
+-- (last_purchased_at) o, sin compras, el vinculo mas antiguo; solo entre proveedores activos. Reaplicar no cambia un
+-- habitual ya elegido. El vinculo elegido estrena updated_at (pasa por trg_supplier_products_updated_at).
+-- OJO: el costo que llega por save_product_suppliers se registra con register_supplier_product_price en modo 'unit'
+-- (borra last_pack_cost_ref del vinculo, igual que registrar un precio por unidad) y sin costo en Bs.
+-- OJO: los triggers bloquean la fila del producto (for no key update) al dar de alta, reactivar, desactivar o borrar un
+-- vinculo que decide el habitual: dos altas simultaneas del primer vinculo ya no eligen dos habituales.
+-- ORDEN DE DESPLIEGUE (PRO-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
+-- sin el parche: PUT /api/products/{id}/suppliers responde error; los listados de productos siguen respondiendo (sin
+-- preferredSupplier) y los de vinculos salen con isPreferred = false.
+-- -----------------------------------------------------------------------------
+-- 20261009f — price and product idempotency (PRO-F9): el precio de un reprecio se calcula DENTRO de la base con el producto
+--             bloqueado (reprice_product_to_markup), cambio de precio y "Mantener precio" con costo esperado
+--             (update_product_price_checked, keep_product_price con p_expected_cost_ref: PT409 si el costo cambio) y clave
+--             de idempotencia del alta de producto (products.client_request_id / client_request_hash + indice unico)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009f-price-and-product-idempotency.sql
+-- Requiere 20261006c, 20261006h y 20261009c. Idempotente, una transaccion. No toca stock, dinero, politicas ni las RPC de
+-- compras; update_product_price queda letra por letra como en 20261009c (las RPC nuevas delegan en ella). No anade columnas
+-- numeric (los triggers de 20261006i no se regeneran). Las dos columnas nuevas de products son opcionales: importacion
+-- masiva, RPC que crean productos y BFF anterior siguen insertando sin ellas.
+-- OJO: keep_product_price cambia de firma: (uuid, text) -> (uuid, text, numeric default null). Se elimina la de dos
+-- argumentos; las llamadas con dos argumentos siguen resolviendo. Reaplicar 20261009c reinstala la firma vieja y deja dos
+-- sobrecargas (PGRST203 en la llamada de un argumento): volver a aplicar este parche y correr verify-patches.sql.
+-- OJO: price_from_markup redondea un % con mas de dos decimales en decimal exacto (1.005 -> 1.01); priceFromMarkup de
+-- @bodega/core lo hace sobre coma flotante (-> 1.00). El BFF envia el % ya redondeado con la regla de @bodega/core.
+-- ORDEN DE DESPLIEGUE (PRO-F9): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: el reprecio masivo, el cambio de precio con costo esperado, "Mantener precio" con costo esperado y el alta de
+-- producto con clientRequestId responden error (funcion o columna inexistente); nada queda a medias.
+-- -----------------------------------------------------------------------------
+-- 20261010a — purchase auto link (COM-02): create_purchase deja vinculada al proveedor cada linea de la compra en la misma
+--             transaccion (tambien en un pedido), crea el empaque del proveedor del vinculo nuevo y rechaza con PT400 al
+--             proveedor inactivo o que no es proveedor
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010a-purchase-auto-link.sql
+-- Requiere 20261006c / f / h, 20261007a, 20261009d y 20261009e. Idempotente, una transaccion. Solo redefine create_purchase
+-- (misma firma de 14 argumentos) a partir del cuerpo de 20261009d; no toca tablas, indices, politicas, triggers ni
+-- receive_purchase. No migra datos.
+-- NO cambia lineas, movimientos (quantity_delta), costo del producto ni totales: para el mismo payload la compra es la misma
+-- que con 20261009d. Compra recibida: el vinculo se crea / reactiva y registra el costo como hasta hoy (origen 'compra').
+-- Nuevo: un PEDIDO de un producto sin vinculo lo crea con el costo de la linea (con IVA), historial 'vinculacion' y sin
+-- last_purchased_at; sobre un vinculo inactivo lo reactiva sin tocar costo; sobre uno activo no hace nada. La linea por
+-- empaque de un vinculo creado en esa compra anade su supplier_product_pack_units (el primero, predeterminado).
+-- El proveedor habitual lo sigue decidiendo el trigger de 20261009e: el vinculo nuevo queda habitual solo si el producto
+-- no tenia ninguno.
+-- OJO: el proveedor inactivo o que no es proveedor / ambos responde ahora PT400 con mensaje propio ("El proveedor X está
+-- inactivo: no se puede registrar la compra"); antes salia de assert_contact_type sin errcode (P0001).
+-- OJO: create_purchase lee el contacto con FOR SHARE: desactivar a un proveedor espera a que termine su compra en curso.
+-- OJO: reaplicar 20261006c / f / h, 20261007a o 20261009d reinstala create_purchase sin el vinculo automatico: volver a
+-- aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-02): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada y el BFF nuevo
+-- sobre la base sin parche (mismo payload y misma firma); sin el parche, un pedido no deja vinculo hasta recibirlo.
+-- OJO: reaplicar 20261010a reinstala create_purchase sin la guarda de producto inactivo: volver a aplicar 20261010b.
+-- -----------------------------------------------------------------------------
+-- 20261010b — purchase inactive product (COM-15): create_purchase rechaza con PT400 cualquier linea de un producto inactivo
+--             (compra recibida o pedido), nombrando el producto, sin crear nada
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010b-purchase-inactive-product.sql
+-- Requiere 20261006c / f / h, 20261007a, 20261009d, 20261009e y 20261010a. Idempotente, una transaccion. Solo redefine
+-- create_purchase (misma firma de 14 argumentos) a partir del cuerpo de 20261010a; no toca tablas, indices, politicas,
+-- triggers ni receive_purchase. No migra datos.
+-- NO cambia lineas, movimientos (quantity_delta), costo del producto, totales ni vinculos de una compra de productos
+-- activos: para el mismo payload la compra es la misma que con 20261010a.
+-- Nuevo: si alguna linea es de un producto con is_active = false la compra entera responde PT400 ("El producto X está
+-- inactivo: no se puede registrar la compra"; con varios, "Los productos X, Y están inactivos: ..."). Se comprueba con los
+-- productos ya bloqueados (order by id for update): no hay carrera con la desactivacion. El producto inexistente o de otra
+-- tienda sigue respondiendo PT404.
+-- OJO: receive_purchase no cambia: un pedido creado con el producto activo se puede recibir aunque el producto se haya
+-- desactivado despues. El reintento con un clientRequestId ya guardado devuelve la compra original aunque el producto
+-- este hoy inactivo.
+-- OJO: reaplicar 20261006c / f / h, 20261007a, 20261009d o 20261010a reinstala create_purchase sin esta guarda: volver a
+-- aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-15): parche -> verify -> BFF. Mismo payload y misma firma: el BFF anterior y el nuevo funcionan
+-- sobre la base con o sin parche; sin el parche, la compra de un producto inactivo se sigue aceptando.
+-- OJO: reaplicar 20261010b reinstala create_purchase sin la marca "Desarmar al recibir": volver a aplicar 20261010d.
+-- -----------------------------------------------------------------------------
+-- 20261010c — payments purchase RLS (COM-16, D23): los pagos de COMPRAS (purchase_id no nulo) solo los leen admin y
+--             contador por PostgREST; los pagos de ventas se leen como hasta hoy (toda la tienda)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010c-payments-purchase-rls.sql
+-- Requiere 20260716-multi-store y 20261006a / h. Idempotente, una transaccion. Solo redefine la politica de lectura
+-- "Authenticated users read payments"; no toca tablas, columnas, indices, funciones, triggers ni otras politicas. No
+-- migra datos. Las RPC que leen payments son security definer: cierre de caja, baul y vistas de integridad no cambian.
+-- Efecto: vendedor y almacen dejan de leer pagos a proveedores con su JWT (0 filas, sin error). Lo pagado de una compra
+-- sigue legible desde su cabecera (purchases.paid_ref / paid_ves).
+-- OJO: vault_movements (asientos purchase_out del baul) NO se toca: sigue legible por tienda sin filtro de rol.
+-- OJO: reaplicar 20260716-multi-store reinstala la lectura sin filtro de rol: volver a aplicar este parche.
+-- ORDEN DE DESPLIEGUE (COM-16): BFF -> parche -> verify. El BFF anterior lee payments con la sesion del usuario en
+-- GET /api/purchases/[id] y sobrescribe Pagado con esa suma: sobre la base parcheada almacen veria "Pagado 0". El BFF
+-- nuevo no consulta payments para almacen y funciona igual con o sin parche.
+-- Ningun otro parche depende de este: se aplica tras el BFF, antes de 20261011d (BFF -> 20261010c -> 20261011d -> verify).
+-- Hasta entonces su fila de verify-patches.sql queda en fail: es la tercera fila esperada del primer verify.
+-- -----------------------------------------------------------------------------
+-- 20261010d — receive disassemble (COM-14): la linea de compra marcada "Desarmar al recibir" se abre en los componentes de
+--             la receta de su empaque en la misma transaccion que la recibe
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010d-receive-disassemble.sql
+-- Requiere 20261006a / c, 20261009d, 20261010a y 20261010b. Idempotente, una transaccion. Anade
+-- purchase_items.disassemble_on_receive (boolean, default false) y disassembled_conversion_id (uuid), y
+-- purchases.receive_client_request_id / receive_request_hash; no migra datos (ninguna linea existente queda marcada).
+-- Redefine create_purchase (misma firma de 14 argumentos) a partir del cuerpo de 20261010b: acepta
+-- disassemble_on_receive por linea, exige receta activa del empaque (PT400) y, si la compra nace recibida, abre los
+-- empaques al final de la misma transaccion. Crea la RPC receive_purchase_and_disassemble(p_purchase_id, p_disassemble,
+-- p_client_request_id) y 4 funciones internas (sin execute para PostgREST). NO redefine receive_purchase ni
+-- convert_pack_to_units: las invoca.
+-- NO cambia cantidades, costos, totales ni movimientos: una compra sin lineas marcadas es la de 20261010b (misma huella de
+-- idempotencia) y una con lineas marcadas deja lo mismo que recibir y despues abrir los empaques a mano.
+-- Camino ATOMICO en los dos sitios: si una apertura falla se revierte todo (ni compra recibida ni stock a medias). Receta
+-- desactivada entre el pedido y la recepcion: PT409 nombrando el producto; se recibe desmarcando la linea.
+-- OJO: anular o devolver una compra desarmada responde como tras abrir los empaques a mano (stock insuficiente del
+-- empaque): cancel_purchase / return_purchase no cambian.
+-- OJO: reaplicar 20261006c / f / h, 20261007a, 20261009d, 20261010a o 20261010b reinstala create_purchase sin el desarme:
+-- volver a aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
+-- sobre la base sin parche: el detalle de compra responde error (pide las columnas nuevas); la recepcion sin lineas a
+-- desarmar cae a receive_purchase.
+-- -----------------------------------------------------------------------------
+-- 20261010e — pack recipe always disassemble (COM-14): preferencia "Desarmar siempre al recibir compras" en la cabecera de
+--             la receta de apertura (product_pack_conversions.always_disassemble_on_receive)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010e-pack-recipe-always-disassemble.sql
+-- Requiere 20261009d. Idempotente, una transaccion. Solo anade la columna (boolean not null default false); no toca
+-- funciones, triggers, indices ni politicas, y no migra datos (toda receta existente queda en false).
+-- NO cambia stock, costo ni dinero: ninguna RPC lee la columna. Es una preferencia de pantalla: la linea de ese empaque
+-- nace con el chip "Desarmar al recibir" marcado en /purchases/create; la marca que decide sigue viajando por linea.
+-- Se LEE por tabla directa (PostgREST) con la RLS de la cabecera (lectura de la tienda). Se ESCRIBE por la RPC
+-- save_pack_recipe desde 20261012a (INT-02): 20261011d revoca la escritura directa de la cabecera, tambien para admin y
+-- almacen.
+-- ORDEN DE DESPLIEGUE: parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sobre la
+-- base sin parche responde error al leer recetas (pide la columna nueva). Aplicar ANTES de 20261012a (usa la columna).
+-- -----------------------------------------------------------------------------
+-- 20261010f — receive disassemble invariant (COM-F7 M1, sobre COM-14): una compra no queda recibida con una linea marcada
+--             "Desarmar al recibir" sin desarmar; lo garantiza la base con un constraint trigger diferido
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010f-receive-disassemble-invariant.sql
+-- Requiere 20261010d. Idempotente, una transaccion. Crea la funcion purchases_received_disassemble_guard() (security
+-- definer, sin execute para PostgREST, solo lee) y el constraint trigger del mismo nombre sobre purchases: after insert or
+-- update of status, when (new.status = 'recibido'), deferrable initially deferred. NO redefine receive_purchase,
+-- receive_purchase_and_disassemble, create_purchase ni convert_pack_to_units; no toca tablas, columnas, indices ni
+-- politicas; no migra datos.
+-- NO cambia stock, costo ni dinero. Al final de la transaccion que deja una compra recibida, si le queda una linea con
+-- disassemble_on_receive = true y disassembled_conversion_id NULL responde PT409 ("Esta compra tiene lineas marcadas para
+-- desarmar: ...") y se revierte todo. Solo lo dispara receive_purchase llamada DIRECTAMENTE sobre un pedido con lineas
+-- marcadas (antes dejaba la compra recibida con la marca y sin conversion). receive_purchase_and_disassemble (con marcas,
+-- con reparto o con [] = desmarca y recibe sin abrir), create_purchase recibida y receive_purchase sobre un pedido sin
+-- marcas responden lo mismo que antes.
+-- OJO: el rechazo llega al confirmar la transaccion (por PostgREST, 409 con el mensaje). En una transaccion abierta a mano
+-- se adelanta con: set constraints public.purchases_received_disassemble_guard immediate;
+-- OJO: un constraint trigger no valida filas existentes; la cabecera del parche trae la consulta que localiza una compra
+-- recibida con una linea marcada sin desarmar. Reaplicar 20261010d no elimina el trigger.
+-- ORDEN DE DESPLIEGUE: parche -> verify. No depende del BFF (ya recibe siempre con receive_purchase_and_disassemble).
+-- -----------------------------------------------------------------------------
+-- 20261011a — inventory overview (INV-01a): vista public.inventory_overview (una fila por producto con entradas y salidas
+--             de 30 dias, ultimo movimiento por seq y stock_status) para que GET /api/inventory filtre y pagine en la base,
+--             e indice idx_stock_movements_product_seq (product_id, seq desc)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011a-inventory-overview.sql
+-- Requiere 20260716, 20261006a y 20261006h. Idempotente, una transaccion. Solo lectura: no toca stock, dinero, politicas ni
+-- RPC. La vista es security_invoker (RLS de products y stock_movements del que consulta) y solo la leen authenticated y
+-- service_role. low_stock_products sigue existiendo (el BFF nuevo ya no la lee).
+-- OJO: create index sin concurrently: bloquea las escrituras de stock_movements mientras se construye (segundos en un libro
+-- grande). Aplicar fuera de hora pico.
+-- ORDEN DE DESPLIEGUE (INV-01): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: GET /api/inventory responde error (la vista no existe); el resto del inventario no cambia.
+-- -----------------------------------------------------------------------------
+-- 20261011b — adjust_stock inactive (COM-15a): adjust_stock rechaza (PT409) la entrada libre de stock a un producto
+--             inactivo; las salidas y las devoluciones ligadas a su venta / compra no cambian
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011b-adjust-stock-inactive.sql
+-- Requiere 20261006a, b, c, e, f y g. Idempotente, una transaccion. La firma de adjust_stock no cambia (7 argumentos).
+-- Reaplicar 20261006c o 20261006g reinstala la version anterior de adjust_stock (sin la guarda): volver a aplicar este
+-- parche despues.
+-- OJO: un ajuste con delta > 0 (ajuste_entrada, inventario_inicial o sin tipo) sobre un producto con is_active = false
+-- ahora responde PT409 ("El producto esta inactivo: reactivalo antes de registrar una entrada de stock"), sin movimiento
+-- ni clave de idempotencia consumida. Un ajuste de salida sobre un inactivo sigue entrando (para dejarlo en cero), igual
+-- que devolucion_cliente con p_sale_id y devolucion_proveedor con p_purchase_id. Sobre un producto activo nada cambia.
+-- create_purchase / receive_purchase NO cambian con este parche. Las compras de un producto inactivo las rechaza
+-- 20261010b (PT400); recibir un pedido hecho antes de desactivarlo sigue permitido.
+-- Scripts que cargan stock inicial por adjust_stock: crear el producto activo, cargar el stock y desactivarlo despues.
+-- ORDEN DE DESPLIEGUE (COM-15a): parche -> verify. No depende del BFF: el anterior y el nuevo funcionan con y sin el
+-- parche (el 409 llega con el mensaje de la base).
+-- -----------------------------------------------------------------------------
+-- 20261011c — save pack recipe (INV-09): RPC public.save_pack_recipe(p_pack_product_id, p_enabled, p_total_units, p_label,
+--             p_components) que guarda, reemplaza o desactiva la receta de un empaque en UNA transaccion, con el empaque y
+--             sus componentes bloqueados (order by id) y la regla de cadenas validada en base
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011c-save-pack-recipe.sql
+-- Requiere 20261006a y 20261009d. Idempotente, una transaccion. No toca stock, dinero, tablas, politicas ni grants de tabla.
+-- OJO: authenticated conserva insert / update / delete sobre product_pack_conversions y product_pack_components: una
+-- escritura directa por tabla no toma el bloqueo ni pasa la regla de cadenas (riesgo residual, ver cabecera del parche).
+-- ORDEN DE DESPLIEGUE (INV-09): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada (sigue escribiendo
+-- por tabla). El BFF nuevo sin el parche: guardar o desactivar la receta de un empaque responde 409 ("Esta base aún no
+-- admite guardar la receta de un empaque de forma segura...") sin escribir la receta; el resto de la edicion no cambia.
+-- El riesgo residual lo cierra 20261011d (abajo), que se aplica DESPUES de desplegar el BFF nuevo.
+-- OJO: 20261012a sustituye esta firma de 5 argumentos por una de 6. Reaplicar 20261011c reinstala la de 5 y deja dos
+-- sobrecargas (PGRST203): volver a aplicar 20261012a justo despues y correr verify-patches.sql.
+-- -----------------------------------------------------------------------------
+-- 20261011d — pack recipe write lockdown (INV-L2): la receta de un empaque solo se escribe por save_pack_recipe. Revoca
+--             insert / update / delete / truncate de authenticated y todo de anon y public sobre product_pack_conversions
+--             y product_pack_components; authenticated conserva select
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011d-pack-recipe-write-lockdown.sql
+-- Requiere 20261009d y 20261011c. Idempotente, una transaccion. Solo privilegios de tabla: no toca stock, dinero, filas,
+-- politicas RLS, triggers ni funciones. service_role y el dueno de las tablas (migraciones, fixtures) siguen escribiendo.
+-- OJO: una escritura directa por PostgREST (POST / PATCH / DELETE) sobre cualquiera de las dos tablas responde 403
+-- (42501 permission denied), tambien para admin y almacen. Cualquier script que escriba recetas con un JWT de usuario
+-- debe pasar a la RPC save_pack_recipe.
+-- ORDEN DE DESPLIEGUE (INV-L2): 20261011c -> verify -> BFF nuevo (INV-09) -> este parche -> verify. En el primer verify
+-- quedan en fail, y solo ellas, las dos filas que exigen este parche (la de privilegios de 20261011d y la de RLS de
+-- product_pack_components de 20261009d; con el orden completo del plan se suma la fila de 20261010c, que tambien va tras el BFF); en el segundo, fail=0. Si despues se reaplica 20261009d, reaplicar este. NO aplicar antes del
+-- BFF nuevo: el BFF anterior escribe la receta por tabla y, sobre la base con este parche, guardar, editar o desactivar
+-- la receta de un empaque le responde 403. Deshacer: grant insert, update, delete on public.product_pack_conversions,
+-- public.product_pack_components to authenticated;
+-- OJO (INT-02): el BFF integrado guarda ademas la preferencia "Desarmar siempre al recibir compras" por la RPC: aplicar
+-- 20261012a ANTES de desplegarlo. Orden completo: 20261010e -> 20261011c -> 20261012a -> verify -> BFF -> 20261011d -> verify.
+-- -----------------------------------------------------------------------------
+-- 20261012a — save pack recipe always disassemble (INT-02): save_pack_recipe gana p_always_disassemble_on_receive (boolean,
+--             default null) y guarda la preferencia "Desarmar siempre al recibir compras" de la cabecera de la receta en
+--             la misma transaccion; una receta reemplazada hereda la preferencia de la anterior
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261012a-save-pack-recipe-always-disassemble.sql
+-- Requiere 20261010e (la columna) y 20261011c (la RPC). Idempotente, una transaccion. Solo redefine save_pack_recipe: el
+-- cuerpo es el de 20261011c (mismas validaciones, bloqueos, mensajes y acciones) mas la columna. No toca stock, costo,
+-- dinero, tablas, politicas ni grants de tabla; ninguna otra funcion lee la columna.
+-- Firma: pasa de 5 a 6 argumentos (el nuevo al final, con default) y se ELIMINA la de 5; las llamadas con 5 argumentos
+-- siguen resolviendo. null / ausente = no cambia (edicion en sitio: conserva; reemplazo: hereda la de la receta anterior;
+-- alta: false). El resultado anade "alwaysDisassembleOnReceive".
+-- OJO: reaplicar 20261011c reinstala la firma de 5 y deja dos sobrecargas (PGRST203 en toda llamada de 5 argumentos):
+-- volver a aplicar este parche y correr verify-patches.sql. Reaplicar 20261010e, 20261009d o 20261011d no lo afecta.
+-- ORDEN DE DESPLIEGUE (INT-02): 20261010e -> 20261011c -> este parche -> verify -> BFF -> 20261011d -> verify. El BFF de
+-- INV-09 (5 argumentos) funciona sobre la base parcheada. El BFF nuevo sin este parche: guardar una receta sin tocar la
+-- casilla funciona (no envia el argumento); tocandola responde 409 ("Esta base aún no admite guardar la receta...") sin
+-- escribir nada. La preferencia se sigue LEYENDO de la cabecera con el select que authenticated conserva.
+-- -----------------------------------------------------------------------------
+-- 20261012b — price review disassemble (INT-04): la cola "Por revisar" atribuye a la compra el costo que suben los
+--             componentes de un empaque desarmado en su recepcion ("Desarmar al recibir"), para que el aviso de reprecio
+--             del detalle de ESA compra los liste
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261012b-price-review-disassemble.sql
+-- Requiere 20261009c (la vista) y 20261010d (purchase_items.disassembled_conversion_id). Idempotente, una transaccion.
+-- Solo redefine la vista products_price_review (mismas columnas, tipos y orden; security_invoker) y crea el indice
+-- parcial idx_purchase_items_disassembled_conversion. La compra causante pasa a ser la del movimiento mas reciente
+-- posterior a la ultima instantanea de precio que sea una `compra` o una `conversion_entrada` cuya apertura es la que
+-- guardo una linea de compra al desarmarse. No cambia QUE productos estan en la cola ni toca stock, costos, precios,
+-- dinero, filas, politicas, grants ni RPC. Una apertura a mano sigue sin compra.
+-- No depende del BFF (lee las mismas columnas): puede ir antes o despues. El `create index` no es concurrently: bloquea
+-- las escrituras de purchase_items mientras se construye.
+-- OJO: reaplicar 20261009c reinstala la vista sin el enlace: volver a aplicar este parche y correr verify-patches.sql.
+-- -----------------------------------------------------------------------------
+-- 20261013a — report money views (REP-06a): daily_sales_summary y gross_profit_summary pasan de dia UTC a dia operativo
+--             de Caracas, y vistas nuevas report_sales_by_hour, report_sales_by_category, report_open_documents_aging,
+--             report_open_documents_aging_summary y report_cash_close_differences para los reportes de dinero
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261013a-report-money-views.sql
+-- Requiere 20260716b, 20260811b, 20260819, 20261006a y 20261006h. Idempotente, una transaccion. SOLO LECTURA: crea /
+-- redefine vistas; no toca tablas, filas, RPC, politicas, stock, dinero, cash_* ni baul. Todas security_invoker (RLS de
+-- las tablas base del que consulta), sin acceso para anon / public.
+-- CAMBIO VISIBLE: en Ventas diarias y Ganancia bruta (y en la tendencia del dashboard) las ventas de 20:00-23:59 Caracas
+-- pasan del dia siguiente a su dia real. El total de un rango no cambia salvo por las ventas que cruzan su borde.
+-- report_open_documents_aging reproduce el criterio de GET /api/payments/open-documents (venta pendiente_pago / compra
+-- pedido o recibido con round(total_ves - paid_ves, 2) > 0); report_cash_close_differences lee el teorico y el contado
+-- que guardo el cierre (theoretical_closing_* / closing_*), no recalcula nada.
+-- OJO: reaplicar 20260716b devuelve los dos resumenes al dia UTC y borra security_invoker: volver a aplicar 20261006a y
+-- este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (REP-06): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: los cinco reportes nuevos (/api/reports/sales-by-hour, sales-by-category, receivables-aging, payables-aging,
+-- cash-close-differences) responden error (la vista no existe); el resto de reportes no cambia.
+-- -----------------------------------------------------------------------------
+-- 20261013b — report inventory views (REP-07a): vistas report_product_last_movement, report_stock_daily_flow y
+--             report_stock_adjustments para los reportes de inventario (sin movimiento, rotacion, ajustes y mermas)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261013b-report-inventory-views.sql
+-- Requiere 20260716, 20261006a (seq), 20261006h y 20261011a (indice product_id, seq desc). Idempotente, una transaccion.
+-- SOLO LECTURA: crea vistas; no toca tablas, filas, RPC, politicas, stock ni dinero. Calculan sobre el libro
+-- stock_movements (orden seq), sin leer stock_after ni exponer created_by. Todas security_invoker (RLS de las tablas base
+-- del que consulta: no amplian quien lee el libro), sin acceso para anon / public.
+-- Clasificacion: venta = 'venta'; reversion de venta = 'devolucion_cliente' o 'ajuste_entrada' con sale_id; ajuste manual
+-- = 'ajuste_entrada' / 'ajuste_salida' sin sale_id ni purchase_id (la merma es un ajuste_salida con su motivo). Las
+-- aperturas de empaque ('conversion_*') y 'inventario_inicial' no son ajustes.
+-- El libro no guarda costo por movimiento: los ajustes se valoran a current_cost_ref ACTUAL (cost_basis = current_cost);
+-- el costo de lo vendido usa sale_items.unit_cost_ref_snapshot.
+-- ORDEN DE DESPLIEGUE (REP-07): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: /api/reports/dead-stock, stock-turnover y stock-adjustments responden error (la vista no existe); el resto
+-- de reportes no cambia. Ningun otro parche redefine estas vistas: puede reaplicarse solo.
+-- -----------------------------------------------------------------------------
+-- 20261015a — cash close diff alert (CNF-10): umbral por tienda del aviso de faltante al cerrar caja
+--             (app_settings.cash_close_diff_alert_ves numeric(14,2) not null default 0, check 0 <= umbral)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261015a-cash-close-diff-alert.sql
+-- Requiere 20260716 y 20261006i. Idempotente, una transaccion. No migra datos (las tiendas existentes reciben 0 por el
+-- default: cualquier faltante pide confirmacion), no toca caja, baul, pagos, cierres, RPC, politicas ni grants: es solo
+-- un aviso de la interfaz (close_cash_session no lee la columna). Regenera los triggers
+-- trg_zz_reject_non_finite_numeric_* de app_settings para cubrir la columna nueva.
+-- Orden con el BFF: indistinto. Sin el parche el BFF lee el umbral como 0 (GET /api/settings y
+-- GET /api/settings/cash-close no fallan) y PATCH /api/settings con `cashCloseDiffAlertVes` responde 409 sin escribir
+-- nada; el resto de ajustes se sigue guardando.
+-- -----------------------------------------------------------------------------
+-- 20261017a — reprice idempotency (FIN-03): clave de idempotencia del reprecio masivo
+--             (reprice_product_to_markup gana p_client_request_id; product_price_history.client_request_id /
+--             client_request_hash + indice unico por producto) y reprecio sin cambio que no inserta historial
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261017a-reprice-idempotency.sql
+-- Requiere 20261009c y 20261009f. Idempotente, una transaccion. Elimina la firma de cuatro argumentos de
+-- reprice_product_to_markup y crea la de cinco (las llamadas con cuatro siguen resolviendo). No cambia como se calcula
+-- el precio, ni update_product_price, update_product_price_checked o keep_product_price; no toca stock, dinero ni
+-- politicas. Las columnas nuevas no son numeric (los triggers de 20261006i no se regeneran).
+-- OJO: reaplicar 20261009f reinstala la firma de cuatro argumentos y deja dos sobrecargas (PGRST203 en el reprecio):
+-- volver a aplicar este parche despues y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (FIN-03): ... -> 20261015a -> este parche -> verify -> BFF -> 20261011d -> verify. El BFF anterior
+-- funciona sobre la base parcheada (no envia la clave). El BFF nuevo sin el parche: el reprecio masivo desde la
+-- interfaz (que envia clientRequestId) responde error en cada fila y no cambia ningun precio.
+-- -----------------------------------------------------------------------------
+-- 20261018a — reports exclude draft sales (DEC-01): una venta en 'borrador' deja de contar en los reportes. Las 6 vistas
+--             que filtran ventas por estado pasan de "todo menos cancelada y devuelta" a status in ('pendiente_pago',
+--             'pagada'): daily_sales_summary, gross_profit_summary, report_sales_by_hour, report_sales_by_category,
+--             product_profitability y customer_purchase_summary
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261018a-reports-exclude-draft-sales.sql
+-- Requiere 20260716b, 20261006a, 20261006h y 20261013a. Idempotente, una transaccion. SOLO LECTURA: redefine vistas con
+-- create or replace (mismas columnas, tipos y orden; security_invoker; sin acceso para anon / public); no toca tablas,
+-- filas, RPC, politicas, stock ni dinero. Los dos resumenes diarios siguen en dia operativo de Caracas (parte de la
+-- definicion de 20261013a, no de la de 20260716b).
+-- CAMBIO VISIBLE: solo donde existan ventas en 'borrador' (ninguna RPC ni pantalla las crea hoy): dejan de sumar en
+-- ventas diarias, ganancia bruta, ventas por hora, ventas por categoria, rentabilidad por producto, compras por cliente y
+-- la tendencia del dashboard. Con 0 borradores todas las cifras son identicas.
+-- ORDEN DE DESPLIEGUE (DEC-01): no depende del BFF; va en la tanda previa, despues de 20261017a: ... -> 20261017a -> este
+-- parche -> verify -> BFF -> 20261010c -> 20261011d -> verify. El BFF anterior funciona sobre la base parcheada; el BFF
+-- nuevo sin el parche deja de contar los borradores en lo que calcula el (dashboard, top productos / clientes, cierre del
+-- dia) pero las 6 vistas los seguirian contando.
+-- OJO: reaplicar 20260716b (y despues 20261006a y 20261013a) o reaplicar 20261013a devuelve a las vistas el criterio
+-- anterior: volver a aplicar este parche AL FINAL y correr verify-patches.sql (filas "(20261018a)").

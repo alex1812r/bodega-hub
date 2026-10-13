@@ -78,6 +78,19 @@ export function usePosCart() {
     setItems([]);
   }
 
+  /**
+   * Devuelve al carrito las lineas de un carrito recuperado (CNF-16), ya revalidadas
+   * contra el catalogo. Lo que el cajero hubiera agregado mientras tanto manda.
+   */
+  function restoreItems(restored: PosCartItem[]) {
+    setItems((current) => [
+      ...current,
+      ...restored.filter(
+        (item) => !current.some((existing) => existing.productId === item.productId),
+      ),
+    ]);
+  }
+
   // Suma de lineas ya redondeadas: el subtotal es el monto que se cobra y que
   // viaja como monto de pago, no puede arrastrar ruido de punto flotante.
   const subtotalRef = useMemo(
@@ -101,6 +114,7 @@ export function usePosCart() {
     clearCart,
     items,
     itemsCount,
+    restoreItems,
     setQuantity,
     subtotalRef,
   };

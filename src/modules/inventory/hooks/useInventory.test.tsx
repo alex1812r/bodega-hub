@@ -1,9 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
+  inventoryQueryKeys,
   useAdjustInventory,
+  useConvertPackToUnits,
   useInventory,
   useInventoryMovements,
   useStockCard,
@@ -91,6 +93,24 @@ describe("inventory hooks", () => {
     );
   });
 
+  it("does not ask for movements while the query is disabled", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: paginated([{ id: "mov-001" }]) }));
+
+    const movements = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useInventoryMovements({ from: "2026-10-05", to: "2026-10-01" }, enabled),
+      { initialProps: { enabled: false }, wrapper: createWrapper() },
+    );
+
+    expect(movements.result.current.fetchStatus).toBe("idle");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    movements.rerender({ enabled: true });
+
+    await waitFor(() => expect(movements.result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("creates inventory adjustments", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ data: { id: "mov-new", type: "ajuste_salida" } }, 201),
@@ -101,6 +121,7 @@ describe("inventory hooks", () => {
     });
 
     adjustment.result.current.mutate({
+      clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
       productId: "prod-cable",
       quantityDelta: -2,
       reason: "Conteo fisico",
@@ -132,6 +153,7 @@ describe("inventory hooks", () => {
     });
 
     adjustment.result.current.mutate({
+      clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
       productId: "prod-cable",
       quantityDelta: -99,
       type: "ajuste_salida",
@@ -141,5 +163,181 @@ describe("inventory hooks", () => {
     expect(adjustment.result.current.error?.message).toBe(
       "El ajuste no puede dejar stock negativo.",
     );
+  });
+});
+
+/**
+ * INV-F4 · R1: si no se sabe si el movimiento se registró (sin respuesta, 5xx o
+ * 408), el stock en caché puede ser viejo; se invalida lo mismo que tras el éxito.
+ */
+describe("stock mutations · invalidación tras un error (INV-F4 · R1)", () => {
+  const fetchMock = jest.fn();
+  const adjustment = {
+    clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
+    productId: "prod-cable",
+    quantityDelta: 1,
+  };
+  const conversion = {
+    clientRequestId: "5b0c1a52-1111-4222-8333-444455556667",
+    packProductId: "prod-pack",
+    packQuantity: 1,
+  };
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock;
+  });
+
+  function setup() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    }
+
+    return { invalidate, Wrapper };
+  }
+
+  function errorResponse(status: number) {
+    return jsonResponse({ error: { code: "ERROR", message: "Mensaje del servidor." } }, status);
+  }
+
+  const uncertain: [string, () => void][] = [
+    ["sin respuesta", () => fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"))],
+    ["500", () => fetchMock.mockResolvedValueOnce(errorResponse(500))],
+    ["408", () => fetchMock.mockResolvedValueOnce(errorResponse(408))],
+  ];
+  const definitive: [string, () => void][] = [
+    ["400", () => fetchMock.mockResolvedValueOnce(errorResponse(400))],
+    ["409", () => fetchMock.mockResolvedValueOnce(errorResponse(409))],
+  ];
+
+  it.each(uncertain)(
+    "ajuste con resultado incierto (%s): invalida inventario y productos",
+    async (_, arrange) => {
+      arrange();
+      const { invalidate, Wrapper } = setup();
+      const { result } = renderHook(() => useAdjustInventory(), { wrapper: Wrapper });
+
+      result.current.mutate(adjustment);
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
+    },
+  );
+
+  it.each(definitive)("ajuste rechazado (%s): no invalida nada", async (_, arrange) => {
+    arrange();
+    const { invalidate, Wrapper } = setup();
+    const { result } = renderHook(() => useAdjustInventory(), { wrapper: Wrapper });
+
+    result.current.mutate(adjustment);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it.each(uncertain)(
+    "conversión con resultado incierto (%s): invalida inventario y productos",
+    async (_, arrange) => {
+      arrange();
+      const { invalidate, Wrapper } = setup();
+      const { result } = renderHook(() => useConvertPackToUnits(), { wrapper: Wrapper });
+
+      result.current.mutate(conversion);
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
+    },
+  );
+
+  it.each(definitive)("conversión rechazada (%s): no invalida nada", async (_, arrange) => {
+    arrange();
+    const { invalidate, Wrapper } = setup();
+    const { result } = renderHook(() => useConvertPackToUnits(), { wrapper: Wrapper });
+
+    result.current.mutate(conversion);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("el éxito sigue invalidando inventario y productos", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "mov-new" } }, 201));
+    const { invalidate, Wrapper } = setup();
+    const { result } = renderHook(() => useAdjustInventory(), { wrapper: Wrapper });
+
+    result.current.mutate(adjustment);
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
+  });
+});
+
+/**
+ * INV-F5 · M1: sin red, React Query pausa por defecto la mutación y la envía
+ * sola al volver la conexión. Un movimiento de stock no puede salir diferido:
+ * el envío se intenta siempre, falla al instante y el usuario decide.
+ */
+describe("stock mutations · sin conexión (INV-F5 · M1)", () => {
+  const fetchMock = jest.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    global.fetch = fetchMock;
+    onlineManager.setOnline(false);
+  });
+
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  async function expectFailsWithoutDeferredSend(result: {
+    current: { isError: boolean; isPaused: boolean };
+  }) {
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isPaused).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      onlineManager.setOnline(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // Al volver la red no sale ningún POST que el usuario no haya pedido.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  }
+
+  it("el ajuste no queda en pausa: falla y no se envía solo al volver la red", async () => {
+    const { result } = renderHook(() => useAdjustInventory(), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.mutate({
+        clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
+        productId: "prod-cable",
+        quantityDelta: 2,
+      });
+    });
+
+    await expectFailsWithoutDeferredSend(result);
+  });
+
+  it("la conversión no queda en pausa: falla y no se envía sola al volver la red", async () => {
+    const { result } = renderHook(() => useConvertPackToUnits(), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.mutate({
+        clientRequestId: "5b0c1a52-1111-4222-8333-444455556667",
+        packProductId: "prod-pack",
+        packQuantity: 1,
+      });
+    });
+
+    await expectFailsWithoutDeferredSend(result);
   });
 });

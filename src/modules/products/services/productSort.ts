@@ -1,12 +1,15 @@
 import { parseSort, sortItems, type SortOrder } from "@/lib/api/sorting";
 import type { CategoryMock, ProductMock } from "@/shared/mocks/erp-data";
 
+import { MARGIN_PCT_COLUMN, productMarginPct } from "./productMargin";
+
 export const PRODUCT_SORT_COLUMNS = [
   "sku",
   "name",
   "category",
   "currentCostRef",
   "salePriceRef",
+  "marginPct",
   "currentStock",
   "status",
 ] as const;
@@ -33,7 +36,7 @@ export function parseProductSort(searchParams: URLSearchParams): {
 type ProductSortQuery = {
   order: (
     column: string,
-    options?: { ascending?: boolean; referencedTable?: string },
+    options?: { ascending?: boolean; nullsFirst?: boolean; referencedTable?: string },
   ) => ProductSortQuery;
 };
 
@@ -65,6 +68,9 @@ function applyPrimaryProductSort<TQuery extends ProductSortQuery>(
       return query.order("current_cost_ref", { ascending }) as TQuery;
     case "salePriceRef":
       return query.order("sale_price_ref", { ascending }) as TQuery;
+    case "marginPct":
+      // Sin costo no hay %: esos productos van al final en los dos sentidos.
+      return query.order(MARGIN_PCT_COLUMN, { ascending, nullsFirst: false }) as TQuery;
     case "currentStock":
       return query.order("current_stock", { ascending }) as TQuery;
     case "status":
@@ -93,6 +99,8 @@ export function sortProductItems<T extends ProductWithOptionalCategory>(
       return sortItems(items, (item) => item.currentCostRef, sortOrder);
     case "salePriceRef":
       return sortItems(items, (item) => item.salePriceRef, sortOrder);
+    case "marginPct":
+      return sortByMarginPct(items, sortOrder);
     case "currentStock":
       return sortItems(items, (item) => item.currentStock, sortOrder);
     case "status":
@@ -101,4 +109,20 @@ export function sortProductItems<T extends ProductWithOptionalCategory>(
     default:
       return sortItems(items, (item) => item.name, sortOrder);
   }
+}
+
+/** Orden por % de ganancia con los productos sin costo al final en los dos sentidos (paridad con `nullsFirst: false`). */
+function sortByMarginPct<T extends ProductWithOptionalCategory>(items: T[], sortOrder: SortOrder): T[] {
+  const direction = sortOrder === "asc" ? 1 : -1;
+
+  return items
+    .map((item) => ({ item, pct: productMarginPct(item) }))
+    .sort((left, right) => {
+      if (left.pct === null || right.pct === null) {
+        return Number(left.pct === null) - Number(right.pct === null);
+      }
+
+      return (left.pct - right.pct) * direction;
+    })
+    .map(({ item }) => item);
 }

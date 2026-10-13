@@ -83,6 +83,82 @@ describe("contacts.server", () => {
     );
   });
 
+  describe("isActive filter (parity with the mock)", () => {
+    function setup() {
+      const supabase = createMockSupabase({ count: 0, data: [], error: null });
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
+
+      return supabase.from() as Record<string, jest.Mock>;
+    }
+
+    it.each([
+      ["true", true],
+      ["false", false],
+    ])("filters by is_active when isActive=%s", async (value, expected) => {
+      const chain = setup();
+
+      await listContacts(new URLSearchParams(`isActive=${value}`), DEFAULT_STORE_ID);
+
+      expect(chain.eq).toHaveBeenCalledWith("store_id", DEFAULT_STORE_ID);
+      expect(chain.eq).toHaveBeenCalledWith("is_active", expected);
+    });
+
+    it.each(["", "isActive="])("does not filter by is_active for query [%s]", async (queryString) => {
+      const chain = setup();
+
+      await listContacts(new URLSearchParams(queryString), DEFAULT_STORE_ID);
+
+      expect(chain.eq).toHaveBeenCalledTimes(1);
+      expect(chain.eq).toHaveBeenCalledWith("store_id", DEFAULT_STORE_ID);
+      expect(chain.range).toHaveBeenCalledTimes(1);
+    });
+
+    it("combines isActive with type and search", async () => {
+      const chain = setup();
+
+      await listContacts(
+        new URLSearchParams("isActive=true&type=proveedor&search=lago"),
+        DEFAULT_STORE_ID,
+      );
+
+      expect(chain.eq).toHaveBeenCalledWith("is_active", true);
+      expect(chain.in).toHaveBeenCalledWith("type", ["proveedor", "ambos"]);
+      expect(chain.or).toHaveBeenCalledWith(expect.stringContaining("name.ilike.%lago%"));
+    });
+
+    it.each([
+      // Una coma cerraría el valor y añadiría otra condición al `or` (AUD-04).
+      [
+        "x,is_active.eq.false",
+        'name.ilike."%x,is_active.eq.false%",tax_id.ilike."%x,is_active.eq.false%",phone.ilike."%x,is_active.eq.false%"',
+      ],
+      // Un paréntesis rompía el `or=(…)`: PostgREST respondía 400 y el BFF 500.
+      [
+        "Lago (Mcbo)",
+        'name.ilike."%Lago (Mcbo)%",tax_id.ilike."%Lago (Mcbo)%",phone.ilike."%Lago (Mcbo)%"',
+      ],
+      // Un RIF con guiones no lleva caracteres reservados: viaja sin comillas.
+      ["J-12345678-9", "name.ilike.%J-12345678-9%,tax_id.ilike.%J-12345678-9%,phone.ilike.%J-12345678-9%"],
+      // Comillas, barras y comodines no llegan como sintaxis.
+      ['a"b\\c%d', "name.ilike.%a_b_c_d%,tax_id.ilike.%a_b_c_d%,phone.ilike.%a_b_c_d%"],
+    ])("AUD-04 · search [%s] travels as text, not as PostgREST syntax", async (search, expected) => {
+      const chain = setup();
+
+      await listContacts(new URLSearchParams({ search }), DEFAULT_STORE_ID);
+
+      expect(chain.or).toHaveBeenCalledWith(expected);
+    });
+
+    it("returns an empty page for a value the mock would not match", async () => {
+      const chain = setup();
+
+      const result = await listContacts(new URLSearchParams("isActive=TRUE"), DEFAULT_STORE_ID);
+
+      expect(result).toEqual(expect.objectContaining({ items: [], total: 0 }));
+      expect(chain.range).not.toHaveBeenCalled();
+    });
+  });
+
   it("maps duplicate tax id to conflict", async () => {
     const supabase = createMockSupabase({
       data: null,

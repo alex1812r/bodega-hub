@@ -13,9 +13,24 @@ export function getStoredTheme(): Theme {
     return "light";
   }
 
-  const storedTheme = window.localStorage.getItem(themeStorageKey);
+  try {
+    const storedTheme = window.localStorage.getItem(themeStorageKey);
 
-  return isTheme(storedTheme) ? storedTheme : "light";
+    return isTheme(storedTheme) ? storedTheme : "light";
+  } catch {
+    // Almacenamiento bloqueado (leer `window.localStorage` ya lanza `SecurityError`):
+    // la app debe cargar igual, con el tema por defecto.
+    return "light";
+  }
+}
+
+/** Guarda el tema elegido; con el almacenamiento bloqueado o lleno no hace nada. */
+export function storeTheme(theme: Theme) {
+  try {
+    window.localStorage.setItem(themeStorageKey, theme);
+  } catch {
+    // `SecurityError` o `QuotaExceededError`: el tema vale para esta sesion y no se recuerda.
+  }
 }
 
 export function applyTheme(theme: Theme) {

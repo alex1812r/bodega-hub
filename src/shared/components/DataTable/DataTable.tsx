@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { type ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import type { SortOrder } from "@/lib/api/sorting";
 import { ActionsMenu, type ActionMenuItem } from "@/shared/components/ActionsMenu";
@@ -52,11 +52,32 @@ type DataTableProps<TData> = {
   loadingRows?: number;
   onRetry?: () => void;
   onSortChange?: (columnKey: string) => void;
+  /**
+   * Contenido expandido de una fila: se pinta en una fila propia a todo el ancho
+   * justo debajo (y al pie de la tarjeta en móvil). `null`, `undefined` o `false`
+   * = fila cerrada. Qué fila está abierta y el botón que la abre son de quien usa
+   * la tabla (una columna normal con `aria-expanded` / `aria-controls`).
+   */
+  renderExpandedRow?: (row: TData) => ReactNode;
   sortBy?: string;
   sortOrder?: SortOrder;
   /** Tablas alineadas al design system Stitch (Inventario, etc.). */
   variant?: DataTableVariant;
 };
+
+function DataTableExpandedRow({ colSpan, content }: { colSpan: number; content: ReactNode }) {
+  if (content === null || content === undefined || content === false) {
+    return null;
+  }
+
+  return (
+    <tr>
+      <td className="p-0" colSpan={colSpan}>
+        {content}
+      </td>
+    </tr>
+  );
+}
 
 const tableHeaderClassDefault =
   "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground";
@@ -67,6 +88,79 @@ const tableHeaderClassStitch =
 const tableCellClassDefault = "px-4 py-3 text-sm text-foreground/90 dark:text-slate-300";
 
 const tableCellClassStitch = "px-4 py-3 text-sm text-foreground";
+
+/**
+ * Columna "Acciones" fijada al borde derecho del contenedor con scroll
+ * horizontal: cuando la tabla no cabe (p. ej. `min-w-[720px]` en una ventana
+ * de 1024 px con el menú lateral abierto) el menú "…" de cada fila sigue a la
+ * vista sin desplazar. La celda necesita fondo opaco para tapar lo que pasa
+ * por debajo; el rayado y el hover de la fila se repiten en `::before`.
+ */
+const pinnedActionsClass = "sticky right-0 z-[1]";
+
+const pinnedActionsCellClass = cn(
+  pinnedActionsClass,
+  "bg-surface-container-lowest dark:bg-slate-900",
+  "before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:transition-colors before:content-['']",
+);
+
+type RowTone = {
+  /** Fondo de la celda fijada (en su `::before`), igual al de la fila. */
+  pinned: string;
+  row: string;
+};
+
+function getRowTone(variant: DataTableVariant, isOdd: boolean): RowTone {
+  if (variant === "stitch-sales") {
+    return {
+      pinned: cn(
+        "group-hover:before:bg-slate-50 dark:group-hover:before:bg-slate-800",
+        isOdd && "before:bg-slate-50/50 dark:before:bg-slate-800/40",
+      ),
+      row: cn(
+        "hover:bg-slate-50 dark:hover:bg-slate-800",
+        isOdd && "bg-slate-50/50 dark:bg-slate-800/40",
+      ),
+    };
+  }
+
+  if (variant === "stitch-purchases") {
+    return {
+      pinned: cn(
+        "group-hover:before:bg-surface-container-low/50 dark:group-hover:before:bg-slate-800",
+        isOdd && "before:bg-surface-bright dark:before:bg-slate-800/20",
+      ),
+      row: cn(
+        "hover:bg-surface-container-low/50 dark:hover:bg-slate-800",
+        isOdd && "bg-surface-bright dark:bg-slate-800/20",
+      ),
+    };
+  }
+
+  if (variant === "stitch") {
+    return {
+      pinned: cn(
+        "group-hover:before:bg-surface-container-low dark:group-hover:before:bg-slate-800",
+        isOdd && "before:bg-surface-bright dark:before:bg-slate-800/40",
+      ),
+      row: cn(
+        "hover:bg-surface-container-low dark:hover:bg-slate-800",
+        isOdd && "bg-surface-bright dark:bg-slate-800/40",
+      ),
+    };
+  }
+
+  return {
+    pinned: cn(
+      "group-hover:before:bg-surface-container-high dark:group-hover:before:bg-slate-800",
+      isOdd && "before:bg-surface-container-low/70 dark:before:bg-slate-800/40",
+    ),
+    row: cn(
+      "hover:bg-surface-container-high dark:hover:bg-slate-800",
+      isOdd && "bg-surface-container-low/70 dark:bg-slate-800/40",
+    ),
+  };
+}
 
 function getColumnSortKey<TData>(column: DataTableColumn<TData>) {
   return column.sortKey ?? column.key;
@@ -123,6 +217,7 @@ export function DataTable<TData>({
   loadingRows = 5,
   onRetry,
   onSortChange,
+  renderExpandedRow,
   sortBy,
   sortOrder,
   variant = "default",
@@ -140,6 +235,13 @@ export function DataTable<TData>({
         ? tableHeaderClassStitch
         : tableHeaderClassDefault;
   const tableCellClass = isStitch ? tableCellClassStitch : tableCellClassDefault;
+  const tableHeadSurfaceClass = isStitchSales
+    ? "bg-slate-50 dark:bg-slate-900"
+    : isStitchPurchases
+      ? "bg-surface-container-low"
+      : isStitch
+        ? "bg-surface-container"
+        : "bg-surface-container-low dark:bg-slate-950";
 
   if (useCards) {
     return (
@@ -157,6 +259,7 @@ export function DataTable<TData>({
         isLoading={isLoading}
         loadingRows={loadingRows}
         onRetry={onRetry}
+        renderExpandedRow={renderExpandedRow}
       />
     );
   }
@@ -171,7 +274,7 @@ export function DataTable<TData>({
           Actualizando...
         </div>
       ) : null}
-      <div className="w-full overflow-x-auto">
+      <div className="w-full overflow-x-auto" data-table-scroll="">
         <table
           className={cn(
             "w-full border-collapse text-left",
@@ -181,13 +284,12 @@ export function DataTable<TData>({
         >
           <thead
             className={cn(
+              tableHeadSurfaceClass,
               isStitchSales
-                ? "border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900"
-                : isStitchPurchases
-                  ? "border-b border-border bg-surface-container-low dark:border-slate-800"
-                  : isStitch
-                    ? "border-b border-border bg-surface-container dark:border-slate-800"
-                    : "bg-surface-container-low dark:bg-slate-950",
+                ? "border-b border-slate-200 dark:border-slate-800"
+                : isStitch
+                  ? "border-b border-border dark:border-slate-800"
+                  : null,
             )}
           >
             <tr>
@@ -233,6 +335,8 @@ export function DataTable<TData>({
                   className={cn(
                     tableHeaderClass,
                     isStitch ? "w-16 text-center" : "w-16 text-right",
+                    pinnedActionsClass,
+                    tableHeadSurfaceClass,
                   )}
                 >
                   Acciones
@@ -269,28 +373,12 @@ export function DataTable<TData>({
                 </td>
               </tr>
             ) : data.length > 0 ? (
-              data.map((row, index) => (
-                <tr
-                  className={cn(
-                    "group transition-colors",
-                    isStitchSales
-                      ? "hover:bg-slate-50 dark:hover:bg-slate-800"
-                      : isStitchPurchases
-                        ? "hover:bg-surface-container-low/50 dark:hover:bg-slate-800"
-                        : isStitch
-                          ? "hover:bg-surface-container-low dark:hover:bg-slate-800"
-                          : "hover:bg-surface-container-high dark:hover:bg-slate-800",
-                    isStitchSales && index % 2 === 1 && "bg-slate-50/50 dark:bg-slate-800/40",
-                    isStitchPurchases && index % 2 === 1 && "bg-surface-bright dark:bg-slate-800/20",
-                    isStitch &&
-                      !isStitchSales &&
-                      !isStitchPurchases &&
-                      index % 2 === 1 &&
-                      "bg-surface-bright dark:bg-slate-800/40",
-                    !isStitch && index % 2 === 1 && "bg-surface-container-low/70 dark:bg-slate-800/40",
-                  )}
-                  key={getRowId(row)}
-                >
+              data.map((row, index) => {
+                const rowTone = getRowTone(variant, index % 2 === 1);
+
+                return (
+                <Fragment key={getRowId(row)}>
+                <tr className={cn("group transition-colors", rowTone.row)}>
                   {columns.map((column) => (
                     <td
                       className={cn(
@@ -311,13 +399,21 @@ export function DataTable<TData>({
                       className={cn(
                         tableCellClass,
                         isStitch ? "text-center" : "text-right",
+                        pinnedActionsCellClass,
+                        rowTone.pinned,
                       )}
+                      data-table-actions-cell=""
                     >
                       <ActionsMenu actions={actions(row)} />
                     </td>
                   ) : null}
                 </tr>
-              ))
+                {renderExpandedRow ? (
+                  <DataTableExpandedRow colSpan={colSpan} content={renderExpandedRow(row)} />
+                ) : null}
+                </Fragment>
+                );
+              })
             ) : (
               <tr>
                 <td
@@ -326,7 +422,7 @@ export function DataTable<TData>({
                 >
                   {emptyState ?? (
                     <EmptyState
-                      description="Cuando existan datos, se mostraran en esta tabla."
+                      description="Cuando existan datos, se mostrarán en esta tabla."
                       title="No hay registros para mostrar"
                     />
                   )}

@@ -11,6 +11,7 @@ import { LoadingState } from "@/shared/components/LoadingState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { Typography } from "@/shared/components/Typography";
+import { fromCents, toCents } from "@/shared/impact/impactVerdict";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
@@ -20,9 +21,9 @@ import { isCashSessionExpired } from "../utils/cashSessionDeadline";
 import type { CashSession, CashSessionClosedReason } from "../types";
 
 const closedReasonLabels: Record<CashSessionClosedReason, string> = {
-  end_of_day: "Cierre automatico (medianoche)",
+  end_of_day: "Cierre automático (medianoche)",
   manual: "Cierre manual",
-  max_24h: "Cierre automatico (24 h)",
+  max_24h: "Cierre automático (24 h)",
 };
 
 function formatDateTime(value?: string | null) {
@@ -130,8 +131,18 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
           if (item.status === "open") {
             return <span className="text-sm text-on-surface-variant">—</span>;
           }
-          const ves = (item.closingVes ?? 0) - (item.theoreticalClosingVes ?? 0);
-          const ref = (item.closingRef ?? 0) - (item.theoreticalClosingRef ?? 0);
+          // Sin teórico guardado no hay con qué comparar: no se inventa una diferencia.
+          if (item.theoreticalClosingVes == null || item.theoreticalClosingRef == null) {
+            return (
+              <span className="text-sm text-on-surface-variant">Teórico no disponible</span>
+            );
+          }
+          const ves = fromCents(
+            toCents(item.closingVes ?? 0) - toCents(item.theoreticalClosingVes),
+          );
+          const ref = fromCents(
+            toCents(item.closingRef ?? 0) - toCents(item.theoreticalClosingRef),
+          );
           if (ves === 0 && ref === 0) {
             return <Badge variant="success">Cuadrada</Badge>;
           }
@@ -156,7 +167,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
         visibility: "lg",
       },
       {
-        header: "Baul",
+        header: "Baúl",
         key: "vault",
         render: (item) => {
           if (item.status === "open") {
@@ -188,7 +199,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
   return (
     <div className="space-y-5">
       <PageHeader
-        actions={<PageBackButton href="/cash/registers" label="Volver a cajas" />}
+        actions={<PageBackButton fallbackHref="/cash/registers" label="Volver a cajas" />}
         badge={
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={item.isActive ? "success" : "default"}>
@@ -203,7 +214,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
             )}
           </div>
         }
-        description={`Vendedor asignado: ${item.assignedUserName ?? "sin asignar"}.`}
+        description={`Usuario asignado: ${item.assignedUserName ?? "sin asignar"}.`}
         title={item.name}
       />
 
@@ -240,7 +251,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
             label="Cobros en cuenta Bs."
             trend={
               <p className="mt-1 text-xs text-muted-foreground">
-                Pago movil, transferencia y punto de este turno.
+                Pago móvil, transferencia y punto de este turno.
               </p>
             }
             value={formatVesBs(openSession.liveTotals?.accountVes ?? 0)}
@@ -255,11 +266,11 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
               <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-amber-600" />
             ) : null}
             <div>
-              <CardTitle className="text-base">Cierres pendientes por transferir al baul</CardTitle>
+              <CardTitle className="text-base">Cierres pendientes por transferir al baúl</CardTitle>
               <p className="mt-1 text-sm text-on-surface-variant">
                 {pending.length === 0
-                  ? "Esta caja no tiene cierres pendientes: todo el efectivo cerrado ya paso al baul."
-                  : `${pending.length} cierre${pending.length === 1 ? "" : "s"} con efectivo que todavia no llega al baul.`}
+                  ? "Esta caja no tiene cierres pendientes: todo el efectivo cerrado ya pasó al baúl."
+                  : `${pending.length} cierre${pending.length === 1 ? "" : "s"} con efectivo que todavía no llega al baúl.`}
               </p>
             </div>
           </div>
@@ -285,7 +296,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
                     </p>
                     <p className="text-xs text-on-surface-variant">
                       {session.closedReason ? closedReasonLabels[session.closedReason] : "—"}
-                      {session.absorbedBySessionId ? " · absorbido (historico)" : ""}
+                      {session.absorbedBySessionId ? " · absorbido (histórico)" : ""}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -305,7 +316,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
                   {formatVesBs(pendingTotals.absorbedVes)} / {formatRefUsd(pendingTotals.absorbedRef)}
                 </strong>{" "}
                 vienen de cierres absorbidos por una apertura posterior, de antes de que la
-                apertura tomara el fondo del baul. Ya se pueden transferir con{" "}
+                apertura tomara el fondo del baúl. Ya se pueden transferir con{" "}
                 <em>Transferir cierres</em>.
               </p>
             ) : null}
@@ -342,7 +353,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
             embedded
             emptyState={
               <p className="p-6 text-center text-sm text-on-surface-variant">
-                Esta caja todavia no tiene turnos registrados.
+                Esta caja todavía no tiene turnos registrados.
               </p>
             }
             getRowId={(session) => session.id}

@@ -179,7 +179,7 @@ describe("inventory.server · devolucion ligada a su documento (R4)", () => {
       );
 
       expect(error).toMatchObject({ code: "CONFLICT", status: 409 });
-      expect((error as Error).message).toMatch(/aun no admite devoluciones ligadas/i);
+      expect((error as Error).message).toMatch(/aún no admite devoluciones ligadas/i);
       expect((error as Error).message).not.toMatch(/schema cache|adjust_stock/i);
       expect(rpc).toHaveBeenCalledTimes(1);
     },

@@ -24,10 +24,26 @@ type ModalProps = {
   trigger?: ReactNode;
 };
 
+/**
+ * Un doble clic sobre el botón que abre el diálogo deja caer su segundo clic en
+ * el fondo recién montado. Durante esta ventana (el intervalo de doble clic del
+ * sistema) un clic en el fondo no cierra; Esc y los botones de cerrar no esperan.
+ */
+const OUTSIDE_DISMISS_GRACE_MS = 500;
+
 function clearStuckBodyPointerEvents() {
   if (document.body.style.pointerEvents === "none") {
     document.body.style.pointerEvents = "";
   }
+}
+
+// `close` llega como prop (igual que un handler) para que el footer-función se
+// evalúe aquí y no en el render de Modal, donde `close` cierra sobre un ref.
+function ModalFunctionFooter({
+  close,
+  render,
+}: ModalFooterHelpers & { render: (helpers: ModalFooterHelpers) => ReactNode }) {
+  return render({ close });
 }
 
 export function Modal({
@@ -45,6 +61,8 @@ export function Modal({
   const isControlled = open !== undefined;
   const currentOpen = isControlled ? open : internalOpen;
   const closeTimeoutRef = useRef<number | null>(null);
+  const openedAtRef = useRef<number | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     clearStuckBodyPointerEvents();
@@ -62,6 +80,8 @@ export function Modal({
     if (!currentOpen) {
       clearStuckBodyPointerEvents();
     }
+
+    openedAtRef.current = currentOpen ? performance.now() : null;
   }, [currentOpen]);
 
   function applyOpenChange(nextOpen: boolean) {
@@ -99,7 +119,7 @@ export function Modal({
     <Dialog.Root onOpenChange={handleOpenChange} open={currentOpen}>
       {trigger ? <Dialog.Trigger asChild>{trigger}</Dialog.Trigger> : null}
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/50" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/50" ref={overlayRef} />
         <Dialog.Content
           className={cn(
             "fixed z-50 flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900",
@@ -109,6 +129,20 @@ export function Modal({
           onCloseAutoFocus={(event) => {
             // Keep focus in the POS panel instead of jumping to an underlying chip.
             event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            const openedAt = openedAtRef.current;
+
+            if (openedAt == null || event.detail.originalEvent.target !== overlayRef.current) {
+              return;
+            }
+
+            const elapsed = performance.now() - openedAt;
+
+            // A negative lapse means the clock was replaced: never hold the dialog open for that.
+            if (elapsed >= 0 && elapsed < OUTSIDE_DISMISS_GRACE_MS) {
+              event.preventDefault();
+            }
           }}
         >
           <div className="shrink-0 space-y-1 pr-10">
@@ -128,7 +162,11 @@ export function Modal({
 
           {footer ? (
             <div className="mt-6 flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end sm:gap-3 dark:border-slate-800">
-              {typeof footer === "function" ? footer({ close }) : footer}
+              {typeof footer === "function" ? (
+                <ModalFunctionFooter close={close} render={footer} />
+              ) : (
+                footer
+              )}
             </div>
           ) : null}
 

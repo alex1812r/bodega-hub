@@ -102,7 +102,7 @@ export function ProductImportRowReasonModal({
         )}
 
         {row.status === "error" &&
-        row.messages.some((message) => message.toLowerCase().includes("categoria")) ? (
+        row.messages.some((message) => /categor[ií]a/i.test(message)) ? (
           <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 text-xs text-on-surface-variant">
             <p className="mb-1 font-medium text-on-surface">Categorías válidas en plantilla</p>
             <p>{categories.map((category) => category.name).join(", ") || "Ninguna cargada."}</p>

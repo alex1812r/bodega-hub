@@ -1,23 +1,33 @@
 "use client";
 
 import { Package } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-import type { PurchaseItemMock, ProductMock } from "@/shared/mocks/erp-data";
+import type { PurchaseItemMock, ProductMock, PurchaseStatus } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
-import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
+import type { PurchaseItemDisassemble } from "../../services/purchaseDisassemble";
+import { getPurchaseLineDisassembleLabel } from "../utils/purchaseDetailLabels";
 
-export type PurchaseDetailItemRow = PurchaseItemMock & {
-  product?: Pick<ProductMock, "imageUrl" | "name" | "sku">;
-};
+export type PurchaseDetailItemRow = PurchaseItemMock &
+  Pick<PurchaseItemDisassemble, "disassembled" | "disassembleOnReceive"> & {
+    product?: Pick<ProductMock, "imageUrl" | "name" | "sku">;
+  };
 
 type PurchaseDetailProductsTableProps = {
+  /** El rol puede ver productos: el nombre de cada línea enlaza a su detalle. */
+  canViewProducts?: boolean;
+  /** URL actual del detalle de la compra, con su `returnTo`: a ella vuelve el producto. */
+  detailUrl?: string;
   discountRef: number;
   discountVes: number;
   items: PurchaseDetailItemRow[];
+  /** Estado de la compra: decide el texto de desarme de cada línea (COM-14). */
+  status: PurchaseStatus;
   taxRef: number;
   taxVes: number;
   totalRef: number;
@@ -112,9 +122,12 @@ function lineTaxVes(item: PurchaseDetailItemRow): number {
 }
 
 export function PurchaseDetailProductsTable({
+  canViewProducts = false,
+  detailUrl,
   discountRef,
   discountVes,
   items,
+  status,
   taxRef,
   taxVes,
   totalRef,
@@ -133,7 +146,7 @@ export function PurchaseDetailProductsTable({
   const hasDiscount = discountVes > 0 || discountRef > 0;
 
   return (
-    <PurchaseDetailSectionCard title="Ítems de la compra">
+    <>
       {items.length === 0 ? (
         <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
           Esta compra no tiene productos registrados.
@@ -158,6 +171,7 @@ export function PurchaseDetailProductsTable({
                 const withTaxRef = Math.round((item.subtotalRef + taxRefLine) * 100) / 100;
                 const withTaxVes = Math.round((item.subtotalVes + taxVesLine) * 100) / 100;
                 const taxRate = item.taxRate ?? 0;
+                const disassembleLabel = getPurchaseLineDisassembleLabel(item, status);
                 const unitWithTaxRef =
                   Math.round(item.unitCostRef * (1 + taxRate / 100) * 100) / 100;
                 const unitWithTaxVes =
@@ -179,7 +193,19 @@ export function PurchaseDetailProductsTable({
                         />
                         <div className="min-w-0">
                           <p className="font-medium text-foreground">
-                            {item.product?.name ?? item.productId}
+                            {canViewProducts && item.productId ? (
+                              <Link
+                                className="rounded hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                href={withChainedReturnTo(
+                                  `/products/${encodeURIComponent(item.productId)}`,
+                                  detailUrl,
+                                )}
+                              >
+                                {item.product?.name ?? item.productId}
+                              </Link>
+                            ) : (
+                              (item.product?.name ?? item.productId)
+                            )}
                           </p>
                           {item.product?.sku ? (
                             <p className="text-xs text-on-surface-variant">
@@ -207,6 +233,9 @@ export function PurchaseDetailProductsTable({
                             <p className="text-xs text-on-surface-variant">
                               IVA {taxRate}%
                             </p>
+                          ) : null}
+                          {disassembleLabel ? (
+                            <p className="text-xs text-on-surface-variant">{disassembleLabel}</p>
                           ) : null}
                         </div>
                       </div>
@@ -289,6 +318,6 @@ export function PurchaseDetailProductsTable({
           </table>
         </div>
       )}
-    </PurchaseDetailSectionCard>
+    </>
   );
 }

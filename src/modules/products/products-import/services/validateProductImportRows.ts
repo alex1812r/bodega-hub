@@ -101,19 +101,19 @@ export function validateProductImportRawRow(
   let input: ProductInput | undefined;
 
   if (Number.isNaN(raw.precio_ref)) {
-    messages.push("precio_ref debe ser un numero valido.");
+    messages.push("precio_ref debe ser un número válido.");
   }
 
   if (raw.costo_ref !== undefined && Number.isNaN(raw.costo_ref)) {
-    messages.push("costo_ref debe ser un numero valido.");
+    messages.push("costo_ref debe ser un número válido.");
   }
 
   if (raw.stock_inicial !== undefined && Number.isNaN(raw.stock_inicial)) {
-    messages.push("stock_inicial debe ser un numero entero valido.");
+    messages.push("stock_inicial debe ser un número entero válido.");
   }
 
   if (raw.stock_minimo !== undefined && Number.isNaN(raw.stock_minimo)) {
-    messages.push("stock_minimo debe ser un numero entero valido.");
+    messages.push("stock_minimo debe ser un número entero válido.");
   }
 
   const zodResult = productImportRowSchema.safeParse({
@@ -145,7 +145,7 @@ export function validateProductImportRawRow(
     if (barcodeKey) {
       const duplicateBarcodeRow = barcodeInFile.get(barcodeKey);
       if (duplicateBarcodeRow !== undefined) {
-        messages.push(`Codigo de barras duplicado en el archivo (fila ${duplicateBarcodeRow}).`);
+        messages.push(`Código de barras duplicado en el archivo (fila ${duplicateBarcodeRow}).`);
         status = "error";
       }
     }
@@ -161,7 +161,7 @@ export function validateProductImportRawRow(
       input = toProductInput(zodResult.data, categoryResult.categoryId);
 
       if (existingSkus.has(skuKey)) {
-        messages.push("Este SKU ya existe en el catalogo.");
+        messages.push("Este SKU ya existe en el catálogo.");
         status = "warning";
       }
     }

@@ -10,9 +10,11 @@ import { exportPaymentsToExcel } from "../../services/exportPaymentsExcel";
 
 type PaymentsExportActionsProps = {
   exportFilters: PaymentsExportFilters;
+  /** Texto humano de los filtros por id que la lista ya conoce (sus chips). */
+  filterLabels?: readonly string[];
 };
 
-export function PaymentsExportActions({ exportFilters }: PaymentsExportActionsProps) {
+export function PaymentsExportActions({ exportFilters, filterLabels }: PaymentsExportActionsProps) {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -21,7 +23,7 @@ export function PaymentsExportActions({ exportFilters }: PaymentsExportActionsPr
     setExportError(null);
 
     try {
-      await exportPaymentsToExcel(exportFilters);
+      await exportPaymentsToExcel(exportFilters, filterLabels);
     } catch (error) {
       setExportError(
         error instanceof Error ? error.message : "No se pudo exportar los pagos a Excel.",

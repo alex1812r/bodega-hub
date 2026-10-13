@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import { roleLabels, type UserRole } from "@/shared/auth/permissions";
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
+import { NumberInput } from "@/shared/components/NumberInput";
 
 import { useUpdatePayrollSettings } from "../../hooks/usePayroll";
 import type { PayrollSettings } from "../../types";
@@ -15,6 +16,13 @@ const SELECTABLE_ELIGIBLE_ROLES: UserRole[] = ["vendedor", "almacen", "contador"
 type PayrollSettingsFormProps = {
   settings: PayrollSettings;
 };
+
+/** Mismo limite que el BFF (0 a 100) y mismo aviso que `PayrollEmployeeRow`. */
+function getPercentError(text: string) {
+  const value = Number(text);
+
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? undefined : "Entre 0 y 100.";
+}
 
 /**
  * El padre lo monta con `key={settings.updatedAt}`, asi que el estado inicial siempre
@@ -34,11 +42,20 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
   const [eligibleRoles, setEligibleRoles] = useState<UserRole[]>(settings.eligibleRoles);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const defaultCommissionError = getPercentError(defaultCommissionPct);
+  const warnShareError = getPercentError(warnSharePct);
+  const reinvestError = getPercentError(reinvestPct);
+  const reserveError = getPercentError(reservePct);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
     setSavedAt(null);
+
+    // Cada campo fuera de rango ya muestra su aviso: no se envia nada.
+    if (defaultCommissionError || warnShareError || reinvestError || reserveError) {
+      return;
+    }
 
     try {
       await updateSettings.mutateAsync({
@@ -52,7 +69,7 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
       setSavedAt(new Date().toLocaleTimeString("es-VE"));
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "No pudimos guardar la configuracion.",
+        error instanceof Error ? error.message : "No pudimos guardar la configuración.",
       );
     }
   }
@@ -73,44 +90,36 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
           type="date"
           value={commissionSince}
         />
-        <Input
-          helperText="Porcentaje que se usa para un cajero que aun no tiene uno propio."
-          label="Comision por defecto (%)"
-          max="100"
-          min="0"
+        <NumberInput
+          decimals={2}
+          error={defaultCommissionError}
+          helperText="Porcentaje que se usa para un cajero que aún no tiene uno propio."
+          label="Comisión por defecto (%)"
           onChange={(event) => setDefaultCommissionPct(event.target.value)}
-          step="0.01"
-          type="number"
           value={defaultCommissionPct}
         />
-        <Input
-          helperText="Por encima de este porcentaje de la ganancia bruta el semaforo se pone en rojo."
-          label="Umbral de alerta del semaforo (%)"
-          max="100"
-          min="0"
+        <NumberInput
+          decimals={2}
+          error={warnShareError}
+          helperText="Por encima de este porcentaje de la ganancia bruta el semáforo se pone en rojo."
+          label="Umbral de alerta del semáforo (%)"
           onChange={(event) => setWarnSharePct(event.target.value)}
-          step="0.01"
-          type="number"
           value={warnSharePct}
         />
-        <Input
-          helperText="Cuanto de lo que queda sugerimos reinvertir en mercancia. Solo informativo."
-          label="Reinversion sugerida (%)"
-          max="100"
-          min="0"
+        <NumberInput
+          decimals={2}
+          error={reinvestError}
+          helperText="Cuánto de lo que queda sugerimos reinvertir en mercancía. Solo informativo."
+          label="Reinversión sugerida (%)"
           onChange={(event) => setReinvestPct(event.target.value)}
-          step="0.01"
-          type="number"
           value={reinvestPct}
         />
-        <Input
-          helperText="Cuanto de lo que queda sugerimos guardar como reserva. Solo informativo."
+        <NumberInput
+          decimals={2}
+          error={reserveError}
+          helperText="Cuánto de lo que queda sugerimos guardar como reserva. Solo informativo."
           label="Reserva sugerida (%)"
-          max="100"
-          min="0"
           onChange={(event) => setReservePct(event.target.value)}
-          step="0.01"
-          type="number"
           value={reservePct}
         />
       </div>
@@ -118,7 +127,7 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium text-foreground">Roles elegibles</legend>
         <p className="text-sm text-on-surface-variant">
-          Que roles pueden cobrar comision. El administrador nunca comisiona.
+          Qué roles pueden cobrar comisión. El administrador nunca comisiona.
         </p>
         <div className="flex flex-wrap gap-4">
           {SELECTABLE_ELIGIBLE_ROLES.map((role) => (
@@ -146,13 +155,13 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
 
       {savedAt ? (
         <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-          Configuracion guardada a las {savedAt}.
+          Configuración guardada a las {savedAt}.
         </p>
       ) : null}
 
       <div className="flex justify-end">
         <Button disabled={updateSettings.isPending} type="submit">
-          {updateSettings.isPending ? "Guardando..." : "Guardar parametros"}
+          {updateSettings.isPending ? "Guardando..." : "Guardar parámetros"}
         </Button>
       </div>
     </form>

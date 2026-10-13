@@ -1,6 +1,7 @@
 import { buildInventoryExportFilename } from "../utils/inventoryExportFilename";
 import { buildInventoryExportWorkbook } from "./buildInventoryExportWorkbook";
 import {
+  describeInventoryExportLimit,
   fetchInventoryForExport,
   type InventoryExportFilters,
 } from "./fetchInventoryForExport";
@@ -14,10 +15,16 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function exportInventoryToExcel(filters: InventoryExportFilters) {
+/**
+ * Descarga el Excel del inventario filtrado. Devuelve el aviso para el usuario
+ * si la lista superó el tope de filas (`null` si salió entera).
+ */
+export async function exportInventoryToExcel(
+  filters: InventoryExportFilters,
+): Promise<string | null> {
   const exportedAt = new Date().toISOString();
   const items = await fetchInventoryForExport(filters);
-  const buffer = await buildInventoryExportWorkbook(items, { exportedAt });
+  const buffer = await buildInventoryExportWorkbook(items.rows, { exportedAt });
   const filename = buildInventoryExportFilename(new Date(exportedAt));
 
   triggerBlobDownload(
@@ -26,4 +33,6 @@ export async function exportInventoryToExcel(filters: InventoryExportFilters) {
     }),
     filename,
   );
+
+  return describeInventoryExportLimit(items);
 }

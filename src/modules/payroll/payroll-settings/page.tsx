@@ -43,14 +43,14 @@ export function PayrollSettingsPage() {
 
   return (
     <EntityListPage
-      actions={<PageBackButton href="/payroll" label="Volver a nomina" size="sm" />}
-      description="Parametros de comision y empleados que cobran nomina."
+      actions={<PageBackButton href="/payroll" label="Volver a nómina" size="sm" />}
+      description="Parámetros de comisión y empleados que cobran nómina."
       layout="sections"
-      title="Configuracion de nomina"
+      title="Configuración de nómina"
     >
       <Card>
         <CardHeader>
-          <CardTitle>Parametros</CardTitle>
+          <CardTitle>Parámetros</CardTitle>
           <CardDescription>
             Aplican a las quincenas que se calculen a partir de ahora; las ya calculadas guardan
             su propio snapshot.
@@ -58,11 +58,11 @@ export function PayrollSettingsPage() {
         </CardHeader>
         <CardContent>
           {settingsQuery.isLoading ? (
-            <p className="text-sm text-on-surface-variant">Cargando parametros...</p>
+            <p className="text-sm text-on-surface-variant">Cargando parámetros...</p>
           ) : settings ? (
             <PayrollSettingsForm key={settings.updatedAt} settings={settings} />
           ) : (
-            <p className="text-sm text-destructive">No pudimos cargar la configuracion.</p>
+            <p className="text-sm text-destructive">No pudimos cargar la configuración.</p>
           )}
         </CardContent>
       </Card>
@@ -89,7 +89,7 @@ export function PayrollSettingsPage() {
           ) : employees.length === 0 ? (
             <EmptyState
               className="py-8"
-              description="Ningun perfil de la tienda tiene un rol elegible para comisionar."
+              description="Ningún perfil de la tienda tiene un rol elegible para comisionar."
               title="Sin empleados elegibles"
             />
           ) : (
@@ -104,7 +104,7 @@ export function PayrollSettingsPage() {
                       Rol
                     </th>
                     <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Comision (%)
+                      Comisión (%)
                     </th>
                     <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estado

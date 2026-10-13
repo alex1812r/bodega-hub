@@ -49,7 +49,7 @@ export async function uploadProductImageBlob(productId: string, blob: Blob) {
     const probe = await fetch(publicUrl, { method: "HEAD", cache: "no-store" });
     if (!probe.ok) {
       throw new Error(
-        `La imagen se subio pero no es accesible en Storage (${probe.status}). Revisa el bucket product-images.`,
+        `La imagen se subió pero no es accesible en Storage (${probe.status}). Revisa el bucket product-images.`,
       );
     }
   }

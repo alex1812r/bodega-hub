@@ -10,7 +10,7 @@ import {
 
 import { cn } from "@/shared/utils/cn";
 
-import { appNavItems } from "./appShellNav";
+import { buildAppNavGroups } from "./appShellNav";
 import { AppHeader } from "./AppHeader";
 import { AppSidebar } from "./AppSidebar";
 import { MobileNavDrawer } from "./MobileNavDrawer";
@@ -50,16 +50,14 @@ export function AppShell({
     useSidebarCollapsed();
   const effectivePermissions =
     permissions ?? (role ? [...getRolePermissions(role)] : []);
-  const visibleNavItems = appNavItems.filter((item) =>
-    effectivePermissions.includes(item.permission),
-  );
+  const navGroups = buildAppNavGroups({ permissions: effectivePermissions, role });
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <AppSidebar
         collapsed={sidebarCollapsed}
         currentPath={currentPath}
-        items={visibleNavItems}
+        groups={navGroups}
         onSignOut={onSignOut}
         userRole={userRole}
       />
@@ -69,7 +67,7 @@ export function AppShell({
       />
       <MobileNavDrawer
         currentPath={currentPath}
-        items={visibleNavItems}
+        groups={navGroups}
         onOpenChange={setMobileNavOpen}
         onSignOut={onSignOut}
         open={mobileNavOpen}
@@ -83,15 +81,19 @@ export function AppShell({
         <AppHeader
           className="shrink-0"
           onOpenMenu={() => setMobileNavOpen(true)}
+          permissions={effectivePermissions}
           refRateError={refRateError}
           refRateVes={refRateVes}
           userName={userName}
           userRole={userRole}
         />
 
+        {/* `relative`: `<main>` es el bloque contenedor de sus descendientes
+            `position: absolute` (p. ej. `sr-only`). Sin él se colocan respecto al
+            documento, escapan del recorte y dejan desplazar la aplicación entera. */}
         <main
           className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-surface",
+            "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-surface",
             mainScroll === "hidden"
               ? "w-full max-w-none overflow-y-hidden"
               : "overflow-y-auto px-4 py-6 lg:px-6",

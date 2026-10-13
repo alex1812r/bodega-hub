@@ -28,7 +28,7 @@ export const PosCatalogToolbar = forwardRef<HTMLInputElement, PosCatalogToolbarP
       onOpenScan,
       onScanSubmit,
       onSearchChange,
-      placeholder = "Buscar por nombre o codigo de barras... (Ej. Harina PAN)",
+      placeholder = "Buscar por nombre o código de barras... (Ej. Harina PAN)",
       scanError,
       search,
     },
@@ -81,7 +81,7 @@ export const PosCatalogToolbar = forwardRef<HTMLInputElement, PosCatalogToolbarP
             />
           </div>
           <button
-            aria-label="Escanear codigo"
+            aria-label="Escanear código"
             className="flex w-12 shrink-0 cursor-pointer items-center justify-center bg-primary text-indigo-100 transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-indigo-500"
             disabled={isLookingUp}
             onClick={onOpenScan}

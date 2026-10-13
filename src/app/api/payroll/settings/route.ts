@@ -3,6 +3,7 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as mock from "@/modules/payroll/services/payroll.mock-server";
 import * as server from "@/modules/payroll/services/payroll.server";
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const auth = await requireStorePermission(request, "payroll.manage");
-    const input = schema.parse(await request.json());
+    const input = schema.parse(await readJsonBody(request));
 
     return jsonData(await service().updatePayrollSettings(input, auth.storeId));
   } catch (error) {

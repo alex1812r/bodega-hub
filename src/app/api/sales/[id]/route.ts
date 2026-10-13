@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import {
   getSaleById as getSaleByIdMock,
@@ -40,7 +41,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/sales/
   try {
     const auth = await requireStorePermission(request, "sales.create");
     const { id } = await context.params;
-    const input = updateSaleSchema.parse(await request.json());
+    const input = updateSaleSchema.parse(await readJsonBody(request));
     const data =
       resolveDataSource() === "supabase"
         ? await updateSaleServer(id, input, auth.storeId)
