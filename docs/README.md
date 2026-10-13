@@ -22,7 +22,7 @@
 | [cash-auto-close-github-actions.md](cash-auto-close-github-actions.md) | Cron gratis con GitHub Actions para autocierre de caja |
 | [cuadre-baul.md](cuadre-baul.md) | **Diagnóstico caja → baúl:** fugas de efectivo, deudas y plan de arreglo (leer antes de tocar caja/baúl/pagos) |
 | [auditoria-producto-2026-10.md](auditoria-producto-2026-10.md) | **Auditoría de producto (UX/funcional):** fricciones en compras, pagos, stock y detalles, con 37 recomendaciones priorizadas |
-| [despliegue-ux-mejoras.md](despliegue-ux-mejoras.md) | **Despliegue del plan ux-mejoras:** orden definitivo de los 25 parches SQL y del BFF, cambios visibles, comprobaciones previas y hallazgos fuera de alcance |
+| [despliegue-ux-mejoras.md](despliegue-ux-mejoras.md) | **Despliegue del plan ux-mejoras:** orden definitivo de los 26 parches SQL y del BFF (con los dos archivos listos para ejecutar de `supabase/patches/deploy/`), cambios visibles, comprobaciones previas y hallazgos fuera de alcance |
 | [compras-montos-ref.md](compras-montos-ref.md) | **Compras REF vs Bs:** por qué los montos por ítem no cuadraban con el total (leer antes de tocar totales de compra) |
 | [supabase-schema-audit.md](supabase-schema-audit.md) | Auditoría SQL vs app |
 | [dev-seed-users.md](dev-seed-users.md) | Usuarios y credenciales de prueba |
