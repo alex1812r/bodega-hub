@@ -16,14 +16,17 @@
  * Diferencias asumidas: el replay se reconoce por la `clientRequestId` con la que
  * se confirmó el escaneo (en la base, por `purchases.client_request_id`; mismo
  * significado) y no se comprueba que `productId` sea un producto de la tienda
- * (la RPC ignora los ajenos). M1 (SCN-06-F2): el mock solo rechaza la compra ya
- * ligada a otro escaneo; no guarda `client_request_id` por compra.
+ * (la RPC ignora los ajenos). M1 (SCN-06-F2): el mock rechaza la compra ya
+ * ligada a otro escaneo; no guarda `client_request_id` por compra, pero sí
+ * rechaza (SCN-06-F3) una compra creada antes del reclamo (la clave ya había
+ * creado una compra vieja sin escaneo).
  *
  * Punto de integración: el mock de Extracción (`POST /api/purchases/invoice-scan`
  * en modo mock) debe llamar a `registerMockInvoiceScan` con el `scanId`, la tienda
  * y la `extraction` que devuelve, para que la compra pueda confirmarlo aquí. Hasta
  * entonces solo los tests registran escaneos.
  */
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -33,6 +36,7 @@ import {
   assertScanUsable,
   buildConfirmedPayload,
   buildLearnLines,
+  INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS,
   INVOICE_SCAN_CLAIM_TTL_MS,
   INVOICE_SCAN_CLAIMED_MESSAGE,
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
@@ -149,8 +153,11 @@ export async function precheckInvoiceScan(
       throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_CLAIMED_MESSAGE);
     }
 
+    // El mismo intento conserva su reclamo original (SCN-06-F3).
+    if (usable.claimRequestId !== input.clientRequestId || usable.claimedAt === null) {
+      usable.claimedAt = now;
+    }
     usable.claimRequestId = input.clientRequestId;
-    usable.claimedAt = now;
   }
 
   return {
@@ -239,12 +246,18 @@ export async function finalizeInvoiceScan(
   }
 
   // SCN-06-F2 · M1: compra ya ligada a otro escaneo (la clave se reutilizó y el mock
-  // de compras devolvió la compra vieja) → suelta el reclamo y 400.
+  // de compras devolvió la compra vieja) → suelta el reclamo y 400. SCN-06-F3: lo
+  // mismo si la compra se creó antes del reclamo (compra vieja sin escaneo).
   const linkedElsewhere = [...scans().values()].some(
     (other) => other.id !== stored.id && other.storeId === storeId && other.purchaseId === input.purchaseId,
   );
+  const purchaseCreatedAt = Date.parse(findMockPurchase(input.purchaseId)?.createdAt ?? "");
+  const createdBeforeClaim =
+    stored.claimedAt === null ||
+    (Number.isFinite(purchaseCreatedAt) &&
+      purchaseCreatedAt < stored.claimedAt - INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS);
 
-  if (linkedElsewhere) {
+  if (linkedElsewhere || createdBeforeClaim) {
     stored.claimRequestId = null;
     stored.claimedAt = null;
     throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_KEY_REUSED_MESSAGE);

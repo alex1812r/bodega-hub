@@ -158,8 +158,8 @@ export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLoo
       return exactStep(conflicting);
     }
   }
-  const alias = aliases[0];
-  if (alias) {
+  // El primer alias cuyo producto sigue en el catálogo (uno puede apuntar a un producto borrado).
+  for (const alias of aliases) {
     const aliasCandidates = exactCandidates([alias.productId], lookup, aliasReason(alias.hits));
     if (aliasCandidates.length > 0) {
       return exactStep(aliasCandidates, alias);

@@ -49,7 +49,8 @@
 --   PT400 'Falta la clave del intento de compra' (claim sin p_client_request_id)
 --   PT409 'El escaneo no está confirmado'  (learn sobre escaneo sin confirmar)
 --   PT409 'La compra no corresponde a este intento' (confirm: purchases.client_request_id
---         distinto de p_client_request_id; SCN-06-F2 M1)
+--         distinto de p_client_request_id; SCN-06-F2 M1; o compra creada antes del
+--         reclamo del escaneo: compra VIEJA de la misma clave; SCN-06-F3)
 --   PT409 'La compra ya está ligada a otro escaneo' (confirm: otra fila de invoice_scans
 --         ya apunta a esa compra; SCN-06-F2 M1)
 --   PT400 'Confirmación demasiado grande' (confirm: pg_column_size(p_confirmed) > 256 KB
@@ -86,6 +87,15 @@
 --   * confirm_invoice_scan exige que la compra sea la de ESTE intento
 --     (purchases.client_request_id = p_client_request_id) y que ningun otro
 --     escaneo apunte ya a ella; limita p_confirmed a 256 KB y 500 lineas.
+--
+-- SCN-06-F3 (caos M1 residual): la clave de una compra VIEJA sin escaneo junto a
+-- un escaneo nuevo pasaba (create_purchase devuelve la compra vieja y su clave
+-- coincide). confirm_invoice_scan exige ademas purchases.created_at >=
+-- invoice_scans.claimed_at - 1 s (ambos now() de este servidor: el reclamo se
+-- confirma antes de que empiece create_purchase; el segundo es margen). Para que
+-- un doble clic del MISMO intento no mueva claimed_at por delante de su propia
+-- compra, claim_invoice_scan conserva claimed_at cuando el reclamo ya es de esa
+-- clave (la caducidad de 5 min cuenta desde el primer reclamo).
 --   * OJO: el contenido de invoice_scans.confirmed sigue siendo TEXTO DEL
 --     USUARIO (rawText de la factura, etiquetas de empaque). Los few-shot de
 --     SCN-01 deben tratarlo como datos, nunca como instrucciones.
@@ -227,7 +237,11 @@ begin
 
   update public.invoice_scans s
   set claim_request_id = p_client_request_id,
-      claimed_at = now()
+      -- SCN-06-F3: el mismo intento conserva su reclamo original.
+      claimed_at = case
+        when s.claim_request_id = p_client_request_id and s.claimed_at is not null then s.claimed_at
+        else now()
+      end
   where s.id = p_scan_id
     and s.store_id = v_store_id
     and s.status = 'extracted'
@@ -330,6 +344,7 @@ declare
   v_scan public.invoice_scans;
   v_supplier_id uuid;
   v_purchase_key uuid;
+  v_purchase_created_at timestamptz;
   v_lines jsonb;
   v_rows integer;
 begin
@@ -367,8 +382,8 @@ begin
     raise exception using errcode = 'PT404', message = 'Escaneo no encontrado';
   end if;
 
-  select p.supplier_id, p.client_request_id
-  into v_supplier_id, v_purchase_key
+  select p.supplier_id, p.client_request_id, p.created_at
+  into v_supplier_id, v_purchase_key, v_purchase_created_at
   from public.purchases p
   where p.id = p_purchase_id
     and p.store_id = v_store_id;
@@ -402,7 +417,11 @@ begin
   -- describe esta factura. El candado serializa dos escaneos contra la misma compra.
   perform pg_advisory_xact_lock(hashtextextended('invoice_scan_purchase:' || p_purchase_id::text, 0));
 
-  if v_purchase_key is distinct from p_client_request_id then
+  -- SCN-06-F3: y creada DESPUES del reclamo de este escaneo; una compra anterior es
+  -- una compra vieja de la misma clave devuelta por idempotencia.
+  if v_purchase_key is distinct from p_client_request_id
+     or v_scan.claimed_at is null
+     or v_purchase_created_at < v_scan.claimed_at - interval '1 second' then
     raise exception using errcode = 'PT409', message = 'La compra no corresponde a este intento';
   end if;
 

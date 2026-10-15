@@ -88,6 +88,47 @@ describe("matchInvoice · alias con tamaño de empaque (caos A1)", () => {
       "La factura dice caja de 6 unidades y el alias aprendido es de 12: confirma las unidades por empaque.",
     ]);
   });
+
+  it("tamaño del alias (la factura no lo dice) distinto del registrado: el aviso habla del alias, no de la factura (SCN-06-F3)", () => {
+    const ctx = pepsiAliasContext({
+      supplierCatalogs: {
+        [SUPPLIER_POLAR]: {
+          supplierProducts: [],
+          packUnits: [{ id: "pu-pepsi-6", productId: "p-pepsi", label: "Caja x6", unitsPerPack: 6 }],
+          aliases: [{ aliasNorm: "pepsi 2l", productId: "p-pepsi", packLabel: "CAJA", unitsPerPack: 12, hits: 5 }],
+        },
+      },
+    });
+    const line = one({ ...pepsi, unit: "caja", quantity: 1 }, ctx).lines[0];
+
+    expect(line.status).toBe("doubtful");
+    expect(line.unitsPerPack).toBeUndefined();
+    expect(line.issues).toEqual([
+      "El alias aprendido es de caja de 12 unidades y el empaque registrado es de 6: confirma las unidades por empaque.",
+    ]);
+  });
+});
+
+describe("matchInvoice · alias exacto hacia un producto que ya no está (SCN-06-F3)", () => {
+  it("el primer alias apunta a un producto ausente: se usa el siguiente alias exacto", () => {
+    const ctx = buildContext({
+      supplierCatalogs: {
+        [SUPPLIER_POLAR]: {
+          supplierProducts: [],
+          packUnits: [],
+          aliases: [
+            { aliasNorm: "pepsi vieja", productId: "p-borrado", packLabel: null, unitsPerPack: null, hits: 9 },
+            { aliasNorm: "pepsi 2l", productId: "p-pepsi", packLabel: null, unitsPerPack: null, hits: 2 },
+          ],
+        },
+      },
+    });
+    const line = one({ description: "PEPSI VIEJA", rawText: "PEPSI 2L", unit: "unidad" }, ctx).lines[0];
+
+    expect(line.productId).toBe("p-pepsi");
+    expect(line.status).toBe("confirmed");
+    expect(line.candidates?.[0]).toMatchObject({ productId: "p-pepsi", reason: "alias visto 2 veces" });
+  });
 });
 
 describe("matchInvoice · variantes de dólar con currency unknown (caos M4, 6.21)", () => {

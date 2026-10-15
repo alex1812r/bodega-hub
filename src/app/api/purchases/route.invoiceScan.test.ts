@@ -20,6 +20,7 @@ import {
   resetMockInvoiceScans,
 } from "@/modules/invoice-scan/server/confirmScan.mock-server";
 import { INVOICE_SCAN_KEY_REUSED_MESSAGE } from "@/modules/invoice-scan/server/confirmScan.server";
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { POST } from "./route";
@@ -108,6 +109,8 @@ function post(body: unknown, headers: Record<string, string> = {}) {
 
 type FakeScan = {
   claim_request_id?: string | null;
+  /** Reloj lógico del reclamo (`claimed_at`). */
+  claimed_at?: number | null;
   extracted: unknown;
   id: string;
   purchase_id: string | null;
@@ -119,12 +122,21 @@ type FakeState = {
   failConfirm?: boolean;
   failCreate?: boolean;
   failLearn?: boolean;
-  purchases: { client_request_id: string | null; id: string; store_id: string; supplier_id: string }[];
+  purchases: {
+    client_request_id: string | null;
+    /** Reloj lógico de `created_at`. */
+    created_at?: number;
+    id: string;
+    store_id: string;
+    supplier_id: string;
+  }[];
   scans: FakeScan[];
 };
 
 /** Cliente Supabase mínimo: lecturas con filtros `eq` y las RPC del flujo. */
 function createFake(state: FakeState) {
+  // Reloj lógico: cada RPC es una transacción con su propio now().
+  let clock = 0;
   const rpc = jest.fn(async (name: string, args: Record<string, unknown>) => {
     if (name === "claim_invoice_scan") {
       // Espejo de claim_invoice_scan (20261019b): un único UPDATE condicional.
@@ -155,6 +167,10 @@ function createFake(state: FakeState) {
         };
       }
 
+      // El mismo intento conserva su reclamo original (SCN-06-F3).
+      if (scan.claim_request_id !== key || scan.claimed_at == null) {
+        scan.claimed_at = ++clock;
+      }
       scan.claim_request_id = key;
       return { data: "claimed", error: null };
     }
@@ -164,6 +180,7 @@ function createFake(state: FakeState) {
 
       if (scan && scan.status === "extracted" && scan.claim_request_id === args.p_client_request_id) {
         scan.claim_request_id = null;
+        scan.claimed_at = null;
       }
 
       return { data: null, error: null };
@@ -180,6 +197,7 @@ function createFake(state: FakeState) {
         : undefined;
       const row = previous ?? {
         client_request_id: key,
+        created_at: ++clock,
         id: `00000000-0000-4000-8000-0000000001${String(state.purchases.length).padStart(2, "0")}`,
         store_id: DEFAULT_STORE_ID,
         supplier_id: SUPPLIER_ID,
@@ -209,7 +227,12 @@ function createFake(state: FakeState) {
       // Espejo de SCN-06-F2 · M1: la compra debe ser la de esta clave y no tener otro escaneo.
       const target = state.purchases.find((row) => row.id === args.p_purchase_id);
 
-      if (target?.client_request_id !== args.p_client_request_id) {
+      // SCN-06-F3: y creada después del reclamo (no una compra vieja de la misma clave).
+      if (
+        target?.client_request_id !== args.p_client_request_id ||
+        scan.claimed_at == null ||
+        (target?.created_at ?? 0) < scan.claimed_at
+      ) {
         return { data: null, error: { code: "PT409", message: "La compra no corresponde a este intento" } };
       }
 
@@ -220,6 +243,7 @@ function createFake(state: FakeState) {
       scan.status = "confirmed";
       scan.purchase_id = args.p_purchase_id as string;
       scan.claim_request_id = null;
+      scan.claimed_at = null;
 
       return { data: true, error: null };
     }
@@ -527,6 +551,30 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(state.scans[1]).toMatchObject({ claim_request_id: null, purchase_id: null, status: "extracted" });
     });
 
+    it("clave de una compra VIEJA sin escaneo con un escaneo nuevo: 400, no confirma y suelta el reclamo (SCN-06-F3)", async () => {
+      const old = await post({ ...purchase, clientRequestId: PURCHASE_KEY });
+      expect(old.status).toBe(201);
+      fake.rpc.mockClear();
+
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: scanLines,
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
+      expect(fake.rpcNames()).toEqual([
+        "claim_invoice_scan",
+        "create_purchase",
+        "confirm_invoice_scan",
+        "release_invoice_scan_claim",
+      ]);
+      expect(state.purchases).toHaveLength(1);
+      expect(state.scans[0]).toMatchObject({ claim_request_id: null, purchase_id: null, status: "extracted" });
+    });
+
     it("línea con un producto que no está en los items: no se aprende y se registra (SCN-06-F2 · M3)", async () => {
       const response = await post({
         ...purchase,
@@ -686,6 +734,25 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect((await second.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
       expect(getMockInvoiceScan(OTHER_SCAN_ID)).toMatchObject({ claimRequestId: null, purchaseId: null, status: "extracted" });
       expect(listMockLearnedAliases(DEFAULT_STORE_ID).every((alias) => alias.hits === 1)).toBe(true);
+    });
+
+    it("clave de una compra VIEJA sin escaneo con un escaneo nuevo: 400 sin confirmar ni aprender (SCN-06-F3)", async () => {
+      registerMockInvoiceScan({ extracted, id: SCAN_ID });
+
+      const old = await post({ ...purchase, clientRequestId: PURCHASE_KEY });
+      const oldPurchase = findMockPurchase((await old.json()).data.id);
+      // La compra vieja se creó hace un minuto.
+      if (oldPurchase) {
+        oldPurchase.createdAt = new Date(Date.now() - 60_000).toISOString();
+      }
+
+      const second = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+
+      expect(oldPurchase).toBeDefined();
+      expect([old.status, second.status]).toEqual([201, 400]);
+      expect((await second.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
+      expect(getMockInvoiceScan(SCAN_ID)).toMatchObject({ claimRequestId: null, purchaseId: null, status: "extracted" });
+      expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([]);
     });
 
     it("escaneo de otra tienda: 400", async () => {

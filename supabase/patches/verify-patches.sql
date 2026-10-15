@@ -2498,6 +2498,17 @@ select
   ), false)
 union all
 select
+  'confirm_invoice_scan rechaza una compra creada antes del reclamo y claim conserva claimed_at del mismo intento (20261019b, SCN-06-F3)',
+  coalesce((
+    select p.prosrc ilike '%v_purchase_created_at < v_scan.claimed_at - interval%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%when s.claim_request_id = p_client_request_id and s.claimed_at is not null then s.claimed_at%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
   'invoice_scans: RLS activa y al menos una politica select (19a o fallback de 20261019b) para el pre-check de POST /api/purchases (SCN-06)',
   coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.invoice_scans')), false)
   and exists (

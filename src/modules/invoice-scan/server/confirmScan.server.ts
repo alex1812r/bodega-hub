@@ -28,7 +28,8 @@
  *    en `invoiceScan` de la respuesta. ÚNICA excepción (SCN-06-F2 · M1): si
  *    `confirm_invoice_scan` rechaza la compra porque no es de este intento (ya
  *    ligada a otro escaneo o de otra clave), `create_purchase` devolvió una compra
- *    VIEJA por idempotencia: se suelta el reclamo y se lanza 400.
+ *    VIEJA por idempotencia (también si se creó antes del reclamo, SCN-06-F3): se
+ *    suelta el reclamo y se lanza 400.
  *    Solo se aprenden las líneas cuyo producto está en los items de la compra, y el
  *    empaque se toma del item (SCN-06-F2 · M3; ver `buildLearnLines`).
  */
@@ -47,6 +48,12 @@ export const MAX_ALIAS_NORM_LENGTH = 200;
 
 /** Vigencia del reclamo de un intento (mismo intervalo que `claim_invoice_scan`). */
 export const INVOICE_SCAN_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Margen de reloj de `confirm_invoice_scan` (SCN-06-F3): una compra creada más de
+ * este margen ANTES del reclamo es una compra vieja de la misma clave.
+ */
+export const INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS = 1000;
 
 export const invoiceScanLineInputSchema = z.object({
   /** Índice de la línea en `extraction.lines` del escaneo guardado. */
