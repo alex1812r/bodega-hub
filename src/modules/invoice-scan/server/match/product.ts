@@ -65,12 +65,13 @@ function bySupplierSku(line: InvoiceExtractionLine, lookup: ProductLookup): stri
   );
 }
 
-function byExactAlias(line: InvoiceExtractionLine, lookup: ProductLookup): MatchAlias | undefined {
+/** Alias exactos de description y rawText (puede haber uno por texto, de productos distintos). */
+function byExactAlias(line: InvoiceExtractionLine, lookup: ProductLookup): MatchAlias[] {
   if (!lookup.catalog) {
-    return undefined;
+    return [];
   }
   const texts = unique([normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean));
-  return lookup.catalog.aliases.find((alias) => texts.includes(alias.aliasNorm));
+  return lookup.catalog.aliases.filter((alias) => texts.includes(alias.aliasNorm));
 }
 
 function byBarcode(line: InvoiceExtractionLine, lookup: ProductLookup): string[] {
@@ -145,7 +146,19 @@ export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLoo
     return exactStep(skuCandidates);
   }
 
-  const alias = byExactAlias(line, lookup);
+  const aliases = byExactAlias(line, lookup);
+  const aliasProductIds = unique(aliases.map((entry) => entry.productId));
+  if (aliasProductIds.length > 1) {
+    // description y rawText casan con alias de productos distintos: no se elige uno.
+    const conflicting = aliasProductIds.flatMap((productId) => {
+      const hits = aliases.find((entry) => entry.productId === productId)?.hits ?? 0;
+      return exactCandidates([productId], lookup, aliasReason(hits));
+    });
+    if (conflicting.length > 1) {
+      return exactStep(conflicting);
+    }
+  }
+  const alias = aliases[0];
   if (alias) {
     const aliasCandidates = exactCandidates([alias.productId], lookup, aliasReason(alias.hits));
     if (aliasCandidates.length > 0) {
