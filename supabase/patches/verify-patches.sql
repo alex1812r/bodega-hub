@@ -2386,4 +2386,86 @@ select
     from pg_class c
     where c.oid in (to_regclass('public.daily_sales_summary'), to_regclass('public.gross_profit_summary'))
   )
+union all
+select
+  'invoice_scans: columnas clave (store_id, image_sha256, pages, status, extracted/matched jsonb not null, supplier_id) y unique (store_id, image_sha256) (20261015c)',
+  (
+    select count(*) = 7
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'invoice_scans'
+      and (col.column_name::text, col.data_type::text, col.is_nullable::text) in (
+        ('store_id', 'uuid', 'NO'),
+        ('image_sha256', 'text', 'NO'),
+        ('pages', 'integer', 'NO'),
+        ('status', 'text', 'NO'),
+        ('extracted', 'jsonb', 'NO'),
+        ('matched', 'jsonb', 'NO'),
+        ('supplier_id', 'uuid', 'YES')
+      )
+  )
+  and exists (
+    select 1 from pg_constraint con
+    where con.conrelid = to_regclass('public.invoice_scans') and con.contype = 'u'
+      and pg_get_constraintdef(con.oid) = 'UNIQUE (store_id, image_sha256)'
+  )
+union all
+select
+  'invoice_scans: indices (store_id, created_at desc) y parcial few-shot por proveedor (20261015c)',
+  exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'invoice_scans_store_created_idx')
+  and exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'invoice_scans_few_shot_idx'
+      and indexdef ilike '%where ((confirmed is not null) and (supplier_id is not null))%'
+  )
+union all
+select
+  'invoice_scans: RLS activa, select/insert/update para authenticated sin delete, anon sin privilegios (20261015c)',
+  exists (select 1 from pg_class c where c.oid = to_regclass('public.invoice_scans') and c.relrowsecurity)
+  and coalesce(has_table_privilege('authenticated', 'public.invoice_scans', 'select, insert, update'), false)
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'delete')
+  and not has_table_privilege('anon', 'public.invoice_scans', 'select, insert, update, delete')
+union all
+select
+  'invoice_scans: politicas por tienda (lee purchases.view, escribe purchases.create), sin delete (20261015c)',
+  (
+    select count(*) = 3 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.policyname in (
+        'Purchase viewers read invoice scans',
+        'Purchase creators insert invoice scans',
+        'Purchase creators update invoice scans'
+      )
+      and coalesce(pol.qual, pol.with_check) ilike '%current_user_store_id()%'
+  )
+  and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans' and pol.cmd in ('DELETE', 'ALL')
+  )
+union all
+select
+  'bucket invoice-scans privado, 1 MB, jpeg/png/webp (20261015c)',
+  exists (
+    select 1 from storage.buckets
+    where id = 'invoice-scans' and public = false and file_size_limit = 1048576
+      and allowed_mime_types @> array['image/jpeg', 'image/png', 'image/webp']
+      and cardinality(allowed_mime_types) = 3
+  )
+union all
+select
+  'storage invoice-scans: lectura e insercion por carpeta de tienda, sin update/delete (20261015c)',
+  (
+    select count(*) = 2 from pg_policies pol
+    where pol.schemaname = 'storage' and pol.tablename = 'objects'
+      and pol.policyname in (
+        'Purchase viewers read invoice scan images',
+        'Purchase creators upload invoice scan images'
+      )
+      and coalesce(pol.qual, pol.with_check) ilike '%foldername%'
+  )
+  and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'storage' and pol.tablename = 'objects'
+      and coalesce(pol.qual, pol.with_check) ilike '%invoice-scans%'
+      and pol.cmd in ('UPDATE', 'DELETE', 'ALL')
+  )
 order by 1;
