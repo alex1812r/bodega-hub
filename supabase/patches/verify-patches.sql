@@ -2509,6 +2509,17 @@ select
   ), false)
 union all
 select
+  'learn_invoice_aliases solo aprende lineas del confirmado del escaneo con producto en purchase_items de su compra y el empaque del item (20261019b, SCN-06-F4)',
+  coalesce((
+    select p.prosrc ilike '%pi.purchase_id = v_scan.purchase_id%'
+      and p.prosrc ilike '%pi.units_per_pack = l.units_per_pack%'
+      and p.prosrc ilike '%left(btrim(pi.pack_label), 100)%'
+      and p.prosrc ilike '%v_scan.confirmed -> ''lines''%'
+      and p.prosrc ilike '%learned_at is null%if v_supplier_id is null then%'
+    from pg_proc p where p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)')
+  ), false)
+union all
+select
   'invoice_scans: RLS activa y al menos una politica select (19a o fallback de 20261019b) para el pre-check de POST /api/purchases (SCN-06)',
   coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.invoice_scans')), false)
   and exists (

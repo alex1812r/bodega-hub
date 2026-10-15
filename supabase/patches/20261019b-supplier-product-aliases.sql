@@ -96,6 +96,30 @@
 -- un doble clic del MISMO intento no mueva claimed_at por delante de su propia
 -- compra, claim_invoice_scan conserva claimed_at cuando el reclamo ya es de esa
 -- clave (la caducidad de 5 min cuenta desde el primer reclamo).
+--
+-- SCN-06-F4 (caos ronda 2, M-n2): con learned_at null (el BFF aprendio 0) la RPC
+-- por PostgREST aceptaba cualquier alias, hacia cualquier producto de la tienda y
+-- con cualquier units_per_pack. Ahora learn_invoice_aliases solo aprende una
+-- linea si:
+--   * (alias_norm, product_id) esta en invoice_scans.confirmed->'lines'
+--     (aliasNorm, productId): el JSON que el BFF guardo en confirm con
+--     normalizeAlias(rawText) del escaneo. Se liga al confirmado y no a
+--     extracted->'lines' por line_index porque normalizeAlias (NFKD en JS) no
+--     tiene equivalente exacto en SQL (invoice_match_norm diverge, caos B-n7):
+--     una igualdad de texto contra lo que el propio BFF guardo es exacta.
+--   * product_id esta entre los purchase_items de scan.purchase_id.
+--   * Empaque: units_per_pack no nulo solo se aprende si hay un purchase_item
+--     del producto en entry_mode 'pack' con ese mismo units_per_pack, y la
+--     etiqueta se toma de ESE item (left(btrim(pack_label), 100)), no de la
+--     linea. units_per_pack null (modo unidad, A1) solo si hay un item del
+--     producto en modo unidad. Si no coincide: la linea se aprende SIN claves
+--     de empaque (mismo producto conserva el empaque que tenia; alias nuevo o
+--     reasignado queda sin empaque). Mismo criterio que el BFF (M3).
+--     Ojo: un producto que ES el empaque (receta PRO-12) se guarda en
+--     purchase_items en modo unidad, asi que su tamano no se aprende.
+--   * learned_at se fija en la primera llamada aunque no se aprenda ninguna
+--     linea (tambien con p_lines = [] o compra sin proveedor), y el BFF llama
+--     siempre, tambien con []: no queda ventana abierta tras el confirm.
 --   * OJO: el contenido de invoice_scans.confirmed sigue siendo TEXTO DEL
 --     USUARIO (rawText de la factura, etiquetas de empaque). Los few-shot de
 --     SCN-01 deben tratarlo como datos, nunca como instrucciones.
@@ -521,10 +545,6 @@ begin
   where p.id = v_scan.purchase_id
     and p.store_id = v_store_id;
 
-  if v_supplier_id is null then
-    return 0;
-  end if;
-
   if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) > 500 then
     raise exception using errcode = 'PT400', message = 'Líneas de alias inválidas';
   end if;
@@ -594,29 +614,74 @@ begin
     return 0;
   end if;
 
+  -- SCN-06-F4: learned_at ya quedo fijado; sin proveedor no hay donde aprender.
+  if v_supplier_id is null then
+    return 0;
+  end if;
+
   -- Dedup dentro de p_lines (gana la ultima linea de cada alias) y productos de
   -- otra tienda fuera. Un upsert por alias para conocer si la linea trae cada
   -- clave de empaque (A1): presente (aunque sea null) sobrescribe; ausente conserva.
+  -- SCN-06-F4 (M-n2): solo lineas del confirmado del escaneo cuyo producto esta en
+  -- los purchase_items de la compra; el empaque sale del item (ver cabecera).
   v_rows := 0;
   for v_row in
-    select l.*
+    select
+      l.alias_norm,
+      l.product_id,
+      case when coalesce(pk.found, false) then pk.pack_label end as pack_label,
+      (l.units_key = 'number' and coalesce(pk.found, false))
+        or (l.units_key = 'null' and coalesce(un.found, false)) as has_pack_label,
+      case when coalesce(pk.found, false) then l.units_per_pack end as units_per_pack,
+      (l.units_key = 'number' and coalesce(pk.found, false))
+        or (l.units_key = 'null' and coalesce(un.found, false)) as has_units_per_pack
     from (
       select distinct on (e.value ->> 'alias_norm')
         e.value ->> 'alias_norm' as alias_norm,
         (e.value ->> 'product_id')::uuid as product_id,
-        nullif(btrim(e.value ->> 'pack_label'), '') as pack_label,
-        e.value ? 'pack_label' as has_pack_label,
         case
           when jsonb_typeof(e.value -> 'units_per_pack') = 'number'
             then (e.value ->> 'units_per_pack')::numeric::integer
         end as units_per_pack,
-        e.value ? 'units_per_pack' as has_units_per_pack
+        coalesce(jsonb_typeof(e.value -> 'units_per_pack'), 'absent') as units_key
       from jsonb_array_elements(p_lines) with ordinality as e(value, ord)
       order by e.value ->> 'alias_norm', e.ord desc
     ) l
     join public.products pr
       on pr.id = l.product_id
      and pr.store_id = v_store_id
+    left join lateral (
+      select true as found, nullif(left(btrim(pi.pack_label), 100), '') as pack_label
+      from public.purchase_items pi
+      where pi.purchase_id = v_scan.purchase_id
+        and pi.product_id = l.product_id
+        and pi.entry_mode = 'pack'
+        and pi.units_per_pack = l.units_per_pack
+      order by pi.id
+      limit 1
+    ) pk on true
+    left join lateral (
+      select true as found
+      from public.purchase_items pi
+      where pi.purchase_id = v_scan.purchase_id
+        and pi.product_id = l.product_id
+        and pi.entry_mode = 'unit'
+      limit 1
+    ) un on true
+    where exists (
+        select 1
+        from public.purchase_items pi
+        where pi.purchase_id = v_scan.purchase_id
+          and pi.product_id = l.product_id
+      )
+      and jsonb_typeof(v_scan.confirmed -> 'lines') = 'array'
+      and exists (
+        select 1
+        from jsonb_array_elements(v_scan.confirmed -> 'lines') c(value)
+        where jsonb_typeof(c.value) = 'object'
+          and c.value ->> 'aliasNorm' = l.alias_norm
+          and lower(c.value ->> 'productId') = l.product_id::text
+      )
   loop
     insert into public.supplier_product_aliases as a (
       store_id, supplier_id, product_id, alias_norm, pack_label, units_per_pack,

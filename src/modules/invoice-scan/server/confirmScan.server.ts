@@ -46,6 +46,9 @@ export const MAX_INVOICE_SCAN_LINES = 500;
 /** Largo máximo de `alias_norm` que acepta `learn_invoice_aliases`. */
 export const MAX_ALIAS_NORM_LENGTH = 200;
 
+/** Largo máximo de `pack_label` que acepta `learn_invoice_aliases` (SCN-06-F4 · M-n1). */
+export const MAX_PACK_LABEL_LENGTH = 100;
+
 /** Vigencia del reclamo de un intento (mismo intervalo que `claim_invoice_scan`). */
 export const INVOICE_SCAN_CLAIM_TTL_MS = 5 * 60 * 1000;
 
@@ -278,11 +281,21 @@ function resolveLearnPack(
     const pack = own.find((item) => item.entryMode === "pack" && item.unitsPerPack === line.unitsPerPack);
 
     return pack
-      ? { pack_label: pack.packLabel?.trim() || null, units_per_pack: line.unitsPerPack }
+      ? { pack_label: toLearnPackLabel(pack.packLabel), units_per_pack: line.unitsPerPack }
       : {};
   }
 
   return own.some((item) => item.entryMode === "unit") ? { pack_label: null, units_per_pack: null } : {};
+}
+
+/**
+ * Etiqueta del item para learn (SCN-06-F4 · M-n1): el schema de compra no limita
+ * `packLabel`, pero la RPC rechaza la llamada ENTERA si pasa de 100 caracteres;
+ * se recorta a 100 (code points, como `length` en SQL) para no perder el resto.
+ */
+function toLearnPackLabel(label: string | undefined): string | null {
+  const trimmed = label?.trim() ?? "";
+  return Array.from(trimmed).slice(0, MAX_PACK_LABEL_LENGTH).join("").trim() || null;
 }
 
 export function buildConfirmedPayload(
@@ -492,12 +505,10 @@ export async function finalizeInvoiceScan(
 
   const learnLines = buildLearnLines(confirmed.lines, input.items);
 
-  if (learnLines.length === 0) {
-    return { confirmed: true, learned: 0 };
-  }
-
   try {
-    // UNA sola llamada por confirmación: cada llamada suma hits.
+    // UNA sola llamada por confirmación: cada llamada suma hits. Se hace aunque no
+    // haya líneas (SCN-06-F4 · M-n2): fija `learned_at` y cierra el aprendizaje del
+    // escaneo, para que nadie lo use después por PostgREST.
     const { data, error } = await supabase.rpc("learn_invoice_aliases", {
       p_lines: learnLines,
       p_scan_id: scan.id,
