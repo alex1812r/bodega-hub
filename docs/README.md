@@ -46,12 +46,14 @@
 | [web-app-build-checklist.md](web-app-build-checklist.md) | Plan histórico de construcción (MVP ya hecho) |
 | [multi-store-options.md](multi-store-options.md) | Multitienda vigente: superadmin, `stores`, aislamiento API/RLS |
 | [chat-ia-analisis.md](chat-ia-analisis.md) | Chat IA de consultas: alcance, arquitectura (tools sobre servicios), proveedor, costo y estado de implementacion (§9) |
+| [factura-por-imagen-analisis.md](factura-por-imagen-analisis.md) | Precarga de compras desde la foto de la factura: opciones (sin entrenar modelo), costo, diseño de emparejamiento y MVP |
 | [agent-prompts/chat-ia-gtm.md](agent-prompts/chat-ia-gtm.md) | Plan de ejecucion del asistente IA hasta GTM |
 | [agent-prompts/mobile-app-gtm.md](agent-prompts/mobile-app-gtm.md) | Plan de ejecucion de la app movil (Expo) hasta GTM |
 | [agent-prompts/nomina-gtm.md](agent-prompts/nomina-gtm.md) | Plan de ejecucion de la nomina de cajeros hasta GTM |
 | [agent-prompts/stock-integrity-gtm.md](agent-prompts/stock-integrity-gtm.md) | Plan autonomo: reproducir y corregir el descuadre de stock con tienda de prueba y agentes en paralelo |
 | [agent-prompts/equipo.md](agent-prompts/equipo.md) | Modo equipo para Claude Code: gerente, supervisor, coders, fixer, caos y QA (roles en `.claude/agents/`) |
 | [agent-prompts/ux-mejoras-gtm.md](agent-prompts/ux-mejoras-gtm.md) | Plan por módulos (gerente + 7 supervisores) para ejecutar las 37 recomendaciones de la auditoría de producto |
+| [agent-prompts/factura-escaneo-gtm.md](agent-prompts/factura-escaneo-gtm.md) | Plan por módulos: escaneo de facturas para precargar compras, con aprendizaje por alias y banco de evaluación |
 | [mobile-app.md](mobile-app.md) | App movil BodegaHub: setup, arquitectura, auth Bearer, tabs por rol, E2E y exclusiones |
 
 ## Contrato machine-readable
