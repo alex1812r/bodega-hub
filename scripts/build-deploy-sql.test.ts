@@ -94,9 +94,13 @@ describe("supabase/patches/deploy (DEC-03)", () => {
     expect(header).toMatch(/NINGUNA fila en fail|ninguna fila en fail/);
   });
 
-  it("todo parche estructural del plan (20261007a en adelante) está en una de las dos listas, y solo una vez", () => {
+  it("todo parche estructural del plan ux-mejoras (20261007 <= prefijo < 20261019) está en una de las dos listas, y solo una vez", () => {
+    // Rango del plan ux-mejoras: desde 20261007 (primer parche) hasta ANTES de 20261019. Los parches 20261019* y
+    // posteriores son del plan factura-escaneo, que no se despliega con estos dos archivos (DEC-03).
+    const UX_MEJORAS_FIRST = "20261007";
+    const UX_MEJORAS_END_EXCLUSIVE = "20261019";
     const planPatches = readdirSync(PATCHES_DIR)
-      .filter((name) => isStructuralPatch(name) && name >= "20261007")
+      .filter((name) => isStructuralPatch(name) && name >= UX_MEJORAS_FIRST && name < UX_MEJORAS_END_EXCLUSIVE)
       .sort();
     const listed = [...BEFORE_BFF, ...AFTER_BFF];
 

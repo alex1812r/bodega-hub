@@ -2386,4 +2386,168 @@ select
     from pg_class c
     where c.oid in (to_regclass('public.daily_sales_summary'), to_regclass('public.gross_profit_summary'))
   )
+union all
+select
+  'pg_trgm instalada y similarity / gin_trgm_ops resuelven en su schema (20261019b)',
+  exists (select 1 from pg_extension where extname = 'pg_trgm')
+  and exists (
+    select 1 from pg_proc p join pg_extension e on e.extname = 'pg_trgm' and p.pronamespace = e.extnamespace
+    where p.proname = 'similarity'
+  )
+  and exists (
+    select 1 from pg_opclass o join pg_extension e on e.extname = 'pg_trgm' and o.opcnamespace = e.extnamespace
+    where o.opcname = 'gin_trgm_ops'
+  )
+union all
+select
+  'supplier_product_aliases con unique (store_id, supplier_id, alias_norm) e indice (store_id, supplier_id) (20261019b)',
+  to_regclass('public.supplier_product_aliases') is not null
+  and exists (
+    select 1
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.supplier_product_aliases')
+      and c.contype = 'u'
+      and pg_get_constraintdef(c.oid) = 'UNIQUE (store_id, supplier_id, alias_norm)'
+  )
+  and exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and tablename = 'supplier_product_aliases'
+      and indexname = 'idx_supplier_product_aliases_store_supplier'
+  )
+union all
+select
+  'supplier_product_aliases: indice gin trigram sobre alias_norm (20261019b)',
+  exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and tablename = 'supplier_product_aliases'
+      and indexname = 'idx_supplier_product_aliases_alias_trgm'
+      and indexdef ilike '%using gin (alias_norm %gin_trgm_ops)%'
+  )
+union all
+select
+  'supplier_product_aliases: RLS activa, solo politica select, sin insert / update / delete para authenticated ni acceso anon (20261019b)',
+  coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.supplier_product_aliases')), false)
+  and exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'supplier_product_aliases' and cmd = 'SELECT'
+  )
+  and not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'supplier_product_aliases' and cmd <> 'SELECT'
+  )
+  and not has_table_privilege('authenticated', 'public.supplier_product_aliases', 'insert, update, delete')
+  and not has_table_privilege('anon', 'public.supplier_product_aliases', 'select, insert, update, delete')
+union all
+select
+  'confirm_invoice_scan(uuid, uuid, jsonb, uuid) boolean, claim_invoice_scan(uuid, uuid) text, release_invoice_scan_claim(uuid, uuid) void y learn_invoice_aliases(uuid, jsonb) integer: security definer, search_path=public, execute authenticated / service_role, no anon (20261019b, SCN-06-F1)',
+  (
+    select count(*) = 4
+      and bool_and(p.prosecdef)
+      and bool_and(coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false))
+      and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+      and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where (p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)') and p.prorettype = 'boolean'::regtype)
+       or (p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)') and p.prorettype = 'text'::regtype)
+       or (p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)') and p.prorettype = 'void'::regtype)
+       or (p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)') and p.prorettype = 'integer'::regtype)
+  )
+union all
+select
+  'invoice_scans: reclamo claim_request_id uuid / claimed_at timestamptz, firma vieja confirm_invoice_scan(uuid, uuid, jsonb) eliminada, claim con UPDATE condicional y confirm exige el reclamo (20261019b, SCN-06-F1)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'claim_request_id' and data_type = 'uuid'
+  )
+  and exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'claimed_at' and data_type = 'timestamp with time zone'
+  )
+  and to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb)') is null
+  and coalesce((
+    select p.prosrc ilike '%update public.invoice_scans s%set claim_request_id = p_client_request_id%s.status = ''extracted''%claimed_at < now() - interval%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%claim_request_id is distinct from p_client_request_id%claim_request_id = null%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+union all
+select
+  'invoice_scans.learned_at timestamptz; learn una vez por escaneo, alias_norm canonico y claves de empaque presentes sobrescriben; confirm exige compra de este intento sin otro escaneo y tope 256 KB / 500 lineas (20261019b, SCN-06-F2)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'learned_at' and data_type = 'timestamp with time zone'
+  )
+  and coalesce((
+    select p.prosrc ilike '%set learned_at = now()%learned_at is null%'
+      and p.prosrc ilike '%v_alias <> lower(v_alias)%'
+      and p.prosrc ilike '%not v_row.has_units_per_pack%'
+      and p.prosrc not ilike '%coalesce(excluded.units_per_pack%'
+    from pg_proc p where p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%pg_column_size(p_confirmed) > 262144%'
+      and p.prosrc ilike '%v_purchase_key is distinct from p_client_request_id%'
+      and p.prosrc ilike '%La compra ya está ligada a otro escaneo%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+union all
+select
+  'confirm_invoice_scan rechaza una compra creada antes del reclamo y claim conserva claimed_at del mismo intento (20261019b, SCN-06-F3)',
+  coalesce((
+    select p.prosrc ilike '%v_purchase_created_at < v_scan.claimed_at - interval%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%when s.claim_request_id = p_client_request_id and s.claimed_at is not null then s.claimed_at%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'learn_invoice_aliases solo aprende lineas del confirmado del escaneo con producto en purchase_items de su compra y el empaque del item (20261019b, SCN-06-F4)',
+  coalesce((
+    select p.prosrc ilike '%pi.purchase_id = v_scan.purchase_id%'
+      and p.prosrc ilike '%pi.units_per_pack = l.units_per_pack%'
+      and p.prosrc ilike '%left(btrim(pi.pack_label), 100)%'
+      and p.prosrc ilike '%v_scan.confirmed -> ''lines''%'
+      and p.prosrc ilike '%learned_at is null%if v_supplier_id is null then%'
+    from pg_proc p where p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)')
+  ), false)
+union all
+select
+  'invoice_scans: RLS activa y al menos una politica select (19a o fallback de 20261019b) para el pre-check de POST /api/purchases (SCN-06)',
+  coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.invoice_scans')), false)
+  and exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'invoice_scans' and cmd = 'SELECT'
+  )
+union all
+select
+  'invoice_match_candidates(text, text, text[], text[], uuid, integer) jsonb: security definer, search_path con public y extensions, execute authenticated / service_role, no anon (20261019d)',
+  coalesce((
+    select p.prosecdef
+      and p.prorettype = 'jsonb'::regtype
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public, extensions%', false)
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_candidates(text, text, text[], text[], uuid, integer)')
+  ), false)
+union all
+select
+  'invoice_match_norm(text): immutable, translate + regexp_replace, execute authenticated, no anon (20261019d)',
+  coalesce((
+    select p.provolatile = 'i'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and p.prosrc ilike '%translate(%' and p.prosrc ilike '%regexp_replace(%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_norm(text)')
+  ), false)
 order by 1;

@@ -5,6 +5,8 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
+import * as invoiceScanMockServer from "@/modules/invoice-scan/server/confirmScan.mock-server";
+import * as invoiceScanServer from "@/modules/invoice-scan/server/confirmScan.server";
 import {
   addPaymentLineIssues,
   paymentLineFields,
@@ -40,26 +42,31 @@ const initialPaymentSchema = z
     }
   });
 
-const createPurchaseSchema = z.object({
-  // Clave de idempotencia por intento (C6): con la misma clave en la misma tienda
-  // el servidor devuelve el resultado original en vez de repetir el movimiento.
-  // Opcional para no romper clientes que aun no la envian.
-  clientRequestId: z.string().uuid().optional(),
-  discountRef: z.number().min(0),
-  discountVes: z.number().min(0),
-  exchangeRateId: z.string().uuid().optional(),
-  initialPayment: initialPaymentSchema.optional(),
-  items: z.array(purchaseItemInputSchema).min(1),
-  notes: safeText().optional(),
-  purchaseNumber: safeText().optional(),
-  refRateVes: z.number().positive(),
-  status: z.enum(["pedido", "recibido"]).default("recibido"),
-  subtotalRef: z.number().min(0),
-  subtotalVes: z.number().min(0),
-  supplierId: safeText().min(1),
-  taxRef: z.number().min(0),
-  taxVes: z.number().min(0),
-});
+const createPurchaseSchema = z
+  .object({
+    // Clave de idempotencia por intento (C6): con la misma clave en la misma tienda
+    // el servidor devuelve el resultado original en vez de repetir el movimiento.
+    // Opcional para no romper clientes que aun no la envian.
+    clientRequestId: z.string().uuid().optional(),
+    discountRef: z.number().min(0),
+    discountVes: z.number().min(0),
+    exchangeRateId: z.string().uuid().optional(),
+    initialPayment: initialPaymentSchema.optional(),
+    // SCN-06: escaneo de factura del que sale la compra (opcional). Ver
+    // `confirmScan.server.ts`: se valida antes de crear y se confirma y aprende después.
+    ...invoiceScanServer.invoiceScanBodyFields,
+    items: z.array(purchaseItemInputSchema).min(1),
+    notes: safeText().optional(),
+    purchaseNumber: safeText().optional(),
+    refRateVes: z.number().positive(),
+    status: z.enum(["pedido", "recibido"]).default("recibido"),
+    subtotalRef: z.number().min(0),
+    subtotalVes: z.number().min(0),
+    supplierId: safeText().min(1),
+    taxRef: z.number().min(0),
+    taxVes: z.number().min(0),
+  })
+  .superRefine((value, context) => invoiceScanServer.addInvoiceScanBodyIssues(value, context));
 
 const LIST_FILTER_KEYS = ["from", "to", "pendingBalance"] as const;
 
@@ -117,6 +124,10 @@ function getPurchasesService() {
   return resolveDataSource() === "supabase" ? purchasesServer : purchasesMockServer;
 }
 
+function getInvoiceScanService() {
+  return resolveDataSource() === "supabase" ? invoiceScanServer : invoiceScanMockServer;
+}
+
 function getPaymentsService() {
   return resolveDataSource() === "supabase" ? paymentsServer : paymentsMockServer;
 }
@@ -172,7 +183,9 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "purchases.create");
     // Compra y pago se validan juntos: con un pago inválido no se crea nada.
-    const { initialPayment, ...input } = createPurchaseSchema.parse(await readJsonBody(request));
+    const { initialPayment, invoiceScanId, invoiceScanLines, ...input } = createPurchaseSchema.parse(
+      await readJsonBody(request),
+    );
 
     if (initialPayment) {
       // Mismos permisos que `POST /api/payments` exige para un pago de compra,
@@ -182,17 +195,58 @@ export async function POST(request: Request) {
       }
     }
 
+    // SCN-06 · caos 6.14: escaneo ajeno, inexistente, ya confirmado o reclamado por
+    // otro intento → 400 sin crear la compra (salvo el replay del mismo intento).
+    // El esquema exige clientRequestId junto a invoiceScanId (SCN-06-F1).
+    const scanService = getInvoiceScanService();
+    const scanClaim =
+      invoiceScanId && input.clientRequestId
+        ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
+        : null;
+    const scan = scanClaim ? await scanService.precheckInvoiceScan(scanClaim, auth.storeId) : null;
+
     const service = getPurchasesService();
-    const purchase = await service.createPurchase(input, auth.storeId);
+    let purchase: Awaited<ReturnType<typeof service.createPurchase>>;
+
+    try {
+      purchase = await service.createPurchase(input, auth.storeId);
+    } catch (error) {
+      // Rechazo definitivo (4xx): la compra no existe y se suelta el reclamo para
+      // reintentar con otra clave. Resultado incierto (5xx, red): el reclamo se
+      // queda; el mismo intento lo recupera y, si no vuelve, caduca.
+      if (scanClaim && error instanceof ApiError && error.status < 500) {
+        await scanService.releaseInvoiceScanClaim(scanClaim, auth.storeId);
+      }
+
+      throw error;
+    }
+
+    // No lanza salvo una excepción: la compra ya existe y el resultado viaja en
+    // `invoiceScan`. Si la compra devuelta es de OTRO intento (clave reutilizada con
+    // otro escaneo; SCN-06-F2 · M1) lanza 400 sin confirmar el escaneo.
+    const invoiceScan = scan
+      ? await scanService.finalizeInvoiceScan(
+          scan,
+          {
+            clientRequestId: input.clientRequestId,
+            items: input.items,
+            lines: invoiceScanLines ?? [],
+            purchaseId: purchase.id,
+            supplierId: purchase.supplierId ?? input.supplierId,
+          },
+          auth.storeId,
+        )
+      : null;
+    const created = invoiceScan ? { ...purchase, invoiceScan } : purchase;
 
     if (!initialPayment) {
-      return jsonCreated(purchase);
+      return jsonCreated(created);
     }
 
     // En secuencia y con dos claves: reintentar el mismo intento devuelve la misma
     // compra y el mismo pago. El pago inicial es un `register_payment` normal.
     return jsonCreated({
-      ...purchase,
+      ...created,
       initialPayment: await registerInitialPayment(initialPayment, purchase.id, auth.storeId),
     });
   } catch (error) {
