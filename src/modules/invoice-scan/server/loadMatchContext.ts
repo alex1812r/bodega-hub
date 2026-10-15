@@ -207,20 +207,23 @@ async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
   storeId: string,
   extraction: InvoiceExtraction,
+  excludeScanId?: string,
 ): Promise<MatchPreviousScan[]> {
   const number = normalizeInvoiceNumber(extraction.number);
   if (!number) {
     return [];
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("invoice_scans")
     .select(PREVIOUS_SCAN_SELECT)
     .eq("store_id", storeId)
     .not("status", "in", "(discarded,failed)")
-    .ilike("extracted->>number", `%${number}`)
-    .order("created_at", { ascending: false })
-    .limit(PREVIOUS_SCANS_LIMIT);
+    .ilike("extracted->>number", `%${number}`);
+  if (excludeScanId) {
+    query = query.neq("id", excludeScanId);
+  }
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(PREVIOUS_SCANS_LIMIT);
   throwIfSupabaseError(error);
 
   return ((data ?? []) as unknown as PreviousScanRow[]).map((row) => ({
@@ -385,17 +388,24 @@ function toFuzzy(result: CandidatesRpcResult, lineCount: number): Record<number,
  * un único contacto o, si no, el de mejor score): de él salen los alias difusos,
  * su catálogo y `linkedToSupplier`. `matchInvoice` decide después si lo da por
  * resuelto (umbral 0,8 y margen 0,1) o solo lo propone.
+ *
+ * `options.excludeScanId`: pásalo con el id del escaneo que se está emparejando
+ * cuando ese escaneo YA está guardado en `invoice_scans` (insertar y luego
+ * emparejar, o re-emparejar en GET); si no, sale en `previousScans` y
+ * `matchInvoice` lo marca como duplicado de sí mismo. Omítelo si el escaneo
+ * aún no existe en la base.
  */
 export async function loadMatchContext(
   supabase: MatchContextSupabaseClient,
   storeId: string,
   extraction: InvoiceExtraction,
+  options?: { excludeScanId?: string },
 ): Promise<MatchContext> {
   const [candidates, taxRates, systemRate, previousScans, barcodeRows] = await Promise.all([
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
     loadSystemRate(supabase, storeId),
-    loadPreviousScans(supabase, storeId, extraction),
+    loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
     loadProductsWhere(supabase, storeId, "barcode", barcodeVariants(extraction)),
   ]);
 

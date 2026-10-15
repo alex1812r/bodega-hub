@@ -45,7 +45,7 @@ function createSupabaseStub(options: {
     queries.push(query);
     const run = (): Result => options.tables?.[table]?.(query) ?? { data: [], error: null };
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "in", "not", "ilike", "order", "limit"]) {
+    for (const method of ["select", "eq", "neq", "in", "not", "ilike", "order", "limit"]) {
       chain[method] = (...args: unknown[]) => {
         query.calls.push({ method, args });
         return chain;
@@ -337,6 +337,32 @@ describe("loadMatchContext", () => {
     expect(tables).not.toContain("supplier_product_aliases");
     expect(tables).not.toContain("invoice_scans");
     expect(tables).not.toContain("products");
+  });
+
+  it("excludeScanId saca el escaneo actual (ya guardado) de previousScans para que no sea duplicado de sí mismo", async () => {
+    const tables = fullTables();
+    const allScans = tables.invoice_scans;
+    // La base honra `.neq('id', …)`: el stub filtra igual.
+    tables.invoice_scans = (query) => {
+      const result = allScans(query);
+      const excluded = argsOf(query, "neq")
+        .filter(([column]) => column === "id")
+        .map(([, value]) => value);
+      return { ...result, data: (result.data as Array<{ id: string }>).filter((row) => !excluded.includes(row.id)) };
+    };
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction, { excludeScanId: "scan-1" });
+
+    const [scans] = queriesOf(stub.queries, "invoice_scans");
+    expect(argsOf(scans, "neq")).toEqual([["id", "scan-1"]]);
+    expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-2"]);
+    expect(matchInvoice(extraction, ctx).duplicateOfScanId).not.toBe("scan-1");
+
+    // Sin la opción, la firma de tres argumentos no filtra por id.
+    const plain = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+    await loadMatchContext(plain.client, STORE_ID, extraction);
+    expect(argsOf(queriesOf(plain.queries, "invoice_scans")[0], "neq")).toEqual([]);
   });
 
   it("propaga el error de la RPC (PT403 de rol sin purchases.create)", async () => {
