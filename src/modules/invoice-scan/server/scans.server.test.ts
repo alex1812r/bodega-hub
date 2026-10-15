@@ -13,8 +13,9 @@ import {
   getScan,
   insertScan,
   listFewShotExamples,
+  deleteScansByIds,
+  listExpiredScans,
   markScanFailed,
-  purgeExpiredScans,
 } from "./scans.server";
 
 type Result = { data: unknown; error: { code?: string; message: string } | null };
@@ -63,7 +64,7 @@ function fakeClient(results: Result[]) {
     const builder: Record<string, unknown> = {
       then: (resolve: (value: Result) => unknown) => Promise.resolve(result).then(resolve),
     };
-    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "lt", "not", "order", "limit"]) {
+    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "order", "limit"]) {
       builder[method] = (...args: unknown[]) => {
         chain.push([method, ...args]);
         return builder;
@@ -258,36 +259,59 @@ describe("scans.server · listFewShotExamples", () => {
   });
 });
 
-describe("scans.server · purgeExpiredScans", () => {
-  it("borra con el cliente admin las filas anteriores al corte y devuelve ids y rutas", async () => {
+type AdminClient = Parameters<typeof listExpiredScans>[0];
+
+describe("scans.server · purga a 90 días", () => {
+  const sha = "a".repeat(64);
+
+  it("listExpiredScans lee sin borrar y deriva las rutas de todas las páginas", async () => {
     const { calls, client } = fakeClient([
       ok([
-        { id: "a", storage_path: "s1/a.jpg" },
-        { id: "b", storage_path: "s2/b.jpg" },
+        { id: "a", pages: 3, storage_path: `s1/${sha}/p1.png` },
+        { id: "b", pages: 1, storage_path: "s2/legacy.jpg" },
       ]),
     ]);
 
-    const result = await purgeExpiredScans(
-      client as unknown as Parameters<typeof purgeExpiredScans>[0],
+    const result = await listExpiredScans(
+      client as unknown as AdminClient,
       90,
       new Date("2026-10-15T12:00:00.000Z"),
     );
 
-    expect(result).toEqual({ deletedIds: ["a", "b"], storagePaths: ["s1/a.jpg", "s2/b.jpg"] });
+    expect(result).toEqual([
+      { id: "a", storagePaths: [`s1/${sha}/p1.png`, `s1/${sha}/p2.png`, `s1/${sha}/p3.png`] },
+      { id: "b", storagePaths: ["s2/legacy.jpg"] },
+    ]);
+    expect(calls[0]).toEqual([
+      ["from", "invoice_scans"],
+      ["select", "id, storage_path, pages"],
+      ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
+    ]);
+    expect(createRouteSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("deleteScansByIds borra solo los ids indicados y cuenta las filas", async () => {
+    const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
+
+    expect(await deleteScansByIds(client as unknown as AdminClient, ["a", "b"])).toBe(2);
     expect(calls[0]).toEqual([
       ["from", "invoice_scans"],
       ["delete"],
-      ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
-      ["select", "id, storage_path"],
+      ["in", "id", ["a", "b"]],
+      ["select", "id"],
     ]);
-    expect(createRouteSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("deleteScansByIds sin ids no consulta", async () => {
+    const { client } = fakeClient([]);
+
+    expect(await deleteScansByIds(client as unknown as AdminClient, [])).toBe(0);
+    expect(client.from).not.toHaveBeenCalled();
   });
 
   it("propaga el error de Supabase", async () => {
     const { client } = fakeClient([{ data: null, error: { code: "42501", message: "denied" } }]);
 
-    await expect(
-      purgeExpiredScans(client as unknown as Parameters<typeof purgeExpiredScans>[0]),
-    ).rejects.toBeInstanceOf(Error);
+    await expect(listExpiredScans(client as unknown as AdminClient)).rejects.toBeInstanceOf(Error);
   });
 });

@@ -32,9 +32,11 @@ const DEMO_ROLES =["admin", "vendedor", "almacen", "contador", "superadmin"];
 
 /**
  * Rutas que pueden leer el cuerpo sin el helper (multipart, webhooks de texto).
- * Clave: ruta relativa a `src/app/api`; valor: motivo. Hoy no hay ninguna.
+ * Clave: ruta relativa a `src/app/api`; valor: motivo.
  */
-const RAW_BODY_ALLOWED: Record<string, string> = {};
+const RAW_BODY_ALLOWED: Record<string, string> = {
+  "purchases/invoice-scan/route.ts": "multipart/form-data con las páginas de la factura (SCN-03b)",
+};
 
 /**
  * Rutas que leen cuerpo y no se pueden invocar aquí. Clave: `MÉTODO /api/...`;

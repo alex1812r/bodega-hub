@@ -67,11 +67,29 @@ export type StoredFewShotExample = {
   confirmed: InvoiceExtraction;
 };
 
-export type PurgeExpiredScansResult = {
-  deletedIds: string[];
-  /** Rutas en el bucket `invoice-scans`; las borra el llamador (cron). */
+/** Escaneo vencido que la purga (cron) debe borrar: primero Storage, luego la fila. */
+export type ExpiredScan = {
+  id: string;
+  /** Rutas de todas las páginas en el bucket `invoice-scans`. */
   storagePaths: string[];
 };
+
+const FIRST_PAGE_PATH = /^(.+\/)p1\.(jpg|png|webp)$/;
+
+/**
+ * Rutas de las `pages` páginas a partir de la página 1 (`<store>/<sha>/p1.<ext>`):
+ * todas comparten carpeta y formato (SCN-03b). Una ruta antigua que no sigue el
+ * patrón se devuelve tal cual.
+ */
+export function invoiceScanPagePaths(storagePath: string, pages: number): string[] {
+  const match = storagePath.match(FIRST_PAGE_PATH);
+
+  if (!match) {
+    return [storagePath];
+  }
+
+  return Array.from({ length: pages }, (_, index) => `${match[1]}p${index + 1}.${match[2]}`);
+}
 
 export const DEFAULT_INVOICE_SCAN_DAILY_LIMIT = 50;
 export const DISCARD_NOT_ALLOWED_MESSAGE =

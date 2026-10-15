@@ -3,16 +3,12 @@
 import { ApiError } from "@/lib/api/apiError";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import * as mock from "@/modules/invoice-scan/server/scans.mock-server";
-import * as server from "@/modules/invoice-scan/server/scans.server";
 import { removeInvoiceObjects } from "@/modules/invoice-scan/server/storage";
 
 import { GET, POST } from "./route";
 
 jest.mock("../../../../../lib/supabase/admin-client", () => ({
   createAdminSupabaseClient: jest.fn(),
-}));
-jest.mock("../../../../../modules/invoice-scan/server/scans.server", () => ({
-  purgeExpiredScans: jest.fn(),
 }));
 jest.mock("../../../../../modules/invoice-scan/server/storage", () => ({
   ...jest.requireActual<typeof import("@/modules/invoice-scan/server/storage")>(
@@ -29,7 +25,6 @@ const SHA_OLD = "a".repeat(64);
 const SHA_NEW = "b".repeat(64);
 
 const mockedAdmin = jest.mocked(createAdminSupabaseClient);
-const mockedPurge = jest.mocked(server.purgeExpiredScans);
 const mockedRemove = jest.mocked(removeInvoiceObjects);
 
 function authorized(method: "GET" | "POST" = "GET") {
@@ -37,6 +32,7 @@ function authorized(method: "GET" | "POST" = "GET") {
 }
 
 type PurgeBody = { data: { deleted: number; objects: number } };
+type ExpiredRow = { id: string; pages: number; storage_path: string };
 
 describe("/api/cron/invoice-scans/purge", () => {
   const originalSecret = process.env.CRON_SECRET;
@@ -57,23 +53,24 @@ describe("/api/cron/invoice-scans/purge", () => {
     const response = await GET(new Request(URL));
 
     expect(response.status).toBe(401);
-    expect(mockedPurge).not.toHaveBeenCalled();
+    expect(mockedAdmin).not.toHaveBeenCalled();
     expect(mockedRemove).not.toHaveBeenCalled();
   });
 
   describe("mock data source", () => {
+    const ctx = { storeId: "store-purge", userId: "user-1" };
+
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "mock";
+      jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"] });
     });
 
-    it("purges only scans older than 90 days", async () => {
-      const ctx = { storeId: "store-purge", userId: "user-1" };
-      jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"] });
-
+    it("purges only scans older than 90 days and counts every page", async () => {
       jest.setSystemTime(new Date(NOW.getTime() - 91 * DAY_MS));
       const old = await mock.insertScan(ctx, {
         imageSha256: SHA_OLD,
         model: "m",
+        pages: 3,
         provider: "p",
         storagePath: `store-purge/${SHA_OLD}/p1.jpg`,
       });
@@ -91,7 +88,7 @@ describe("/api/cron/invoice-scans/purge", () => {
       const body = (await response.json()) as PurgeBody;
 
       expect(response.status).toBe(200);
-      expect(body.data).toEqual({ deleted: 1, objects: 1 });
+      expect(body.data).toEqual({ deleted: 1, objects: 3 });
       expect(await mock.getScan(ctx, old.id)).toBeNull();
       expect(await mock.getScan(ctx, recent.id)).not.toBeNull();
     });
@@ -100,37 +97,32 @@ describe("/api/cron/invoice-scans/purge", () => {
   describe("supabase data source", () => {
     const calls: string[] = [];
     const lt = jest.fn();
-    const list = jest.fn();
+    const deleteIn = jest.fn();
+
+    function useExpiredRows(rows: ExpiredRow[]) {
+      lt.mockResolvedValue({ data: rows, error: null });
+    }
 
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "supabase";
       calls.length = 0;
       jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"], now: NOW });
 
-      lt.mockResolvedValue({
-        data: [
-          { storage_path: `store-1/${SHA_OLD}/p1.jpg` },
-          { storage_path: `store-2/${SHA_NEW}/p1.webp` },
-        ],
-        error: null,
-      });
-      list.mockImplementation(async (folder: string) => ({
-        data:
-          folder === `store-1/${SHA_OLD}`
-            ? [{ name: "p1.jpg" }, { name: "p2.png" }]
-            : [{ name: "p1.webp" }],
-        error: null,
+      useExpiredRows([
+        { id: "scan-1", pages: 2, storage_path: `store-1/${SHA_OLD}/p1.jpg` },
+        { id: "scan-2", pages: 1, storage_path: `store-2/${SHA_NEW}/p1.webp` },
+      ]);
+      deleteIn.mockImplementation((_column: string, ids: string[]) => ({
+        select: async () => {
+          calls.push("rows");
+          return { data: ids.map((id) => ({ id })), error: null };
+        },
       }));
       mockedAdmin.mockReturnValue({
-        from: () => ({ select: () => ({ lt }) }),
-        storage: { from: () => ({ list }) },
+        from: () => ({ delete: () => ({ in: deleteIn }), select: () => ({ lt }) }),
       } as unknown as ReturnType<typeof createAdminSupabaseClient>);
       mockedRemove.mockImplementation(async () => {
         calls.push("storage");
-      });
-      mockedPurge.mockImplementation(async () => {
-        calls.push("rows");
-        return { deletedIds: ["scan-1", "scan-2"], storagePaths: [] };
       });
     });
 
@@ -147,10 +139,25 @@ describe("/api/cron/invoice-scans/purge", () => {
       );
       expect(mockedRemove).toHaveBeenCalledWith(expect.anything(), [
         `store-1/${SHA_OLD}/p1.jpg`,
-        `store-1/${SHA_OLD}/p2.png`,
+        `store-1/${SHA_OLD}/p2.jpg`,
         `store-2/${SHA_NEW}/p1.webp`,
       ]);
-      expect(mockedPurge).toHaveBeenCalledWith(expect.anything(), 90, NOW);
+      expect(deleteIn).toHaveBeenCalledWith("id", ["scan-1", "scan-2"]);
+    });
+
+    it("removes the three objects of a three-page scan", async () => {
+      useExpiredRows([{ id: "scan-3", pages: 3, storage_path: `store-1/${SHA_OLD}/p1.png` }]);
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 1, objects: 3 });
+      expect(mockedRemove).toHaveBeenCalledWith(expect.anything(), [
+        `store-1/${SHA_OLD}/p1.png`,
+        `store-1/${SHA_OLD}/p2.png`,
+        `store-1/${SHA_OLD}/p3.png`,
+      ]);
     });
 
     it("keeps the rows when Storage removal fails", async () => {
@@ -159,17 +166,7 @@ describe("/api/cron/invoice-scans/purge", () => {
       const response = await GET(authorized());
 
       expect(response.status).toBe(503);
-      expect(mockedPurge).not.toHaveBeenCalled();
-    });
-
-    it("keeps the rows when listing a scan folder fails", async () => {
-      list.mockResolvedValue({ data: null, error: { message: "boom" } });
-
-      const response = await GET(authorized());
-
-      expect(response.status).toBe(503);
-      expect(mockedRemove).not.toHaveBeenCalled();
-      expect(mockedPurge).not.toHaveBeenCalled();
+      expect(deleteIn).not.toHaveBeenCalled();
     });
   });
 });

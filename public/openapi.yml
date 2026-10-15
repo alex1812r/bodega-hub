@@ -380,6 +380,44 @@ paths:
           $ref: "#/components/responses/CronUnauthorized"
         "503":
           $ref: "#/components/responses/CronSecretMissing"
+  /api/cron/invoice-scans/purge:
+    get:
+      tags: [Purchases]
+      summary: Purgar escaneos de factura vencidos (90 días)
+      description: >-
+        Tarea programada, sin sesión de usuario. Se autentica con el secreto `CRON_SECRET` en
+        `Authorization: Bearer <secreto>` o en la cabecera `x-cron-secret`. Borra los escaneos
+        de factura de más de 90 días de todas las tiendas: primero las imágenes de todas sus
+        páginas en el bucket `invoice-scans` y solo después las filas. Si Storage falla responde
+        503 y las filas se conservan para la próxima corrida.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/InvoiceScanPurgeResponse"
+        "401":
+          $ref: "#/components/responses/CronUnauthorized"
+        "503":
+          description: "`CRON_SECRET` no está configurado o Storage no está disponible; no se borra ninguna fila"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Purchases]
+      summary: Purgar escaneos de factura vencidos (90 días)
+      description: Igual que el GET, con la misma autenticación por `CRON_SECRET`. No lee cuerpo.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/InvoiceScanPurgeResponse"
+        "401":
+          $ref: "#/components/responses/CronUnauthorized"
+        "503":
+          description: "`CRON_SECRET` no está configurado o Storage no está disponible; no se borra ninguna fila"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/vault:
     get:
       tags: [Vault]
@@ -5367,6 +5405,24 @@ components:
                   sessionIds:
                     type: array
                     items: { type: string }
+    InvoiceScanPurgeResponse:
+      description: Escaneos y objetos de Storage borrados en esta ejecución
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [deleted, objects]
+                properties:
+                  deleted:
+                    type: integer
+                    description: Filas de `invoice_scans` borradas
+                  objects:
+                    type: integer
+                    description: Imágenes borradas del bucket `invoice-scans` (todas las páginas)
     StoreVaultResponse:
       description: Baúl de la tienda con sus saldos actualizados
       content:

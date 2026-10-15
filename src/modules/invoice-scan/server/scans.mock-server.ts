@@ -11,13 +11,14 @@ import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusin
 import type { InvoiceExtraction, InvoiceScanLimits } from "../contracts";
 import {
   DISCARD_NOT_ALLOWED_MESSAGE,
+  type ExpiredScan,
   INVOICE_SCAN_RETENTION_DAYS,
+  invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
   type StoredFewShotExample,
   type InvoiceScanContext,
   type InvoiceScanInsert,
   type InvoiceScanRow,
-  type PurgeExpiredScansResult,
 } from "./scans.types";
 
 function scans() {
@@ -159,22 +160,18 @@ export async function listFewShotExamples(
 }
 
 /** El mock no usa cliente: el primer argumento existe por paridad con `scans.server.ts`. */
-export async function purgeExpiredScans(
+export async function listExpiredScans(
   _adminClient: unknown,
   olderThanDays: number = INVOICE_SCAN_RETENTION_DAYS,
   now: Date = new Date(),
-): Promise<PurgeExpiredScansResult> {
+): Promise<ExpiredScan[]> {
   const cutoff = now.getTime() - olderThanDays * 24 * 60 * 60 * 1000;
-  const expired = [...scans().values()].filter(
-    (scan) => new Date(scan.createdAt).getTime() < cutoff,
-  );
 
-  for (const scan of expired) {
-    scans().delete(scan.id);
-  }
+  return [...scans().values()]
+    .filter((scan) => new Date(scan.createdAt).getTime() < cutoff)
+    .map((scan) => ({ id: scan.id, storagePaths: invoiceScanPagePaths(scan.storagePath, scan.pages) }));
+}
 
-  return {
-    deletedIds: expired.map((scan) => scan.id),
-    storagePaths: expired.map((scan) => scan.storagePath),
-  };
+export async function deleteScansByIds(_adminClient: unknown, ids: readonly string[]): Promise<number> {
+  return ids.filter((id) => scans().delete(id)).length;
 }

@@ -12,8 +12,9 @@ import {
   getScan,
   insertScan,
   listFewShotExamples,
+  deleteScansByIds,
+  listExpiredScans,
   markScanFailed,
-  purgeExpiredScans,
 } from "./scans.mock-server";
 import {
   DEFAULT_INVOICE_SCAN_DAILY_LIMIT,
@@ -184,20 +185,33 @@ describe("scans.mock-server · few-shot por proveedor", () => {
 });
 
 describe("scans.mock-server · purga a 90 días", () => {
-  it("borra los escaneos más antiguos que el corte en todas las tiendas y devuelve sus rutas", async () => {
+  it("lista sin borrar los escaneos anteriores al corte en todas las tiendas, con todas sus páginas", async () => {
     const now = new Date("2026-10-15T12:00:00.000Z");
-    const old = await insertScan(storeA, input({ imageSha256: "old", storagePath: "store-a/old.jpg" }));
+    const sha = "c".repeat(64);
+    const old = await insertScan(
+      storeA,
+      input({ imageSha256: sha, pages: 3, storagePath: `store-a/${sha}/p1.webp` }),
+    );
     const oldB = await insertScan(storeB, input({ imageSha256: "old-b", storagePath: "store-b/old.jpg" }));
     const fresh = await insertScan(storeA, input({ imageSha256: "fresh" }));
     store().set(old.id, { ...old, createdAt: "2026-07-01T12:00:00.000Z" });
     store().set(oldB.id, { ...oldB, createdAt: "2026-07-17T11:59:59.000Z" });
     store().set(fresh.id, { ...fresh, createdAt: "2026-07-17T12:00:00.000Z" });
 
-    const result = await purgeExpiredScans(null, 90, now);
+    const expired = await listExpiredScans(null, 90, now);
 
-    expect(result.deletedIds.sort()).toEqual([old.id, oldB.id].sort());
-    expect(result.storagePaths.sort()).toEqual(["store-a/old.jpg", "store-b/old.jpg"]);
-    expect(await getScan(storeA, fresh.id)).not.toBeNull();
+    expect(expired.sort((a, b) => a.storagePaths[0].localeCompare(b.storagePaths[0]))).toEqual([
+      {
+        id: old.id,
+        storagePaths: [`store-a/${sha}/p1.webp`, `store-a/${sha}/p2.webp`, `store-a/${sha}/p3.webp`],
+      },
+      { id: oldB.id, storagePaths: ["store-b/old.jpg"] },
+    ]);
+    expect(await getScan(storeA, old.id)).not.toBeNull();
+
+    expect(await deleteScansByIds(null, [old.id, oldB.id])).toBe(2);
     expect(await getScan(storeA, old.id)).toBeNull();
+    expect(await getScan(storeB, oldB.id)).toBeNull();
+    expect(await getScan(storeA, fresh.id)).not.toBeNull();
   });
 });

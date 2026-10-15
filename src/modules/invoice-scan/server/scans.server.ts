@@ -15,14 +15,15 @@ import { caracasDateToUtcRange, getCaracasIsoDate } from "@/shared/utils/caracas
 import type { InvoiceExtraction, InvoiceMatch, InvoiceScanLimits } from "../contracts";
 import {
   DISCARD_NOT_ALLOWED_MESSAGE,
+  type ExpiredScan,
   INVOICE_SCAN_RETENTION_DAYS,
+  invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
   type StoredFewShotExample,
   type InvoiceScanContext,
   type InvoiceScanInsert,
   type InvoiceScanRow,
   type InvoiceScanStatus,
-  type PurgeExpiredScansResult,
 } from "./scans.types";
 
 type AdminClient = ReturnType<typeof createAdminSupabaseClient>;
@@ -314,28 +315,42 @@ export async function listFewShotExamples(
 }
 
 /**
- * Borra los escaneos de todas las tiendas creados hace más de `olderThanDays`
- * días (cron con service role). Devuelve las rutas de Storage para que el
- * llamador borre las imágenes.
+ * Escaneos de todas las tiendas creados hace más de `olderThanDays` días, con
+ * las rutas de todas sus páginas (cron con service role). No borra nada: el
+ * llamador borra Storage y solo entonces las filas con `deleteScansByIds`.
  */
-export async function purgeExpiredScans(
+export async function listExpiredScans(
   adminClient: AdminClient,
   olderThanDays: number = INVOICE_SCAN_RETENTION_DAYS,
   now: Date = new Date(),
-): Promise<PurgeExpiredScansResult> {
+): Promise<ExpiredScan[]> {
   const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await adminClient
     .from("invoice_scans")
-    .delete()
-    .lt("created_at", cutoff)
-    .select("id, storage_path");
+    .select("id, storage_path, pages")
+    .lt("created_at", cutoff);
 
   throwIfSupabaseError(error);
 
-  const rows = (data ?? []) as { id: string; storage_path: string }[];
+  return ((data ?? []) as { id: string; storage_path: string; pages: number }[]).map((row) => ({
+    id: row.id,
+    storagePaths: invoiceScanPagePaths(row.storage_path, row.pages),
+  }));
+}
 
-  return {
-    deletedIds: rows.map((row) => row.id),
-    storagePaths: rows.map((row) => row.storage_path),
-  };
+/** Borra las filas indicadas (cron con service role). Devuelve cuántas se borraron. */
+export async function deleteScansByIds(adminClient: AdminClient, ids: readonly string[]): Promise<number> {
+  if (ids.length === 0) {
+    return 0;
+  }
+
+  const { data, error } = await adminClient
+    .from("invoice_scans")
+    .delete()
+    .in("id", [...ids])
+    .select("id");
+
+  throwIfSupabaseError(error);
+
+  return (data ?? []).length;
 }
