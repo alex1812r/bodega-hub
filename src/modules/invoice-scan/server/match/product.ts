@@ -1,0 +1,172 @@
+import { normalizeAlias } from "@bodega/core/invoice";
+
+import type { InvoiceExtractionLine, InvoiceMatchCandidate, InvoiceMatchStatus } from "../../contracts";
+import type { MatchAlias, MatchFuzzyCandidate, MatchProduct, MatchSupplierCatalog } from "../match.types";
+
+import { formatDecimal, normalizeCode } from "./text";
+
+/** Score mínimo de un alias difuso (trigram) para proponerlo. */
+export const FUZZY_ALIAS_MIN_SCORE = 0.6;
+/**
+ * Bonus de orden para productos vinculados al proveedor resuelto: se suma al
+ * score SOLO para ordenar (el `score` devuelto es el de la base). Un vinculado
+ * con 0,65 queda delante de un no vinculado con 0,72.
+ */
+export const LINKED_SUPPLIER_BONUS = 0.1;
+/** Candidatos máximos por línea dudosa. */
+export const MAX_LINE_CANDIDATES = 3;
+const RANK_EPSILON = 1e-9;
+
+export type ProductMatch = {
+  /** Estado de la cascada, antes de degradar por empaque, precio o moneda. */
+  status: InvoiceMatchStatus;
+  /** Solo cuando la cascada identificó UN producto (SKU, alias exacto o barcode único). */
+  productId?: string;
+  candidates: InvoiceMatchCandidate[];
+  /** Alias exacto usado (su `unitsPerPack` resuelve el empaque). */
+  alias?: MatchAlias;
+};
+
+export type ProductLookup = {
+  /** Catálogo del proveedor resuelto; sin proveedor resuelto, `undefined`. */
+  catalog?: MatchSupplierCatalog;
+  productsById: Map<string, MatchProduct>;
+  products: MatchProduct[];
+  fuzzy: MatchFuzzyCandidate[];
+  isLinked: (productId: string) => boolean;
+};
+
+type Ranked = { candidate: InvoiceMatchCandidate; rank: number };
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
+}
+
+function exactCandidates(productIds: string[], lookup: ProductLookup, reason: string): InvoiceMatchCandidate[] {
+  return productIds.flatMap((productId) => {
+    const product = lookup.productsById.get(productId);
+    return product ? [{ productId, name: product.name, score: 1, reason }] : [];
+  });
+}
+
+function aliasReason(hits: number): string {
+  return `alias visto ${hits} ${hits === 1 ? "vez" : "veces"}`;
+}
+
+function bySupplierSku(line: InvoiceExtractionLine, lookup: ProductLookup): string[] {
+  const code = normalizeCode(line.supplierSku);
+  if (!code || !lookup.catalog) {
+    return [];
+  }
+  return unique(
+    lookup.catalog.supplierProducts
+      .filter((link) => normalizeCode(link.supplierSku) === code)
+      .map((link) => link.productId),
+  );
+}
+
+function byExactAlias(line: InvoiceExtractionLine, lookup: ProductLookup): MatchAlias | undefined {
+  if (!lookup.catalog) {
+    return undefined;
+  }
+  const texts = unique([normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean));
+  return lookup.catalog.aliases.find((alias) => texts.includes(alias.aliasNorm));
+}
+
+function byBarcode(line: InvoiceExtractionLine, lookup: ProductLookup): string[] {
+  const code = normalizeCode(line.barcode);
+  if (!code) {
+    return [];
+  }
+  return lookup.products.filter((product) => normalizeCode(product.barcode) === code).map((product) => product.id);
+}
+
+function rankFuzzy(lookup: ProductLookup): Ranked[] {
+  const best = new Map<string, Ranked>();
+
+  for (const fuzzy of lookup.fuzzy) {
+    const product = lookup.productsById.get(fuzzy.productId);
+    if (!product || !Number.isFinite(fuzzy.score) || fuzzy.score <= 0) {
+      continue;
+    }
+    if (fuzzy.via === "alias" && fuzzy.score < FUZZY_ALIAS_MIN_SCORE) {
+      continue;
+    }
+    if (fuzzy.via === "name" && !product.active) {
+      continue;
+    }
+
+    const linked = lookup.isLinked(product.id);
+    const label = fuzzy.via === "alias" ? "alias parecido" : "nombre parecido";
+    const reason = `${label} ${formatDecimal(fuzzy.score)}${linked ? " · vinculado al proveedor" : ""}`;
+    const ranked: Ranked = {
+      candidate: { productId: product.id, name: product.name, score: fuzzy.score, reason },
+      rank: fuzzy.score + (linked ? LINKED_SUPPLIER_BONUS : 0),
+    };
+    const previous = best.get(product.id);
+    if (!previous || ranked.rank > previous.rank) {
+      best.set(product.id, ranked);
+    }
+  }
+
+  return [...best.values()].sort((a, b) => {
+    const diff = b.rank - a.rank;
+    // Empate (con tolerancia de coma flotante): orden estable por nombre, nunca se elige uno.
+    return Math.abs(diff) > RANK_EPSILON ? diff : a.candidate.name.localeCompare(b.candidate.name);
+  });
+}
+
+function withFuzzyFill(first: InvoiceMatchCandidate[], lookup: ProductLookup): InvoiceMatchCandidate[] {
+  const seen = new Set(first.map((candidate) => candidate.productId));
+  const extra = rankFuzzy(lookup)
+    .map((entry) => entry.candidate)
+    .filter((candidate) => !seen.has(candidate.productId));
+  return [...first, ...extra].slice(0, MAX_LINE_CANDIDATES);
+}
+
+/** Paso exacto con uno o varios productos: uno -> confirmado; varios -> dudosa con todos (6.9). */
+function exactStep(candidates: InvoiceMatchCandidate[], alias?: MatchAlias): ProductMatch {
+  if (candidates.length === 1) {
+    return { status: "confirmed", productId: candidates[0].productId, candidates, alias };
+  }
+  return { status: "doubtful", candidates: candidates.slice(0, MAX_LINE_CANDIDATES) };
+}
+
+/**
+ * Cascada de producto de una línea (plan §3 "Emparejamiento"):
+ * (1) SKU del proveedor resuelto; (2) alias exacto normalizado de ese
+ * proveedor; (3) código de barras -> dudosa con candidato; (4) alias difuso
+ * >= 0,6 o nombre en productos activos -> dudosa con <= 3 candidatos;
+ * (5) nada -> sin emparejar. Solo (1) y (2) pueden confirmar.
+ */
+export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLookup): ProductMatch {
+  const skuCandidates = exactCandidates(bySupplierSku(line, lookup), lookup, "SKU del proveedor");
+  if (skuCandidates.length > 0) {
+    return exactStep(skuCandidates);
+  }
+
+  const alias = byExactAlias(line, lookup);
+  if (alias) {
+    const aliasCandidates = exactCandidates([alias.productId], lookup, aliasReason(alias.hits));
+    if (aliasCandidates.length > 0) {
+      return exactStep(aliasCandidates, alias);
+    }
+  }
+
+  const barcodeIds = byBarcode(line, lookup);
+  if (barcodeIds.length > 0) {
+    const candidates = withFuzzyFill(exactCandidates(barcodeIds, lookup, "código de barras"), lookup);
+    return {
+      status: "doubtful",
+      productId: barcodeIds.length === 1 ? barcodeIds[0] : undefined,
+      candidates,
+    };
+  }
+
+  const fuzzy = withFuzzyFill([], lookup);
+  if (fuzzy.length > 0) {
+    return { status: "doubtful", candidates: fuzzy };
+  }
+
+  return { status: "unmatched", candidates: [] };
+}
