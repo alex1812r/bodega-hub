@@ -49,6 +49,7 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
     ["cero páginas", `sha256=${HASH}&pages=0&types=image/jpeg`],
     ["tipo no permitido", `sha256=${HASH}&pages=1&types=application/pdf`],
     ["tipos que no cuadran con las páginas", `sha256=${HASH}&pages=3&types=image/jpeg,image/webp`],
+    ["tipos mezclados (el POST exige un solo formato)", `sha256=${HASH}&pages=2&types=image/jpeg,image/webp`],
     ["sin parámetros", ""],
   ])("responde 400 por %s", async (_label, query) => {
     const response = await GET(request(query));
@@ -58,7 +59,7 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
 
   it("en mock devuelve URLs deterministas bajo la tienda de la sesión", async () => {
     const response = await GET(
-      request(`sha256=${HASH}&pages=2&types=image/jpeg,image/webp`, {
+      request(`sha256=${HASH}&pages=2&types=image/jpeg,image/jpeg`, {
         "x-demo-role": "almacen",
       }),
     );
@@ -74,14 +75,14 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
       },
       {
         page: 2,
-        path: `${DEFAULT_STORE_ID}/${HASH}/p2.webp`,
+        path: `${DEFAULT_STORE_ID}/${HASH}/p2.jpg`,
         signedUrl: expect.stringContaining("mock-upload.local"),
         token: expect.any(String),
       },
     ]);
 
     const again = await (
-      await GET(request(`sha256=${HASH}&pages=2&types=image/jpeg,image/webp`))
+      await GET(request(`sha256=${HASH}&pages=2&types=image/jpeg,image/jpeg`))
     ).json();
     expect(again).toEqual(body);
   });

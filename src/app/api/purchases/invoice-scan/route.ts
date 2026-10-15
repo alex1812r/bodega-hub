@@ -5,27 +5,23 @@ import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import {
   createInvoiceScanDeps,
+  INVOICE_MULTIPART_MAX_BYTES,
+  multipartTooLarge,
   readUploadedPages,
   scanInvoice,
   type ScanInvoiceInput,
   storedScanBodySchema,
 } from "@/modules/invoice-scan/server/scanService";
-import { INVOICE_MAX_BYTES, INVOICE_MAX_PAGES } from "@/modules/invoice-scan/server/storage";
 
 /** Una llamada al modelo por página (45 s de timeout cada una). */
 export const maxDuration = 300;
 
-/** Margen para las cabeceras multipart y los campos de texto. */
-const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
-const MAX_BODY_BYTES = INVOICE_MAX_PAGES * INVOICE_MAX_BYTES + MULTIPART_OVERHEAD_BYTES;
-
 const INVALID_MULTIPART_MESSAGE = "No pudimos leer las páginas enviadas. Vuelve a cargar la factura.";
-const BODY_TOO_LARGE_MESSAGE = `La factura pesa demasiado: máximo ${INVOICE_MAX_PAGES} páginas de 1 MB.`;
 
 /**
  * `POST /api/purchases/invoice-scan`: lee una factura y la empareja.
  *
- * - multipart/form-data: `page` (1..10 imágenes), `sha256` y `supplierId` opcionales;
+ * - multipart/form-data: `page` (1..10 imágenes, ≤ 4 MB en total), `sha256` y `supplierId` opcionales;
  * - JSON `{ sha256, storagePaths, supplierId? }` tras subir con `upload-url`.
  *
  * El hash se recalcula sobre los bytes y las rutas se validan contra la tienda
@@ -43,8 +39,8 @@ export async function POST(request: Request) {
     let input: ScanInvoiceInput;
 
     if (contentType.toLowerCase().startsWith("multipart/form-data")) {
-      if (Number(request.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
-        throw new ApiError(413, "PAYLOAD_TOO_LARGE", BODY_TOO_LARGE_MESSAGE);
+      if (Number(request.headers.get("content-length") ?? 0) > INVOICE_MULTIPART_MAX_BYTES) {
+        throw multipartTooLarge();
       }
 
       const form = await request.formData().catch(() => {
@@ -59,6 +55,7 @@ export async function POST(request: Request) {
       createInvoiceScanDeps(resolveDataSource()),
       { storeId: auth.storeId, userId: auth.userId },
       input,
+      { signal: request.signal },
     );
 
     return jsonData(result);

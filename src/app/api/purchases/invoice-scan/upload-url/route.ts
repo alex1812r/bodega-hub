@@ -5,6 +5,7 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
+import { INVOICE_MIXED_TYPES_MESSAGE } from "@/modules/invoice-scan/server/scanService";
 import {
   createInvoiceUploadUrls,
   createMockInvoiceUploadUrls,
@@ -14,7 +15,8 @@ import {
 
 /**
  * `types` lleva un MIME por página, separados por comas, o uno solo que vale
- * para todas las páginas.
+ * para todas las páginas. Todas las páginas deben tener el mismo formato, como
+ * exige el POST (las rutas p2..pN se derivan de la página 1).
  */
 const uploadUrlQuerySchema = z
   .object({
@@ -27,6 +29,10 @@ const uploadUrlQuerySchema = z
   })
   .refine((query) => query.types.length === 1 || query.types.length === query.pages, {
     message: "Indica un tipo por página o uno solo para todas.",
+    path: ["types"],
+  })
+  .refine((query) => new Set(query.types).size === 1, {
+    message: INVOICE_MIXED_TYPES_MESSAGE,
     path: ["types"],
   });
 

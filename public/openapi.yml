@@ -2752,14 +2752,19 @@ paths:
       description: >-
         Lee la factura con IA y empareja sus lineas (plan factura-escaneo). Dos
         formas: multipart/form-data con `page` (1 a 10 imagenes JPG/PNG/WebP de
-        hasta 1 MB cada una, todas del mismo formato), o JSON con las rutas que
+        hasta 1 MB cada una y 4 MB en total, todas del mismo formato), o JSON con las rutas que
         devolvio `GET /api/purchases/invoice-scan/upload-url` tras subir las
         paginas. El servidor recalcula el sha256 sobre los bytes (si el cliente
-        manda otro, 400) y valida cada ruta contra la tienda de la sesion. Mismo
-        hash en la tienda = mismo escaneo, con `cached: true`, sin llamar al
-        modelo ni consumir cuota. La cuota es de `INVOICE_SCAN_DAILY_LIMIT`
-        paginas por tienda y dia operativo de Caracas (50 por defecto); cada
-        pagina cuenta, tambien las de un intento fallido. Con `supplierId` se
+        manda otro, 400), comprueba por sus bytes que cada pagina es una imagen
+        del tipo declarado (si no, 400 sin subirla ni cobrar) y valida cada ruta
+        contra la tienda de la sesion. Mismo hash en la tienda con lectura
+        vigente = mismo escaneo, con `cached: true`, sin llamar al modelo ni
+        consumir cuota; si otra peticion esta leyendo esa misma imagen, 409. Un
+        escaneo descartado o fallido se vuelve a leer. La cuota es de
+        `INVOICE_SCAN_DAILY_LIMIT` paginas por tienda y dia operativo de Caracas
+        (50 por defecto) y se reserva de forma atomica antes de llamar al
+        modelo; cada intento cuenta sus paginas, tambien un reintento fallido o
+        un reescaneo tras descartar. Con `supplierId` se
         usan hasta 3 escaneos confirmados de ese proveedor como ejemplos. Un
         fallo del proveedor de IA deja el escaneo en `failed` (solo con el codigo
         del fallo) y el reintento con la misma imagen reutiliza esa fila. Una
@@ -2815,8 +2820,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Otra peticion esta leyendo esta misma factura (`CONFLICT`); se
+            reintenta en unos segundos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: Una pagina pesa mas de 1 MB o el cuerpo supera 10 paginas de 1 MB (`PAYLOAD_TOO_LARGE`).
+          description: >-
+            Una pagina pesa mas de 1 MB o el multipart supera 4 MB en total
+            (`PAYLOAD_TOO_LARGE`); por encima de 4 MB hay que subir con upload-url.
           content:
             application/json:
               schema:
@@ -2868,7 +2883,8 @@ paths:
           required: true
           description: >-
             Un MIME por pagina separados por comas, o uno solo para todas
-            (image/jpeg, image/webp o image/png).
+            (image/jpeg, image/webp o image/png). Todas las paginas deben tener
+            el mismo formato; tipos mezclados responden 400.
           schema:
             type: string
       responses:

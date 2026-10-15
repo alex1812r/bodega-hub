@@ -2490,4 +2490,44 @@ select
       and not has_function_privilege('authenticated', p.oid, 'execute')
       and has_function_privilege('service_role', p.oid, 'execute')
   )
+union all
+select
+  'reserve_invoice_scan existe, security definer y search_path vacio (20261019e)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']
+      and pg_get_function_identity_arguments(p.oid)
+        = 'p_sha256 text, p_storage_path text, p_pages integer, p_limit integer, p_provider text, p_model text'
+  )
+union all
+select
+  'reserve_invoice_scan: execute para authenticated y service_role, no para anon (20261019e)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
+union all
+select
+  'invoice_scans.usage_pages integer not null (20261019e)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'usage_pages' and data_type = 'integer' and is_nullable = 'NO'
+  )
+union all
+select
+  'invoice_scans_status_check incluye processing (20261019e)',
+  exists (
+    select 1 from pg_constraint c
+    where c.conrelid = 'public.invoice_scans'::regclass
+      and c.conname = 'invoice_scans_status_check'
+      and pg_get_constraintdef(c.oid) ilike '%processing%'
+  )
 order by 1;

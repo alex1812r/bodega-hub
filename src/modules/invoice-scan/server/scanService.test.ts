@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
 
 import { notAnInvoiceExtraction, singlePageExtraction } from "./__fixtures__/extractions";
+import { jpegHeader } from "./__fixtures__/images";
 import { InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } from "./extract";
 import { matchScan } from "./matchScan";
 import { createMockInvoiceScanModel } from "./mockModel";
@@ -17,6 +18,7 @@ import {
   INVOICE_HASH_MISMATCH_MESSAGE,
   INVOICE_MIXED_TYPES_MESSAGE,
   INVOICE_READ_URL_TTL_SECONDS,
+  INVOICE_SCAN_IN_PROGRESS_MESSAGE,
   readUploadedPages,
   scanInvoice,
   type InvoiceScanDeps,
@@ -24,7 +26,7 @@ import {
 } from "./scanService";
 import { INVOICE_INVALID_PATH_MESSAGE, INVOICE_MAX_BYTES, sha256OfPages } from "./storage";
 
-/** La fila `failed` no sale por findScanByHash (no es caché): se lee del estado mock. */
+/** Lee la fila por hash del estado mock (también las `failed`). */
 function failedRow(ctx: { storeId: string }, sha: string) {
   const rows = mockState("invoice-scan:scans", () => new Map<string, InvoiceScanRow>());
   return [...rows.values()].find((row) => row.storeId === ctx.storeId && row.imageSha256 === sha) ?? null;
@@ -40,8 +42,9 @@ function newContext() {
   return { storeId: `scan-service-${storeCounter}`, userId: "user-1" };
 }
 
+/** JPEG válido (pasa inspectInvoiceImage) con bytes distintos por `text`. */
 function page(text: string, mediaType: InvoicePage["mediaType"] = "image/jpeg"): InvoicePage {
-  return { data: new TextEncoder().encode(text), mediaType };
+  return { data: jpegHeader(1600, 1200, text), mediaType };
 }
 
 function extractResult(overrides: Partial<ExtractInvoiceResult> = {}): ExtractInvoiceResult {
@@ -245,7 +248,7 @@ describe("scanInvoice · fallo del proveedor", () => {
     expect((error as ApiError).message).toMatch(/tardó demasiado/);
 
     const sha = sha256OfPages(pages.map((item) => item.data));
-    expect(await mockRepo.findScanByHash(ctx, sha)).toBeNull();
+    expect(failedRow(ctx, sha)).toMatchObject({ error: "TIMEOUT", extracted: null, status: "failed" });
     expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
   });
 
@@ -273,7 +276,8 @@ describe("scanInvoice · fallo del proveedor", () => {
     const row = await mockRepo.getScan(ctx, retry.scanId);
 
     expect(row).toMatchObject({ error: null, provider: "mock", status: "extracted" });
-    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
+    // Cada intento cobra sus páginas: el fallido y el reintento.
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 2 });
   });
 
   it("registra provider y model del modelo resuelto", async () => {
@@ -316,10 +320,10 @@ describe("scanInvoice · no es una factura", () => {
 
 describe("scanInvoice · forma storagePaths", () => {
   function stored(ctx: { storeId: string }, storage: ReturnType<typeof memoryStorage>, texts: string[]) {
-    const pages = texts.map((text) => new TextEncoder().encode(text));
+    const pages = texts.map((text) => jpegHeader(1600, 1200, text));
     const sha = sha256OfPages(pages);
     const storagePaths = pages.map((data, index) => {
-      const path = `${ctx.storeId}/${sha}/p${index + 1}.webp`;
+      const path = `${ctx.storeId}/${sha}/p${index + 1}.jpg`;
       storage.objects.set(path, data);
       return path;
     });
@@ -339,8 +343,8 @@ describe("scanInvoice · forma storagePaths", () => {
     expect(extract).toHaveBeenCalledWith(
       expect.objectContaining({
         pages: [
-          { data: storage.objects.get(storagePaths[0]!), mediaType: "image/webp" },
-          { data: storage.objects.get(storagePaths[1]!), mediaType: "image/webp" },
+          { data: storage.objects.get(storagePaths[0]!), mediaType: "image/jpeg" },
+          { data: storage.objects.get(storagePaths[1]!), mediaType: "image/jpeg" },
         ],
       }),
     );
@@ -362,8 +366,8 @@ describe("scanInvoice · forma storagePaths", () => {
   });
 
   it.each([
-    ["rutas fuera de orden", (sha: string, store: string) => [`${store}/${sha}/p2.webp`, `${store}/${sha}/p1.webp`]],
-    ["carpeta de otro hash", (_sha: string, store: string) => [`${store}/${"e".repeat(64)}/p1.webp`]],
+    ["rutas fuera de orden", (sha: string, store: string) => [`${store}/${sha}/p2.jpg`, `${store}/${sha}/p1.jpg`]],
+    ["carpeta de otro hash", (_sha: string, store: string) => [`${store}/${"e".repeat(64)}/p1.jpg`]],
   ])("400 por %s", async (_label, buildPaths) => {
     const ctx = newContext();
     const { built, storage } = deps();
@@ -378,7 +382,7 @@ describe("scanInvoice · forma storagePaths", () => {
     const ctx = newContext();
     const { built, storage } = deps();
     const { sha, storagePaths } = stored(ctx, storage, ["original"]);
-    storage.objects.set(storagePaths[0]!, new TextEncoder().encode("alterado"));
+    storage.objects.set(storagePaths[0]!, jpegHeader(1600, 1200, "alterado"));
 
     await expect(
       scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths }),
@@ -535,5 +539,146 @@ describe("createInvoiceScanDeps", () => {
     await built.storage.upload("s/x/p1.jpg", new Uint8Array([1]), "image/jpeg");
     await expect(built.storage.download("s/x/p1.jpg")).resolves.toEqual(new Uint8Array([1]));
     await expect(built.storage.download("s/x/p9.jpg")).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("scanInvoice · reserva atómica (SCN-03h)", () => {
+  /** extract que no termina hasta `release()`: simula la latencia real del modelo. */
+  function gatedExtract() {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const extract = jest.fn(async () => {
+      await gate;
+      return extractResult();
+    });
+
+    return { extract, release: () => release() };
+  }
+
+  it("5 POST simultáneos con la misma imagen: 1 llamada al modelo, el resto 409 o caché, cuota +1", async () => {
+    const ctx = newContext();
+    const { extract, release } = gatedExtract();
+    const { built } = deps({ extract });
+    const pages = [page("carrera")];
+
+    const pending = Array.from({ length: 5 }, () => scanInvoice(built, ctx, { pages, source: "upload" }));
+    setTimeout(release, 10);
+    const results = await Promise.allSettled(pending);
+
+    expect(extract).toHaveBeenCalledTimes(1);
+    const fulfilled = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const rejected = results.flatMap((result) => (result.status === "rejected" ? [result.reason as ApiError] : []));
+    expect(fulfilled.filter((value) => !value.cached)).toHaveLength(1);
+    rejected.forEach((error) =>
+      expect(error).toMatchObject({ message: INVOICE_SCAN_IN_PROGRESS_MESSAGE, status: 409 }),
+    );
+    expect(fulfilled.length + rejected.length).toBe(5);
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
+  });
+
+  it("cuota atómica: con límite 2 y 5 escaneos simultáneos distintos solo pasan 2", async () => {
+    const ctx = newContext();
+    const { extract, release } = gatedExtract();
+    const { built } = deps({ dailyLimit: 2, extract });
+
+    const pending = [0, 1, 2, 3, 4].map((n) =>
+      scanInvoice(built, ctx, { pages: [page(`cuota-${n}`)], source: "upload" }),
+    );
+    setTimeout(release, 10);
+    const results = await Promise.allSettled(pending);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    expect(
+      results.filter((result) => result.status === "rejected" && (result.reason as ApiError).status === 429),
+    ).toHaveLength(3);
+    expect(extract).toHaveBeenCalledTimes(2);
+    expect(await mockRepo.getDailyUsage(ctx, 2)).toMatchObject({ used: 2 });
+  });
+
+  it("cada reintento de un escaneo failed cobra sus páginas", async () => {
+    const ctx = newContext();
+    const extract = jest.fn(async () => {
+      throw new InvoiceExtractionError("INVALID_OUTPUT");
+    });
+    const { built } = deps({ dailyLimit: 3, extract });
+    const pages = [page("siempre-mal")];
+
+    for (const expectedUsed of [1, 2, 3]) {
+      await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 502 });
+      expect(await mockRepo.getDailyUsage(ctx, 3)).toMatchObject({ used: expectedUsed });
+    }
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 429 });
+    expect(extract).toHaveBeenCalledTimes(3);
+  });
+
+  it("reescanear tras descartar vuelve a leer, cobra y devuelve un scanId utilizable", async () => {
+    const ctx = newContext();
+    const { built, extract } = deps();
+    const pages = [page("descartada")];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    await discardInvoiceScan(built, ctx, first.scanId);
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again.cached).toBe(false);
+    expect(extract).toHaveBeenCalledTimes(2);
+    expect(again.limits.used).toBe(2);
+    expect(await mockRepo.getScan(ctx, again.scanId)).toMatchObject({ status: "extracted" });
+    await expect(discardInvoiceScan(built, ctx, again.scanId)).resolves.toMatchObject({ status: "discarded" });
+  });
+
+  it("un .exe declarado como JPEG: 400 sin subirlo, sin llamar al modelo y sin cobrar", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const exe = { data: new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]), mediaType: "image/jpeg" as const };
+
+    await expect(scanInvoice(built, ctx, { pages: [exe], source: "upload" })).rejects.toMatchObject({ status: 400 });
+
+    expect(storage.upload).not.toHaveBeenCalled();
+    expect(extract).not.toHaveBeenCalled();
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
+  it("un .exe subido por upload-url: 400 sin llamar al modelo ni cobrar", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const exe = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);
+    const sha = sha256OfPages([exe]);
+    const path = `${ctx.storeId}/${sha}/p1.jpg`;
+    storage.objects.set(path, exe);
+
+    await expect(
+      scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths: [path] }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
+  it("pasa la señal de cancelación del cliente a la extracción", async () => {
+    const { built, extract } = deps();
+    const controller = new AbortController();
+
+    await scanInvoice(built, newContext(), { pages: [page("señal")], source: "upload" }, { signal: controller.signal });
+
+    expect(extract).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+  });
+});
+
+describe("readUploadedPages · tope multipart (SCN-03h)", () => {
+  it("413 en español que sugiere upload-url si el total pasa de 4 MB", async () => {
+    const data = new FormData();
+    for (let index = 0; index < 5; index += 1) {
+      data.append("page", new File([new Uint8Array(900 * 1024)], `p${index}.jpg`, { type: "image/jpeg" }));
+    }
+
+    await expect(readUploadedPages(data)).rejects.toMatchObject({
+      code: "PAYLOAD_TOO_LARGE",
+      message: expect.stringMatching(/4 MB.*upload-url/),
+      status: 413,
+    });
   });
 });

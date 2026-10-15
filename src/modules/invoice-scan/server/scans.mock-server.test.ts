@@ -6,8 +6,9 @@ import { mockState } from "@/shared/mocks/mockStore";
 
 import type { InvoiceExtraction } from "../contracts";
 import {
+  completeScan,
   discardScan,
-  findScanByHash,
+  failScan,
   getDailyUsage,
   getScan,
   insertScan,
@@ -18,11 +19,13 @@ import {
   markScanFailed,
   recordScanObject,
   removeScanObjects,
+  reserveScan,
 } from "./scans.mock-server";
 import {
   DEFAULT_INVOICE_SCAN_DAILY_LIMIT,
   readInvoiceScanDailyLimit,
   type InvoiceScanInsert,
+  type InvoiceScanReserveInput,
   type InvoiceScanRow,
 } from "./scans.types";
 
@@ -64,42 +67,124 @@ beforeEach(() => {
   jest.useRealTimers();
 });
 
-describe("scans.mock-server · caché por hash", () => {
-  it("devuelve el mismo escaneo para el mismo hash y tienda, sin duplicar filas", async () => {
-    const first = await insertScan(storeA, input());
-    const again = await insertScan(storeA, input({ provider: "otro" }));
+describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", () => {
+  function reserve(ctx = storeA, overrides: Partial<InvoiceScanReserveInput> = {}) {
+    return reserveScan(ctx, {
+      imageSha256: "hash-1",
+      limit: 50,
+      model: "mock-model",
+      pages: 1,
+      provider: "mock",
+      storagePath: "store-a/hash-1/p1.jpg",
+      ...overrides,
+    });
+  }
 
-    expect(again.id).toBe(first.id);
-    expect(again.provider).toBe("mock");
-    expect(await findScanByHash(storeA, "hash-1")).toMatchObject({ id: first.id, status: "extracted" });
+  it("reserva en processing y cobra; la misma foto mientras se lee es in_progress", async () => {
+    const first = await reserve();
+
+    expect(first).toMatchObject({ limit: 50, outcome: "reserved", used: 1 });
+    expect(await reserve()).toEqual({ id: (first as { id: string }).id, outcome: "in_progress" });
     expect(store().size).toBe(1);
+    expect(await getDailyUsage(storeA, 50)).toMatchObject({ used: 1 });
   });
 
-  it("el hash es por tienda: B no ve el caché de A", async () => {
-    await insertScan(storeA, input());
+  it("5 reservas simultáneas con la misma foto: 1 reserved y 4 in_progress", async () => {
+    const results = await Promise.all(Array.from({ length: 5 }, () => reserve()));
 
-    expect(await findScanByHash(storeB, "hash-1")).toBeNull();
-    const fromB = await insertScan(storeB, input({ storagePath: "store-b/hash-1.jpg" }));
-    expect(fromB.storeId).toBe("store-b");
-    expect(store().size).toBe(2);
+    expect(results.filter((result) => result.outcome === "reserved")).toHaveLength(1);
+    expect(results.filter((result) => result.outcome === "in_progress")).toHaveLength(4);
+  });
+
+  it("cuota atómica: con límite 2, de 5 reservas simultáneas solo 2 pasan", async () => {
+    const results = await Promise.all(
+      [0, 1, 2, 3, 4].map((n) => reserve(storeA, { imageSha256: `q-${n}`, limit: 2 })),
+    );
+
+    expect(results.filter((result) => result.outcome === "reserved")).toHaveLength(2);
+    expect(results.filter((result) => result.outcome === "quota")).toEqual(
+      Array.from({ length: 3 }, () => ({ limit: 2, outcome: "quota", used: 2 })),
+    );
+  });
+
+  it("extracted o confirmed es caché, por tienda", async () => {
+    const reserved = await reserve();
+    const id = (reserved as { id: string }).id;
+    await completeScan(storeA, id, {
+      durationMs: 1,
+      extracted: extraction,
+      inputTokens: null,
+      matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
+      model: "mock-model",
+      outputTokens: null,
+      provider: "mock",
+    });
+
+    expect(await reserve()).toEqual({ id, outcome: "cached" });
+    expect(await reserve(storeB)).toMatchObject({ outcome: "reserved" });
+    confirm(id, new Date().toISOString());
+    expect(await reserve()).toEqual({ id, outcome: "cached" });
+  });
+
+  it("failed y discarded se reutilizan y suman páginas el mismo día", async () => {
+    const id = ((await reserve(storeA, { pages: 2 })) as { id: string }).id;
+    await failScan(storeA, id, "TIMEOUT");
+
+    expect(await getScan(storeA, id)).toMatchObject({ error: "TIMEOUT", status: "failed" });
+    expect(await reserve(storeA, { pages: 2 })).toMatchObject({ id, outcome: "reserved", used: 4 });
+
+    store().set(id, { ...(store().get(id) as InvoiceScanRow), status: "discarded" });
+    expect(await reserve(storeA, { pages: 2 })).toMatchObject({ id, outcome: "reserved", used: 6 });
+    expect(store().get(id)).toMatchObject({ status: "processing", usagePages: 6 });
+  });
+
+  it("una fila de otro día se reutiliza cobrando solo este intento; processing caducado se recupera", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-15T03:30:00.000Z"));
+    const id = ((await reserve(storeA, { pages: 3 })) as { id: string }).id;
+
+    // 00:10 del día siguiente en Caracas: el processing de ayer ya caducó.
+    jest.setSystemTime(new Date("2026-10-15T04:10:00.000Z"));
+    expect(await reserve()).toMatchObject({ id, outcome: "reserved", used: 1 });
+    expect(store().get(id)).toMatchObject({ pages: 1, usagePages: 1 });
+  });
+
+  it("completeScan y failScan solo cierran una fila processing de la propia tienda", async () => {
+    const id = ((await reserve()) as { id: string }).id;
+
+    await failScan(storeB, id, "x");
+    expect(store().get(id)).toMatchObject({ status: "processing" });
+    await failScan(storeA, id, "INVALID_OUTPUT");
+    await failScan(storeA, id, "otra");
+    expect(store().get(id)).toMatchObject({ error: "INVALID_OUTPUT", status: "failed" });
+    expect(
+      await completeScan(storeA, id, {
+        durationMs: 1,
+        extracted: extraction,
+        inputTokens: null,
+        matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
+        model: "m",
+        outputTokens: null,
+        provider: "mock",
+      }),
+    ).toBeNull();
   });
 });
 
-describe("scans.mock-server · failed → retry", () => {
-  it("un escaneo failed no es caché y el reintento reutiliza su fila", async () => {
+describe("scans.mock-server · insertScan (fixtures)", () => {
+  it("no duplica filas por tienda + hash y reutiliza una fila failed", async () => {
     const failed = await insertScan(
       storeA,
       input({ error: "Tiempo de espera agotado", extracted: null, status: "failed" }),
     );
+    const retry = await insertScan(storeA, input({ inputTokens: 1200 }));
+    const again = await insertScan(storeA, input({ provider: "otro" }));
+    await insertScan(storeB, input({ storagePath: "store-b/hash-1.jpg" }));
 
     expect(failed.extracted).toBeNull();
-    expect(await findScanByHash(storeA, "hash-1")).toBeNull();
-
-    const retry = await insertScan(storeA, input({ inputTokens: 1200 }));
-
     expect(retry).toMatchObject({ error: null, id: failed.id, inputTokens: 1200, status: "extracted" });
-    expect(await findScanByHash(storeA, "hash-1")).toMatchObject({ id: failed.id });
-    expect(store().size).toBe(1);
+    expect(again).toMatchObject({ id: failed.id, provider: "mock" });
+    expect(store().size).toBe(2);
   });
 
   it("markScanFailed solo afecta a escaneos extracted de la propia tienda", async () => {

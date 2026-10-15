@@ -1,6 +1,8 @@
 /**
  * @jest-environment node
  */
+import { jpegHeader } from "@/modules/invoice-scan/server/__fixtures__/images";
+
 import { POST as scan } from "../../route";
 import { POST } from "./route";
 
@@ -15,7 +17,7 @@ function fresh() {
 
 async function createScan(storeId: string, image: string) {
   const form = new FormData();
-  form.append("page", new File([image], "p1.jpg", { type: "image/jpeg" }));
+  form.append("page", new File([new Uint8Array(jpegHeader(1600, 1200, image))], "p1.jpg", { type: "image/jpeg" }));
   const response = await scan(
     new Request(URL_BASE, {
       body: form,

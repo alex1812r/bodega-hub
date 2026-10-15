@@ -1,8 +1,8 @@
 /**
  * Orquestación del escaneo de facturas para el BFF (plan factura-escaneo-gtm
- * §3 "Idempotencia y cuota" y "Trazabilidad", §4 endpoints): caché por hash,
- * cuota diaria por tienda, subida al bucket privado, few-shot de la capa 2,
- * extracción y emparejamiento. Las dependencias se inyectan para testear el
+ * §3 "Idempotencia y cuota" y "Trazabilidad", §4 endpoints): validación de
+ * bytes, reserva atómica (caché por hash, en curso y cuota diaria por tienda),
+ * subida al bucket privado, few-shot de la capa 2, extracción y emparejamiento. Las dependencias se inyectan para testear el
  * flujo sin red; `createInvoiceScanDeps` arma las reales según la fuente de datos.
  *
  * El `storeId` y el `userId` siempre salen de la sesión (`InvoiceScanContext`).
@@ -19,7 +19,6 @@ import { mockState } from "@/shared/mocks/mockStore";
 import type {
   InvoiceExtraction,
   InvoiceMatch,
-  InvoiceScanLimits,
   InvoiceScanResponse,
 } from "../contracts";
 import {
@@ -29,6 +28,7 @@ import {
   type InvoiceFewShotExample,
   type InvoicePage,
 } from "./extract";
+import { inspectInvoiceImage } from "./imageInfo";
 import { matchScan, type InvoiceScanMatcher } from "./matchScan";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 import * as mockRepo from "./scans.mock-server";
@@ -58,7 +58,7 @@ import {
 
 export type InvoiceScanRepo = Pick<
   typeof serverRepo,
-  "discardScan" | "findScanByHash" | "getDailyUsage" | "getScan" | "insertScan" | "listFewShotExamples"
+  "completeScan" | "discardScan" | "failScan" | "getDailyUsage" | "getScan" | "listFewShotExamples" | "reserveScan"
 >;
 
 /** Bucket privado `invoice-scans`; las rutas ya vienen validadas bajo la tienda de la sesión. */
@@ -102,6 +102,22 @@ export const INVOICE_SCAN_NOT_FOUND_MESSAGE = "No encontramos ese escaneo de fac
 export const INVOICE_HASH_MISMATCH_MESSAGE =
   "El hash de la factura no coincide con las páginas enviadas. Vuelve a cargarla.";
 export const INVOICE_MIXED_TYPES_MESSAGE = "Todas las páginas de la factura deben tener el mismo formato.";
+export const INVOICE_SCAN_IN_PROGRESS_MESSAGE =
+  "Esta factura ya se está leyendo; espera unos segundos y vuelve a intentarlo.";
+export const INVOICE_SCAN_CHANGED_MESSAGE =
+  "La lectura de esta factura cambió mientras se procesaba. Vuelve a intentarlo.";
+
+/**
+ * Tope del cuerpo multipart: Vercel corta a 4,5 MB con un 413 que no es de la
+ * app, así que la app corta antes. Por encima, el cliente sube por upload-url.
+ */
+export const INVOICE_MULTIPART_MAX_BYTES = 4 * 1024 * 1024;
+export const INVOICE_MULTIPART_TOO_LARGE_MESSAGE =
+  "La factura pesa más de 4 MB en total para enviarla de una vez. Súbela página por página con la subida directa (upload-url).";
+
+export function multipartTooLarge(): ApiError {
+  return new ApiError(413, "PAYLOAD_TOO_LARGE", INVOICE_MULTIPART_TOO_LARGE_MESSAGE);
+}
 
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, "El hash de la factura no es válido.");
 const supplierIdSchema = z.string().trim().min(1).max(100);
@@ -150,7 +166,8 @@ function formString(form: FormData, key: string) {
 
 /**
  * Forma multipart: campos `page` (1..10 imágenes JPG/PNG/WebP de ≤ 1 MB cada
- * una), `sha256` y `supplierId` opcionales. Una página de más peso es 413.
+ * una y ≤ 4 MB en total), `sha256` y `supplierId` opcionales. Una página de
+ * más peso, o un total de más de 4 MB, es 413.
  */
 export async function readUploadedPages(form: FormData): Promise<ScanInvoiceInput> {
   const entries = form.getAll("page");
@@ -164,6 +181,7 @@ export async function readUploadedPages(form: FormData): Promise<ScanInvoiceInpu
   }
 
   const pages: InvoicePage[] = [];
+  let totalBytes = 0;
 
   for (const [index, entry] of entries.entries()) {
     const label = `La página ${index + 1}`;
@@ -186,6 +204,12 @@ export async function readUploadedPages(form: FormData): Promise<ScanInvoiceInpu
         "PAYLOAD_TOO_LARGE",
         `${label} pesa más de 1 MB. Comprímela o vuelve a tomar la foto.`,
       );
+    }
+
+    totalBytes += entry.size;
+
+    if (totalBytes > INVOICE_MULTIPART_MAX_BYTES) {
+      throw multipartTooLarge();
     }
 
     pages.push({ data: new Uint8Array(await entry.arrayBuffer()), mediaType: entry.type });
@@ -214,6 +238,13 @@ function assertSameMediaType(mediaTypes: readonly InvoiceScanMediaType[]) {
   }
 }
 
+/** Bytes mágicos, tipo declarado y tamaño: antes de subir, de cobrar y de reservar. */
+function assertImages(pages: readonly InvoicePage[]) {
+  for (const page of pages) {
+    inspectInvoiceImage(page.data, page.mediaType);
+  }
+}
+
 function assertHash(expected: string | undefined, actual: string) {
   if (expected !== undefined && expected !== actual) {
     badRequest(INVOICE_HASH_MISMATCH_MESSAGE);
@@ -228,6 +259,7 @@ async function loadScan(
   if (input.source === "upload") {
     const mediaTypes = input.pages.map((page) => page.mediaType);
     assertSameMediaType(mediaTypes);
+    assertImages(input.pages);
 
     const sha256 = sha256OfPages(input.pages.map((page) => page.data));
     assertHash(input.sha256, sha256);
@@ -265,19 +297,20 @@ async function loadScan(
   );
 
   assertHash(input.sha256, sha256OfPages(pages.map((page) => page.data)));
+  assertImages(pages);
 
   return { pages, pendingUploads: [], sha256: input.sha256, storagePath: input.storagePaths[0]! };
 }
 
-function assertUnderPageLimit(usage: InvoiceScanLimits, pages: number) {
-  if (usage.used + pages > usage.limit) {
-    throw new ApiError(
-      429,
-      "INVOICE_SCAN_LIMIT_REACHED",
-      `Alcanzaste el límite de ${usage.limit} páginas escaneadas por día. Esta factura tiene ${pages} y hoy quedan ${usage.remaining}. Vuelve a intentarlo mañana o registra la compra a mano.`,
-      { limit: usage.limit, used: usage.used },
-    );
-  }
+function limitReached(limit: number, used: number, pages: number): ApiError {
+  const remaining = Math.max(0, limit - used);
+
+  return new ApiError(
+    429,
+    "INVOICE_SCAN_LIMIT_REACHED",
+    `Alcanzaste el límite de ${limit} páginas escaneadas por día. Esta factura tiene ${pages} y hoy quedan ${remaining}. Vuelve a intentarlo mañana o registra la compra a mano.`,
+    { limit, used },
+  );
 }
 
 /** Hasta 3 escaneos confirmados del proveedor; una imagen que no se descarga se omite. */
@@ -312,21 +345,47 @@ async function loadFewShot(
   return loaded.filter((example): example is InvoiceFewShotExample => example !== null);
 }
 
+export type ScanInvoiceOptions = {
+  /** `request.signal`: si el cliente corta, se cancela la llamada al modelo. */
+  signal?: AbortSignal;
+};
+
 /**
- * `POST /api/purchases/invoice-scan`: caché por hash (0 llamadas al modelo y
- * sin consumir cuota) → cuota → subida → few-shot → extracción → emparejamiento.
- * Un fallo del modelo deja la fila `failed` con el código y responde 502.
+ * `POST /api/purchases/invoice-scan`: valida los bytes → reserva atómica
+ * (`reserveScan`, lock por tienda) → según el resultado:
+ * - `cached`: la lectura guardada, sin modelo ni cuota;
+ * - `in_progress`: 409, otra petición está leyendo la misma foto;
+ * - `quota`: 429;
+ * - `reserved` (páginas ya cobradas): subida → few-shot → extracción →
+ *   emparejamiento → `extracted`. Un fallo deja la fila `failed` con el código
+ *   (nunca el contenido); si es del modelo responde 502.
+ * Un escaneo `failed` o `discarded` se vuelve a leer y cobra otra vez.
  */
 export async function scanInvoice(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
   input: ScanInvoiceInput,
+  options: ScanInvoiceOptions = {},
 ): Promise<InvoiceScanResponse> {
   const scan = await loadScan(deps, ctx, input);
   const pageCount = scan.pages.length;
-  const cached = await deps.repo.findScanByHash(ctx, scan.sha256);
+  const model = deps.model();
+  const reservation = await deps.repo.reserveScan(ctx, {
+    imageSha256: scan.sha256,
+    limit: deps.dailyLimit,
+    model: model.modelId,
+    pages: pageCount,
+    provider: model.provider,
+    storagePath: scan.storagePath,
+  });
 
-  if (cached?.extracted && cached.matched) {
+  if (reservation.outcome === "cached") {
+    const cached = await deps.repo.getScan(ctx, reservation.id);
+
+    if (!cached?.extracted || !cached.matched) {
+      throw new ApiError(409, "CONFLICT", INVOICE_SCAN_CHANGED_MESSAGE);
+    }
+
     return {
       cached: true,
       extraction: cached.extracted,
@@ -336,38 +395,45 @@ export async function scanInvoice(
     };
   }
 
-  assertUnderPageLimit(await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()), pageCount);
+  if (reservation.outcome === "in_progress") {
+    throw new ApiError(409, "CONFLICT", INVOICE_SCAN_IN_PROGRESS_MESSAGE);
+  }
 
-  for (const upload of scan.pendingUploads) {
-    await deps.storage.upload(upload.path, upload.page.data, upload.page.mediaType);
+  if (reservation.outcome === "quota") {
+    throw limitReached(reservation.limit, reservation.used, pageCount);
+  }
+
+  // Las páginas ya están cobradas: cualquier fallo cierra la reserva como failed.
+  const fail = (code: string) => deps.repo.failScan(ctx, reservation.id, code);
+  let result: Awaited<ReturnType<typeof extractInvoice>>;
+  let matched: InvoiceMatch;
+
+  try {
+    for (const upload of scan.pendingUploads) {
+      await deps.storage.upload(upload.path, upload.page.data, upload.page.mediaType);
+    }
+  } catch (error) {
+    await fail("UPLOAD_ERROR");
+    throw error;
   }
 
   const fewShot = await loadFewShot(deps, ctx, input.supplierId);
-  const model = deps.model();
-  const base = { imageSha256: scan.sha256, pages: pageCount, storagePath: scan.storagePath };
-
-  let result: Awaited<ReturnType<typeof extractInvoice>>;
 
   try {
-    result = await deps.extract({ fewShot, model, pages: scan.pages });
+    result = await deps.extract({ fewShot, model, pages: scan.pages, signal: options.signal });
   } catch (error) {
-    await deps.repo.insertScan(ctx, {
-      ...base,
-      error: error instanceof InvoiceExtractionError ? error.code : "PROVIDER_ERROR",
-      model: model.modelId,
-      provider: model.provider,
-      status: "failed",
-    });
-
+    await fail(error instanceof InvoiceExtractionError ? error.code : "PROVIDER_ERROR");
     throw toInvoiceScanApiError(error);
   }
 
-  const matched = await deps.matcher(result.extraction, {
-    dataSource: deps.dataSource,
-    storeId: ctx.storeId,
-  });
-  const row = await deps.repo.insertScan(ctx, {
-    ...base,
+  try {
+    matched = await deps.matcher(result.extraction, { dataSource: deps.dataSource, storeId: ctx.storeId });
+  } catch (error) {
+    await fail("MATCH_ERROR");
+    throw error;
+  }
+
+  const row = await deps.repo.completeScan(ctx, reservation.id, {
     durationMs: result.durationMs,
     extracted: result.extraction,
     inputTokens: result.inputTokens,
@@ -375,14 +441,17 @@ export async function scanInvoice(
     model: result.modelId,
     outputTokens: result.outputTokens,
     provider: result.provider,
-    status: "extracted",
   });
+
+  if (!row) {
+    throw new ApiError(409, "CONFLICT", INVOICE_SCAN_CHANGED_MESSAGE);
+  }
 
   return {
     cached: false,
-    extraction: row.extracted ?? result.extraction,
+    extraction: result.extraction,
     limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
-    matched: row.matched ?? matched,
+    matched,
     scanId: row.id,
   };
 }

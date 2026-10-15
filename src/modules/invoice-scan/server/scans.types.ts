@@ -5,7 +5,8 @@
  */
 import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
 
-export const invoiceScanStatuses = ["extracted", "confirmed", "discarded", "failed"] as const;
+/** `processing`: reservado por `reserveScan` mientras el modelo lee (parche 20261019e). */
+export const invoiceScanStatuses = ["processing", "extracted", "confirmed", "discarded", "failed"] as const;
 export type InvoiceScanStatus = (typeof invoiceScanStatuses)[number];
 
 /** Tienda y usuario de la sesión (los pone el BFF; nunca vienen del cliente). */
@@ -22,6 +23,8 @@ export type InvoiceScanRow = {
   /** `<store_id>/<archivo>` dentro del bucket privado `invoice-scans`. */
   storagePath: string;
   pages: number;
+  /** Páginas cobradas hoy por la fila: cada intento suma (cuota, parche 20261019e). */
+  usagePages: number;
   provider: string;
   model: string;
   inputTokens: number | null;
@@ -42,8 +45,8 @@ export type InvoiceScanRow = {
 };
 
 /**
- * Alta de un escaneo. `status: "failed"` (con `error`) registra un intento que
- * no produjo lectura: cuenta para la cuota pero no es caché.
+ * Alta directa de un escaneo en el repositorio mock (fixtures de tests). El BFF
+ * no la usa: reserva con `reserveScan` y cierra con `completeScan`/`failScan`.
  */
 export type InvoiceScanInsert = {
   imageSha256: string;
@@ -58,6 +61,43 @@ export type InvoiceScanInsert = {
   matched?: InvoiceMatch | null;
   status?: Extract<InvoiceScanStatus, "extracted" | "failed">;
   error?: string | null;
+};
+
+/** Una fila `processing` más reciente que esto bloquea otra lectura de la misma foto. */
+export const INVOICE_SCAN_PROCESSING_WINDOW_MS = 2 * 60 * 1000;
+
+/** Entrada de `reserveScan` (RPC `reserve_invoice_scan`, parche 20261019e). */
+export type InvoiceScanReserveInput = {
+  imageSha256: string;
+  storagePath: string;
+  pages: number;
+  limit: number;
+  provider: string;
+  model: string;
+};
+
+/**
+ * Resultado de la reserva atómica (lock por tienda):
+ * - `cached`: la foto ya tiene lectura (extracted o confirmed); no se llama al modelo;
+ * - `in_progress`: otra petición la está leyendo (processing de < 2 min);
+ * - `quota`: las páginas no caben en la cuota de hoy;
+ * - `reserved`: fila en `processing` y páginas cobradas; `used` ya las incluye.
+ */
+export type InvoiceScanReservation =
+  | { outcome: "cached"; id: string }
+  | { outcome: "in_progress"; id: string }
+  | { outcome: "quota"; used: number; limit: number }
+  | { outcome: "reserved"; id: string; used: number; limit: number };
+
+/** Lectura que cierra una reserva (`processing` → `extracted`). */
+export type InvoiceScanCompletion = {
+  provider: string;
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  durationMs: number;
+  extracted: InvoiceExtraction;
+  matched: InvoiceMatch;
 };
 
 /** Ejemplo few-shot de la capa 2: imagen guardada + lectura confirmada. */

@@ -8,6 +8,7 @@ jest.mock("../../../../modules/invoice-scan/server/provider", () => ({
 
 import type { MockLanguageModelV4 } from "ai/test";
 
+import { jpegHeader } from "@/modules/invoice-scan/server/__fixtures__/images";
 import { createMockInvoiceScanModel } from "@/modules/invoice-scan/server/mockModel";
 import { createInvoiceScanModel } from "@/modules/invoice-scan/server/provider";
 import type { InvoiceScanRow } from "@/modules/invoice-scan/server/scans.types";
@@ -27,14 +28,15 @@ function fresh() {
   return { image: `factura-${counter}-${Date.now()}`, storeId: `route-scan-${counter}` };
 }
 
+/** JPEG válido (pasa inspectInvoiceImage) con bytes distintos por `text`. */
 function bytes(text: string) {
-  return new TextEncoder().encode(text);
+  return jpegHeader(1600, 1200, text);
 }
 
 function multipart(store: string, pages: string[], fields: Record<string, string> = {}, role = "almacen") {
   const form = new FormData();
   pages.forEach((text, index) =>
-    form.append("page", new File([text], `p${index + 1}.jpg`, { type: "image/jpeg" })),
+    form.append("page", new File([new Uint8Array(bytes(text))], `p${index + 1}.jpg`, { type: "image/jpeg" })),
   );
   Object.entries(fields).forEach(([key, value]) => form.append(key, value));
 
@@ -254,6 +256,74 @@ describe("POST /api/purchases/invoice-scan", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("si el cliente corta, la llamada al modelo se cancela y responde 502 sin esperar al timeout", async () => {
+    process.env.INVOICE_SCAN_MOCK_MODE = "timeout";
+    const { image, storeId } = fresh();
+    const controller = new AbortController();
+    const base = multipart(storeId, [image]);
+    const request = new Request(base, { signal: controller.signal });
+    setTimeout(() => controller.abort(), 50);
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(502);
+    expect(rowByHash(storeId, sha256OfPages([bytes(image)]))).toMatchObject({
+      error: "TIMEOUT",
+      status: "failed",
+    });
+  }, 5000);
+
+  it("413 en español que sugiere upload-url si el multipart pasa de 4 MB en total", async () => {
+    const { storeId } = fresh();
+    const form = new FormData();
+    for (let index = 0; index < 5; index += 1) {
+      form.append("page", new File([new Uint8Array(900 * 1024)], `p${index}.jpg`, { type: "image/jpeg" }));
+    }
+
+    const response = await POST(
+      new Request(URL_BASE, {
+        body: form,
+        headers: { "x-demo-role": "almacen", "x-demo-store-id": storeId },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    expect((await response.json()).error).toMatchObject({
+      code: "PAYLOAD_TOO_LARGE",
+      message: expect.stringMatching(/4 MB.*upload-url/),
+    });
+  });
+
+  it("413 por content-length de más de 4 MB sin leer el cuerpo", async () => {
+    const { image, storeId } = fresh();
+    const base = multipart(storeId, [image]);
+    const headers = new Headers(base.headers);
+    headers.set("content-length", String(4 * 1024 * 1024 + 1));
+
+    const response = await POST(new Request(base, { headers }));
+
+    expect(response.status).toBe(413);
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  it("400 sin cobrar si la página no es una imagen (un .exe declarado como JPEG)", async () => {
+    const { storeId } = fresh();
+    const form = new FormData();
+    form.append("page", new File([new Uint8Array([0x4d, 0x5a, 0x90, 0x00])], "factura.jpg", { type: "image/jpeg" }));
+
+    const response = await POST(
+      new Request(URL_BASE, {
+        body: form,
+        headers: { "x-demo-role": "almacen", "x-demo-store-id": storeId },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(model.doGenerateCalls).toHaveLength(0);
   });
 
   it("forma JSON: 400 con un cuerpo que no es JSON o sin rutas", async () => {

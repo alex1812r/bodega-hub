@@ -6,6 +6,8 @@
  * filtra por `ctx.storeId`. Solo la purga (cron) recibe el cliente service role.
  * Paridad en `scans.mock-server.ts`.
  */
+import { z } from "zod";
+
 import { ApiError } from "@/lib/api/apiError";
 import type { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -19,8 +21,10 @@ import {
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
   type StoredFewShotExample,
+  type InvoiceScanCompletion,
   type InvoiceScanContext,
-  type InvoiceScanInsert,
+  type InvoiceScanReservation,
+  type InvoiceScanReserveInput,
   type InvoiceScanRow,
   type InvoiceScanStatus,
 } from "./scans.types";
@@ -34,6 +38,7 @@ type DbInvoiceScanRow = {
   image_sha256: string;
   storage_path: string;
   pages: number;
+  usage_pages: number;
   provider: string;
   model: string;
   input_tokens: number | null;
@@ -51,10 +56,9 @@ type DbInvoiceScanRow = {
 };
 
 const scanSelect =
-  "id, store_id, created_by, image_sha256, storage_path, pages, provider, model, input_tokens, output_tokens, duration_ms, extracted, matched, confirmed, purchase_id, supplier_id, status, error, created_at, confirmed_at";
+  "id, store_id, created_by, image_sha256, storage_path, pages, usage_pages, provider, model, input_tokens, output_tokens, duration_ms, extracted, matched, confirmed, purchase_id, supplier_id, status, error, created_at, confirmed_at";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const UNIQUE_VIOLATION = "23505";
 
 /** La columna guarda `{}` cuando no hay lectura (escaneo fallido). */
 function nonEmpty<T extends object>(value: T | Record<string, never> | null): T | null {
@@ -87,35 +91,66 @@ function mapScan(row: DbInvoiceScanRow): InvoiceScanRow {
     storagePath: row.storage_path,
     storeId: row.store_id,
     supplierId: row.supplier_id,
+    usagePages: row.usage_pages,
   };
 }
 
-function toDbWrite(ctx: InvoiceScanContext, input: InvoiceScanInsert) {
-  return {
-    created_by: ctx.userId,
-    duration_ms: input.durationMs ?? null,
-    error: input.error ?? null,
-    extracted: input.extracted ?? {},
-    image_sha256: input.imageSha256,
-    input_tokens: input.inputTokens ?? null,
-    matched: input.matched ?? {},
-    model: input.model,
-    output_tokens: input.outputTokens ?? null,
-    pages: input.pages ?? 1,
-    provider: input.provider,
-    status: input.status ?? "extracted",
-    storage_path: input.storagePath,
-    store_id: ctx.storeId,
-  };
+const reservationSchema = z.discriminatedUnion("outcome", [
+  z.object({ id: z.string(), outcome: z.literal("cached") }),
+  z.object({ id: z.string(), outcome: z.literal("in_progress") }),
+  z.object({ limit: z.number(), outcome: z.literal("quota"), used: z.number() }),
+  z.object({ id: z.string(), limit: z.number(), outcome: z.literal("reserved"), used: z.number() }),
+]);
+
+/**
+ * Reserva atómica del escaneo (RPC `reserve_invoice_scan`, parche 20261019e):
+ * con un lock por tienda decide caché, en curso, cuota o reserva, y en la
+ * reserva deja la fila en `processing` con las páginas ya cobradas. La tienda y
+ * el usuario salen del JWT dentro de la RPC.
+ */
+export async function reserveScan(
+  _ctx: InvoiceScanContext,
+  input: InvoiceScanReserveInput,
+): Promise<InvoiceScanReservation> {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("reserve_invoice_scan", {
+    p_limit: input.limit,
+    p_model: input.model,
+    p_pages: input.pages,
+    p_provider: input.provider,
+    p_sha256: input.imageSha256,
+    p_storage_path: input.storagePath,
+  });
+
+  throwIfSupabaseError(error);
+
+  return reservationSchema.parse(data);
 }
 
-async function selectByHash(ctx: InvoiceScanContext, sha256: string) {
+/** Cierra una reserva con la lectura. null si la fila ya no está `processing`. */
+export async function completeScan(
+  ctx: InvoiceScanContext,
+  id: string,
+  completion: InvoiceScanCompletion,
+): Promise<InvoiceScanRow | null> {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("invoice_scans")
-    .select(scanSelect)
+    .update({
+      duration_ms: completion.durationMs,
+      error: null,
+      extracted: completion.extracted,
+      input_tokens: completion.inputTokens,
+      matched: completion.matched,
+      model: completion.model,
+      output_tokens: completion.outputTokens,
+      provider: completion.provider,
+      status: "extracted",
+    })
+    .eq("id", id)
     .eq("store_id", ctx.storeId)
-    .eq("image_sha256", sha256)
+    .eq("status", "processing")
+    .select(scanSelect)
     .maybeSingle<DbInvoiceScanRow>();
 
   throwIfSupabaseError(error);
@@ -123,66 +158,17 @@ async function selectByHash(ctx: InvoiceScanContext, sha256: string) {
   return data ? mapScan(data) : null;
 }
 
-/** Caché por hash: un escaneo `failed` no cuenta (se reintenta). */
-export async function findScanByHash(
-  ctx: InvoiceScanContext,
-  sha256: string,
-): Promise<InvoiceScanRow | null> {
-  const scan = await selectByHash(ctx, sha256);
-
-  return scan && scan.status !== "failed" ? scan : null;
-}
-
-/**
- * Registra un escaneo. Si la tienda ya tiene una fila `failed` con el mismo
- * hash (unique store_id + image_sha256) la reutiliza: la sobrescribe con este
- * intento y le pone `created_at = now()`, así el reintento cuenta en la cuota
- * de hoy. Si otra petición ganó la carrera con el mismo hash, devuelve su fila.
- */
-export async function insertScan(
-  ctx: InvoiceScanContext,
-  input: InvoiceScanInsert,
-): Promise<InvoiceScanRow> {
-  const existing = await selectByHash(ctx, input.imageSha256);
-
-  if (existing && existing.status !== "failed") {
-    return existing;
-  }
-
+/** Cierra una reserva sin lectura: `failed` con el código (nunca el contenido). Las páginas ya se cobraron. */
+export async function failScan(ctx: InvoiceScanContext, id: string, errorCode: string): Promise<void> {
   const supabase = await createRouteSupabaseClient();
-
-  if (existing) {
-    const { data, error } = await supabase
-      .from("invoice_scans")
-      .update({ ...toDbWrite(ctx, input), created_at: new Date().toISOString() })
-      .eq("id", existing.id)
-      .eq("store_id", ctx.storeId)
-      .eq("status", "failed")
-      .select(scanSelect)
-      .maybeSingle<DbInvoiceScanRow>();
-
-    throwIfSupabaseError(error);
-
-    return data ? mapScan(data) : ((await selectByHash(ctx, input.imageSha256)) ?? existing);
-  }
-
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("invoice_scans")
-    .insert(toDbWrite(ctx, input))
-    .select(scanSelect)
-    .single<DbInvoiceScanRow>();
-
-  if (error?.code === UNIQUE_VIOLATION) {
-    const winner = await selectByHash(ctx, input.imageSha256);
-
-    if (winner) {
-      return winner;
-    }
-  }
+    .update({ error: errorCode, extracted: {}, matched: {}, status: "failed" })
+    .eq("id", id)
+    .eq("store_id", ctx.storeId)
+    .eq("status", "processing");
 
   throwIfSupabaseError(error);
-
-  return mapScan(data as DbInvoiceScanRow);
 }
 
 /** Marca como fallido un escaneo aún sin confirmar. null si no existe en la tienda o ya no está `extracted`. */
@@ -262,7 +248,10 @@ export async function discardScan(
   return mapScan(data);
 }
 
-/** Páginas escaneadas hoy (día operativo de Caracas) por la tienda, fallidos incluidos. */
+/**
+ * Páginas cobradas hoy (día operativo de Caracas) por la tienda: suma de
+ * `usage_pages`, que cuenta cada intento (fallidos y reescaneos incluidos).
+ */
 export async function getDailyUsage(
   ctx: InvoiceScanContext,
   limit: number,
@@ -272,14 +261,14 @@ export async function getDailyUsage(
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("invoice_scans")
-    .select("pages")
+    .select("usage_pages")
     .eq("store_id", ctx.storeId)
     .gte("created_at", startUtc)
     .lt("created_at", endUtcExclusive);
 
   throwIfSupabaseError(error);
 
-  const used = ((data ?? []) as { pages: number }[]).reduce((sum, row) => sum + row.pages, 0);
+  const used = ((data ?? []) as { usage_pages: number }[]).reduce((sum, row) => sum + row.usage_pages, 0);
 
   return { limit, remaining: Math.max(0, limit - used), used };
 }
