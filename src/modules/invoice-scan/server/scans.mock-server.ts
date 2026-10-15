@@ -14,6 +14,7 @@ import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusin
 
 import type { InvoiceExtraction, InvoiceScanLimits } from "../contracts";
 import {
+  DISCARD_CLAIMED_MESSAGE,
   DISCARD_NOT_ALLOWED_MESSAGES,
   type ExpiredScan,
   INVALID_SCAN_DATA_MESSAGE,
@@ -264,6 +265,11 @@ export async function discardScan(
 
   if (scan.status !== "extracted") {
     throw new ApiError(409, "CONFLICT", DISCARD_NOT_ALLOWED_MESSAGES[scan.status]);
+  }
+
+  // Guarda de 20261019k. El mock no tiene las columnas de reclamo de 19b.
+  if (scan.purchaseId !== null || scan.confirmed !== null) {
+    throw new ApiError(409, "CONFLICT", DISCARD_CLAIMED_MESSAGE);
   }
 
   return save({ ...scan, status: "discarded" });

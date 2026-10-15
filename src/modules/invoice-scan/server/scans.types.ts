@@ -190,6 +190,8 @@ export const DISCARD_NOT_ALLOWED_MESSAGES: Record<Exclude<InvoiceScanStatus, "ex
   failed: "La lectura de este escaneo falló y no hay nada que descartar. Vuelve a escanear la factura.",
   processing: "Este escaneo todavía se está leyendo; espera a que termine para descartarlo.",
 };
+/** 409 al descartar un `extracted` que Emparejamiento está confirmando (PT409 de `discard_invoice_scan`, 20261019k). */
+export const DISCARD_CLAIMED_MESSAGE = "Esta factura se está confirmando en una compra; espera a que termine.";
 export const MAX_FEW_SHOT_EXAMPLES = 3;
 export const INVOICE_SCAN_RETENTION_DAYS = 90;
 

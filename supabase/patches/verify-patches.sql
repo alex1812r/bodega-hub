@@ -2430,25 +2430,18 @@ select
   and not has_table_privilege('anon', 'public.invoice_scans', 'select, insert, update, delete')
 union all
 select
-  'invoice_scans: politicas por tienda (lee purchases.view; insert/update de purchases.create, que 20261019g retira), sin delete (20261019a)',
-  (
-    select count(*) in (1, 3) from pg_policies pol
-    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
-      and pol.policyname in (
-        'Purchase viewers read invoice scans',
-        'Purchase creators insert invoice scans',
-        'Purchase creators update invoice scans'
-      )
-      and coalesce(pol.qual, pol.with_check) ilike '%current_user_store_id()%'
-  )
-  and exists (
+  'invoice_scans: solo la politica de lectura por tienda (purchases.view), sin insert, update ni delete (20261019a, SCN-03p)',
+  exists (
     select 1 from pg_policies pol
     where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
       and pol.policyname = 'Purchase viewers read invoice scans'
+      and pol.cmd = 'SELECT'
+      and pol.qual ilike '%current_user_store_id()%'
   )
   and not exists (
     select 1 from pg_policies pol
-    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans' and pol.cmd in ('DELETE', 'ALL')
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
   )
 union all
 select

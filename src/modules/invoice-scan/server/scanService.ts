@@ -557,11 +557,28 @@ export async function getInvoiceScanDetail(
     createdAt: row.createdAt,
     extraction: row.extracted,
     imageUrls,
-    matched: row.matched,
+    matched: validDetailMatch(row.matched),
     pages: row.pages,
     scanId: row.id,
     status: row.status,
   };
+}
+
+/** `matched` guardado que no cumple el contrato → null; solo se registra el código, sin contenido. */
+function validDetailMatch(matched: unknown): InvoiceMatch | null {
+  if (matched === null) {
+    return null;
+  }
+
+  const parsed = invoiceMatchSchema.safeParse(matched);
+
+  if (parsed.success) {
+    return matched as InvoiceMatch;
+  }
+
+  console.warn("[invoice-scan] emparejamiento guardado fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
+
+  return null;
 }
 
 /** 404 si no es de la tienda; 409 (del repositorio) si ya no está `extracted`. */

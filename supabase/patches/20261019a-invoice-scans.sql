@@ -17,10 +17,12 @@
 -- 2. RLS por tienda y rol, con los roles que tienen el permiso en
 --    packages/core/src/permissions.ts (mismo patron que 20261010c):
 --      lectura   purchases.view   -> admin, almacen, contador
---      escritura purchases.create -> admin, almacen (insert y update)
---    SCN-03o: authenticated solo tiene el grant de SELECT; sin el de insert ni
---    update esas politicas no conceden escritura (20261019g las retira). Sin
---    delete para authenticated: la purga (90 dias) la hace el service role.
+--    SCN-03o: authenticated solo tiene el grant de SELECT. Las escrituras van
+--    por RPC con service role (20261019g/i).
+--    SCN-03p: solo se crea la politica de lectura; las de insert/update que
+--    creaban versiones anteriores se borran (drop policy if exists), igual que
+--    20261019g, asi que reaplicar 19a no las resucita. Sin delete para
+--    authenticated: la purga (90 dias) la hace el service role.
 --    Las excepciones por usuario (granted / denied) las aplica el BFF con
 --    requireStorePermission antes de tocar la tabla. anon sin privilegios.
 -- 3. Bucket Storage `invoice-scans` privado (1 MB, jpeg/png/webp). La ruta de
@@ -73,7 +75,7 @@ alter table public.invoice_scans enable row level security;
 revoke all on public.invoice_scans from anon;
 revoke all on public.invoice_scans from authenticated;
 -- SCN-03o: authenticated solo lee. Las escrituras van por RPC con service role
--- (20261019i); las politicas de insert/update de abajo no conceden nada sin el grant.
+-- (20261019i).
 grant select on public.invoice_scans to authenticated;
 grant all on public.invoice_scans to service_role;
 
@@ -86,28 +88,9 @@ using (
   and public.current_user_role() in ('admin', 'almacen', 'contador')
 );
 
+-- SCN-03p: sin politicas de escritura (coherente con 20261019g).
 drop policy if exists "Purchase creators insert invoice scans" on public.invoice_scans;
-create policy "Purchase creators insert invoice scans"
-on public.invoice_scans for insert
-to authenticated
-with check (
-  store_id = public.current_user_store_id()
-  and created_by = auth.uid()
-  and public.current_user_role() in ('admin', 'almacen')
-);
-
 drop policy if exists "Purchase creators update invoice scans" on public.invoice_scans;
-create policy "Purchase creators update invoice scans"
-on public.invoice_scans for update
-to authenticated
-using (
-  store_id = public.current_user_store_id()
-  and public.current_user_role() in ('admin', 'almacen')
-)
-with check (
-  store_id = public.current_user_store_id()
-  and public.current_user_role() in ('admin', 'almacen')
-);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

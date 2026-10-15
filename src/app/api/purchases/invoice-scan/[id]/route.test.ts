@@ -104,6 +104,32 @@ describe("GET /api/purchases/invoice-scan/[id]", () => {
     });
   });
 
+  it.each([
+    ["sin lines", { supplier: {} }],
+    ["línea con status desconocido", { lines: [{ entryMode: "unit", index: 0, issues: [], status: "raro", taxRateCode: "G" }], supplier: {} }],
+    ["no objeto", "SECRETO-PROVEEDOR"],
+  ])("matched inválido (%s) → matched: null y solo se registra el código", async (_label, broken) => {
+    const { image, storeId } = fresh();
+    const id = await createScan(storeId, [image]);
+    const rows = mockState("invoice-scan:scans", () => new Map<string, Record<string, unknown>>());
+    rows.set(id, { ...(rows.get(id) as Record<string, unknown>), matched: broken });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const response = await get(id, storeId);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data).toMatchObject({ extraction: { lines: expect.any(Array) }, matched: null, scanId: id });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]).toEqual([expect.any(String), { code: "INVALID_CACHED_MATCH" }]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("SECRETO");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("raro");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("404 para un id que no es uuid", async () => {
     expect((await get("no-es-un-uuid", fresh().storeId)).status).toBe(404);
   });

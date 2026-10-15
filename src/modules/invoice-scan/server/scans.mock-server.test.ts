@@ -308,6 +308,21 @@ describe("scans.mock-server · tienda y descarte", () => {
 
     await expect(discardScan(storeA, scan.id)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
   });
+
+  it.each([
+    ["purchaseId", { purchaseId: "purchase-1" }],
+    ["confirmed", { confirmed: extraction }],
+  ] as const)("409 sobre un extracted con %s no nulo, como la guarda de 20261019k", async (_field, patch) => {
+    const scan = await seedScanForTest(storeA, input());
+    store().set(scan.id, { ...(store().get(scan.id) as InvoiceScanRow), ...patch });
+
+    await expect(discardScan(storeA, scan.id)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "Esta factura se está confirmando en una compra; espera a que termine.",
+      status: 409,
+    });
+    expect(store().get(scan.id)).toMatchObject({ status: "extracted" });
+  });
 });
 
 describe("scans.mock-server · cuota diaria (día operativo de Caracas)", () => {
