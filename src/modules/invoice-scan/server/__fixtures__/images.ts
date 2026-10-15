@@ -1,6 +1,6 @@
 /**
- * Cabecera JPEG mínima y real (SOI + APP0 JFIF + SOF0 + EOI) con las
- * dimensiones pedidas; `tail` va en un segmento COM para que cada página
+ * JPEG mínimo y estructuralmente válido (SOI + APP0 JFIF + COM + SOF0 + SOS +
+ * un byte de datos + EOI) con las dimensiones pedidas; `tail` va en un segmento COM para que cada página
  * tenga bytes distintos. Suficiente para `inspectInvoiceImage`, sin decodificar.
  */
 export function jpegHeader(width: number, height: number, tail = ""): Uint8Array {
@@ -13,6 +13,8 @@ export function jpegHeader(width: number, height: number, tail = ""): Uint8Array
     0xff, 0xfe, commentLength >> 8, commentLength & 0xff, ...comment,
     0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff,
     0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00,
+    0x00,
     0xff, 0xd9,
   ]);
 }
