@@ -34,7 +34,8 @@
     "stock-lab:ui": "npx tsx scripts/stock-lab/ui/run.ts",
     "stock-lab:chaos": "npx tsx scripts/stock-lab/chaos/run.ts",
     "stock-lab:load": "npx tsx scripts/stock-lab/chaos/load.ts",
-    "stock-lab:test": "jest --config jest.stock-lab.config.ts --runInBand"
+    "stock-lab:test": "jest --config jest.stock-lab.config.ts --runInBand",
+    "invoice-eval:export-finetune": "npx tsx scripts/invoice-eval/export-finetune.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.49",
