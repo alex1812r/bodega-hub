@@ -46,6 +46,11 @@ function indicatesPack(line: InvoiceExtractionLine, product?: MatchProduct): boo
   return !product?.hasRecipe && (PACK_WORD.test(line.rawText) || PACK_WORD.test(line.description));
 }
 
+/** La factura declara la unidad de empaque (`unit` caja/bulto/paquete/display). */
+function declaresPack(line: InvoiceExtractionLine): boolean {
+  return line.unit !== undefined && PACK_UNITS.has(line.unit);
+}
+
 function withRecipe(resolution: PackResolution, product?: MatchProduct): PackResolution {
   if (!product?.hasRecipe) {
     return resolution;
@@ -101,9 +106,13 @@ function resolveWithSize(size: number, input: PackInput, fromAlias: boolean): Pa
  *   Si la línea dice "unidad" gana la línea (modo unidad; la coherencia de
  *   precio avisa si el importe es de empaque). Sin ningún indicio -> dudosa en
  *   modo unidad: nunca se multiplica sin indicio (caos A1).
- * - Empaque sin número ("caja", "otro", "BULTO" en el texto): un solo empaque
- *   registrado -> ese; ninguno o varios -> dudosa pidiendo unidades por
- *   empaque. Nunca entra como 1 unidad (6.19, caos M5).
+ * - Empaque sin número: si la factura lo declara (`unit` caja/bulto/paquete/
+ *   display) y hay un solo empaque registrado -> ese. Si el indicio es solo
+ *   una palabra del texto o `unit: "otro"`, nunca confirma por sí solo: un
+ *   alias del proveedor aprendido en modo unidad (`unitsPerPack` null) manda
+ *   (modo unidad); si no, el empaque único queda propuesto con aviso (caos
+ *   A-n1). Ninguno o varios -> dudosa pidiendo unidades por empaque. Nunca
+ *   entra como 1 unidad (6.19, caos M5).
  * - Producto con receta -> modo empaque + `disassembleOnReceive`.
  */
 export function resolvePack(input: PackInput): PackResolution {
@@ -147,10 +156,24 @@ export function resolvePack(input: PackInput): PackResolution {
   if (!indicated) {
     return withRecipe({ entryMode: "unit", issues: [] }, input.product);
   }
+  const declared = declaresPack(line);
+  if (!declared && alias && aliasSize === undefined) {
+    // Alias aprendido en modo unidad: gana a la palabra del texto o a "otro" (caos A-n1).
+    return withRecipe({ entryMode: "unit", issues: [] }, input.product);
+  }
   if (input.packUnits.length === 1) {
     const [only] = input.packUnits;
     return withRecipe(
-      { entryMode: "pack", packUnitId: only.id, unitsPerPack: only.unitsPerPack, issues: [] },
+      {
+        entryMode: "pack",
+        packUnitId: only.id,
+        unitsPerPack: only.unitsPerPack,
+        issues: declared
+          ? []
+          : [
+              `La factura no declara la unidad de empaque (solo se intuye del texto): confirma si son empaques "${only.label}" de ${only.unitsPerPack} unidades o unidades sueltas.`,
+            ],
+      },
       input.product,
     );
   }
