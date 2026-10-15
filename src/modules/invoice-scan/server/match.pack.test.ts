@@ -8,35 +8,43 @@ function matchOne(overrides: Partial<InvoiceExtractionLine>) {
 
 describe("matchInvoice · empaques", () => {
   it("tamaño leído = empaque registrado: modo empaque con packUnitId, confirmada", () => {
-    const line = matchOne({ unit: "caja", unitsPerPack: 6, quantity: 2, unitPrice: 300, lineTotal: 600 });
+    // Refresco: por SKU y sin alias aprendido en modo unidad (malta lo tiene: caos A-r3-1).
+    const line = matchOne({ description: "COLA 2L", supplierSku: "REF 2L", unit: "paquete", unitsPerPack: 6, quantity: 2, unitPrice: 1800, lineTotal: 3600 });
 
     expect(line).toMatchObject({
       status: "confirmed",
-      productId: "p-malta",
+      productId: "p-refresco",
       entryMode: "pack",
-      packUnitId: "pu-malta-6",
+      packUnitId: "pu-refresco-6",
       unitsPerPack: 6,
       issues: [],
     });
   });
 
-  it("CAJA x12 para empaque registrado de 6: dudosa con aviso de tamaño y sin convertir (6.8)", () => {
-    const line = matchOne({ unit: "caja", unitsPerPack: 12, quantity: 2, unitPrice: 600, lineTotal: 1200 });
+  it("PAQUETE x12 para empaque registrado de 6: dudosa con aviso de tamaño y sin convertir (6.8)", () => {
+    const line = matchOne({ description: "COLA 2L", supplierSku: "REF 2L", unit: "paquete", unitsPerPack: 12, quantity: 2, unitPrice: 3600, lineTotal: 7200 });
 
     expect(line.status).toBe("doubtful");
-    expect(line.productId).toBe("p-malta");
+    expect(line.productId).toBe("p-refresco");
     expect(line.entryMode).toBe("pack");
     expect(line.unitsPerPack).toBeUndefined();
     expect(line.packUnitId).toBeUndefined();
     expect(line.issues).toEqual([
-      "La factura dice caja de 12 unidades y el empaque registrado es de 6: confirma las unidades por empaque.",
+      "La factura dice paquete de 12 unidades y el empaque registrado es de 6: confirma las unidades por empaque.",
     ]);
   });
 
-  it("'caja' sin número y un solo empaque registrado: usa ese", () => {
+  it("'paquete' sin número y un solo empaque registrado: usa ese", () => {
+    const line = matchOne({ description: "COLA 2L", supplierSku: "REF 2L", unit: "paquete", quantity: 2, unitPrice: 1800, lineTotal: 3600 });
+
+    expect(line).toMatchObject({ status: "confirmed", entryMode: "pack", packUnitId: "pu-refresco-6", unitsPerPack: 6 });
+  });
+
+  it("'caja' declarada para un producto cuyo alias del proveedor es de modo unidad: dudosa con contradicción (caos A-r3-1)", () => {
     const line = matchOne({ unit: "caja", quantity: 2, unitPrice: 300, lineTotal: 600 });
 
-    expect(line).toMatchObject({ status: "confirmed", entryMode: "pack", packUnitId: "pu-malta-6", unitsPerPack: 6 });
+    expect(line).toMatchObject({ status: "doubtful", entryMode: "pack", packUnitId: "pu-malta-6", unitsPerPack: 6 });
+    expect(line.issues[0]).toContain("Antes este proveedor lo facturó por unidad; ahora dice caja");
   });
 
   it("'bulto' sin número y sin empaque registrado: dudosa pidiendo unidades, nunca 1 unidad (6.19)", () => {
@@ -46,7 +54,11 @@ describe("matchInvoice · empaques", () => {
     expect(line.productId).toBe("p-harina");
     expect(line.entryMode).toBe("pack");
     expect(line.unitsPerPack).toBeUndefined();
-    expect(line.issues).toEqual(["La factura no dice cuántas unidades trae cada bulto: indícalo."]);
+    // "harina pan 1kg" ya se aprendió en modo unidad con este proveedor (caos A-r3-1).
+    expect(line.issues).toEqual([
+      "Antes este proveedor lo facturó por unidad; ahora dice bulto: confirma si son empaques o unidades sueltas.",
+      "La factura no dice cuántas unidades trae cada bulto: indícalo.",
+    ]);
   });
 
   it("'caja' sin número con varios empaques registrados: dudosa", () => {
@@ -64,6 +76,7 @@ describe("matchInvoice · empaques", () => {
     expect(line.status).toBe("doubtful");
     expect(line.unitsPerPack).toBe(20);
     expect(line.issues).toEqual([
+      "Antes este proveedor lo facturó por unidad; ahora dice bulto: confirma si son empaques o unidades sueltas.",
       "No hay empaque registrado de 20 unidades para este proveedor: confirma las unidades por empaque.",
     ]);
   });
@@ -108,16 +121,51 @@ describe("matchInvoice · empaques", () => {
     expect(line.unitCostRef).toBe(18);
   });
 
-  it("producto con receta: modo empaque y desarmar al recibir", () => {
+  it("producto con receta: modo empaque con la conversión registrada y desarmar al recibir (caos M-r3-1)", () => {
     const line = matchOne({ description: "CAJA MALTA X36", supplierSku: "CMX36", quantity: 2, unitPrice: 1800, lineTotal: 3600 });
 
+    // create_purchase exige units_per_pack = product_pack_conversions.total_units (36), nunca 1.
     expect(line).toMatchObject({
       status: "confirmed",
       productId: "p-caja-malta",
       entryMode: "pack",
-      unitsPerPack: 1,
+      unitsPerPack: 36,
       disassembleOnReceive: true,
+      issues: [],
     });
+  });
+
+  it.each<[string, Partial<InvoiceExtractionLine>]>([
+    ["unit caja sin tamaño", { unit: "caja" }],
+    ["unit caja con el tamaño de la receta", { unit: "caja", unitsPerPack: 36 }],
+    ["unit unidad (cada unidad del producto-empaque es un empaque)", { unit: "unidad" }],
+  ])("receta con %s: confirmada con la conversión registrada (caos B-r3-4)", (_name, extra) => {
+    const line = matchOne({ description: "CAJA MALTA X36", supplierSku: "CMX36", quantity: 2, unitPrice: 1800, lineTotal: 3600, ...extra });
+
+    expect(line).toMatchObject({ status: "confirmed", entryMode: "pack", unitsPerPack: 36, disassembleOnReceive: true, issues: [] });
+  });
+
+  it("receta con tamaño leído distinto de la conversión: dudosa con aviso, propone la conversión", () => {
+    const line = matchOne({ description: "CAJA MALTA X36", supplierSku: "CMX36", unit: "caja", unitsPerPack: 24, quantity: 2, unitPrice: 1800, lineTotal: 3600 });
+
+    expect(line).toMatchObject({ status: "doubtful", entryMode: "pack", unitsPerPack: 36, disassembleOnReceive: true });
+    expect(line.issues).toEqual([
+      "La factura dice caja de 24 unidades y la receta del producto es de 36: confirma las unidades por empaque.",
+    ]);
+  });
+
+  it("receta sin conversión conocida en el contexto: dudosa pidiendo unidades, nunca upp 1", () => {
+    const ctx = buildContext();
+    ctx.products = ctx.products.map((p) => (p.id === "p-caja-malta" ? { ...p, recipeUnitsPerPack: undefined } : p));
+    const extraction = buildExtraction({
+      lines: [buildLine({ description: "CAJA MALTA X36", supplierSku: "CMX36", quantity: 2, unitPrice: 1800, lineTotal: 3600 })],
+    });
+    const line = matchInvoice(extraction, ctx).lines[0];
+
+    expect(line.status).toBe("doubtful");
+    expect(line.entryMode).toBe("pack");
+    expect(line.unitsPerPack).toBeUndefined();
+    expect(line.disassembleOnReceive).toBe(true);
   });
 
   it("línea en unidades sin empaque: modo unidad", () => {

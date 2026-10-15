@@ -100,3 +100,101 @@ describe("matchInvoice · el alias del proveedor manda sobre la palabra del text
     expect(result).toMatchObject({ status: "confirmed", entryMode: "pack", packUnitId: "pu-lec-12", unitsPerPack: 12 });
   });
 });
+
+/**
+ * Caos ronda 3 A-r3-1 / B-r3-1 (decisión del supervisor): si el proveedor ya
+ * facturó el producto por unidad (alias en modo unidad) y ahora la factura
+ * DECLARA caja/bulto/paquete/display, la línea queda dudosa con aviso de
+ * contradicción y el empaque único solo propuesto. Las líneas por SKU usan el
+ * alias del mismo producto/proveedor para el empaque.
+ */
+describe("matchInvoice · unidad aprendida frente a empaque declarado (caos A-r3-1, B-r3-1)", () => {
+  const lecheSinSku = { rawText: "LECHE COMPLETA CAJA 1L", description: "LECHE COMPLETA CAJA 1L", quantity: 12, unitPrice: 100, lineTotal: 1200 };
+  const unitAlias: MatchAlias = { aliasNorm: "leche completa caja 1l", productId: "p-leche", packLabel: null, unitsPerPack: null, hits: 1 };
+  const CONTRADICTION = "Antes este proveedor lo facturó por unidad; ahora dice caja";
+
+  it("UNIDAD-1: alias en modo unidad + unit caja + Bulto x12 único: dudosa, empaque propuesto, nunca confirmada", () => {
+    const result = one({ ...lecheSinSku, unit: "caja" }, ctxWith([BULTO_LECHE], [unitAlias]));
+
+    expect(result.status).toBe("doubtful");
+    expect(result).toMatchObject({ productId: "p-leche", entryMode: "pack", packUnitId: "pu-lec-12", unitsPerPack: 12 });
+    expect(result.issues[0]).toContain(CONTRADICTION);
+  });
+
+  it("1 caja a 1200 con alias en modo unidad: también dudosa", () => {
+    const result = one({ ...lecheSinSku, unit: "caja", quantity: 1, unitPrice: 1200 }, ctxWith([BULTO_LECHE], [unitAlias]));
+
+    expect(result.status).toBe("doubtful");
+    expect(result.issues[0]).toContain(CONTRADICTION);
+  });
+
+  it.each(["bulto", "paquete", "display"] as const)("unit %s declarado con alias en modo unidad: dudosa", (unit) => {
+    const result = one({ ...lecheSinSku, unit }, ctxWith([BULTO_LECHE], [unitAlias]));
+
+    expect(result.status).toBe("doubtful");
+    expect(result.issues[0]).toContain(`Antes este proveedor lo facturó por unidad; ahora dice ${unit}`);
+  });
+
+  it("caja con tamaño leído igual al registrado y alias en modo unidad: dudosa", () => {
+    const result = one({ ...lecheSinSku, unit: "caja", unitsPerPack: 12, quantity: 1, unitPrice: 1200 }, ctxWith([BULTO_LECHE], [unitAlias]));
+
+    expect(result.status).toBe("doubtful");
+    expect(result.issues[0]).toContain(CONTRADICTION);
+  });
+
+  it("alias en modo unidad + caja sin empaque registrado: dudosa sin tamaño", () => {
+    const result = one({ ...lecheSinSku, unit: "caja" }, ctxWith([], [unitAlias]));
+
+    expect(result.status).toBe("doubtful");
+    expect(result.entryMode).toBe("pack");
+    expect(result.unitsPerPack).toBeUndefined();
+    expect(result.issues[0]).toContain(CONTRADICTION);
+  });
+
+  it("SKU-8: línea por SKU con alias del mismo texto en modo unidad + caja: dudosa", () => {
+    const alias: MatchAlias = { ...unitAlias, aliasNorm: "leche completa caja 1l" };
+    const result = one({ ...leche, unit: "caja", quantity: 1, unitPrice: 480 }, ctxWith([BULTO_LECHE], [alias]));
+
+    expect(result.productId).toBe("p-leche");
+    expect(result.status).toBe("doubtful");
+    expect(result.packUnitId).toBe("pu-lec-12");
+    expect(result.issues[0]).toContain(CONTRADICTION);
+  });
+
+  it("línea por SKU cuyo producto tiene alias de ese proveedor en modo unidad (otro texto) + caja: dudosa", () => {
+    const alias: MatchAlias = { ...unitAlias, aliasNorm: "leche entera 1 litro" };
+    const result = one({ ...leche, unit: "caja", quantity: 1, unitPrice: 480 }, ctxWith([BULTO_LECHE], [alias]));
+
+    expect(result.status).toBe("doubtful");
+    expect(result.issues[0]).toContain(CONTRADICTION);
+  });
+
+  it("B-r3-1 R4c: línea por SKU con alias x12 de ese texto y palabra CAJA: confirmada x12", () => {
+    const alias: MatchAlias = { aliasNorm: "leche completa caja 1l", productId: "p-leche", packLabel: "Bulto x12", unitsPerPack: 12, hits: 2 };
+    const result = one({ ...leche, quantity: 1, unitPrice: 480 }, ctxWith([BULTO_LECHE], [alias]));
+
+    expect(result).toMatchObject({ status: "confirmed", entryMode: "pack", packUnitId: "pu-lec-12", unitsPerPack: 12, issues: [] });
+  });
+
+  it("B-r3-1 R4d: línea por SKU con alias x12 y sin empaque registrado: confirmada x12", () => {
+    const alias: MatchAlias = { aliasNorm: "leche completa caja 1l", productId: "p-leche", packLabel: "Bulto x12", unitsPerPack: 12, hits: 2 };
+    const result = one({ ...leche, quantity: 1, unitPrice: 480 }, ctxWith([], [alias]));
+
+    expect(result).toMatchObject({ status: "confirmed", entryMode: "pack", unitsPerPack: 12, issues: [] });
+  });
+
+  it("alias con tamaño N sigue mandando con caja declarada", () => {
+    const alias: MatchAlias = { aliasNorm: "leche completa caja 1l", productId: "p-leche", packLabel: "Bulto x12", unitsPerPack: 12, hits: 2 };
+    const result = one({ ...lecheSinSku, unit: "caja", quantity: 1, unitPrice: 1200 }, ctxWith([BULTO_LECHE], [alias]));
+
+    expect(result).toMatchObject({ status: "confirmed", entryMode: "pack", packUnitId: "pu-lec-12", unitsPerPack: 12, issues: [] });
+  });
+
+  it("control UNIDAD-2/5: sin unit u 'otro', el alias en modo unidad manda (modo unidad confirmada)", () => {
+    for (const unit of [undefined, "otro"] as const) {
+      const result = one({ ...lecheSinSku, unit, unitPrice: 40, lineTotal: 480 }, ctxWith([BULTO_LECHE], [unitAlias]));
+
+      expect(result).toMatchObject({ status: "confirmed", entryMode: "unit" });
+    }
+  });
+});

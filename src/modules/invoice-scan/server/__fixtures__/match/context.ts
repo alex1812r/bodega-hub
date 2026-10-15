@@ -59,6 +59,7 @@ export const products: MatchProduct[] = [
     taxRateCode: "general",
     lastUnitCostRef: 18,
     hasRecipe: true,
+    recipeUnitsPerPack: 36,
   },
   {
     id: "p-arroz-a",
