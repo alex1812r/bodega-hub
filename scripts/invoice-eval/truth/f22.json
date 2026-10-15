@@ -1,0 +1,213 @@
+{
+  "id": "f22",
+  "synthetic": false,
+  "pages": [
+    "samples/f22.jpg"
+  ],
+  "supplierKey": "mercaseu-2030",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C.A.",
+      "taxId": "J-506040310",
+      "address": "CALLE 500 EDIF LIRIO PB LOCAL 1 Y 2 URB QTA CRESPO CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00002988",
+    "date": "2026-09-07",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "CAFE SAN DOMINGO 200G (E) |[DOC X 12.0]|",
+        "description": "Café San Domingo 200g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 23460.01,
+        "lineTotal": 23460.01,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "SARDINA MARBONITA 170G |[DOC X 12.0]|",
+        "description": "Sardina Marbonita 170g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 5022.72,
+        "lineTotal": 5022.72,
+        "confidence": 1
+      },
+      {
+        "rawText": "SALSA ESPAGUETTIS GUT 34G |[RISTRA X 18.0]|",
+        "description": "Salsa para espaguetis Gut 34g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 18,
+        "unitPrice": 8509.16,
+        "lineTotal": 8509.16,
+        "confidence": 1
+      },
+      {
+        "rawText": "COLORANTE AMPARITO GUT 20G |[BLISTER X 18.0]|",
+        "description": "Colorante Amparito Gut 20g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 18,
+        "unitPrice": 4166.89,
+        "lineTotal": 4166.89,
+        "confidence": 1
+      },
+      {
+        "rawText": "ADOBO COMPLETO GUT 24G |[BLISTER X 18.0]|",
+        "description": "Adobo completo Gut 24g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 18,
+        "unitPrice": 5247.2,
+        "lineTotal": 5247.2,
+        "confidence": 1
+      },
+      {
+        "rawText": "AVENA EN HOJUELA EL MAIZALITO 400GR (E) |[DOC X 12.0]|",
+        "description": "Avena en hojuelas El Maizalito 400g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 9772.97,
+        "lineTotal": 9772.97,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "AROMAX LAVANDA 10G |[CJT X 24.0]|",
+        "description": "Aromax lavanda 10g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 3283,
+        "lineTotal": 3283,
+        "confidence": 1
+      },
+      {
+        "rawText": "TOALLA HUMEDA BABY FINGER 50UND |[DOC X 12.0]|",
+        "description": "Toallas húmedas Baby Finger 50 und",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 8474.08,
+        "lineTotal": 8474.08,
+        "confidence": 1
+      },
+      {
+        "rawText": "SUAVIZATEL ALIVE LAVANDA 200ML |[DOC X 12.0]|",
+        "description": "Suavizante Alive lavanda 200ml",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 4293.16,
+        "lineTotal": 4293.16,
+        "confidence": 1
+      },
+      {
+        "rawText": "CREMA D. COLGATE TRIPLE ACCION 60 CC |[DOC X 12.0]|",
+        "description": "Crema dental Colgate Triple Acción 60cc",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 11722.01,
+        "lineTotal": 11722.01,
+        "confidence": 1
+      },
+      {
+        "rawText": "PROTECTOR DIARIO ALIVE 20PC |[DOC X 12.0]|",
+        "description": "Protector diario Alive 20 pc",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 6032.87,
+        "lineTotal": 6032.87,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 89984.07,
+    "tax": 9080.17,
+    "total": 99064.24,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "cafe-san-domingo-200g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro"
+    },
+    {
+      "productKey": "sardina-marbonita-170g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "salsa-espaguetis-gut-34g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "RISTRA (ristra) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "colorante-amparito-gut-20g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "BLISTER (blíster) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "adobo-completo-gut-24g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "BLISTER (blíster) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "avena-hojuelas-maizalito-400g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro"
+    },
+    {
+      "productKey": "aromax-lavanda-10g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "CJT se mapea a caja; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "toallas-humedas-baby-finger-50und",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "suavizante-alive-lavanda-200ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro; sin marca de IVA en la línea (cae en BI G); impreso SUAVIZATEL"
+    },
+    {
+      "productKey": "crema-dental-colgate-triple-accion-60ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "protector-diario-alive-20und",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "DOC (docena) se mapea a otro; sin marca de IVA en la línea (cae en BI G)"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [
+      "La línea vertical (doblez/trazo) cruza la columna de nombres y cantidades (TRIPLE, ALIVE, LAVANDA, rótulos del pie), no la de precios: todos los importes se leen completos"
+    ],
+    "arithmetic": "11 líneas = \"TOTAL: 11\" de la cabecera; sum(lineTotal) = 89.984,07 = SUBTTL OK; Café + Avena = 33.232,98 = EXENTO OK; resto 56.751,09 = BI G OK; ×16% = 9.080,17 = IVA G OK; 89.984,07 + 9.080,17 = 99.064,24 = TOTAL OK; Efectivo 8.500,00 + Débito 90.564,24 = 99.064,24 OK"
+  }
+}
