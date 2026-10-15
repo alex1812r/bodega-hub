@@ -112,7 +112,7 @@ function logFailure(code: InvoiceExtractionErrorCode, error: unknown) {
 export function toInvoiceScanApiError(error: unknown): ApiError {
   const code = error instanceof InvoiceExtractionError ? error.code : "PROVIDER_ERROR";
 
-  return new ApiError(502, "ASSISTANT_PROVIDER_ERROR", ERROR_MESSAGES[code], { reason: code });
+  return new ApiError(502, "INVOICE_SCAN_PROVIDER_ERROR", ERROR_MESSAGES[code], { reason: code });
 }
 
 type PageResult = {

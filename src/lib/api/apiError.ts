@@ -8,7 +8,10 @@ export type ApiErrorCode =
   | "FORBIDDEN"
   | "INSUFFICIENT_VAULT_BALANCE"
   | "INTERNAL_ERROR"
+  | "INVOICE_SCAN_LIMIT_REACHED"
+  | "INVOICE_SCAN_PROVIDER_ERROR"
   | "NOT_FOUND"
+  | "PAYLOAD_TOO_LARGE"
   | "UNAUTHORIZED";
 
 export class ApiError extends Error {

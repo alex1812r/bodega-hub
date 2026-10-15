@@ -13,7 +13,7 @@ import {
   DISCARD_NOT_ALLOWED_MESSAGE,
   INVOICE_SCAN_RETENTION_DAYS,
   MAX_FEW_SHOT_EXAMPLES,
-  type InvoiceFewShotExample,
+  type StoredFewShotExample,
   type InvoiceScanContext,
   type InvoiceScanInsert,
   type InvoiceScanRow,
@@ -145,7 +145,7 @@ export async function listFewShotExamples(
   ctx: InvoiceScanContext,
   supplierId: string,
   max: number = MAX_FEW_SHOT_EXAMPLES,
-): Promise<InvoiceFewShotExample[]> {
+): Promise<StoredFewShotExample[]> {
   const count = Math.min(Math.max(Math.trunc(max), 0), MAX_FEW_SHOT_EXAMPLES);
 
   return [...scans().values()]
