@@ -43,8 +43,10 @@ export type MatchContextSupabaseClient = Awaited<ReturnType<typeof createRouteSu
 export const MATCH_CANDIDATES_RPC = "invoice_match_candidates";
 /** Candidatos difusos por línea pedidos a la RPC (la RPC acota a 5). */
 export const MATCH_CANDIDATES_PER_LINE = 5;
-/** Escaneos previos con número parecido que se traen para detectar duplicados. */
+/** Escaneos previos con el mismo número normalizado que se pasan a `matchInvoice`. */
 export const PREVIOUS_SCANS_LIMIT = 50;
+/** Candidatos que se piden a la base antes de filtrar por número normalizado. */
+export const PREVIOUS_SCAN_CANDIDATES_LIMIT = 200;
 
 const PRODUCT_SELECT = "id, name, sku, barcode, is_active, category:categories(tax_rate:tax_rates(code))";
 /** Igual que `purchaseLastCosts.server.ts`: la última línea recibida de cada producto. */
@@ -199,9 +201,14 @@ async function loadSystemRate(supabase: MatchContextSupabaseClient, storeId: str
 }
 
 /**
- * Escaneos de la tienda cuyo número leído TERMINA en el número normalizado (así
- * "00-012345" aparece al buscar "12345"); `findDuplicateScan` compara después
- * normalizado y por proveedor/RIF. Los descartados o fallidos no cuentan.
+ * Escaneos de la tienda con el MISMO número normalizado (`normalizeInvoiceNumber`
+ * en ambos lados, como `findDuplicateScan`): "FAC12321" = "FAC-12321",
+ * "1004321" = "0001-004321". El texto guardado es crudo, así que la base trae
+ * candidatos cuyo número contiene los caracteres normalizados en orden y
+ * termina en el último (`%F%A%C%1%2%3%2%1`, sin distinguir mayúsculas; los
+ * separadores y ceros sobrantes caen en los `%`) y aquí se filtra por igualdad
+ * normalizada. `findDuplicateScan` decide después por proveedor/RIF. Los
+ * descartados o fallidos no cuentan.
  */
 async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
@@ -219,14 +226,20 @@ async function loadPreviousScans(
     .select(PREVIOUS_SCAN_SELECT)
     .eq("store_id", storeId)
     .not("status", "in", "(discarded,failed)")
-    .ilike("extracted->>number", `%${number}`);
+    // `number` solo tiene [A-Z0-9]: no hay comodines de LIKE que escapar.
+    .ilike("extracted->>number", `%${[...number].join("%")}`);
   if (excludeScanId) {
     query = query.neq("id", excludeScanId);
   }
-  const { data, error } = await query.order("created_at", { ascending: false }).limit(PREVIOUS_SCANS_LIMIT);
+  const { data, error } = await query
+    .order("created_at", { ascending: false })
+    .limit(PREVIOUS_SCAN_CANDIDATES_LIMIT);
   throwIfSupabaseError(error);
 
-  return ((data ?? []) as unknown as PreviousScanRow[]).map((row) => ({
+  const rows = ((data ?? []) as unknown as PreviousScanRow[])
+    .filter((row) => normalizeInvoiceNumber(row.number) === number)
+    .slice(0, PREVIOUS_SCANS_LIMIT);
+  return rows.map((row) => ({
     scanId: row.id,
     supplierId: row.supplier_id ?? row.matched_contact_id ?? null,
     supplierTaxId: row.supplier_tax_id ?? null,

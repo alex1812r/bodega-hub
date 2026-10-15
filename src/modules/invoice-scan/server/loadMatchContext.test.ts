@@ -288,7 +288,8 @@ describe("loadMatchContext", () => {
     expect(hasEq(aliases, "supplier_id", SUPPLIER_ID)).toBe(true);
 
     const [scans] = queriesOf(stub.queries, "invoice_scans");
-    expect(argsOf(scans, "ilike")).toEqual([["extracted->>number", "%123"]]);
+    // Subsecuencia del número normalizado: tolera separadores y ceros en el texto crudo guardado.
+    expect(argsOf(scans, "ilike")).toEqual([["extracted->>number", "%1%2%3"]]);
     expect(argsOf(scans, "not")).toEqual([["status", "in", "(discarded,failed)"]]);
 
     const barcodeQuery = queriesOf(stub.queries, "products").find((query) =>
@@ -364,6 +365,51 @@ describe("loadMatchContext", () => {
     await loadMatchContext(plain.client, STORE_ID, extraction);
     expect(argsOf(queriesOf(plain.queries, "invoice_scans")[0], "neq")).toEqual([]);
   });
+
+  it.each([
+    ["FAC12321", "FAC-12321"],
+    ["FAC-12321", "FAC-12321"],
+    ["fac 12321", "FAC-12321"],
+    ["QA-55555", "QA-55555"],
+    ["0001-004321", "0001-004321"],
+    ["1004321", "0001-004321"],
+  ])(
+    "detecta duplicado con número alfanumérico: leído %p vs guardado %p (comparación normalizada en ambos lados)",
+    async (readNumber, storedNumber) => {
+      const rows = [
+        { id: "scan-dup", supplier_id: SUPPLIER_ID, number: storedNumber, supplier_tax_id: null, matched_contact_id: null },
+        { id: "scan-other", supplier_id: SUPPLIER_ID, number: `X${storedNumber}9`, supplier_tax_id: null, matched_contact_id: null },
+        { id: "scan-prefix", supplier_id: SUPPLIER_ID, number: `Z-${storedNumber}`, supplier_tax_id: null, matched_contact_id: null },
+      ];
+      const tables = fullTables();
+      // La base honra `ilike` (sin distinguir mayúsculas, `%` = cualquier cosa) y `.neq('id', …)`.
+      tables.invoice_scans = (query) => {
+        const patterns = argsOf(query, "ilike").map(([, pattern]) => String(pattern));
+        const excluded = argsOf(query, "neq").map(([, value]) => value);
+        const data = rows.filter(
+          (row) =>
+            !excluded.includes(row.id) &&
+            patterns.every((pattern) =>
+              new RegExp(`^${pattern.split("%").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i").test(
+                row.number,
+              ),
+            ),
+        );
+        return { data, error: null };
+      };
+      const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+      const scanned: InvoiceExtraction = { ...extraction, number: readNumber };
+
+      const ctx = await loadMatchContext(stub.client, STORE_ID, scanned, { excludeScanId: "scan-self" });
+
+      expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-dup"]);
+      expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-dup");
+      const [scans] = queriesOf(stub.queries, "invoice_scans");
+      expect(hasEq(scans, "store_id", STORE_ID)).toBe(true);
+      expect(argsOf(scans, "neq")).toEqual([["id", "scan-self"]]);
+      expect(argsOf(scans, "limit").length).toBe(1);
+    },
+  );
 
   it("propaga el error de la RPC (PT403 de rol sin purchases.create)", async () => {
     const stub = createSupabaseStub({

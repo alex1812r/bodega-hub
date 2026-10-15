@@ -18,6 +18,19 @@ describe("normalizeAlias", () => {
     expect(normalizeAlias(input)).toBe(expected);
   });
 
+  it.each([
+    ["ＭＡＬＴＡ　ＰＯＬＡＲ　３５５ｍｌ", "malta polar 355ml"],
+    ["Haﬁna ﬂan", "hafina flan"],
+    ["ℌarina ½", "harina 1 2"],
+    ["MAL​TA", "malta"],
+    ["MAL‌TA PO‍LAR", "malta polar"],
+    ["﻿HARINA", "harina"],
+    ["HARI­NA PAN", "harina pan"],
+    ["MAL⁠TA", "malta"],
+  ])("pliega compatibilidad (NFKD) y quita invisibles sin partir palabras: %p -> %p", (input, expected) => {
+    expect(normalizeAlias(input)).toBe(expected);
+  });
+
   it("conserva dígitos y no interpreta decimales", () => {
     expect(normalizeAlias("1.5")).toBe("1 5");
     expect(normalizeAlias("0,75L")).toBe("0 75l");
@@ -36,6 +49,7 @@ describe("normalizeAlias", () => {
     "AZÚCAR  Montalbán",
     `Queso${NBSP}Blanco\t500g`,
     "İSTANBUL Ñandú",
+    "ＭＡＬＴＡ ﬁ ℌ ½ MAL​TA HARI­NA",
     "",
     "--",
   ])("es idempotente para %p", (input) => {
