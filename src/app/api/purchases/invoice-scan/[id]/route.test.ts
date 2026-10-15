@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+import { jpegHeader } from "@/modules/invoice-scan/server/__fixtures__/images";
 import { sha256OfPages } from "@/modules/invoice-scan/server/storage";
 
 import { POST as scan } from "../route";
@@ -17,7 +18,9 @@ function fresh() {
 
 async function createScan(storeId: string, pages: string[]) {
   const form = new FormData();
-  pages.forEach((text) => form.append("page", new File([text], "p.webp", { type: "image/webp" })));
+  pages.forEach((text) =>
+    form.append("page", new File([new Uint8Array(jpegHeader(1600, 1200, text))], "p.jpg", { type: "image/jpeg" })),
+  );
   const response = await scan(
     new Request(URL_BASE, {
       body: form,
@@ -46,7 +49,7 @@ describe("GET /api/purchases/invoice-scan/[id]", () => {
   it("devuelve el escaneo con una URL de lectura falsa por página en mock", async () => {
     const { image, storeId } = fresh();
     const pages = [`${image}-1`, `${image}-2`];
-    const sha = sha256OfPages(pages.map((text) => new TextEncoder().encode(text)));
+    const sha = sha256OfPages(pages.map((text) => jpegHeader(1600, 1200, text)));
     const id = await createScan(storeId, pages);
 
     const response = await get(id, storeId);
@@ -62,8 +65,8 @@ describe("GET /api/purchases/invoice-scan/[id]", () => {
       status: "extracted",
     });
     expect(body.data.imageUrls).toEqual([
-      expect.stringContaining(`mock-storage.local/storage/v1/object/sign/invoice-scans/${storeId}/${sha}/p1.webp`),
-      expect.stringContaining(`${storeId}/${sha}/p2.webp`),
+      expect.stringContaining(`mock-storage.local/storage/v1/object/sign/invoice-scans/${storeId}/${sha}/p1.jpg`),
+      expect.stringContaining(`${storeId}/${sha}/p2.jpg`),
     ]);
   });
 

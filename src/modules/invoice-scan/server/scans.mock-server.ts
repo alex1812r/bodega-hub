@@ -1,9 +1,9 @@
 /**
  * Repositorio de escaneos de factura para el modo mock del BFF: en memoria y
  * por tienda, con la misma semántica que `scans.server.ts` (unique tienda +
- * hash, `failed` no es caché y se reutiliza, cuota por día de Caracas,
- * few-shot ≤ 3, 404 entre tiendas, purga a 90 días de filas y de objetos sin
- * escaneo vivo).
+ * hash, reserva atómica como `reserve_invoice_scan`, cuota por día de Caracas
+ * sobre `usagePages`, few-shot ≤ 3, 404 entre tiendas, purga a 90 días de
+ * filas y de objetos sin escaneo vivo).
  */
 import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
@@ -15,9 +15,13 @@ import {
   type ExpiredScan,
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
+  INVOICE_SCAN_PROCESSING_WINDOW_MS,
   type StoredFewShotExample,
+  type InvoiceScanCompletion,
   type InvoiceScanContext,
   type InvoiceScanInsert,
+  type InvoiceScanReservation,
+  type InvoiceScanReserveInput,
   type InvoiceScanRow,
 } from "./scans.types";
 
@@ -49,15 +53,93 @@ function save(scan: InvoiceScanRow) {
   return { ...scan };
 }
 
-export async function findScanByHash(
-  ctx: InvoiceScanContext,
-  sha256: string,
-): Promise<InvoiceScanRow | null> {
-  const scan = selectByHash(ctx, sha256);
+function usedToday(ctx: InvoiceScanContext, now: Date) {
+  const today = getCaracasIsoDate(now);
 
-  return scan && scan.status !== "failed" ? { ...scan } : null;
+  return [...scans().values()]
+    .filter((scan) => scan.storeId === ctx.storeId && toCaracasDateKey(scan.createdAt) === today)
+    .reduce((sum, scan) => sum + scan.usagePages, 0);
 }
 
+/**
+ * Paridad con `reserve_invoice_scan` (20261019e). El cuerpo es síncrono (sin
+ * `await`): en un solo hilo equivale al lock por tienda de la RPC.
+ */
+export async function reserveScan(
+  ctx: InvoiceScanContext,
+  input: InvoiceScanReserveInput,
+): Promise<InvoiceScanReservation> {
+  const now = new Date();
+  const existing = selectByHash(ctx, input.imageSha256);
+
+  if (existing && (existing.status === "extracted" || existing.status === "confirmed")) {
+    return { id: existing.id, outcome: "cached" };
+  }
+
+  if (
+    existing?.status === "processing" &&
+    new Date(existing.createdAt).getTime() > now.getTime() - INVOICE_SCAN_PROCESSING_WINDOW_MS
+  ) {
+    return { id: existing.id, outcome: "in_progress" };
+  }
+
+  const used = usedToday(ctx, now);
+
+  if (used + input.pages > input.limit) {
+    return { limit: input.limit, outcome: "quota", used };
+  }
+
+  const sameDay = existing !== null && toCaracasDateKey(existing.createdAt) === getCaracasIsoDate(now);
+  const row = save({
+    confirmed: existing?.confirmed ?? null,
+    confirmedAt: existing?.confirmedAt ?? null,
+    createdAt: now.toISOString(),
+    createdBy: ctx.userId,
+    durationMs: null,
+    error: null,
+    extracted: null,
+    id: existing?.id ?? crypto.randomUUID(),
+    imageSha256: input.imageSha256,
+    inputTokens: null,
+    matched: null,
+    model: input.model,
+    outputTokens: null,
+    pages: input.pages,
+    provider: input.provider,
+    purchaseId: existing?.purchaseId ?? null,
+    status: "processing",
+    storagePath: input.storagePath,
+    storeId: ctx.storeId,
+    supplierId: existing?.supplierId ?? null,
+    usagePages: sameDay && existing ? existing.usagePages + input.pages : input.pages,
+  });
+
+  return { id: row.id, limit: input.limit, outcome: "reserved", used: used + input.pages };
+}
+
+export async function completeScan(
+  ctx: InvoiceScanContext,
+  id: string,
+  completion: InvoiceScanCompletion,
+): Promise<InvoiceScanRow | null> {
+  const scan = ownScan(ctx, id);
+
+  if (!scan || scan.status !== "processing") {
+    return null;
+  }
+
+  return save({ ...scan, ...completion, error: null, status: "extracted" });
+}
+
+export async function failScan(ctx: InvoiceScanContext, id: string, errorCode: string): Promise<void> {
+  const scan = ownScan(ctx, id);
+
+  if (scan && scan.status === "processing") {
+    save({ ...scan, error: errorCode, extracted: null, matched: null, status: "failed" });
+  }
+}
+
+/** Alta directa para fixtures de tests (la purga y este repositorio); el BFF usa `reserveScan`. */
 export async function insertScan(
   ctx: InvoiceScanContext,
   input: InvoiceScanInsert,
@@ -89,6 +171,7 @@ export async function insertScan(
     storagePath: input.storagePath,
     storeId: ctx.storeId,
     supplierId: null,
+    usagePages: input.pages ?? 1,
   });
 }
 
@@ -134,10 +217,7 @@ export async function getDailyUsage(
   limit: number,
   now: Date = new Date(),
 ): Promise<InvoiceScanLimits> {
-  const today = getCaracasIsoDate(now);
-  const used = [...scans().values()]
-    .filter((scan) => scan.storeId === ctx.storeId && toCaracasDateKey(scan.createdAt) === today)
-    .reduce((sum, scan) => sum + scan.pages, 0);
+  const used = usedToday(ctx, now);
 
   return { limit, remaining: Math.max(0, limit - used), used };
 }

@@ -7,16 +7,17 @@ jest.mock("../../../lib/supabase/route-client");
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import {
+  completeScan,
   discardScan,
-  findScanByHash,
+  failScan,
   getDailyUsage,
   getScan,
-  insertScan,
   listFewShotExamples,
   deleteScansByIds,
   listExpiredScanObjects,
   listExpiredScans,
   markScanFailed,
+  reserveScan,
 } from "./scans.server";
 
 type Result = { data: unknown; error: { code?: string; message: string } | null };
@@ -42,6 +43,7 @@ function dbRow(overrides: Record<string, unknown> = {}) {
     model: "m",
     output_tokens: 20,
     pages: 1,
+    usage_pages: 1,
     provider: "mock",
     purchase_id: null,
     status: "extracted",
@@ -95,86 +97,103 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-describe("scans.server · findScanByHash", () => {
-  it("filtra por tienda y hash y mapea a camelCase (matched {} → null)", async () => {
-    const { calls } = useRouteClient([ok(dbRow())]);
+describe("scans.server · reserveScan", () => {
+  const input = {
+    imageSha256: "a".repeat(64),
+    limit: 50,
+    model: "m",
+    pages: 2,
+    provider: "mock",
+    storagePath: `${ctx.storeId}/${"a".repeat(64)}/p1.jpg`,
+  };
 
-    const scan = await findScanByHash(ctx, "hash-1");
+  function useRpc(result: Result) {
+    const rpc = jest.fn(async () => result);
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+    return rpc;
+  }
 
-    expect(scan).toMatchObject({ id: scanId, imageSha256: "hash-1", matched: null, storeId: ctx.storeId });
-    expect(calls[0]).toEqual(
-      expect.arrayContaining([
-        ["eq", "store_id", ctx.storeId],
-        ["eq", "image_sha256", "hash-1"],
-      ]),
-    );
-  });
+  it("llama a reserve_invoice_scan con los parámetros (la tienda sale del JWT) y valida la respuesta", async () => {
+    const rpc = useRpc(ok({ id: scanId, limit: 50, outcome: "reserved", used: 7 }));
 
-  it("un escaneo failed no es acierto de caché", async () => {
-    useRouteClient([ok(dbRow({ extracted: {}, status: "failed" }))]);
-
-    expect(await findScanByHash(ctx, "hash-1")).toBeNull();
-  });
-});
-
-describe("scans.server · insertScan", () => {
-  const input = { imageSha256: "hash-1", model: "m", provider: "mock", storagePath: `${ctx.storeId}/hash-1.jpg` };
-
-  it("inserta con store_id y created_by del contexto y defaults {} si no hay lectura", async () => {
-    const { calls } = useRouteClient([ok(null), ok(dbRow({ extracted: {}, status: "failed" }))]);
-
-    const scan = await insertScan(ctx, { ...input, error: "timeout", status: "failed" });
-
-    expect(scan.extracted).toBeNull();
-    const insert = calls[1].find(([method]) => method === "insert");
-    expect(insert?.[1]).toMatchObject({
-      created_by: "user-a",
-      error: "timeout",
-      extracted: {},
-      matched: {},
-      pages: 1,
-      status: "failed",
-      store_id: ctx.storeId,
+    await expect(reserveScan(ctx, input)).resolves.toEqual({ id: scanId, limit: 50, outcome: "reserved", used: 7 });
+    expect(rpc).toHaveBeenCalledWith("reserve_invoice_scan", {
+      p_limit: 50,
+      p_model: "m",
+      p_pages: 2,
+      p_provider: "mock",
+      p_sha256: input.imageSha256,
+      p_storage_path: input.storagePath,
     });
   });
 
-  it("reutiliza la fila failed del mismo hash con un update condicionado a failed", async () => {
-    const { calls } = useRouteClient([
-      ok(dbRow({ extracted: {}, status: "failed" })),
-      ok(dbRow({ input_tokens: 99 })),
-    ]);
+  it.each([
+    [{ id: scanId, outcome: "cached" }],
+    [{ id: scanId, outcome: "in_progress" }],
+    [{ limit: 50, outcome: "quota", used: 49 }],
+  ])("devuelve %o tal cual", async (data) => {
+    useRpc(ok(data));
 
-    const scan = await insertScan(ctx, { ...input, inputTokens: 99 });
+    await expect(reserveScan(ctx, input)).resolves.toEqual(data);
+  });
 
-    expect(scan).toMatchObject({ id: scanId, inputTokens: 99, status: "extracted" });
-    expect(calls[1]).toEqual(
+  it("propaga el error de la RPC (42501 para un rol sin permiso)", async () => {
+    useRpc({ data: null, error: { code: "42501", message: "No tienes permiso para escanear facturas." } });
+
+    await expect(reserveScan(ctx, input)).rejects.toBeTruthy();
+  });
+
+  it("rechaza una respuesta con otra forma", async () => {
+    useRpc(ok({ outcome: "otro" }));
+
+    await expect(reserveScan(ctx, input)).rejects.toThrow();
+  });
+});
+
+describe("scans.server · completeScan / failScan", () => {
+  const completion = {
+    durationMs: 900,
+    extracted: { confidence: 1, currency: "VES" as const, lines: [], supplier: { name: "Alfa" }, warnings: [] },
+    inputTokens: 10,
+    matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
+    model: "m",
+    outputTokens: 20,
+    provider: "mock",
+  };
+
+  it("completeScan pasa la fila de processing a extracted en la tienda", async () => {
+    const { calls } = useRouteClient([ok(dbRow())]);
+
+    expect(await completeScan(ctx, scanId, completion)).toMatchObject({ id: scanId, status: "extracted" });
+    expect(calls[0]).toEqual(
       expect.arrayContaining([
         ["eq", "id", scanId],
         ["eq", "store_id", ctx.storeId],
-        ["eq", "status", "failed"],
+        ["eq", "status", "processing"],
       ]),
     );
-    const update = calls[1].find(([method]) => method === "update");
-    expect(update?.[1]).toMatchObject({ error: null, input_tokens: 99, status: "extracted" });
-    expect(update?.[1]).toHaveProperty("created_at");
-    expect(calls.some((chain) => chain.some(([method]) => method === "insert"))).toBe(false);
+    const update = calls[0].find(([method]) => method === "update");
+    expect(update?.[1]).toMatchObject({ error: null, input_tokens: 10, status: "extracted" });
   });
 
-  it("si el hash ya está en caché devuelve esa fila sin escribir", async () => {
-    const { calls } = useRouteClient([ok(dbRow())]);
+  it("completeScan devuelve null si la fila ya no está processing", async () => {
+    useRouteClient([ok(null)]);
 
-    expect(await insertScan(ctx, input)).toMatchObject({ id: scanId });
-    expect(calls).toHaveLength(1);
+    expect(await completeScan(ctx, scanId, completion)).toBeNull();
   });
 
-  it("si pierde la carrera (23505) devuelve la fila ganadora", async () => {
-    useRouteClient([
-      ok(null),
-      { data: null, error: { code: "23505", message: "duplicate key" } },
-      ok(dbRow({ id: "winner" })),
-    ]);
+  it("failScan deja failed con el código y la lectura vacía, solo desde processing", async () => {
+    const { calls } = useRouteClient([ok(null)]);
 
-    expect(await insertScan(ctx, input)).toMatchObject({ id: "winner" });
+    await failScan(ctx, scanId, "TIMEOUT");
+
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([
+        ["update", { error: "TIMEOUT", extracted: {}, matched: {}, status: "failed" }],
+        ["eq", "store_id", ctx.storeId],
+        ["eq", "status", "processing"],
+      ]),
+    );
   });
 });
 
@@ -215,8 +234,8 @@ describe("scans.server · getScan / markScanFailed / discardScan", () => {
 });
 
 describe("scans.server · getDailyUsage", () => {
-  it("suma páginas en el rango [00:00, 24:00) de Caracas del día de `now`", async () => {
-    const { calls } = useRouteClient([ok([{ pages: 2 }, { pages: 1 }, { pages: 3 }])]);
+  it("suma usage_pages (cada intento cobrado) en el rango [00:00, 24:00) de Caracas del día de `now`", async () => {
+    const { calls } = useRouteClient([ok([{ usage_pages: 2 }, { usage_pages: 1 }, { usage_pages: 3 }])]);
 
     // 23:30 del 14-oct en Caracas.
     const usage = await getDailyUsage(ctx, 5, new Date("2026-10-15T03:30:00.000Z"));
@@ -224,6 +243,7 @@ describe("scans.server · getDailyUsage", () => {
     expect(usage).toEqual({ limit: 5, remaining: 0, used: 6 });
     expect(calls[0]).toEqual(
       expect.arrayContaining([
+        ["select", "usage_pages"],
         ["eq", "store_id", ctx.storeId],
         ["gte", "created_at", "2026-10-14T04:00:00.000Z"],
         ["lt", "created_at", "2026-10-15T04:00:00.000Z"],
