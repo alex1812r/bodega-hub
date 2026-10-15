@@ -12,6 +12,7 @@ import { ZodError } from "zod";
 import { ApiError } from "@/lib/api/apiError";
 
 import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 
@@ -193,12 +194,65 @@ async function extractPage(
   }
 }
 
-/** Lee la factura (una llamada por página) y devuelve la extracción validada. */
+/** Plan §6.1: tope de confianza cuando la lectura no es fiable. */
+export const LOW_QUALITY_MAX_CONFIDENCE = 0.5;
+/** Por debajo de esta confianza global, que todas las líneas digan 1 es incoherente. */
+const INCOHERENT_GLOBAL_CONFIDENCE = 0.6;
+
+export const LOW_RES_WARNING = "La imagen tiene poca resolución; revisa cada línea con la factura en mano.";
+export const INCOHERENT_CONFIDENCE_WARNING =
+  "La lectura no es fiable; revisa cada línea con la factura en mano.";
+
+/**
+ * Plan §6.1: el modelo no siempre admite que no lee. Si alguna página tiene
+ * poca resolución, o si dice confianza 1 en todas las líneas pero baja en lo
+ * global, se avisa y se limita la confianza global y por línea a 0,5.
+ */
+function guardReadability(
+  extraction: InvoiceExtraction,
+  images: readonly InvoiceImageInfo[],
+): InvoiceExtraction {
+  const lowRes = images.some((image) => Math.max(image.width, image.height) < INVOICE_LOW_RES_SIDE);
+  const incoherent =
+    extraction.lines.length > 0 &&
+    extraction.lines.every((line) => line.confidence === 1) &&
+    extraction.confidence < INCOHERENT_GLOBAL_CONFIDENCE;
+
+  if (!lowRes && !incoherent) {
+    return extraction;
+  }
+
+  const cap = (confidence: number) => Math.min(confidence, LOW_QUALITY_MAX_CONFIDENCE);
+  const added = [
+    ...(lowRes ? [LOW_RES_WARNING] : []),
+    ...(incoherent ? [INCOHERENT_CONFIDENCE_WARNING] : []),
+  ];
+
+  return {
+    ...extraction,
+    confidence: cap(extraction.confidence),
+    lines: extraction.lines.map((line) => ({ ...line, confidence: cap(line.confidence) })),
+    warnings: [...new Set([...extraction.warnings, ...added])],
+  };
+}
+
+/**
+ * Lee la factura (una llamada por página) y devuelve la extracción validada.
+ *
+ * Antes de llamar al modelo valida TODAS las páginas con `inspectInvoiceImage`
+ * (bytes mágicos, tipo declarado, dimensiones y lado mínimo): un archivo que no
+ * es imagen o una foto diminuta lanza ApiError 400 sin consumir cuota. Las
+ * dimensiones leídas deciden el aviso de poca resolución (`guardReadability`).
+ * Se valida aquí, y no en quien llama, para que ningún camino llegue al modelo
+ * sin esa comprobación; quien llama puede usar `inspectInvoiceImage` antes
+ * (p. ej. antes de subir al bucket) sin que cambie el resultado.
+ */
 export async function extractInvoice(input: ExtractInvoiceInput): Promise<ExtractInvoiceResult> {
   if (input.pages.length === 0) {
     throw new TypeError("extractInvoice necesita al menos una página.");
   }
 
+  const images = input.pages.map((page) => inspectInvoiceImage(page.data, page.mediaType));
   const startedAt = Date.now();
   const info = input.model ?? createInvoiceScanModel();
   const results: PageResult[] = [];
@@ -209,7 +263,7 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
 
   return {
     durationMs: Date.now() - startedAt,
-    extraction: mergePages(results.map((result) => result.extraction)),
+    extraction: guardReadability(mergePages(results.map((result) => result.extraction)), images),
     inputTokens: sumTokens(results.map((result) => result.inputTokens)),
     modelId: info.modelId,
     outputTokens: sumTokens(results.map((result) => result.outputTokens)),

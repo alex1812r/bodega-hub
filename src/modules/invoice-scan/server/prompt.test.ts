@@ -7,6 +7,7 @@ import {
   buildFewShotMessages,
   buildInvoiceSystemPrompt,
   buildTargetMessage,
+  ILLEGIBLE_LINES_WARNING,
   INVOICE_DATA_RULE,
 } from "./prompt";
 
@@ -36,6 +37,26 @@ describe("buildInvoiceSystemPrompt", () => {
     "No parece una factura.",
   ])("explains %s", (fragment) => {
     expect(buildInvoiceSystemPrompt()).toContain(fragment);
+  });
+
+  // Plan §6.1 (caos SCN-03i F1): con una foto de 200 px el modelo inventó todo con confianza 1.
+  it.each([
+    ["drops lines whose digits are unreadable", "NO incluyas esa línea"],
+    ["names the quantity, unit price and line total", "la cantidad, el precio unitario o el total"],
+    ["asks for the illegible-lines warning", ILLEGIBLE_LINES_WARNING],
+    ["ties confidence to real legibility, not format", "legibilidad real"],
+    ["asks to report blurry, dark or small images", "borrosa, oscura"],
+    ["forbids inventing supplier, number and date", "NO inventes proveedor, RIF, número de factura ni fecha"],
+  ])("%s", (_, fragment) => {
+    expect(buildInvoiceSystemPrompt()).toContain(fragment);
+  });
+
+  it("starts the illegible-lines warning as the plan says", () => {
+    expect(ILLEGIBLE_LINES_WARNING).toMatch(/^Hay líneas ilegibles/);
+  });
+
+  it("no longer tells the model to keep half-read lines with guessed numbers", () => {
+    expect(buildInvoiceSystemPrompt()).not.toContain("Si una línea se lee a medias, inclúyela");
   });
 });
 
