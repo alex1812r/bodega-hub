@@ -396,6 +396,35 @@ $$;
 revoke all on function public.learn_invoice_aliases(uuid, jsonb) from public, anon;
 grant execute on function public.learn_invoice_aliases(uuid, jsonb) to authenticated, service_role;
 
+-- -----------------------------------------------------------------------------
+-- 5. FALLBACK de lectura de public.invoice_scans (SCN-06). El POST de compras
+--    lee el escaneo con el cliente del usuario (filtro explicito por tienda)
+--    antes de crear la compra. Si 20261019a ya puso sus politicas, este bloque
+--    no hace nada: solo actua cuando la tabla NO tiene ninguna politica (la
+--    rama sola, con el fallback de la seccion 1). Lectura por tienda para
+--    purchases.view (admin | almacen | contador); sin escritura directa.
+-- -----------------------------------------------------------------------------
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'invoice_scans'
+  ) then
+    execute $p$
+      create policy "Fallback 19b: purchases viewers read invoice scans"
+      on public.invoice_scans for select
+      to authenticated
+      using (
+        store_id = public.current_user_store_id()
+        and coalesce(public.current_user_role()::text, '') in ('admin', 'almacen', 'contador')
+      )
+    $p$;
+    grant select on public.invoice_scans to authenticated;
+  end if;
+end;
+$$;
+
 commit;
 
 notify pgrst, 'reload schema';

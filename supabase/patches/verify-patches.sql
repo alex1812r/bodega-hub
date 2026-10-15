@@ -2451,4 +2451,12 @@ select
     where (p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb)') and p.prorettype = 'void'::regtype)
        or (p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)') and p.prorettype = 'integer'::regtype)
   )
+union all
+select
+  'invoice_scans: RLS activa y al menos una politica select (19a o fallback de 20261019b) para el pre-check de POST /api/purchases (SCN-06)',
+  coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.invoice_scans')), false)
+  and exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'invoice_scans' and cmd = 'SELECT'
+  )
 order by 1;
