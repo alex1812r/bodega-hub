@@ -217,6 +217,29 @@ describe("confirmScan.mock-server", () => {
     jest.restoreAllMocks();
   });
 
+  it("item con etiqueta de empaque de más de 100 caracteres: se aprende recortada a 100 (SCN-06-F4 · M-n1)", async () => {
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+
+    const scan = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    const outcome = await finalizeInvoiceScan(
+      scan,
+      {
+        clientRequestId: KEY_1,
+        items: [{ entryMode: "pack", packLabel: "C".repeat(150), productId: PRODUCT_A, unitsPerPack: 12 }],
+        lines: [{ lineIndex: 0, productId: PRODUCT_A, unitsPerPack: 12 }],
+        purchaseId: "p-1",
+        supplierId: SUPPLIER,
+      },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(outcome).toEqual({ confirmed: true, learned: 1 });
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)[0]).toMatchObject({
+      packLabel: "C".repeat(100),
+      unitsPerPack: 12,
+    });
+  });
+
   it("alias normalizado de más de 200 caracteres: se guarda en confirmed pero no se aprende", async () => {
     const longText = Array.from({ length: 60 }, (_, index) => `palabra${index}`).join(" ");
     registerMockInvoiceScan({ extracted: { lines: [{ rawText: longText }] }, id: "scan-1" });

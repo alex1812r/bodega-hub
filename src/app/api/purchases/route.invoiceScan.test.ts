@@ -249,9 +249,21 @@ function createFake(state: FakeState) {
     }
 
     if (name === "learn_invoice_aliases") {
-      return state.failLearn
-        ? { data: null, error: { code: "PT500", message: "boom" } }
-        : { data: (args.p_lines as unknown[]).length, error: null };
+      if (state.failLearn) {
+        return { data: null, error: { code: "PT500", message: "boom" } };
+      }
+
+      // Espejo de la forma que exige la RPC: una etiqueta de más de 100 caracteres
+      // rechaza la llamada entera (PT400).
+      const lines = args.p_lines as { pack_label?: string | null }[];
+      const tooLong = lines.findIndex((line) => Array.from(line.pack_label?.trim() ?? "").length > 100);
+
+      return tooLong >= 0
+        ? {
+            data: null,
+            error: { code: "PT400", message: `Etiqueta de empaque inválida en la línea ${tooLong + 1}` },
+          }
+        : { data: lines.length, error: null };
     }
 
     throw new Error(`RPC inesperada ${name}`);
@@ -636,6 +648,45 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
           { alias_norm: "ref malta 1 5 x6", pack_label: "Caja", product_id: PRODUCT_A, units_per_pack: 6 },
           { alias_norm: "azucar montalban", pack_label: null, product_id: PRODUCT_B, units_per_pack: null },
         ],
+        p_scan_id: SCAN_ID,
+      });
+    });
+
+    it("item con etiqueta de empaque de más de 100 caracteres: se recorta y el resto se aprende (SCN-06-F4 · M-n1)", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [
+          { lineIndex: 0, productId: PRODUCT_A, unitsPerPack: 6 },
+          { lineIndex: 1, productId: PRODUCT_B },
+        ],
+        items: [{ ...purchase.items[0], packLabel: "C".repeat(150) }, purchase.items[1]],
+      });
+
+      expect(response.status).toBe(201);
+      expect((await response.json()).data.invoiceScan).toEqual({ confirmed: true, learned: 2 });
+      expect(fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1]).toEqual({
+        p_lines: [
+          { alias_norm: "ref malta 1 5 x6", pack_label: "C".repeat(100), product_id: PRODUCT_A, units_per_pack: 6 },
+          { alias_norm: "azucar montalban", pack_label: null, product_id: PRODUCT_B, units_per_pack: null },
+        ],
+        p_scan_id: SCAN_ID,
+      });
+    });
+
+    it("sin líneas que aprender: learn se llama igual con [] para cerrar el aprendizaje del escaneo (SCN-06-F4 · M-n2)", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [],
+      });
+
+      expect(response.status).toBe(201);
+      expect((await response.json()).data.invoiceScan).toEqual({ confirmed: true, learned: 0 });
+      expect(fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1]).toEqual({
+        p_lines: [],
         p_scan_id: SCAN_ID,
       });
     });
