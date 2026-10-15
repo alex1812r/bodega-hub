@@ -9,6 +9,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { isStructuralPatch } from "./stock-lab/pipeline";
+import { isUxMejorasPatch, UX_MEJORAS_FIRST_PATCH, UX_MEJORAS_LAST_PATCH } from "./build-deploy-sql.mjs";
 
 const ROOT = resolve(__dirname, "..");
 const PATCHES_DIR = resolve(ROOT, "supabase", "patches");
@@ -94,9 +95,22 @@ describe("supabase/patches/deploy (DEC-03)", () => {
     expect(header).toMatch(/NINGUNA fila en fail|ninguna fila en fail/);
   });
 
-  it("todo parche estructural del plan (20261007a en adelante) está en una de las dos listas, y solo una vez", () => {
+  it("el plan ux-mejoras va de 20261007a a 20261018a: un parche posterior (20261019a, otro plan) no se exige en sus listas", () => {
+    expect([UX_MEJORAS_FIRST_PATCH, UX_MEJORAS_LAST_PATCH]).toEqual(["20261007a", "20261018a"]);
+    expect(
+      [
+        "20261006z-anterior.sql",
+        "20261007a-tax-rates.sql",
+        "20261018a-reports-exclude-draft-sales.sql",
+        "20261019a-invoice-scans.sql",
+        "20261019b-otro-plan.sql",
+      ].filter(isUxMejorasPatch),
+    ).toEqual(["20261007a-tax-rates.sql", "20261018a-reports-exclude-draft-sales.sql"]);
+  });
+
+  it("todo parche estructural del plan (20261007a a 20261018a) está en una de las dos listas, y solo una vez", () => {
     const planPatches = readdirSync(PATCHES_DIR)
-      .filter((name) => isStructuralPatch(name) && name >= "20261007")
+      .filter((name) => isStructuralPatch(name) && isUxMejorasPatch(name))
       .sort();
     const listed = [...BEFORE_BFF, ...AFTER_BFF];
 
