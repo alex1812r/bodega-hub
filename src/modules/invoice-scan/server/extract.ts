@@ -12,6 +12,7 @@ import { ZodError } from "zod";
 import { ApiError } from "@/lib/api/apiError";
 
 import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import type { FewShotFormat } from "./fewShot";
 import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
@@ -23,7 +24,8 @@ export type InvoicePage = {
 
 export type InvoiceFewShotExample = {
   page?: InvoicePage;
-  confirmed: InvoiceExtraction;
+  /** Formato saneado de un `confirmed` previo (`toFewShotFormat`), nunca el `confirmed` crudo. */
+  format: FewShotFormat;
 };
 
 export type ExtractInvoiceResult = {

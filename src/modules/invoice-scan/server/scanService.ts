@@ -29,6 +29,7 @@ import {
   type InvoiceFewShotExample,
   type InvoicePage,
 } from "./extract";
+import { toFewShotFormat } from "./fewShot";
 import { inspectInvoiceImage } from "./imageInfo";
 import { invoiceMatchSchema } from "./invoiceMatchSchema";
 import { matchScan, type InvoiceScanMatcher } from "./matchScan";
@@ -325,7 +326,9 @@ function limitReached(limit: number, used: number, pages: number): ApiError {
 
 /**
  * Hasta 3 escaneos confirmados del proveedor; una imagen que no se descarga, o
- * cuya ruta guardada no es de la tienda de la sesión, se omite.
+ * cuya ruta guardada no es de la tienda de la sesión, se omite. El `confirmed`
+ * es entrada no confiable (SCN-03q): solo viaja su formato saneado, y si no
+ * valida o tiene valores absurdos el ejemplo se omite registrando solo el código.
  */
 async function loadFewShot(
   deps: InvoiceScanDeps,
@@ -345,11 +348,18 @@ async function loadFewShot(
         return null;
       }
 
+      const reduced = toFewShotFormat(example.confirmed);
+
+      if (!reduced.ok) {
+        console.warn("[invoice-scan] ejemplo few-shot descartado", { code: reduced.code });
+        return null;
+      }
+
       try {
         assertPathInStore(example.storagePath, ctx.storeId);
         const data = await deps.storage.download(example.storagePath);
 
-        return { confirmed: example.confirmed, page: { data, mediaType } };
+        return { format: reduced.format, page: { data, mediaType } };
       } catch {
         return null;
       }

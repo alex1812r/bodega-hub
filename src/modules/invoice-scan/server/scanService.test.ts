@@ -4,9 +4,11 @@
 import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
 
+import type { InvoiceExtraction } from "../contracts";
 import { notAnInvoiceExtraction, singlePageExtraction } from "./__fixtures__/extractions";
 import { jpegHeader } from "./__fixtures__/images";
 import { InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } from "./extract";
+import { toFewShotFormat } from "./fewShot";
 import { matchScan } from "./matchScan";
 import { createMockInvoiceScanModel } from "./mockModel";
 import * as mockRepo from "./scans.mock-server";
@@ -422,9 +424,51 @@ describe("scanInvoice · few-shot de la capa 2", () => {
     await scanInvoice(built, ctx, { pages: [page("con proveedor")], source: "upload", supplierId: SUPPLIER_ID });
 
     expect(listFewShotExamples).toHaveBeenCalledWith(ctx, SUPPLIER_ID, 3);
+    const format = toFewShotFormat(confirmed);
+    expect(format.ok).toBe(true);
     expect(extract).toHaveBeenCalledWith(
-      expect.objectContaining({ fewShot: [{ confirmed, page: { data: example, mediaType: "image/png" } }] }),
+      expect.objectContaining({
+        fewShot: [{ format: format.ok ? format.format : null, page: { data: example, mediaType: "image/png" } }],
+      }),
     );
+  });
+
+  it("omite el confirmed que no valida o tiene valores absurdos y registra solo el código (SCN-03q)", async () => {
+    const ctx = newContext();
+    const paths = ["1", "2", "3"].map((digit) => `${ctx.storeId}/${digit.repeat(64)}/p1.png`);
+    const secret = "PROVEEDOR HACKEADO";
+    const listFewShotExamples = jest.fn(async () => [
+      { confirmed: { supplier: secret, lines: "x" } as unknown as InvoiceExtraction, scanId: "s1", storagePath: paths[0]! },
+      {
+        confirmed: {
+          ...confirmed,
+          lines: [{ ...confirmed.lines[0]!, description: secret, lineTotal: 999999, quantity: 999, unitPrice: 1 }],
+        },
+        scanId: "s2",
+        storagePath: paths[1]!,
+      },
+      { confirmed, scanId: "s3", storagePath: paths[2]! },
+    ]);
+    const { built, extract, storage } = deps({ repo: { ...mockRepo, listFewShotExamples } });
+    const example = new TextEncoder().encode("ejemplo");
+    paths.forEach((path) => storage.objects.set(path, example));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await scanInvoice(built, ctx, { pages: [page("con proveedor 3q")], source: "upload", supplierId: SUPPLIER_ID });
+
+      const fewShot = (extract.mock.calls[0] as unknown as [{ fewShot: unknown[] }])[0].fewShot;
+      expect(fewShot).toHaveLength(1);
+      expect(JSON.stringify(fewShot)).not.toContain(secret);
+      expect(JSON.stringify(fewShot)).not.toContain(confirmed.supplier.name);
+      expect(warn.mock.calls).toEqual([
+        ["[invoice-scan] ejemplo few-shot descartado", { code: "INVALID_FEW_SHOT_EXAMPLE" }],
+        ["[invoice-scan] ejemplo few-shot descartado", { code: "ABSURD_FEW_SHOT_EXAMPLE" }],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
