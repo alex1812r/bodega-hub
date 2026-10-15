@@ -4,6 +4,7 @@
  * No toca canvas ni pdfjs, así que se prueba en jest sin navegador.
  */
 import { INVOICE_MAX_BYTES, INVOICE_MAX_PAGES, INVOICE_MAX_SIDE } from "./invoiceLimits";
+import type { InvoiceQuality } from "./invoiceQuality.core";
 
 export type InvoicePageMediaType = "image/jpeg" | "image/webp";
 
@@ -21,6 +22,11 @@ export type PreparedInvoice = {
   sha256: string;
   sourceName: string;
   sourceType: string;
+  /**
+   * Nitidez y brillo de cada página (en orden) y avisos en español para que la
+   * UI proponga repetir la foto. Solo informa: no bloquea la subida.
+   */
+  quality: InvoiceQuality;
 };
 
 export const INVOICE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;

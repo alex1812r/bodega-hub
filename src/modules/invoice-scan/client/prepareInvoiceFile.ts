@@ -5,6 +5,12 @@
  * lógica pura vive en `prepareInvoice.core.ts`.
  */
 import { INVOICE_MAX_SIDE } from "./invoiceLimits";
+import {
+  measurePageQuality,
+  rgbaToLuminance,
+  summarizeInvoiceQuality,
+  type InvoicePageQuality,
+} from "./invoiceQuality.core";
 import { loadPdfjs } from "./loadPdfjs";
 import {
   assertInvoicePageCount,
@@ -42,6 +48,24 @@ function canvasToBlob(canvas: HTMLCanvasElement, quality: number) {
   });
 }
 
+/** Nitidez y brillo de la página tal como se codificó (fuente dibujada a su tamaño final). */
+function measureSource(source: CanvasImageSource, page: PreparedInvoicePage): InvoicePageQuality {
+  const canvas = createCanvas(page);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+
+  if (!context) {
+    throw new Error(UNREADABLE_IMAGE_MESSAGE);
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, page.width, page.height);
+  context.drawImage(source, 0, 0, page.width, page.height);
+  const { data } = context.getImageData(0, 0, page.width, page.height);
+  return measurePageQuality(rgbaToLuminance(data, page.width, page.height));
+}
+
+type MeasuredPage = { page: PreparedInvoicePage; quality: InvoicePageQuality };
+
 /** Encoder de canvas: redibuja la fuente al tamaño pedido y la codifica en JPEG. */
 function canvasEncoder(source: CanvasImageSource): PageEncoder {
   return async (size, quality) => {
@@ -60,7 +84,7 @@ function canvasEncoder(source: CanvasImageSource): PageEncoder {
   };
 }
 
-async function prepareImage(file: File): Promise<PreparedInvoicePage[]> {
+async function prepareImage(file: File): Promise<MeasuredPage[]> {
   let bitmap: ImageBitmap;
 
   try {
@@ -75,13 +99,13 @@ async function prepareImage(file: File): Promise<PreparedInvoicePage[]> {
       canvasEncoder(bitmap),
       OUTPUT_MEDIA_TYPE,
     );
-    return [page];
+    return [{ page, quality: measureSource(bitmap, page) }];
   } finally {
     bitmap.close();
   }
 }
 
-async function preparePdf(file: File): Promise<PreparedInvoicePage[]> {
+async function preparePdf(file: File): Promise<MeasuredPage[]> {
   const pdfjs = await loadPdfjs();
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
 
@@ -95,7 +119,7 @@ async function preparePdf(file: File): Promise<PreparedInvoicePage[]> {
     }
 
     assertInvoicePageCount(pdf.numPages);
-    const pages: PreparedInvoicePage[] = [];
+    const pages: MeasuredPage[] = [];
 
     for (let number = 1; number <= pdf.numPages; number += 1) {
       const page = await pdf.getPage(number);
@@ -108,13 +132,12 @@ async function preparePdf(file: File): Promise<PreparedInvoicePage[]> {
       const canvas = createCanvas({ height: Math.round(viewport.height), width: Math.round(viewport.width) });
 
       await page.render({ canvas, viewport }).promise;
-      pages.push(
-        await encodePageWithinLimit(
-          { height: canvas.height, width: canvas.width },
-          canvasEncoder(canvas),
-          OUTPUT_MEDIA_TYPE,
-        ),
+      const encoded = await encodePageWithinLimit(
+        { height: canvas.height, width: canvas.width },
+        canvasEncoder(canvas),
+        OUTPUT_MEDIA_TYPE,
       );
+      pages.push({ page: encoded, quality: measureSource(canvas, encoded) });
       page.cleanup();
     }
 
@@ -133,15 +156,23 @@ async function preparePdf(file: File): Promise<PreparedInvoicePage[]> {
  * - `sha256`: sha256 de la concatenación de los bytes de todas las páginas
  *   procesadas, en orden. El servidor lo recalcula igual (`sha256OfPages`).
  *
+ * - `quality`: nitidez y brillo de cada página y avisos en español para que la
+ *   UI proponga repetir la foto. Solo informa, no bloquea.
+ *
  * Lanza `Error` con mensaje en español para formatos no admitidos, PDF con más
  * de 10 páginas o archivos ilegibles.
  */
 export async function prepareInvoiceFile(file: File): Promise<PreparedInvoice> {
   const kind = classifyInvoiceType(file.type);
-  const pages = kind === "pdf" ? await preparePdf(file) : await prepareImage(file);
+  const measured = kind === "pdf" ? await preparePdf(file) : await prepareImage(file);
+  const pages = measured.map(({ page }) => page);
 
   return {
     pages,
+    quality: summarizeInvoiceQuality(
+      measured.map(({ quality }) => quality),
+      kind,
+    ),
     sha256: await hashInvoicePages(pages.map((page) => page.blob)),
     sourceName: file.name,
     sourceType: file.type,
