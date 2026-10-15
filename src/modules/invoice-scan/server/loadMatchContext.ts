@@ -12,7 +12,8 @@
  * 2. Catálogo del proveedor elegido por la RPC: `supplier_products` activos con
  *    sus `supplier_product_pack_units` activos y `supplier_product_aliases`.
  * 3. Detalle de los productos referenciados (candidatos + catálogo + alias +
- *    barcode): alícuota de la categoría, receta activa y último costo recibido.
+ *    barcode): alícuota de la categoría, receta activa, tamaños de las recetas
+ *    de las que es componente y último costo recibido.
  */
 import { normalizeAlias } from "@bodega/core/invoice";
 
@@ -339,6 +340,48 @@ async function loadRecipeConversions(
   return new Map(rows.map((row) => [row.pack_product_id, toNumber(row.total_units)]));
 }
 
+/**
+ * Tamaños de empaque de las recetas activas de las que el producto es
+ * COMPONENTE (`product_pack_components.unit_product_id`), solo 1 a 1
+ * (`units_per_pack = total_units`): es el `v_unit_pack_sizes` con el que
+ * `create_purchase` valida una línea en modo empaque del producto (20261010d;
+ * caos M-r4-1).
+ */
+async function loadComponentPackSizes(
+  supabase: MatchContextSupabaseClient,
+  storeId: string,
+  productIds: string[],
+): Promise<Map<string, number[]>> {
+  if (productIds.length === 0) {
+    return new Map();
+  }
+  const { data, error } = await supabase
+    .from("product_pack_components")
+    .select("unit_product_id, units_per_pack, conversion:product_pack_conversions!inner(total_units, is_active)")
+    .eq("store_id", storeId)
+    .eq("conversion.is_active", true)
+    .in("unit_product_id", productIds);
+  throwIfSupabaseError(error);
+  const rows = (data ?? []) as unknown as Array<{
+    unit_product_id: string;
+    units_per_pack: number | string;
+    conversion: { total_units: number | string | null; is_active: boolean } | null;
+  }>;
+  const sizes = new Map<string, number[]>();
+  for (const row of rows) {
+    const size = toNumber(row.units_per_pack);
+    if (!row.conversion?.is_active || size === undefined || size !== toNumber(row.conversion.total_units)) {
+      continue;
+    }
+    const list = sizes.get(row.unit_product_id) ?? [];
+    if (!list.includes(size)) {
+      list.push(size);
+    }
+    sizes.set(row.unit_product_id, list.sort((a, b) => a - b));
+  }
+  return sizes;
+}
+
 /** Última línea recibida por producto, del proveedor o de cualquiera (misma consulta que `purchaseLastCosts.server.ts`). */
 async function loadLastLines(
   supabase: MatchContextSupabaseClient,
@@ -442,9 +485,10 @@ export async function loadMatchContext(
   const productIds = [...referenced];
   const missing = productIds.filter((id) => !loaded.has(id));
 
-  const [extraRows, recipes, supplierCosts, anyCosts] = await Promise.all([
+  const [extraRows, recipes, componentSizes, supplierCosts, anyCosts] = await Promise.all([
     loadProductsWhere(supabase, storeId, "id", missing),
     loadRecipeConversions(supabase, storeId, productIds),
+    loadComponentPackSizes(supabase, storeId, productIds),
     supplierId ? loadLastLines(supabase, storeId, productIds, supplierId) : Promise.resolve(new Map<string, number>()),
     loadLastLines(supabase, storeId, productIds),
   ]);
@@ -455,6 +499,7 @@ export async function loadMatchContext(
   const linkedIds = new Set(catalog?.supplierProducts.map((link) => link.productId) ?? []);
   const products: MatchProduct[] = [...loaded.values()].map((row) => {
     const recipeUnitsPerPack = recipes.get(row.id);
+    const componentPackSizes = componentSizes.get(row.id);
     return {
       id: row.id,
       name: row.name,
@@ -466,6 +511,7 @@ export async function loadMatchContext(
       linkedToSupplier: linkedIds.has(row.id),
       hasRecipe: recipes.has(row.id),
       ...(recipeUnitsPerPack !== undefined ? { recipeUnitsPerPack } : {}),
+      ...(componentPackSizes ? { componentPackSizes } : {}),
     };
   });
 

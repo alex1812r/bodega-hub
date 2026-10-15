@@ -138,7 +138,7 @@ describe("matchInvoice · empaques", () => {
   it.each<[string, Partial<InvoiceExtractionLine>]>([
     ["unit caja sin tamaño", { unit: "caja" }],
     ["unit caja con el tamaño de la receta", { unit: "caja", unitsPerPack: 36 }],
-    ["unit unidad (cada unidad del producto-empaque es un empaque)", { unit: "unidad" }],
+    // "unit unidad" ya no confirma: ¿empaques o unidades sueltas? (caos B-r4-1, match.caos-r4.test.ts).
   ])("receta con %s: confirmada con la conversión registrada (caos B-r3-4)", (_name, extra) => {
     const line = matchOne({ description: "CAJA MALTA X36", supplierSku: "CMX36", quantity: 2, unitPrice: 1800, lineTotal: 3600, ...extra });
 

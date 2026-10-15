@@ -173,7 +173,19 @@ export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLoo
   const skuCandidates = exactCandidates(bySupplierSku(line, lookup), lookup, "SKU del proveedor");
   if (skuCandidates.length > 0) {
     const step = exactStep(skuCandidates);
-    return step.productId ? { ...step, ...aliasForPack(line, lookup, step.productId) } : step;
+    if (!step.productId) {
+      return step;
+    }
+    // Alias exacto de este mismo texto hacia OTRO producto: dos señales exactas se contradicen (caos B-r4-2).
+    const conflicting = byExactAlias(line, lookup).filter((alias) => alias.productId !== step.productId);
+    const aliasCandidates = unique(conflicting.map((alias) => alias.productId)).flatMap((productId) => {
+      const hits = conflicting.find((alias) => alias.productId === productId)?.hits ?? 0;
+      return exactCandidates([productId], lookup, aliasReason(hits));
+    });
+    if (aliasCandidates.length > 0) {
+      return { status: "doubtful", candidates: [...skuCandidates, ...aliasCandidates].slice(0, MAX_LINE_CANDIDATES) };
+    }
+    return { ...step, ...aliasForPack(line, lookup, step.productId) };
   }
 
   const aliases = byExactAlias(line, lookup);

@@ -122,6 +122,16 @@ export type MatchProduct = {
    * `units_per_pack` (20261009d / 20261010d). Sin receta, `undefined`.
    */
   recipeUnitsPerPack?: number;
+  /**
+   * Tamaños de empaque en los que el producto es COMPONENTE (unidad) de una
+   * receta activa de otro producto: `product_pack_components.units_per_pack`
+   * de las conversiones activas donde es `unit_product_id` y
+   * `units_per_pack = product_pack_conversions.total_units` (1 a 1). Si hay
+   * alguno, `create_purchase` solo acepta una línea en modo empaque de este
+   * producto con uno de estos `units_per_pack` (20261010d, `v_unit_pack_sizes`;
+   * caos M-r4-1). Sin recetas de las que sea componente, `undefined`.
+   */
+  componentPackSizes?: number[];
 };
 
 /** Cómo llegó un candidato difuso. */

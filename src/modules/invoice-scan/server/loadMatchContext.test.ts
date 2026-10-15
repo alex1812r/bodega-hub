@@ -457,6 +457,35 @@ describe("loadMatchContext", () => {
 
     expect(line).toMatchObject({ status: "confirmed", productId: CAJA_ID, entryMode: "pack", unitsPerPack: 12, disassembleOnReceive: true });
   });
+
+  it("componente de receta: carga los tamaños 1 a 1 que create_purchase acepta y el empaque x20 queda dudoso (caos M-r4-1)", async () => {
+    const tables = fullTables();
+    tables.product_pack_components = () => ({
+      data: [
+        { unit_product_id: HARINA_ID, units_per_pack: 12, conversion: { total_units: 12, is_active: true } },
+        // Surtida (6 de 12): create_purchase no la cuenta (pc.units_per_pack = c.total_units).
+        { unit_product_id: HARINA_ID, units_per_pack: 6, conversion: { total_units: 12, is_active: true } },
+        { unit_product_id: HARINA_ID, units_per_pack: 12, conversion: { total_units: "12", is_active: true } },
+      ],
+      error: null,
+    });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    const byId = new Map(ctx.products.map((product) => [product.id, product]));
+    expect(byId.get(HARINA_ID)?.componentPackSizes).toEqual([12]);
+    expect(byId.get(MALTA_ID)?.componentPackSizes).toBeUndefined();
+    const [components] = queriesOf(stub.queries, "product_pack_components");
+    expect(hasEq(components, "store_id", STORE_ID)).toBe(true);
+    expect(hasEq(components, "conversion.is_active", true)).toBe(true);
+    expect(argsOf(components, "in")[0]?.[0]).toBe("unit_product_id");
+
+    // Línea por SKU "HP-01" en caja x20 (empaque registrado del proveedor): create_purchase solo aceptaría 12.
+    const [line] = matchInvoice(extraction, ctx).lines;
+    expect(line.status).toBe("doubtful");
+    expect(line.issues.join(" ")).toContain("componente de una receta de 12 unidades por empaque");
+  });
 });
 
 describe("taxRateKind", () => {
