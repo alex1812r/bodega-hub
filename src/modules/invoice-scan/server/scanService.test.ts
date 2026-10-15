@@ -414,8 +414,8 @@ describe("scanInvoice · few-shot de la capa 2", () => {
   it("con supplierId pasa hasta 3 ejemplos y omite los que no se descargan", async () => {
     const ctx = newContext();
     const listFewShotExamples = jest.fn(async () => [
-      { confirmed, scanId: "s1", storagePath: `${ctx.storeId}/${"1".repeat(64)}/p1.png` },
-      { confirmed, scanId: "s2", storagePath: `${ctx.storeId}/${"2".repeat(64)}/p1.jpg` },
+      { extraction: confirmed, scanId: "s1", storagePath: `${ctx.storeId}/${"1".repeat(64)}/p1.png` },
+      { extraction: confirmed, scanId: "s2", storagePath: `${ctx.storeId}/${"2".repeat(64)}/p1.jpg` },
     ]);
     const { built, extract, storage } = deps({ repo: { ...mockRepo, listFewShotExamples } });
     const example = new TextEncoder().encode("ejemplo");
@@ -438,16 +438,16 @@ describe("scanInvoice · few-shot de la capa 2", () => {
     const paths = ["1", "2", "3"].map((digit) => `${ctx.storeId}/${digit.repeat(64)}/p1.png`);
     const secret = "PROVEEDOR HACKEADO";
     const listFewShotExamples = jest.fn(async () => [
-      { confirmed: { supplier: secret, lines: "x" } as unknown as InvoiceExtraction, scanId: "s1", storagePath: paths[0]! },
+      { extraction: { supplier: secret, lines: "x" } as unknown as InvoiceExtraction, scanId: "s1", storagePath: paths[0]! },
       {
-        confirmed: {
+        extraction: {
           ...confirmed,
           lines: [{ ...confirmed.lines[0]!, description: secret, lineTotal: 999999, quantity: 999, unitPrice: 1 }],
         },
         scanId: "s2",
         storagePath: paths[1]!,
       },
-      { confirmed, scanId: "s3", storagePath: paths[2]! },
+      { extraction: confirmed, scanId: "s3", storagePath: paths[2]! },
     ]);
     const { built, extract, storage } = deps({ repo: { ...mockRepo, listFewShotExamples } });
     const example = new TextEncoder().encode("ejemplo");
@@ -741,7 +741,7 @@ describe("scanInvoice · ruta guardada y cobro de los fallos (SCN-03l)", () => {
     const ctx = newContext();
     const confirmed = { ...singlePageExtraction, number: "ajena" };
     const foreign = `otra-tienda/${"9".repeat(64)}/p1.jpg`;
-    const listFewShotExamples = jest.fn(async () => [{ confirmed, scanId: "s9", storagePath: foreign }]);
+    const listFewShotExamples = jest.fn(async () => [{ extraction: confirmed, scanId: "s9", storagePath: foreign }]);
     const { built, extract, storage } = deps({ repo: { ...mockRepo, listFewShotExamples } });
     storage.objects.set(foreign, new TextEncoder().encode("ajena"));
 

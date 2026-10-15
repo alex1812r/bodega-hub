@@ -21,6 +21,7 @@ import {
   type ExpiredScan,
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
+  parseConfirmedScan,
   type StoredFewShotExample,
   type InvoiceScanCompletion,
   type InvoiceScanContext,
@@ -47,7 +48,7 @@ type DbInvoiceScanRow = {
   duration_ms: number | null;
   extracted: InvoiceExtraction | Record<string, never>;
   matched: InvoiceMatch | Record<string, never>;
-  confirmed: InvoiceExtraction | null;
+  confirmed: unknown;
   purchase_id: string | null;
   supplier_id: string | null;
   status: InvoiceScanStatus;
@@ -287,9 +288,11 @@ export async function listFewShotExamples(
 
   throwIfSupabaseError(error);
 
-  return ((data ?? []) as { id: string; storage_path: string; confirmed: InvoiceExtraction }[]).map(
-    (row) => ({ confirmed: row.confirmed, scanId: row.id, storagePath: row.storage_path }),
-  );
+  return ((data ?? []) as { id: string; storage_path: string; confirmed: unknown }[]).flatMap((row) => {
+    const confirmed = parseConfirmedScan(row.confirmed);
+
+    return confirmed ? [{ extraction: confirmed.extraction, scanId: row.id, storagePath: row.storage_path }] : [];
+  });
 }
 
 /**

@@ -326,13 +326,15 @@ describe("scans.server · getDailyUsage", () => {
 });
 
 describe("scans.server · listFewShotExamples", () => {
-  it("pide confirmados del proveedor en la tienda, recientes primero, máximo 3", async () => {
-    const confirmed = { confidence: 1, currency: "USD", lines: [], supplier: { name: "Alfa" }, warnings: [] };
+  const extraction = { confidence: 1, currency: "USD", lines: [], supplier: { name: "Alfa" }, warnings: [] };
+
+  it("pide confirmados del proveedor en la tienda, recientes primero, máximo 3, y usa confirmed.extraction (D10)", async () => {
+    const confirmed = { extraction, lines: [{ lineIndex: 0, packLabel: "caja", productId: "p1", unitsPerPack: 12 }] };
     const { calls } = useRouteClient([ok([{ confirmed, id: scanId, storage_path: "p.jpg" }])]);
 
     const examples = await listFewShotExamples(ctx, supplierId, 10);
 
-    expect(examples).toEqual([{ confirmed, scanId, storagePath: "p.jpg" }]);
+    expect(examples).toEqual([{ extraction, scanId, storagePath: "p.jpg" }]);
     expect(calls[0]).toEqual(
       expect.arrayContaining([
         ["eq", "store_id", ctx.storeId],
@@ -350,6 +352,31 @@ describe("scans.server · listFewShotExamples", () => {
     expect(await listFewShotExamples(ctx, supplierId, 0)).toEqual([]);
     expect(await listFewShotExamples(ctx, "x")).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+
+  it("ignora la forma vieja y el JSON roto registrando solo el código (D10)", async () => {
+    const secret = "PROVEEDOR SECRETO";
+    useRouteClient([
+      ok([
+        { confirmed: { ...extraction, supplier: { name: secret } }, id: "s-legacy", storage_path: "a.jpg" },
+        { confirmed: `{"extraction": "${secret}`, id: "s-broken", storage_path: "b.jpg" },
+        { confirmed: { extraction: { supplier: secret }, lines: "x" }, id: "s-garbage", storage_path: "c.jpg" },
+        { confirmed: { extraction, lines: [] }, id: scanId, storage_path: "p.jpg" },
+      ]),
+    ]);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const examples = await listFewShotExamples(ctx, supplierId);
+
+      expect(examples).toEqual([{ extraction, scanId, storagePath: "p.jpg" }]);
+      expect(warn.mock.calls).toEqual(
+        Array.from({ length: 3 }, () => ["[invoice-scan] confirmed fuera del contrato", { code: "INVALID_CONFIRMED_SCAN" }]),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

@@ -61,9 +61,9 @@ function store() {
 }
 
 /** Lo que hará Emparejamiento al confirmar (SCN-06): no es parte de este repositorio. */
-function confirm(id: string, at: string) {
+function confirm(id: string, at: string, confirmed: unknown = { extraction, lines: [] }) {
   const scan = store().get(id) as InvoiceScanRow;
-  store().set(id, { ...scan, confirmed: extraction, createdAt: at, status: "confirmed", supplierId });
+  store().set(id, { ...scan, confirmed, createdAt: at, status: "confirmed", supplierId });
 }
 
 beforeEach(() => {
@@ -377,10 +377,37 @@ describe("scans.mock-server · few-shot por proveedor", () => {
       "store-a/s-4.jpg",
       "store-a/s-3.jpg",
     ]);
-    expect(examples[0].confirmed).toEqual(extraction);
+    expect(examples[0].extraction).toEqual(extraction);
     expect(await listFewShotExamples(storeA, supplierId, 10)).toHaveLength(3);
     expect(await listFewShotExamples(storeA, supplierId, 1)).toHaveLength(1);
     expect(await listFewShotExamples(storeA, "otro-proveedor")).toEqual([]);
+  });
+
+  it("ignora la forma vieja y el JSON roto registrando solo el código (D10)", async () => {
+    const secret = "PROVEEDOR SECRETO";
+    const rows: [string, unknown][] = [
+      ["legacy", { ...extraction, supplier: { name: secret } }],
+      ["broken", `{"extraction": "${secret}`],
+      ["good", { extraction, lines: [{ lineIndex: 0, productId: "p1" }] }],
+    ];
+    for (const [index, [sha, confirmed]] of rows.entries()) {
+      const scan = await seedScanForTest(storeA, input({ imageSha256: sha, storagePath: `store-a/${sha}.jpg` }));
+      confirm(scan.id, `2026-10-0${index + 1}T12:00:00.000Z`, confirmed);
+    }
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const examples = await listFewShotExamples(storeA, supplierId);
+
+      expect(examples).toEqual([expect.objectContaining({ extraction, storagePath: "store-a/good.jpg" })]);
+      expect(warn.mock.calls).toEqual([
+        ["[invoice-scan] confirmed fuera del contrato", { code: "INVALID_CONFIRMED_SCAN" }],
+        ["[invoice-scan] confirmed fuera del contrato", { code: "INVALID_CONFIRMED_SCAN" }],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

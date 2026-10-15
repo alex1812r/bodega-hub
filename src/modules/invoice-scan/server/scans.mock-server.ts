@@ -12,7 +12,7 @@ import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
 import { mockState } from "@/shared/mocks/mockStore";
 import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
-import type { InvoiceExtraction, InvoiceScanLimits } from "../contracts";
+import type { InvoiceScanLimits } from "../contracts";
 import {
   DISCARD_CLAIMED_MESSAGE,
   DISCARD_NOT_ALLOWED_MESSAGES,
@@ -25,6 +25,7 @@ import {
   isReserveInputInRange,
   isScanStoragePathInScope,
   MAX_FEW_SHOT_EXAMPLES,
+  parseConfirmedScan,
   type StoredFewShotExample,
   type InvoiceScanCompletion,
   type InvoiceScanContext,
@@ -298,13 +299,14 @@ export async function listFewShotExamples(
   const count = Math.min(Math.max(Math.trunc(max), 0), MAX_FEW_SHOT_EXAMPLES);
 
   return [...scans().values()]
-    .filter(
-      (scan): scan is InvoiceScanRow & { confirmed: InvoiceExtraction } =>
-        scan.storeId === ctx.storeId && scan.supplierId === supplierId && scan.confirmed !== null,
-    )
+    .filter((scan) => scan.storeId === ctx.storeId && scan.supplierId === supplierId && scan.confirmed !== null)
     .sort(byNewest)
     .slice(0, count)
-    .map((scan) => ({ confirmed: scan.confirmed, scanId: scan.id, storagePath: scan.storagePath }));
+    .flatMap((scan) => {
+      const confirmed = parseConfirmedScan(scan.confirmed);
+
+      return confirmed ? [{ extraction: confirmed.extraction, scanId: scan.id, storagePath: scan.storagePath }] : [];
+    });
 }
 
 /** El mock no usa cliente: el primer argumento existe por paridad con `scans.server.ts`. */

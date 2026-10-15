@@ -3,8 +3,10 @@
  * parche 20261019a; plan factura-escaneo-gtm §3 "Idempotencia y cuota",
  * "Trazabilidad" y §4). Los comparten `scans.server.ts` y `scans.mock-server.ts`.
  */
+import { z } from "zod";
+
 import { INVOICE_MAX_PAGES } from "../client/invoiceLimits";
-import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
+import { invoiceExtractionSchema, type InvoiceExtraction, type InvoiceMatch } from "../contracts";
 
 /** `processing`: reservado por `reserveScan` mientras el modelo lee (parche 20261019e). */
 export const invoiceScanStatuses = ["processing", "extracted", "confirmed", "discarded", "failed"] as const;
@@ -34,8 +36,13 @@ export type InvoiceScanRow = {
   /** null mientras no hay lectura (escaneo fallido: la columna guarda `{}`). */
   extracted: InvoiceExtraction | null;
   matched: InvoiceMatch | null;
-  /** Lectura confirmada por el usuario al crear la compra (verdad de la capa 2). */
-  confirmed: InvoiceExtraction | null;
+  /**
+   * Confirmación del usuario al crear la compra (verdad de la capa 2), null si
+   * no hay. `unknown` a propósito: la escribe Emparejamiento y hay filas con la
+   * forma vieja (InvoiceExtraction suelta); quien la lea valida con
+   * `parseConfirmedScan` (D10).
+   */
+  confirmed: unknown;
   purchaseId: string | null;
   /** Proveedor confirmado (capa 2); lo rellena Emparejamiento al confirmar. */
   supplierId: string | null;
@@ -151,11 +158,47 @@ export type InvoiceScanCompletion = {
   matched: InvoiceMatch;
 };
 
-/** Ejemplo few-shot de la capa 2: imagen guardada + lectura confirmada. */
+/**
+ * Forma de `invoice_scans.confirmed` (D10): la lectura corregida por el usuario
+ * y el producto elegido por línea. La raíz admite claves nuevas de Emparejamiento.
+ */
+export const confirmedScanSchema = z
+  .object({
+    extraction: invoiceExtractionSchema,
+    lines: z.array(
+      z.object({
+        lineIndex: z.number().int().nonnegative(),
+        productId: z.string(),
+        packLabel: z.string().optional(),
+        unitsPerPack: z.number().int().positive().optional(),
+      }),
+    ),
+  })
+  .loose();
+export type ConfirmedScan = z.infer<typeof confirmedScanSchema>;
+
+export const INVALID_CONFIRMED_SCAN = "INVALID_CONFIRMED_SCAN";
+
+/**
+ * Valida `confirmed` en el borde. Una fila fuera del contrato (forma vieja,
+ * JSON roto) devuelve null y registra solo el código, nunca su contenido.
+ */
+export function parseConfirmedScan(value: unknown): ConfirmedScan | null {
+  const parsed = confirmedScanSchema.safeParse(value);
+
+  if (!parsed.success) {
+    console.warn("[invoice-scan] confirmed fuera del contrato", { code: INVALID_CONFIRMED_SCAN });
+    return null;
+  }
+
+  return parsed.data;
+}
+
+/** Ejemplo few-shot de la capa 2: imagen guardada + `confirmed.extraction` ya validado. */
 export type StoredFewShotExample = {
   scanId: string;
   storagePath: string;
-  confirmed: InvoiceExtraction;
+  extraction: InvoiceExtraction;
 };
 
 /** Escaneo vencido que la purga (cron) debe borrar: primero Storage, luego la fila. */

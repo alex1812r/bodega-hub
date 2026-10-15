@@ -326,8 +326,8 @@ function limitReached(limit: number, used: number, pages: number): ApiError {
 
 /**
  * Hasta 3 escaneos confirmados del proveedor; una imagen que no se descarga, o
- * cuya ruta guardada no es de la tienda de la sesión, se omite. El `confirmed`
- * es entrada no confiable (SCN-03q): solo viaja su formato saneado, y si no
+ * cuya ruta guardada no es de la tienda de la sesión, se omite. `confirmed.extraction`
+ * (validado por el repositorio, D10) es entrada no confiable (SCN-03q): solo viaja su formato saneado, y si no
  * valida o tiene valores absurdos el ejemplo se omite registrando solo el código.
  */
 async function loadFewShot(
@@ -348,7 +348,7 @@ async function loadFewShot(
         return null;
       }
 
-      const reduced = toFewShotFormat(example.confirmed);
+      const reduced = toFewShotFormat(example.extraction);
 
       if (!reduced.ok) {
         console.warn("[invoice-scan] ejemplo few-shot descartado", { code: reduced.code });
