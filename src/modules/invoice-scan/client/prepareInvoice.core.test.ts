@@ -3,7 +3,7 @@
  */
 import { sha256OfPages } from "../server/storage";
 
-import { INVOICE_MAX_BYTES, INVOICE_MAX_SIDE } from "./invoiceLimits";
+import { INVOICE_MAX_BYTES, INVOICE_MAX_SIDE, INVOICE_TARGET_BYTES } from "./invoiceLimits";
 import {
   assertInvoicePageCount,
   classifyInvoiceType,
@@ -86,6 +86,23 @@ describe("encodePageWithinLimit", () => {
     expect(page.width).toBeLessThan(1600);
     expect(page.width / page.height).toBeCloseTo(4 / 3, 1);
     expect(calls.at(-1)?.quality).toBe(INVOICE_QUALITY_STEPS.at(-1));
+  });
+
+  it("6.15: el objetivo es 1 MB decimal; 1 020 838 B (≤ 1 MiB) no se acepta y baja la calidad", async () => {
+    expect(INVOICE_TARGET_BYTES).toBe(1_000_000);
+    expect(INVOICE_MAX_BYTES).toBe(1_048_576);
+    const sizes = [1_020_838, 950_000];
+    const qualities: number[] = [];
+    const encode: PageEncoder = async (_size, quality) => {
+      qualities.push(quality);
+      return new Blob([new Uint8Array(sizes[qualities.length - 1] ?? 900_000)], { type: "image/jpeg" });
+    };
+
+    const page = await encodePageWithinLimit({ height: 4500, width: 6000 }, encode, "image/jpeg");
+
+    expect(page.bytes).toBe(950_000);
+    expect(page.bytes).toBeLessThanOrEqual(INVOICE_TARGET_BYTES);
+    expect(qualities).toEqual(INVOICE_QUALITY_STEPS.slice(0, 2));
   });
 
   it("si ni reduciendo cabe, lanza un error en español", async () => {

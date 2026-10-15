@@ -3,7 +3,7 @@
  * objetivo, bucle de compresión con un encoder inyectable y hash del escaneo.
  * No toca canvas ni pdfjs, así que se prueba en jest sin navegador.
  */
-import { INVOICE_MAX_BYTES, INVOICE_MAX_PAGES, INVOICE_MAX_SIDE } from "./invoiceLimits";
+import { INVOICE_MAX_PAGES, INVOICE_MAX_SIDE, INVOICE_TARGET_BYTES } from "./invoiceLimits";
 import type { InvoiceQuality } from "./invoiceQuality.core";
 
 export type InvoicePageMediaType = "image/jpeg" | "image/webp";
@@ -87,7 +87,7 @@ export type PageEncoder = (size: Dimensions, quality: number) => Promise<Blob>;
 
 /**
  * Codifica una página dentro de los límites: primero ajusta el lado mayor a
- * `INVOICE_MAX_SIDE`, luego baja la calidad hasta pesar ≤ `INVOICE_MAX_BYTES` y,
+ * `INVOICE_MAX_SIDE`, luego baja la calidad hasta pesar ≤ `INVOICE_TARGET_BYTES` y,
  * si a la calidad mínima sigue pesando más, reduce las dimensiones.
  */
 export async function encodePageWithinLimit(
@@ -101,7 +101,7 @@ export async function encodePageWithinLimit(
   for (const quality of INVOICE_QUALITY_STEPS) {
     const blob = await encode(size, quality);
 
-    if (blob.size <= INVOICE_MAX_BYTES) {
+    if (blob.size <= INVOICE_TARGET_BYTES) {
       return toPage(blob, size, mediaType);
     }
   }
@@ -110,7 +110,7 @@ export async function encodePageWithinLimit(
     size = fitWithin(size, Math.floor(Math.max(size.width, size.height) * 0.8));
     const blob = await encode(size, minQuality);
 
-    if (blob.size <= INVOICE_MAX_BYTES) {
+    if (blob.size <= INVOICE_TARGET_BYTES) {
       return toPage(blob, size, mediaType);
     }
   }
