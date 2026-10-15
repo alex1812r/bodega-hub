@@ -14,6 +14,7 @@ import {
   insertScan,
   listFewShotExamples,
   deleteScansByIds,
+  listExpiredScanObjects,
   listExpiredScans,
   markScanFailed,
 } from "./scans.server";
@@ -317,6 +318,33 @@ describe("scans.server · purga a 90 días", () => {
 
     await expect(
       listExpiredScans(client as unknown as AdminClient, 90, new Date(), 100),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  it("listExpiredScanObjects llama a la RPC con el corte y el límite y devuelve los nombres", async () => {
+    const rpc = jest.fn(async () => ok([{ name: `s1/${sha}/p1.jpg` }, { name: `s1/${sha}/p2.jpg` }]));
+    const { client } = fakeClient([]);
+
+    const result = await listExpiredScanObjects(
+      { ...client, rpc } as unknown as AdminClient,
+      90,
+      new Date("2026-10-15T12:00:00.000Z"),
+      100,
+    );
+
+    expect(result).toEqual([`s1/${sha}/p1.jpg`, `s1/${sha}/p2.jpg`]);
+    expect(rpc).toHaveBeenCalledWith("list_expired_invoice_scan_objects", {
+      p_before: "2026-07-17T12:00:00.000Z",
+      p_limit: 100,
+    });
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("listExpiredScanObjects propaga el error de la RPC", async () => {
+    const rpc = jest.fn(async () => ({ data: null, error: { code: "42501", message: "denied" } }));
+
+    await expect(
+      listExpiredScanObjects({ rpc } as unknown as AdminClient, 90, new Date(), 100),
     ).rejects.toBeInstanceOf(Error);
   });
 });

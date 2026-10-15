@@ -341,6 +341,29 @@ export async function listExpiredScans(
   }));
 }
 
+/**
+ * Objetos del bucket `invoice-scans` subidos hace más de `olderThanDays` días
+ * que no pertenecen a un escaneo vivo (RPC del parche 20261019c, solo service
+ * role): sobre todo páginas subidas por `upload-url` que nunca llegaron a fila.
+ * Como mucho `limit`, los más antiguos primero. No borra nada.
+ */
+export async function listExpiredScanObjects(
+  adminClient: AdminClient,
+  olderThanDays: number,
+  now: Date,
+  limit: number,
+): Promise<string[]> {
+  const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await adminClient.rpc("list_expired_invoice_scan_objects", {
+    p_before: cutoff,
+    p_limit: limit,
+  });
+
+  throwIfSupabaseError(error);
+
+  return ((data ?? []) as { name: string }[]).map((row) => row.name);
+}
+
 /** Borra las filas indicadas (cron con service role). Devuelve cuántas se borraron. */
 export async function deleteScansByIds(adminClient: AdminClient, ids: readonly string[]): Promise<number> {
   if (ids.length === 0) {

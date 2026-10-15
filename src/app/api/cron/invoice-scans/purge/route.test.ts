@@ -142,7 +142,10 @@ describe("/api/cron/invoice-scans/purge", () => {
     const lt = jest.fn();
     const limit = jest.fn();
     const deleteIn = jest.fn();
+    const rpc = jest.fn();
     let table: ExpiredRow[] = [];
+    /** Objetos del bucket de más de 90 días sin escaneo vivo (lo que devuelve la RPC). */
+    let orphans: string[] = [];
 
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "supabase";
@@ -158,6 +161,11 @@ describe("/api/cron/invoice-scans/purge", () => {
         return { data: table.slice(0, count), error: null };
       });
       lt.mockReturnValue({ order: () => ({ limit }) });
+      orphans = [];
+      rpc.mockImplementation(async (_fn: string, args: { p_limit: number }) => {
+        calls.push("orphans");
+        return { data: orphans.slice(0, args.p_limit).map((name) => ({ name })), error: null };
+      });
       deleteIn.mockImplementation((_column: string, ids: string[]) => ({
         select: async () => {
           calls.push("rows");
@@ -168,10 +176,30 @@ describe("/api/cron/invoice-scans/purge", () => {
       }));
       mockedAdmin.mockReturnValue({
         from: () => ({ delete: () => ({ in: deleteIn }), select: () => ({ lt }) }),
+        rpc,
       } as unknown as ReturnType<typeof createAdminSupabaseClient>);
-      mockedRemove.mockImplementation(async () => {
+      mockedRemove.mockImplementation(async (_client, paths) => {
         calls.push("storage");
+        orphans = orphans.filter((name) => !paths.includes(name));
       });
+    });
+
+    it("purges a 91-day object that never got a row (upload-url without a successful POST)", async () => {
+      table = [];
+      const orphan = `store-1/${SHA_OLD}/p1.jpg`;
+      orphans = [orphan];
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 0, objects: 1 });
+      expect(rpc).toHaveBeenCalledWith("list_expired_invoice_scan_objects", {
+        p_before: new Date(NOW.getTime() - 90 * DAY_MS).toISOString(),
+        p_limit: 100,
+      });
+      expect(mockedRemove).toHaveBeenCalledWith(expect.anything(), [orphan]);
+      expect(orphans).toEqual([]);
     });
 
     it("removes every page from Storage before deleting the rows", async () => {
@@ -180,7 +208,7 @@ describe("/api/cron/invoice-scans/purge", () => {
 
       expect(response.status).toBe(200);
       expect(body.data).toEqual({ deleted: 2, objects: 3 });
-      expect(calls).toEqual(["list", "storage", "rows"]);
+      expect(calls).toEqual(["list", "storage", "rows", "orphans"]);
       expect(lt).toHaveBeenCalledWith(
         "created_at",
         new Date(NOW.getTime() - 90 * DAY_MS).toISOString(),
@@ -225,7 +253,7 @@ describe("/api/cron/invoice-scans/purge", () => {
 
       expect(response.status).toBe(200);
       expect(body.data).toEqual({ deleted: 250, objects: 250 });
-      expect(calls).toEqual(["list", "storage", "rows", "list", "storage", "rows", "list", "storage", "rows"]);
+      expect(calls).toEqual(["list", "storage", "rows", "list", "storage", "rows", "list", "storage", "rows", "orphans"]);
       expect(limit.mock.calls.map(([count]) => count)).toEqual([100, 100, 100]);
       expect(mockedRemove.mock.calls.map(([, paths]) => paths.length)).toEqual([100, 100, 50]);
       expect(deleteIn.mock.calls.map(([, ids]) => (ids as string[]).length)).toEqual([100, 100, 50]);
@@ -258,6 +286,87 @@ describe("/api/cron/invoice-scans/purge", () => {
       expect(body.data).toEqual({ deleted: 2000, objects: 2000 });
       expect(limit).toHaveBeenCalledTimes(20);
       expect(table).toHaveLength(50);
+    });
+
+    it("purges orphan objects after the rows, in batches of at most 100, and adds them to objects", async () => {
+      orphans = Array.from({ length: 250 }, (_, index) => `store-1/${index.toString(16).padStart(64, "0")}/p1.jpg`);
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 2, objects: 3 + 250 });
+      expect(calls).toEqual([
+        "list", "storage", "rows",
+        "orphans", "storage", "orphans", "storage", "orphans", "storage",
+      ]);
+      expect(rpc.mock.calls.map(([, args]) => (args as { p_limit: number }).p_limit)).toEqual([100, 100, 100]);
+      expect(mockedRemove.mock.calls.map(([, paths]) => paths.length)).toEqual([3, 100, 100, 50]);
+      expect(orphans).toEqual([]);
+    });
+
+    it("caps the orphan phase at 20 batches too", async () => {
+      table = [];
+      orphans = Array.from({ length: 2050 }, (_, index) => `store-1/${index.toString(16).padStart(64, "0")}/p1.jpg`);
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 0, objects: 2000 });
+      expect(rpc).toHaveBeenCalledTimes(20);
+      expect(orphans).toHaveLength(50);
+    });
+
+    it("answers 503 with what was already purged when Storage fails on orphans", async () => {
+      orphans = [`store-1/${"c".repeat(64)}/p1.jpg`];
+      mockedRemove
+        .mockImplementationOnce(async () => {
+          calls.push("storage");
+        })
+        .mockRejectedValueOnce(new ApiError(503, "INTERNAL_ERROR", "Storage caído"));
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeErrorBody;
+
+      expect(response.status).toBe(503);
+      expect(body.error.details).toEqual({ deleted: 2, objects: 3 });
+      expect(orphans).toHaveLength(1);
+    });
+  });
+
+  describe("mock data source: objects without a row", () => {
+    const ctx = { storeId: "store-orphans", userId: "user-1" };
+    const SHA_LIVE = "d".repeat(64);
+    const SHA_ORPHAN = "e".repeat(64);
+
+    beforeEach(() => {
+      process.env.API_DATA_SOURCE = "mock";
+      jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"], now: NOW });
+    });
+
+    it("removes a 91-day orphan and keeps the old image of a live (retried) scan", async () => {
+      const old = new Date(NOW.getTime() - 91 * DAY_MS).toISOString();
+      const orphan = `store-orphans/${SHA_ORPHAN}/p1.jpg`;
+      const liveImage = `store-orphans/${SHA_LIVE}/p1.jpg`;
+      mock.recordScanObject(orphan, old);
+      mock.recordScanObject(liveImage, old);
+      await mock.insertScan(ctx, {
+        imageSha256: SHA_LIVE,
+        model: "m",
+        provider: "p",
+        storagePath: liveImage,
+      });
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 0, objects: 1 });
+      expect(await mock.listExpiredScanObjects(null, 90, NOW, 100)).toEqual([]);
+      expect(await mock.listExpiredScanObjects(null, 90, new Date(NOW.getTime() + 91 * DAY_MS), 100)).toEqual([
+        liveImage,
+      ]);
     });
   });
 });

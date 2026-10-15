@@ -2,7 +2,8 @@
  * Repositorio de escaneos de factura para el modo mock del BFF: en memoria y
  * por tienda, con la misma semántica que `scans.server.ts` (unique tienda +
  * hash, `failed` no es caché y se reutiliza, cuota por día de Caracas,
- * few-shot ≤ 3, 404 entre tiendas, purga a 90 días).
+ * few-shot ≤ 3, 404 entre tiendas, purga a 90 días de filas y de objetos sin
+ * escaneo vivo).
  */
 import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
@@ -176,4 +177,49 @@ export async function listExpiredScans(
 
 export async function deleteScansByIds(_adminClient: unknown, ids: readonly string[]): Promise<number> {
   return ids.filter((id) => scans().delete(id)).length;
+}
+
+/** Fecha de subida de cada objeto del bucket (equivale a `storage.objects.created_at`). */
+function objectDates() {
+  return mockState("invoice-scan:object-dates", () => new Map<string, string>());
+}
+
+/** Registra un objeto del bucket en memoria con su fecha de subida. */
+export function recordScanObject(path: string, createdAt: string = new Date().toISOString()): void {
+  objectDates().set(path, createdAt);
+}
+
+/**
+ * Paridad con `list_expired_invoice_scan_objects` (20261019c): objetos subidos
+ * antes del corte que no están en la carpeta `<store>/<sha>/` de un escaneo vivo
+ * (creado en o después del corte), los más antiguos primero.
+ */
+export async function listExpiredScanObjects(
+  _adminClient: unknown,
+  olderThanDays: number,
+  now: Date,
+  limit: number,
+): Promise<string[]> {
+  const cutoff = now.getTime() - olderThanDays * 24 * 60 * 60 * 1000;
+  const liveFolders = new Set(
+    [...scans().values()]
+      .filter((scan) => new Date(scan.createdAt).getTime() >= cutoff)
+      .map((scan) => `${scan.storeId}/${scan.imageSha256}`),
+  );
+
+  return [...objectDates().entries()]
+    .filter(([path, createdAt]) => {
+      const [storeId, sha256] = path.split("/");
+      return new Date(createdAt).getTime() < cutoff && !liveFolders.has(`${storeId}/${sha256}`);
+    })
+    .sort(([, a], [, b]) => a.localeCompare(b))
+    .slice(0, limit)
+    .map(([path]) => path);
+}
+
+/** Paridad con `removeInvoiceObjects`: borra los objetos indicados del bucket en memoria. */
+export async function removeScanObjects(_adminClient: unknown, paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    objectDates().delete(path);
+  }
 }

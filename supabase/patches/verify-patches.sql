@@ -2468,4 +2468,26 @@ select
       and coalesce(pol.qual, pol.with_check) ilike '%invoice-scans%'
       and pol.cmd in ('UPDATE', 'DELETE', 'ALL')
   )
+union all
+select
+  'list_expired_invoice_scan_objects existe, security definer y search_path vacio (20261019c)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'list_expired_invoice_scan_objects'
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']
+      and p.prosrc ilike '%invoice_scans%'
+  )
+union all
+select
+  'list_expired_invoice_scan_objects solo la ejecuta service_role: sin execute para anon ni authenticated (20261019c)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'list_expired_invoice_scan_objects'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
 order by 1;

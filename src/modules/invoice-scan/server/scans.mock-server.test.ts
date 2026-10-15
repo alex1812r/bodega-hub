@@ -13,8 +13,11 @@ import {
   insertScan,
   listFewShotExamples,
   deleteScansByIds,
+  listExpiredScanObjects,
   listExpiredScans,
   markScanFailed,
+  recordScanObject,
+  removeScanObjects,
 } from "./scans.mock-server";
 import {
   DEFAULT_INVOICE_SCAN_DAILY_LIMIT,
@@ -214,5 +217,26 @@ describe("scans.mock-server · purga a 90 días", () => {
     expect(await getScan(storeA, old.id)).toBeNull();
     expect(await getScan(storeB, oldB.id)).toBeNull();
     expect(await getScan(storeA, fresh.id)).not.toBeNull();
+  });
+
+  it("lista los objetos vencidos sin escaneo vivo, los más antiguos primero, y removeScanObjects los borra", async () => {
+    const now = new Date("2026-10-15T12:00:00.000Z");
+    const live = "d".repeat(64);
+    const orphanA = `store-a/${"e".repeat(64)}/p1.jpg`;
+    const orphanB = `store-b/${"f".repeat(64)}/p1.png`;
+    const liveImage = `store-a/${live}/p1.jpg`;
+    const fresh = `store-a/${"0".repeat(64)}/p1.jpg`;
+    recordScanObject(orphanB, "2026-07-10T00:00:00.000Z");
+    recordScanObject(orphanA, "2026-07-01T00:00:00.000Z");
+    recordScanObject(liveImage, "2026-07-01T00:00:00.000Z");
+    recordScanObject(fresh, "2026-07-17T12:00:00.000Z");
+    const retried = await insertScan(storeA, input({ imageSha256: live, storagePath: liveImage }));
+    store().set(retried.id, { ...retried, createdAt: "2026-07-17T12:00:00.000Z" });
+
+    expect(await listExpiredScanObjects(null, 90, now, 100)).toEqual([orphanA, orphanB]);
+    expect(await listExpiredScanObjects(null, 90, now, 1)).toEqual([orphanA]);
+
+    await removeScanObjects(null, [orphanA, orphanB]);
+    expect(await listExpiredScanObjects(null, 90, now, 100)).toEqual([]);
   });
 });
