@@ -1,6 +1,7 @@
 export * from "./currency";
 export * from "./dashboard/index";
 export * from "./dates/index";
+export * from "./invoice/index";
 export * from "./payments/index";
 export * from "./permissions";
 export * from "./pricing";
