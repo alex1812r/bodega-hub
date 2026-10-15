@@ -12,7 +12,8 @@
 // El orden NO es el alfabético de los nombres: es el de docs/despliegue-ux-mejoras.md, sección 2, que es la única
 // fuente del orden de despliegue. Si se añade o se mueve un parche, se cambia la lista aquí, se corre
 // `npm run deploy:sql` y se actualiza ese documento; `scripts/build-deploy-sql.test.ts` falla si los archivos de
-// `deploy/` quedan desfasados o si un parche del plan no está en ninguna de las dos listas.
+// `deploy/` quedan desfasados o si un parche del plan (rango UX_MEJORAS_FIRST_PATCH..UX_MEJORAS_LAST_PATCH) no está
+// en ninguna de las dos listas.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,21 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PATCHES_DIR = resolve(ROOT, "supabase/patches");
 const DEPLOY_DIR = resolve(PATCHES_DIR, "deploy");
+
+/**
+ * Rango del plan ux-mejoras por prefijo de fecha (ambos inclusive). Los parches posteriores a la última fecha del
+ * plan (20261019a en adelante: factura-escaneo y los que sigan) son de OTROS planes, tienen su propio despliegue y no
+ * van en los archivos de `deploy/ux-mejoras-0*.sql`. Si el plan ux-mejoras recibe otro parche, se sube este límite.
+ */
+export const UX_MEJORAS_FIRST_PATCH = "20261007a";
+export const UX_MEJORAS_LAST_PATCH = "20261018a";
+
+/** ¿El parche `supabase/patches/<name>` cae dentro del rango del plan ux-mejoras? */
+export function isUxMejorasPatch(name) {
+  const prefix = name.slice(0, UX_MEJORAS_LAST_PATCH.length);
+
+  return prefix >= UX_MEJORAS_FIRST_PATCH && prefix <= UX_MEJORAS_LAST_PATCH;
+}
 
 /** Antes de desplegar el BFF, en este orden exacto. */
 const BEFORE_BFF = [
@@ -201,4 +217,7 @@ function main() {
   }
 }
 
-main();
+// Solo al ejecutarlo como script: el test lo importa por el rango del plan y no debe (re)escribir nada.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
