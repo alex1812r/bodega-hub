@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { InvoiceExtraction } from "../contracts";
 import { notAnInvoiceExtraction, singlePageExtraction } from "./__fixtures__/extractions";
 import { matchScan } from "./matchScan";
 
-const ctx = { dataSource: "mock", storeId: "store-1" } as const;
+const ctx = { dataSource: "mock", scanId: "scan-1", storeId: "store-1" } as const;
 
 describe("matchScan (stub hasta SCN-05)", () => {
   it("deja todas las líneas sin emparejar, en modo unidad y sin avisos", async () => {
@@ -48,5 +51,14 @@ describe("matchScan (stub hasta SCN-05)", () => {
 
     expect(match.lines).toEqual([]);
     expect(match.totals).toEqual({ computed: 0, mismatch: false });
+  });
+
+  it("deja el PUNTO DE INTEGRACIÓN con matchInvoice y excludeScanId del escaneo reservado", () => {
+    const source = readFileSync(join(__dirname, "matchScan.ts"), "utf8");
+
+    expect(source).toContain("PUNTO DE INTEGRACIÓN");
+    expect(source).toContain(
+      "matchInvoice(extraction, await loadMatchContext(supabase, storeId, extraction, { excludeScanId: scanId }))",
+    );
   });
 });

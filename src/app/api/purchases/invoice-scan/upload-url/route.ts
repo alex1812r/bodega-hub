@@ -3,8 +3,8 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requireStorePermission } from "@/lib/api/requirePermission";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
+import { requireInvoiceScanSession } from "@/modules/invoice-scan/server/requireScanSession";
 import { INVOICE_MIXED_TYPES_MESSAGE } from "@/modules/invoice-scan/server/scanService";
 import {
   createInvoiceUploadUrls,
@@ -44,7 +44,9 @@ const uploadUrlQuerySchema = z
  */
 export async function GET(request: Request) {
   try {
-    const auth = await requireStorePermission(request, "purchases.create");
+    const dataSource = resolveDataSource();
+    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2).
+    const auth = await requireInvoiceScanSession(request, "purchases.create", dataSource);
     const params = new URL(request.url).searchParams;
     const query = uploadUrlQuerySchema.parse({
       pages: params.get("pages") ?? undefined,
@@ -56,7 +58,7 @@ export async function GET(request: Request) {
       page: index + 1,
     }));
     const uploads =
-      resolveDataSource() === "supabase"
+      dataSource === "supabase"
         ? await createInvoiceUploadUrls(createAdminSupabaseClient(), auth.storeId, query.sha256, pages)
         : createMockInvoiceUploadUrls(auth.storeId, query.sha256, pages);
 

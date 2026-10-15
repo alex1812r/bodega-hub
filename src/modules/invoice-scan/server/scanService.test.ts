@@ -116,7 +116,11 @@ describe("scanInvoice · forma multipart", () => {
       limits: { limit: 50, remaining: 48, used: 2 },
     });
     expect(response.matched.lines.every((line) => line.status === "unmatched")).toBe(true);
-    expect(matcher).toHaveBeenCalledWith(singlePageExtraction, { dataSource: "mock", storeId: ctx.storeId });
+    expect(matcher).toHaveBeenCalledWith(singlePageExtraction, {
+      dataSource: "mock",
+      scanId: response.scanId,
+      storeId: ctx.storeId,
+    });
     expect(extract).toHaveBeenCalledWith(expect.objectContaining({ fewShot: [], pages }));
     expect([...storage.objects.keys()]).toEqual([
       `${ctx.storeId}/${sha}/p1.jpg`,
@@ -788,6 +792,44 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     });
     expect(JSON.stringify(warn.mock.calls)).not.toContain("ilegible");
     warn.mockRestore();
+  });
+
+  it.each([
+    ["con otra forma", { lines: 7, x: "basura" }],
+    ["con una línea sin estado válido", { lines: [{ entryMode: "unit", index: 0, issues: [], status: "ok", taxRateCode: "general" }], supplier: {}, totals: { computed: 1, mismatch: false } }],
+    ["sin totales", { lines: [], supplier: {} }],
+  ])("un emparejamiento en caché %s no se sirve: se re-empareja sin llamar al modelo ni cobrar (B1)", async (_label, matched) => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const ctx = newContext();
+    const { built, extract, matcher } = deps();
+    const pages = [page(`matched roto ${JSON.stringify(matched)}`)];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    tamper(first.scanId, { matched: matched as unknown as InvoiceScanRow["matched"] });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again).toEqual({ ...first, cached: true });
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(matcher).toHaveBeenCalledTimes(2);
+    expect(matcher).toHaveBeenLastCalledWith(singlePageExtraction, {
+      dataSource: "mock",
+      scanId: first.scanId,
+      storeId: ctx.storeId,
+    });
+    expect(again.limits.used).toBe(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("basura");
+    warn.mockRestore();
+  });
+
+  it("un emparejamiento en caché válido se sirve tal cual, sin volver a emparejar", async () => {
+    const ctx = newContext();
+    const { built, matcher } = deps();
+    const pages = [page("matched válido")];
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(matcher).toHaveBeenCalledTimes(1);
   });
 
   it("una lectura vieja no pisa la nueva: si otra reserva tomó la fila, complete responde 409 y la fila sigue con el intento nuevo (C1/C2)", async () => {

@@ -5,6 +5,8 @@ import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
 export type MatchScanContext = {
   storeId: string;
   dataSource: "supabase" | "mock";
+  /** Escaneo ya reservado que se empareja: se excluye de su propia detección de duplicados. */
+  scanId: string;
 };
 
 export type InvoiceScanMatcher = (
@@ -16,10 +18,10 @@ export type InvoiceScanMatcher = (
 const TOTALS_TOLERANCE = 0.01;
 
 // PUNTO DE INTEGRACIÓN (Emparejamiento SCN-05)
-// Stub hasta integrar la rama de Emparejamiento: al integrar se sustituye por
-// `matchInvoice(extraction, await loadMatchContext(...))` usando `ctx`. Ninguna
-// línea se empareja ni se toca un alias: todas llegan `unmatched` para que el
-// usuario elija.
+// Stub hasta integrar la rama de Emparejamiento. Al integrar, se sustituye por
+// `matchInvoice(extraction, await loadMatchContext(supabase, storeId, extraction, { excludeScanId: scanId }))`
+// con `storeId`, `dataSource` y `scanId` de `ctx`. Ninguna línea se empareja
+// ni se toca un alias: todas llegan `unmatched` para que el usuario elija.
 export const matchScan: InvoiceScanMatcher = async (extraction) => {
   const computed = roundMoney(extraction.lines.reduce((sum, line) => sum + line.lineTotal, 0));
   const read = extraction.total;

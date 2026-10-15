@@ -1,8 +1,7 @@
-import { ApiError, toErrorResponse, unauthenticatedError } from "@/lib/api/apiError";
+import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
-import { requireStorePermission } from "@/lib/api/requirePermission";
 import {
   createInvoiceScanDeps,
   INVOICE_MULTIPART_MAX_BYTES,
@@ -12,6 +11,7 @@ import {
   type ScanInvoiceInput,
   storedScanBodySchema,
 } from "@/modules/invoice-scan/server/scanService";
+import { requireInvoiceScanSession } from "@/modules/invoice-scan/server/requireScanSession";
 
 /** Una llamada al modelo por página (45 s de timeout cada una). */
 export const maxDuration = 300;
@@ -29,11 +29,9 @@ const INVALID_MULTIPART_MESSAGE = "No pudimos leer las páginas enviadas. Vuelve
  */
 export async function POST(request: Request) {
   try {
-    const auth = await requireStorePermission(request, "purchases.create");
-
-    if (!auth.userId) {
-      throw unauthenticatedError();
-    }
+    const dataSource = resolveDataSource();
+    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2).
+    const ctx = await requireInvoiceScanSession(request, "purchases.create", dataSource);
 
     const contentType = request.headers.get("content-type") ?? "";
     let input: ScanInvoiceInput;
@@ -52,8 +50,8 @@ export async function POST(request: Request) {
     }
 
     const result = await scanInvoice(
-      createInvoiceScanDeps(resolveDataSource()),
-      { storeId: auth.storeId, userId: auth.userId },
+      createInvoiceScanDeps(dataSource),
+      ctx,
       input,
       { signal: request.signal },
     );

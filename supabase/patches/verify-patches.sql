@@ -2419,9 +2419,13 @@ select
   )
 union all
 select
-  'invoice_scans: RLS activa, select/insert/update para authenticated sin delete, anon sin privilegios (20261019a)',
+  'invoice_scans: RLS activa, authenticated solo select (sin insert, update ni delete), anon sin privilegios (20261019a, SCN-03o)',
   exists (select 1 from pg_class c where c.oid = to_regclass('public.invoice_scans') and c.relrowsecurity)
-  and coalesce(has_table_privilege('authenticated', 'public.invoice_scans', 'select, insert, update'), false)
+  and coalesce(has_table_privilege('authenticated', 'public.invoice_scans', 'select'), false)
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'insert')
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'update')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'insert')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'update')
   and not has_table_privilege('authenticated', 'public.invoice_scans', 'delete')
   and not has_table_privilege('anon', 'public.invoice_scans', 'select, insert, update, delete')
 union all
@@ -2655,5 +2659,31 @@ select
       and c.convalidated
       and pg_get_constraintdef(c.oid) ilike '%octet_length((extracted)::text) <= 524288%'
       and pg_get_constraintdef(c.oid) ilike '%octet_length((matched)::text) <= 524288%'
+  )
+union all
+select
+  'reserve_invoice_scan: 42501 si p_user_id no es perfil activo de p_store_id y limpia el reclamo de Emparejamiento al reusar la fila (20261019k)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosrc ilike '%p.id = p_user_id and p.store_id = p_store_id and p.is_active%'
+      and p.prosrc ilike '%errcode = ''42501''%'
+      and p.prosrc ilike '%''claim_request_id'', ''claimed_at'', ''learned_at''%'
+      and p.prosrc ilike '%attempt_id = v_attempt_id%'
+  )
+union all
+select
+  'discard_invoice_scan: PT409 con reclamo activo (5 min), purchase_id o confirmed (20261019k)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'discard_invoice_scan'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid, p_id uuid'
+      and p.prosrc ilike '%v_row.purchase_id is not null%'
+      and p.prosrc ilike '%v_row.confirmed is not null%'
+      and p.prosrc ilike '%->>''claim_request_id'' is not null%'
+      and p.prosrc ilike '%interval ''5 minutes''%'
+      and p.prosrc ilike '%se está confirmando en una compra%'
   )
 order by 1;

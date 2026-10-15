@@ -30,6 +30,7 @@ import {
   type InvoicePage,
 } from "./extract";
 import { inspectInvoiceImage } from "./imageInfo";
+import { invoiceMatchSchema } from "./invoiceMatchSchema";
 import { matchScan, type InvoiceScanMatcher } from "./matchScan";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 import * as mockRepo from "./scans.mock-server";
@@ -111,6 +112,8 @@ export const INVOICE_SCAN_CHANGED_MESSAGE =
   "La lectura de esta factura cambió mientras se procesaba. Vuelve a intentarlo.";
 /** Código que se registra (sin contenido) cuando la lectura en caché no cumple el contrato. */
 export const INVOICE_SCAN_INVALID_CACHE = "INVALID_CACHED_EXTRACTION";
+/** Código que se registra (sin contenido) cuando el `matched` en caché no cumple el contrato. */
+export const INVOICE_SCAN_INVALID_CACHED_MATCH = "INVALID_CACHED_MATCH";
 /** 404 del detalle cuando una página ya no está en el bucket (caos-3 C6). */
 export const INVOICE_SCAN_IMAGE_GONE_MESSAGE = "La imagen de esta factura ya no está disponible.";
 
@@ -362,10 +365,22 @@ export type ScanInvoiceOptions = {
 };
 
 /**
- * La lectura guardada de un `cached`, solo si `extracted` cumple el contrato y
- * hay emparejamiento; null si no (caos-3 C4: no se sirve). 409 si la fila ya
- * no está.
+ * La lectura guardada de un `cached`, solo si `extracted` cumple el contrato;
+ * null si no (caos-3 C4: no se sirve). Si el `matched` guardado no cumple el
+ * schema de `InvoiceMatch` (o falta), se vuelve a emparejar la lectura válida
+ * sin llamar al modelo ni cobrar (caos-4 B1). 409 si la fila ya no está.
  */
+async function rematchCachedScan(
+  deps: InvoiceScanDeps,
+  ctx: InvoiceScanContext,
+  scanId: string,
+  extraction: InvoiceExtraction,
+): Promise<InvoiceMatch> {
+  console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
+
+  return deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
+}
+
 async function readCachedScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
@@ -379,15 +394,19 @@ async function readCachedScan(
 
   const extraction = invoiceExtractionSchema.safeParse(cached.extracted);
 
-  if (!extraction.success || !cached.matched) {
+  if (!extraction.success) {
     return null;
   }
+
+  const matched = invoiceMatchSchema.safeParse(cached.matched).success && cached.matched
+    ? cached.matched
+    : await rematchCachedScan(deps, ctx, cached.id, extraction.data);
 
   return {
     cached: true,
     extraction: extraction.data,
     limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
-    matched: cached.matched,
+    matched,
     scanId: cached.id,
   };
 }
@@ -484,7 +503,7 @@ export async function scanInvoice(
   }
 
   try {
-    matched = await deps.matcher(result.extraction, { dataSource: deps.dataSource, storeId: ctx.storeId });
+    matched = await deps.matcher(result.extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
   } catch (error) {
     await fail("MATCH_ERROR");
     throw error;

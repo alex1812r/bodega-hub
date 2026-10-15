@@ -1,7 +1,7 @@
-import { toErrorResponse, unauthenticatedError } from "@/lib/api/apiError";
+import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requireStorePermission } from "@/lib/api/requirePermission";
+import { requireInvoiceScanSession } from "@/modules/invoice-scan/server/requireScanSession";
 import { createInvoiceScanDeps, discardInvoiceScan } from "@/modules/invoice-scan/server/scanService";
 
 /**
@@ -13,18 +13,11 @@ export async function POST(
   context: RouteContext<"/api/purchases/invoice-scan/[id]/discard">,
 ) {
   try {
-    const auth = await requireStorePermission(request, "purchases.create");
-
-    if (!auth.userId) {
-      throw unauthenticatedError();
-    }
-
+    const dataSource = resolveDataSource();
+    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2).
+    const ctx = await requireInvoiceScanSession(request, "purchases.create", dataSource);
     const { id } = await context.params;
-    const discarded = await discardInvoiceScan(
-      createInvoiceScanDeps(resolveDataSource()),
-      { storeId: auth.storeId, userId: auth.userId },
-      id,
-    );
+    const discarded = await discardInvoiceScan(createInvoiceScanDeps(dataSource), ctx, id);
 
     return jsonData(discarded);
   } catch (error) {

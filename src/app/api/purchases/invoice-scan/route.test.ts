@@ -5,12 +5,17 @@
 jest.mock("../../../../modules/invoice-scan/server/provider", () => ({
   createInvoiceScanModel: jest.fn(),
 }));
+jest.mock("../../../../lib/supabase/admin-client", () => ({
+  createAdminSupabaseClient: jest.fn(),
+}));
 
 import type { MockLanguageModelV4 } from "ai/test";
 
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { jpegHeader } from "@/modules/invoice-scan/server/__fixtures__/images";
 import { createMockInvoiceScanModel } from "@/modules/invoice-scan/server/mockModel";
 import { createInvoiceScanModel } from "@/modules/invoice-scan/server/provider";
+import { INVOICE_SCAN_REAL_SESSION_MESSAGE } from "@/modules/invoice-scan/server/requireScanSession";
 import type { InvoiceScanRow } from "@/modules/invoice-scan/server/scans.types";
 import { sha256OfPages } from "@/modules/invoice-scan/server/storage";
 import { mockState } from "@/shared/mocks/mockStore";
@@ -83,6 +88,20 @@ describe("POST /api/purchases/invoice-scan", () => {
     const { image, storeId } = fresh();
 
     expect((await POST(multipart(storeId, [image]))).status).toBe(401);
+  });
+
+  it("con datos en Supabase, la sesión demo (ALLOW_DEMO_AUTH) responde 401 sin tocar la base ni el modelo (caos-4 M2)", async () => {
+    process.env.API_DATA_SOURCE = "supabase";
+    process.env.ALLOW_DEMO_AUTH = "true";
+    (createAdminSupabaseClient as jest.Mock).mockClear();
+    const { image } = fresh();
+
+    const response = await POST(multipart("00000000-0000-4000-8000-000000000001", [image], {}, "admin"));
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.message).toBe(INVOICE_SCAN_REAL_SESSION_MESSAGE);
+    expect(createAdminSupabaseClient).not.toHaveBeenCalled();
+    expect(model.doGenerateCalls).toHaveLength(0);
   });
 
   it("responde 403 al vendedor (sin purchases.create)", async () => {

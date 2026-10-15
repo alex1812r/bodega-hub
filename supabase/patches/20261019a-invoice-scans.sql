@@ -18,7 +18,9 @@
 --    packages/core/src/permissions.ts (mismo patron que 20261010c):
 --      lectura   purchases.view   -> admin, almacen, contador
 --      escritura purchases.create -> admin, almacen (insert y update)
---    Sin delete para authenticated: la purga (90 dias) la hace el service role.
+--    SCN-03o: authenticated solo tiene el grant de SELECT; sin el de insert ni
+--    update esas politicas no conceden escritura (20261019g las retira). Sin
+--    delete para authenticated: la purga (90 dias) la hace el service role.
 --    Las excepciones por usuario (granted / denied) las aplica el BFF con
 --    requireStorePermission antes de tocar la tabla. anon sin privilegios.
 -- 3. Bucket Storage `invoice-scans` privado (1 MB, jpeg/png/webp). La ruta de
@@ -70,7 +72,9 @@ alter table public.invoice_scans enable row level security;
 
 revoke all on public.invoice_scans from anon;
 revoke all on public.invoice_scans from authenticated;
-grant select, insert, update on public.invoice_scans to authenticated;
+-- SCN-03o: authenticated solo lee. Las escrituras van por RPC con service role
+-- (20261019i); las politicas de insert/update de abajo no conceden nada sin el grant.
+grant select on public.invoice_scans to authenticated;
 grant all on public.invoice_scans to service_role;
 
 drop policy if exists "Purchase viewers read invoice scans" on public.invoice_scans;

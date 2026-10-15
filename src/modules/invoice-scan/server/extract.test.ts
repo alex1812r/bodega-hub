@@ -146,16 +146,10 @@ describe("extractInvoice", () => {
     await extractInvoice({ fewShot, model: modelInfo, pages: [page("objetivo")] });
 
     const prompt = model.doGenerateCalls[0]!.prompt;
-    expect(prompt.map((message) => message.role)).toEqual([
-      "system",
-      "user",
-      "assistant",
-      "user",
-      "assistant",
-      "user",
-      "assistant",
-      "user",
-    ]);
+    // Ejemplos en un solo mensaje de usuario delimitado + acuse fijo (SCN-03o).
+    expect(prompt.map((message) => message.role)).toEqual(["system", "user", "assistant", "user"]);
+    const examples = prompt[1]!;
+    expect(examples.role === "user" && examples.content.filter((part) => part.type === "file")).toHaveLength(3);
     const text = textOf(prompt);
     expect(text).toContain("EJ-3");
     expect(text).not.toContain("EJ-4");

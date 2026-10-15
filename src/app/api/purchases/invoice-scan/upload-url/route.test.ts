@@ -7,6 +7,8 @@ jest.mock("../../../../../lib/supabase/admin-client", () => ({
 }));
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
+import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
+import { INVOICE_SCAN_REAL_SESSION_MESSAGE } from "@/modules/invoice-scan/server/requireScanSession";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { GET } from "./route";
@@ -96,8 +98,34 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
     expect(body.data.uploads[0].path.startsWith(`${DEFAULT_STORE_ID}/`)).toBe(true);
   });
 
+  it("en supabase, anon con cabeceras demo no firma subidas en otra tienda: 401 (caos-4 M2)", async () => {
+    process.env.API_DATA_SOURCE = "supabase";
+    process.env.ALLOW_DEMO_AUTH = "true";
+    (createAdminSupabaseClient as jest.Mock).mockClear();
+
+    const response = await GET(
+      request(`sha256=${HASH}&pages=1&types=image/jpeg`, {
+        "x-demo-role": "admin",
+        "x-demo-store-id": "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.message).toBe(INVOICE_SCAN_REAL_SESSION_MESSAGE);
+    expect(createAdminSupabaseClient).not.toHaveBeenCalled();
+  });
+
   it("en supabase firma una URL por página con un solo tipo para todas", async () => {
     process.env.API_DATA_SOURCE = "supabase";
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue({
+      deniedPermissions: [],
+      grantedPermissions: [],
+      id: "f2120000-0000-4000-8000-000000000001",
+      isActive: true,
+      name: "Almacén",
+      role: "almacen",
+      storeId: DEFAULT_STORE_ID,
+    });
     const createSignedUploadUrl = jest.fn(async (path: string) => ({
       data: { path, signedUrl: `https://firma/${path}`, token: `t-${path}` },
       error: null,
