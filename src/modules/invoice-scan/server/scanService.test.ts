@@ -668,6 +668,76 @@ describe("scanInvoice · reserva atómica (SCN-03h)", () => {
   });
 });
 
+describe("scanInvoice · ruta guardada y cobro de los fallos (SCN-03l)", () => {
+  it("el detalle no firma una ruta guardada fuera de la tienda de la sesión (N1)", async () => {
+    const ctx = newContext();
+    const { built, storage } = deps();
+    const { scanId } = await scanInvoice(built, ctx, { pages: [page("ruta")], source: "upload" });
+    const row = (await mockRepo.getScan(ctx, scanId)) as InvoiceScanRow;
+    const foreign = `otra-tienda/${row.imageSha256}/p1.jpg`;
+    const getScan = jest.fn(async () => ({ ...row, storagePath: foreign }));
+    const tampered = deps({ repo: { ...mockRepo, getScan }, storage });
+
+    await expect(getInvoiceScanDetail(tampered.built, ctx, scanId)).rejects.toMatchObject({
+      message: INVOICE_INVALID_PATH_MESSAGE,
+      status: 400,
+    });
+    expect(storage.signedReadUrl).not.toHaveBeenCalled();
+  });
+
+  it("el few-shot no descarga un ejemplo con ruta de otra tienda (N1)", async () => {
+    const ctx = newContext();
+    const confirmed = { ...singlePageExtraction, number: "ajena" };
+    const foreign = `otra-tienda/${"9".repeat(64)}/p1.jpg`;
+    const listFewShotExamples = jest.fn(async () => [{ confirmed, scanId: "s9", storagePath: foreign }]);
+    const { built, extract, storage } = deps({ repo: { ...mockRepo, listFewShotExamples } });
+    storage.objects.set(foreign, new TextEncoder().encode("ajena"));
+
+    await scanInvoice(built, ctx, { pages: [page("few ajeno")], source: "upload", supplierId: SUPPLIER_ID });
+
+    expect(storage.download).not.toHaveBeenCalledWith(foreign);
+    expect(extract).toHaveBeenCalledWith(expect.objectContaining({ fewShot: [] }));
+  });
+
+  it("si Storage falla al subir (antes del modelo), la reserva queda failed y no cobra (N8)", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    (storage.upload as jest.Mock).mockRejectedValueOnce(new ApiError(503, "INTERNAL_ERROR", "caído"));
+    const pages = [page("storage caído")];
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 503 });
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      error: "UPLOAD_ERROR",
+      status: "failed",
+      usagePages: 0,
+    });
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
+  it("un corte del cliente durante la lectura queda como CLIENT_ABORTED y cobra (el modelo se llamó) (N8)", async () => {
+    const ctx = newContext();
+    const controller = new AbortController();
+    const extract = jest.fn(async () => {
+      controller.abort();
+      throw new InvoiceExtractionError("TIMEOUT");
+    });
+    const { built } = deps({ extract });
+    const pages = [page("corte")];
+
+    await expect(
+      scanInvoice(built, ctx, { pages, source: "upload" }, { signal: controller.signal }),
+    ).rejects.toBeTruthy();
+
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      error: "CLIENT_ABORTED",
+      status: "failed",
+      usagePages: 1,
+    });
+  });
+});
+
 describe("readUploadedPages · tope multipart (SCN-03h)", () => {
   it("413 en español que sugiere upload-url si el total pasa de 4 MB", async () => {
     const data = new FormData();

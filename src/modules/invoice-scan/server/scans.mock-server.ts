@@ -1,7 +1,8 @@
 /**
  * Repositorio de escaneos de factura para el modo mock del BFF: en memoria y
  * por tienda, con la misma semántica que `scans.server.ts` (unique tienda +
- * hash, reserva atómica como `reserve_invoice_scan`, cuota por día de Caracas
+ * hash, reserva atómica como `reserve_invoice_scan` con la ruta ligada a la
+ * tienda, cierre/fallo/descarte como las RPCs de 20261019g, cuota por día de Caracas
  * sobre `usagePages`, few-shot ≤ 3, 404 entre tiendas, purga a 90 días de
  * filas y de objetos sin escaneo vivo).
  */
@@ -11,11 +12,13 @@ import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusin
 
 import type { InvoiceExtraction, InvoiceScanLimits } from "../contracts";
 import {
-  DISCARD_NOT_ALLOWED_MESSAGE,
+  DISCARD_NOT_ALLOWED_MESSAGES,
   type ExpiredScan,
+  INVALID_SCAN_DATA_MESSAGE,
   invoiceScanPagePaths,
+  invoiceScanProcessingWindowMs,
+  isScanStoragePathInScope,
   MAX_FEW_SHOT_EXAMPLES,
-  INVOICE_SCAN_PROCESSING_WINDOW_MS,
   type StoredFewShotExample,
   type InvoiceScanCompletion,
   type InvoiceScanContext,
@@ -62,13 +65,17 @@ function usedToday(ctx: InvoiceScanContext, now: Date) {
 }
 
 /**
- * Paridad con `reserve_invoice_scan` (20261019e). El cuerpo es síncrono (sin
- * `await`): en un solo hilo equivale al lock por tienda de la RPC.
+ * Paridad con `reserve_invoice_scan` (20261019e y 20261019g). El cuerpo es
+ * síncrono (sin `await`): en un solo hilo equivale al lock por tienda de la RPC.
  */
 export async function reserveScan(
   ctx: InvoiceScanContext,
   input: InvoiceScanReserveInput,
 ): Promise<InvoiceScanReservation> {
+  if (!isScanStoragePathInScope(ctx.storeId, input.imageSha256, input.storagePath)) {
+    throw new ApiError(400, "BAD_REQUEST", INVALID_SCAN_DATA_MESSAGE);
+  }
+
   const now = new Date();
   const existing = selectByHash(ctx, input.imageSha256);
 
@@ -78,7 +85,7 @@ export async function reserveScan(
 
   if (
     existing?.status === "processing" &&
-    new Date(existing.createdAt).getTime() > now.getTime() - INVOICE_SCAN_PROCESSING_WINDOW_MS
+    new Date(existing.createdAt).getTime() > now.getTime() - invoiceScanProcessingWindowMs(existing.pages)
   ) {
     return { id: existing.id, outcome: "in_progress" };
   }
@@ -131,11 +138,23 @@ export async function completeScan(
   return save({ ...scan, ...completion, error: null, status: "extracted" });
 }
 
-export async function failScan(ctx: InvoiceScanContext, id: string, errorCode: string): Promise<void> {
+export async function failScan(
+  ctx: InvoiceScanContext,
+  id: string,
+  errorCode: string,
+  refundPages = false,
+): Promise<void> {
   const scan = ownScan(ctx, id);
 
   if (scan && scan.status === "processing") {
-    save({ ...scan, error: errorCode, extracted: null, matched: null, status: "failed" });
+    save({
+      ...scan,
+      error: errorCode,
+      extracted: null,
+      matched: null,
+      status: "failed",
+      usagePages: refundPages ? Math.max(0, scan.usagePages - scan.pages) : scan.usagePages,
+    });
   }
 }
 
@@ -196,12 +215,17 @@ export async function discardScan(
   }
 
   if (scan.status !== "extracted") {
-    throw new ApiError(409, "CONFLICT", DISCARD_NOT_ALLOWED_MESSAGE);
+    throw new ApiError(409, "CONFLICT", DISCARD_NOT_ALLOWED_MESSAGES[scan.status]);
   }
 
   return save({ ...scan, status: "discarded" });
 }
 
+/**
+ * Páginas cobradas hoy (día de Caracas). Misma limitación que `scans.server.ts`
+ * (caos-2 N9): reutilizar una fila de otro día la pasa a hoy y el consumo de
+ * aquel día pierde esas páginas.
+ */
 export async function getDailyUsage(
   ctx: InvoiceScanContext,
   limit: number,
