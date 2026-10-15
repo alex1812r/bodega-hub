@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20261015c — escaneos de factura: tabla invoice_scans y bucket invoice-scans
+-- 20261019a — escaneos de factura: tabla invoice_scans y bucket invoice-scans
 --             (SCN-03a; plan factura-escaneo-gtm §1, §3 "Idempotencia y cuota",
 --             "Trazabilidad", "Permiso", §4)
 -- Proyecto: BodegaHub

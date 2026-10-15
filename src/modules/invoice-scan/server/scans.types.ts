@@ -1,6 +1,6 @@
 /**
  * Tipos del repositorio de escaneos de factura (`public.invoice_scans`,
- * parche 20261015c; plan factura-escaneo-gtm §3 "Idempotencia y cuota",
+ * parche 20261019a; plan factura-escaneo-gtm §3 "Idempotencia y cuota",
  * "Trazabilidad" y §4). Los comparten `scans.server.ts` y `scans.mock-server.ts`.
  */
 import type { InvoiceExtraction, InvoiceMatch } from "../contracts";

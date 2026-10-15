@@ -1,5 +1,5 @@
 /**
- * Repositorio de `public.invoice_scans` contra Supabase (parche 20261015c).
+ * Repositorio de `public.invoice_scans` contra Supabase (parche 20261019a).
  *
  * Usa el cliente con el JWT del usuario: la RLS limita a la tienda de la sesión
  * (lee `purchases.view`, escribe `purchases.create`) y además cada consulta

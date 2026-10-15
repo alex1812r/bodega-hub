@@ -2388,7 +2388,7 @@ select
   )
 union all
 select
-  'invoice_scans: columnas clave (store_id, image_sha256, pages, status, extracted/matched jsonb not null, supplier_id) y unique (store_id, image_sha256) (20261015c)',
+  'invoice_scans: columnas clave (store_id, image_sha256, pages, status, extracted/matched jsonb not null, supplier_id) y unique (store_id, image_sha256) (20261019a)',
   (
     select count(*) = 7
     from information_schema.columns col
@@ -2410,7 +2410,7 @@ select
   )
 union all
 select
-  'invoice_scans: indices (store_id, created_at desc) y parcial few-shot por proveedor (20261015c)',
+  'invoice_scans: indices (store_id, created_at desc) y parcial few-shot por proveedor (20261019a)',
   exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'invoice_scans_store_created_idx')
   and exists (
     select 1 from pg_indexes
@@ -2419,14 +2419,14 @@ select
   )
 union all
 select
-  'invoice_scans: RLS activa, select/insert/update para authenticated sin delete, anon sin privilegios (20261015c)',
+  'invoice_scans: RLS activa, select/insert/update para authenticated sin delete, anon sin privilegios (20261019a)',
   exists (select 1 from pg_class c where c.oid = to_regclass('public.invoice_scans') and c.relrowsecurity)
   and coalesce(has_table_privilege('authenticated', 'public.invoice_scans', 'select, insert, update'), false)
   and not has_table_privilege('authenticated', 'public.invoice_scans', 'delete')
   and not has_table_privilege('anon', 'public.invoice_scans', 'select, insert, update, delete')
 union all
 select
-  'invoice_scans: politicas por tienda (lee purchases.view, escribe purchases.create), sin delete (20261015c)',
+  'invoice_scans: politicas por tienda (lee purchases.view, escribe purchases.create), sin delete (20261019a)',
   (
     select count(*) = 3 from pg_policies pol
     where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
@@ -2443,7 +2443,7 @@ select
   )
 union all
 select
-  'bucket invoice-scans privado, 1 MB, jpeg/png/webp (20261015c)',
+  'bucket invoice-scans privado, 1 MB, jpeg/png/webp (20261019a)',
   exists (
     select 1 from storage.buckets
     where id = 'invoice-scans' and public = false and file_size_limit = 1048576
@@ -2452,7 +2452,7 @@ select
   )
 union all
 select
-  'storage invoice-scans: lectura e insercion por carpeta de tienda, sin update/delete (20261015c)',
+  'storage invoice-scans: lectura e insercion por carpeta de tienda, sin update/delete (20261019a)',
   (
     select count(*) = 2 from pg_policies pol
     where pol.schemaname = 'storage' and pol.tablename = 'objects'
