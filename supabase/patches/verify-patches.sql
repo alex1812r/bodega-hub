@@ -2459,4 +2459,28 @@ select
     select 1 from pg_policies
     where schemaname = 'public' and tablename = 'invoice_scans' and cmd = 'SELECT'
   )
+union all
+select
+  'invoice_match_candidates(text, text, text[], text[], uuid, integer) jsonb: security definer, search_path con public y extensions, execute authenticated / service_role, no anon (20261019d)',
+  coalesce((
+    select p.prosecdef
+      and p.prorettype = 'jsonb'::regtype
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public, extensions%', false)
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_candidates(text, text, text[], text[], uuid, integer)')
+  ), false)
+union all
+select
+  'invoice_match_norm(text): immutable, translate + regexp_replace, execute authenticated, no anon (20261019d)',
+  coalesce((
+    select p.provolatile = 'i'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and p.prosrc ilike '%translate(%' and p.prosrc ilike '%regexp_replace(%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_norm(text)')
+  ), false)
 order by 1;
