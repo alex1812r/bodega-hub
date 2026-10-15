@@ -2386,4 +2386,69 @@ select
     from pg_class c
     where c.oid in (to_regclass('public.daily_sales_summary'), to_regclass('public.gross_profit_summary'))
   )
+union all
+select
+  'pg_trgm instalada y similarity / gin_trgm_ops resuelven en su schema (20261019b)',
+  exists (select 1 from pg_extension where extname = 'pg_trgm')
+  and exists (
+    select 1 from pg_proc p join pg_extension e on e.extname = 'pg_trgm' and p.pronamespace = e.extnamespace
+    where p.proname = 'similarity'
+  )
+  and exists (
+    select 1 from pg_opclass o join pg_extension e on e.extname = 'pg_trgm' and o.opcnamespace = e.extnamespace
+    where o.opcname = 'gin_trgm_ops'
+  )
+union all
+select
+  'supplier_product_aliases con unique (store_id, supplier_id, alias_norm) e indice (store_id, supplier_id) (20261019b)',
+  to_regclass('public.supplier_product_aliases') is not null
+  and exists (
+    select 1
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.supplier_product_aliases')
+      and c.contype = 'u'
+      and pg_get_constraintdef(c.oid) = 'UNIQUE (store_id, supplier_id, alias_norm)'
+  )
+  and exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and tablename = 'supplier_product_aliases'
+      and indexname = 'idx_supplier_product_aliases_store_supplier'
+  )
+union all
+select
+  'supplier_product_aliases: indice gin trigram sobre alias_norm (20261019b)',
+  exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and tablename = 'supplier_product_aliases'
+      and indexname = 'idx_supplier_product_aliases_alias_trgm'
+      and indexdef ilike '%using gin (alias_norm %gin_trgm_ops)%'
+  )
+union all
+select
+  'supplier_product_aliases: RLS activa, solo politica select, sin insert / update / delete para authenticated ni acceso anon (20261019b)',
+  coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.supplier_product_aliases')), false)
+  and exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'supplier_product_aliases' and cmd = 'SELECT'
+  )
+  and not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'supplier_product_aliases' and cmd <> 'SELECT'
+  )
+  and not has_table_privilege('authenticated', 'public.supplier_product_aliases', 'insert, update, delete')
+  and not has_table_privilege('anon', 'public.supplier_product_aliases', 'select, insert, update, delete')
+union all
+select
+  'confirm_invoice_scan(uuid, uuid, jsonb) void y learn_invoice_aliases(uuid, jsonb) integer: security definer, search_path=public, execute authenticated / service_role, no anon (20261019b)',
+  (
+    select count(*) = 2
+      and bool_and(p.prosecdef)
+      and bool_and(coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false))
+      and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+      and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where (p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb)') and p.prorettype = 'void'::regtype)
+       or (p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)') and p.prorettype = 'integer'::regtype)
+  )
 order by 1;
