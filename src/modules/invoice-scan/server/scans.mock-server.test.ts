@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import { ApiError } from "@/lib/api/apiError";
+import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
 import { mockState } from "@/shared/mocks/mockStore";
 
 import type { InvoiceExtraction } from "../contracts";
@@ -22,6 +23,10 @@ import {
 } from "./scans.mock-server";
 import {
   DEFAULT_INVOICE_SCAN_DAILY_LIMIT,
+  INVALID_SCAN_DATA_MESSAGE,
+  INVOICE_SCAN_MAX_DAILY_LIMIT,
+  INVOICE_SCAN_PAYLOAD_MAX_BYTES,
+  INVOICE_SCAN_STALE_ATTEMPT_MESSAGE,
   readInvoiceScanDailyLimit,
   type InvoiceScanInsert,
   type InvoiceScanReserveInput,
@@ -81,11 +86,38 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
     });
   }
 
+  /** Reserva que debe quedar `reserved`: devuelve la fila y el intento. */
+  async function reserved(ctx = storeA, overrides: Partial<InvoiceScanReserveInput> = {}) {
+    const result = await reserve(ctx, overrides);
+
+    if (result.outcome !== "reserved") {
+      throw new Error(`se esperaba reserved y fue ${result.outcome}`);
+    }
+
+    return result;
+  }
+
+  const completion = {
+    durationMs: 1,
+    extracted: extraction,
+    inputTokens: null,
+    matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
+    outputTokens: null,
+  };
+
   it("rechaza (400) una ruta que no es <tienda>/<hash>/p1.<ext> de la propia tienda, sin crear fila (N1)", async () => {
     for (const storagePath of ["store-b/hash-1/p1.jpg", "store-a/otro/p1.jpg", "store-a/hash-1/p2.jpg", "store-a/hash-1/p1.gif"]) {
       await expect(reserve(storeA, { storagePath })).rejects.toMatchObject({ status: 400 });
     }
     expect(store().size).toBe(0);
+  });
+
+  it("rechaza (400) páginas fuera de 1..10 o un límite fuera de 0..10000, sin crear fila (C3)", async () => {
+    for (const overrides of [{ pages: 0 }, { pages: 11 }, { pages: 2147483000 }, { limit: -1 }, { limit: 10001 }, { limit: 2147483647 }]) {
+      await expect(reserve(storeA, overrides)).rejects.toMatchObject({ message: INVALID_SCAN_DATA_MESSAGE, status: 400 });
+    }
+    expect(store().size).toBe(0);
+    expect(await reserve(storeA, { limit: 10000, pages: 10 })).toMatchObject({ outcome: "reserved" });
   });
 
   it("la ventana de processing crece con las páginas: 50 s por página + 60 s (N6)", async () => {
@@ -102,16 +134,16 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
   });
 
   it("failScan con reembolso resta las páginas del intento sin bajar de 0 (N8)", async () => {
-    const id = ((await reserve(storeA, { pages: 2 })) as { id: string }).id;
-    await failScan(storeA, id, "UPLOAD_ERROR", true);
+    const first = await reserved(storeA, { pages: 2 });
+    await failScan(storeA, first.id, first.attemptId, "UPLOAD_ERROR", true);
 
-    expect(store().get(id)).toMatchObject({ error: "UPLOAD_ERROR", status: "failed", usagePages: 0 });
+    expect(store().get(first.id)).toMatchObject({ error: "UPLOAD_ERROR", status: "failed", usagePages: 0 });
     expect(await getDailyUsage(storeA, 50)).toMatchObject({ used: 0 });
 
-    await reserve(storeA, { pages: 2 });
-    store().set(id, { ...(store().get(id) as InvoiceScanRow), usagePages: 1 });
-    await failScan(storeA, id, "UPLOAD_ERROR", true);
-    expect(store().get(id)).toMatchObject({ usagePages: 0 });
+    const second = await reserved(storeA, { pages: 2 });
+    store().set(first.id, { ...(store().get(first.id) as InvoiceScanRow), usagePages: 1 });
+    await failScan(storeA, second.id, second.attemptId, "UPLOAD_ERROR", true);
+    expect(store().get(first.id)).toMatchObject({ usagePages: 0 });
   });
 
   it("reserva en processing y cobra; la misma foto mientras se lee es in_progress", async () => {
@@ -142,15 +174,8 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
   });
 
   it("extracted o confirmed es caché, por tienda", async () => {
-    const reserved = await reserve();
-    const id = (reserved as { id: string }).id;
-    await completeScan(storeA, id, {
-      durationMs: 1,
-      extracted: extraction,
-      inputTokens: null,
-      matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
-      outputTokens: null,
-    });
+    const { attemptId, id } = await reserved();
+    await completeScan(storeA, id, attemptId, completion);
 
     expect(await reserve()).toEqual({ id, outcome: "cached" });
     expect(await reserve(storeB)).toMatchObject({ outcome: "reserved" });
@@ -159,8 +184,8 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
   });
 
   it("failed y discarded se reutilizan y suman páginas el mismo día", async () => {
-    const id = ((await reserve(storeA, { pages: 2 })) as { id: string }).id;
-    await failScan(storeA, id, "TIMEOUT");
+    const { attemptId, id } = await reserved(storeA, { pages: 2 });
+    await failScan(storeA, id, attemptId, "TIMEOUT");
 
     expect(await getScan(storeA, id)).toMatchObject({ error: "TIMEOUT", status: "failed" });
     expect(await reserve(storeA, { pages: 2 })).toMatchObject({ id, outcome: "reserved", used: 4 });
@@ -181,23 +206,59 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
     expect(store().get(id)).toMatchObject({ pages: 1, usagePages: 1 });
   });
 
-  it("completeScan y failScan solo cierran una fila processing de la propia tienda", async () => {
-    const id = ((await reserve()) as { id: string }).id;
+  it("completeScan y failScan solo cierran una fila processing de la propia tienda; después, 409", async () => {
+    const { attemptId, id } = await reserved();
 
-    await failScan(storeB, id, "x");
+    await failScan(storeB, id, attemptId, "X");
     expect(store().get(id)).toMatchObject({ status: "processing" });
-    await failScan(storeA, id, "INVALID_OUTPUT");
-    await failScan(storeA, id, "otra");
+    await failScan(storeA, id, attemptId, "INVALID_OUTPUT");
+    await expect(failScan(storeA, id, attemptId, "OTRA")).rejects.toMatchObject({
+      message: INVOICE_SCAN_STALE_ATTEMPT_MESSAGE,
+      status: 409,
+    });
     expect(store().get(id)).toMatchObject({ error: "INVALID_OUTPUT", status: "failed" });
-    expect(
-      await completeScan(storeA, id, {
-        durationMs: 1,
-        extracted: extraction,
-        inputTokens: null,
-        matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
-        outputTokens: null,
-      }),
-    ).toBeNull();
+    await expect(completeScan(storeA, id, attemptId, completion)).rejects.toMatchObject({ status: 409 });
+    expect(await completeScan(storeA, "no-existe", attemptId, completion)).toBeNull();
+  });
+
+  it("cada reserva abre un intento nuevo: el viejo no puede cerrar ni devolver la lectura nueva (C1/C2)", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-15T12:00:00.000Z"));
+    const stale = await reserved();
+    jest.setSystemTime(new Date("2026-10-15T12:02:00.000Z"));
+    const live = await reserved();
+
+    expect(live.id).toBe(stale.id);
+    expect(live.attemptId).not.toBe(stale.attemptId);
+    await expect(failScan(storeA, live.id, stale.attemptId, "TIMEOUT", true)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: INVOICE_SCAN_STALE_ATTEMPT_MESSAGE,
+      status: 409,
+    });
+    await expect(completeScan(storeA, live.id, stale.attemptId, completion)).rejects.toMatchObject({ status: 409 });
+    expect(store().get(live.id)).toMatchObject({ status: "processing", usagePages: 2 });
+
+    expect(await completeScan(storeA, live.id, live.attemptId, completion)).toMatchObject({ status: "extracted" });
+  });
+
+  it("solo el usuario que reservó cierra el intento (C1)", async () => {
+    const { attemptId, id } = await reserved();
+    const colleague = { ...storeA, userId: "user-otro" };
+
+    await expect(completeScan(colleague, id, attemptId, completion)).rejects.toMatchObject({ status: 409 });
+    await expect(failScan(colleague, id, attemptId, "TIMEOUT", true)).rejects.toMatchObject({ status: 409 });
+    expect(store().get(id)).toMatchObject({ status: "processing", usagePages: 1 });
+  });
+
+  it("rechaza (400, como el 23514 del check) una lectura de más de 512 KB y la fila sigue processing (C7)", async () => {
+    const { attemptId, id } = await reserved();
+    const huge = { ...extraction, warnings: ["x".repeat(INVOICE_SCAN_PAYLOAD_MAX_BYTES)] };
+
+    await expect(completeScan(storeA, id, attemptId, { ...completion, extracted: huge })).rejects.toMatchObject({
+      message: INVALID_DATA_MESSAGE,
+      status: 400,
+    });
+    expect(store().get(id)).toMatchObject({ status: "processing" });
   });
 });
 
@@ -273,6 +334,11 @@ describe("scans.mock-server · cuota diaria (día operativo de Caracas)", () => 
     expect(readInvoiceScanDailyLimit({ INVOICE_SCAN_DAILY_LIMIT: " 120 " })).toBe(120);
     expect(readInvoiceScanDailyLimit({ INVOICE_SCAN_DAILY_LIMIT: "-3" })).toBe(50);
     expect(readInvoiceScanDailyLimit({ INVOICE_SCAN_DAILY_LIMIT: "abc" })).toBe(50);
+  });
+
+  it("readInvoiceScanDailyLimit no pasa del tope que acepta reserve_invoice_scan (C3)", () => {
+    expect(readInvoiceScanDailyLimit({ INVOICE_SCAN_DAILY_LIMIT: "2147483647" })).toBe(INVOICE_SCAN_MAX_DAILY_LIMIT);
+    expect(INVOICE_SCAN_MAX_DAILY_LIMIT).toBe(10000);
   });
 });
 

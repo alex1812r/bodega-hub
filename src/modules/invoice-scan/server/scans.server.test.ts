@@ -3,7 +3,9 @@
  */
 
 jest.mock("../../../lib/supabase/route-client");
+jest.mock("../../../lib/supabase/admin-client");
 
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import {
@@ -22,8 +24,9 @@ import {
 type Result = { data: unknown; error: { code?: string; message: string } | null };
 type Call = [method: string, ...args: unknown[]];
 
-const ctx = { storeId: "00000000-0000-4000-8000-000000000001", userId: "user-a" };
+const ctx = { storeId: "00000000-0000-4000-8000-000000000001", userId: "44444444-4444-4444-8444-444444444444" };
 const scanId = "11111111-1111-4111-8111-111111111111";
+const attemptId = "55555555-5555-4555-8555-555555555555";
 const supplierId = "33333333-3333-4333-8333-333333333333";
 
 function dbRow(overrides: Record<string, unknown> = {}) {
@@ -106,16 +109,18 @@ describe("scans.server · reserveScan", () => {
     storagePath: `${ctx.storeId}/${"a".repeat(64)}/p1.jpg`,
   };
 
+  /** reserve_invoice_scan solo la ejecuta service_role (20261019i): cliente admin, nunca el del usuario. */
   function useRpc(result: Result) {
     const rpc = jest.fn(async () => result);
-    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue({ rpc });
     return rpc;
   }
 
-  it("llama a reserve_invoice_scan con los parámetros (la tienda sale del JWT) y valida la respuesta", async () => {
-    const rpc = useRpc(ok({ id: scanId, limit: 50, outcome: "reserved", used: 7 }));
+  it("llama a reserve_invoice_scan con el cliente service role, la tienda y el usuario de la sesión (C1/C3)", async () => {
+    const reserved = { attemptId, id: scanId, limit: 50, outcome: "reserved", used: 7 };
+    const rpc = useRpc(ok(reserved));
 
-    await expect(reserveScan(ctx, input)).resolves.toEqual({ id: scanId, limit: 50, outcome: "reserved", used: 7 });
+    await expect(reserveScan(ctx, input)).resolves.toEqual(reserved);
     expect(rpc).toHaveBeenCalledWith("reserve_invoice_scan", {
       p_limit: 50,
       p_model: "m",
@@ -123,7 +128,16 @@ describe("scans.server · reserveScan", () => {
       p_provider: "mock",
       p_sha256: input.imageSha256,
       p_storage_path: input.storagePath,
+      p_store_id: ctx.storeId,
+      p_user_id: ctx.userId,
     });
+    expect(createRouteSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un reserved sin attemptId", async () => {
+    useRpc(ok({ id: scanId, limit: 50, outcome: "reserved", used: 7 }));
+
+    await expect(reserveScan(ctx, input)).rejects.toThrow();
   });
 
   it.each([
@@ -149,7 +163,7 @@ describe("scans.server · reserveScan", () => {
   });
 });
 
-describe("scans.server · completeScan / failScan / discardScan por RPC (SCN-03l)", () => {
+describe("scans.server · completeScan / failScan / discardScan por RPC service role (SCN-03l, SCN-03n)", () => {
   const completion = {
     durationMs: 900,
     extracted: { confidence: 1, currency: "VES" as const, lines: [], supplier: { name: "Alfa" }, warnings: [] },
@@ -176,59 +190,94 @@ describe("scans.server · completeScan / failScan / discardScan por RPC (SCN-03l
       calls.push(["rpc", ...args]);
       return builder;
     });
-    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue({ rpc });
     return calls;
   }
 
-  it("completeScan llama a complete_invoice_scan y devuelve la fila extracted", async () => {
+  afterEach(() => {
+    expect(createRouteSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("completeScan llama a complete_invoice_scan con tienda, usuario e intento y devuelve la fila extracted", async () => {
     const calls = useRpcClient(ok(dbRow()));
 
-    expect(await completeScan(ctx, scanId, completion)).toMatchObject({ id: scanId, status: "extracted" });
+    expect(await completeScan(ctx, scanId, attemptId, completion)).toMatchObject({ id: scanId, status: "extracted" });
     expect(calls[0]).toEqual([
       "rpc",
       "complete_invoice_scan",
       {
+        p_attempt_id: attemptId,
         p_duration_ms: 900,
         p_extracted: completion.extracted,
         p_id: scanId,
         p_input_tokens: 10,
         p_matched: completion.matched,
         p_output_tokens: 20,
+        p_store_id: ctx.storeId,
+        p_user_id: ctx.userId,
       },
     ]);
     expect(calls).toContainEqual(["maybeSingle"]);
   });
 
-  it("completeScan devuelve null si la fila ya no está processing (la RPC no devuelve filas)", async () => {
+  it("completeScan devuelve null si la fila ya no existe (la RPC no devuelve filas)", async () => {
     useRpcClient(ok(null));
 
-    expect(await completeScan(ctx, scanId, completion)).toBeNull();
+    expect(await completeScan(ctx, scanId, attemptId, completion)).toBeNull();
   });
 
-  it("failScan llama a fail_invoice_scan con el código y sin reembolso por defecto", async () => {
+  it("completeScan propaga el 409 de un intento que ya no está vigente (PT409, C1/C2)", async () => {
+    useRpcClient({ data: null, error: { code: "PT409", message: "Esta lectura ya no está vigente." } });
+
+    await expect(completeScan(ctx, scanId, attemptId, completion)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "Esta lectura ya no está vigente.",
+      status: 409,
+    });
+  });
+
+  it("failScan llama a fail_invoice_scan con tienda, usuario, intento y código, sin reembolso por defecto", async () => {
     const calls = useRpcClient(ok(null));
 
-    await failScan(ctx, scanId, "TIMEOUT");
+    await failScan(ctx, scanId, attemptId, "TIMEOUT");
 
-    expect(calls[0]).toEqual(["rpc", "fail_invoice_scan", { p_error: "TIMEOUT", p_id: scanId, p_refund_pages: false }]);
+    expect(calls[0]).toEqual([
+      "rpc",
+      "fail_invoice_scan",
+      {
+        p_attempt_id: attemptId,
+        p_error: "TIMEOUT",
+        p_id: scanId,
+        p_refund_pages: false,
+        p_store_id: ctx.storeId,
+        p_user_id: ctx.userId,
+      },
+    ]);
   });
 
   it("failScan con reembolso cuando el fallo es anterior al modelo", async () => {
     const calls = useRpcClient(ok(null));
 
-    await failScan(ctx, scanId, "UPLOAD_ERROR", true);
+    await failScan(ctx, scanId, attemptId, "UPLOAD_ERROR", true);
 
     expect(calls[0]).toEqual([
       "rpc",
       "fail_invoice_scan",
-      { p_error: "UPLOAD_ERROR", p_id: scanId, p_refund_pages: true },
+      {
+        p_attempt_id: attemptId,
+        p_error: "UPLOAD_ERROR",
+        p_id: scanId,
+        p_refund_pages: true,
+        p_store_id: ctx.storeId,
+        p_user_id: ctx.userId,
+      },
     ]);
   });
 
-  it("discardScan llama a discard_invoice_scan; null (404) si no hay fila o el id no es uuid", async () => {
+  it("discardScan llama a discard_invoice_scan con la tienda; null (404) si no hay fila o el id no es uuid", async () => {
     const calls = useRpcClient(ok(dbRow({ status: "discarded" })));
     expect(await discardScan(ctx, scanId)).toMatchObject({ status: "discarded" });
-    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId }]);
+    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId, p_store_id: ctx.storeId }]);
 
     useRpcClient(ok(null));
     expect(await discardScan(ctx, scanId)).toBeNull();

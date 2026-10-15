@@ -2759,10 +2759,11 @@ paths:
         del tipo declarado (si no, 400 sin subirla ni cobrar) y valida cada ruta
         contra la tienda de la sesion. Mismo hash en la tienda con lectura
         vigente = mismo escaneo, con `cached: true`, sin llamar al modelo ni
-        consumir cuota; si otra peticion esta leyendo esa misma imagen, 409. Un
-        escaneo descartado o fallido se vuelve a leer. La cuota es de
+        consumir cuota; si otra peticion esta leyendo esa misma imagen, 409. Una
+        lectura guardada que no cumple el contrato no se sirve: se vuelve a leer
+        y cobra. Un escaneo descartado o fallido se vuelve a leer. La cuota es de
         `INVOICE_SCAN_DAILY_LIMIT` paginas por tienda y dia operativo de Caracas
-        (50 por defecto) y se reserva de forma atomica antes de llamar al
+        (50 por defecto, 10000 como maximo) y se reserva de forma atomica antes de llamar al
         modelo; cada intento cuenta sus paginas, tambien un reintento fallido o
         un reescaneo tras descartar, salvo si falla la subida a Storage antes de
         llamar al modelo (se devuelven). Si el cliente corta durante la lectura,
@@ -2825,7 +2826,8 @@ paths:
         "409":
           description: >-
             Otra peticion esta leyendo esta misma factura (`CONFLICT`); se
-            reintenta en unos segundos.
+            reintenta en unos segundos. Tambien si otra reserva tomo la fila
+            mientras se leia ("Esta lectura ya no esta vigente.").
           content:
             application/json:
               schema:
@@ -2921,7 +2923,10 @@ paths:
       description: >-
         Escaneo de la tienda de la sesion con URLs firmadas de lectura de cada
         pagina, validas 5 minutos (falsas en modo mock). Un id de otra tienda o
-        que no es uuid responde 404.
+        que no es uuid responde 404. Si una pagina ya no esta en el bucket (por
+        ejemplo, un escaneo `failed` por `UPLOAD_ERROR`) tambien responde 404,
+        con "La imagen de esta factura ya no está disponible."; 503 queda solo
+        para Storage caido.
       x-permission: purchases.view
       responses:
         "200":
@@ -2940,6 +2945,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          description: El almacenamiento de facturas no esta disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/invoice-scan/{id}/discard:
     parameters:
       - $ref: "#/components/parameters/Id"

@@ -3,6 +3,7 @@
  */
 import { jpegHeader } from "@/modules/invoice-scan/server/__fixtures__/images";
 import { sha256OfPages } from "@/modules/invoice-scan/server/storage";
+import { mockState } from "@/shared/mocks/mockStore";
 
 import { POST as scan } from "../route";
 import { GET } from "./route";
@@ -85,6 +86,22 @@ describe("GET /api/purchases/invoice-scan/[id]", () => {
 
     expect(response.status).toBe(404);
     expect((await response.json()).error.message).toBe("No encontramos ese escaneo de factura.");
+  });
+
+  it("404 en español, no 503, si una página ya no está en el bucket (C6)", async () => {
+    const { image, storeId } = fresh();
+    const pages = [`${image}-1`, `${image}-2`];
+    const sha = sha256OfPages(pages.map((text) => jpegHeader(1600, 1200, text)));
+    const id = await createScan(storeId, pages);
+    mockState("invoice-scan:objects", () => new Map<string, Uint8Array>()).delete(`${storeId}/${sha}/p2.jpg`);
+
+    const response = await get(id, storeId);
+
+    expect(response.status).toBe(404);
+    expect((await response.json()).error).toMatchObject({
+      code: "NOT_FOUND",
+      message: "La imagen de esta factura ya no está disponible.",
+    });
   });
 
   it("404 para un id que no es uuid", async () => {

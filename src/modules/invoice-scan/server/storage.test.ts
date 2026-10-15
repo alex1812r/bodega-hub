@@ -222,6 +222,20 @@ describe("invoice-scan storage", () => {
 
       await expect(createInvoiceSignedReadUrl(client, PATH, 60)).rejects.toMatchObject(UNAVAILABLE);
     });
+
+    it("objeto inexistente → 404, no 503 (C6)", async () => {
+      const { client } = clientWith({
+        createSignedUrl: jest.fn(async () => ({
+          data: null,
+          error: { message: "Object not found", status: 400, statusCode: "404" },
+        })),
+      });
+
+      await expect(createInvoiceSignedReadUrl(client, PATH, 60)).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        status: 404,
+      });
+    });
   });
 
   describe("removeInvoiceObjects", () => {

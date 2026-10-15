@@ -10,7 +10,7 @@ import { InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } f
 import { matchScan } from "./matchScan";
 import { createMockInvoiceScanModel } from "./mockModel";
 import * as mockRepo from "./scans.mock-server";
-import { invoiceScanPagePaths, type InvoiceScanRow } from "./scans.types";
+import { INVOICE_SCAN_STALE_ATTEMPT_MESSAGE, invoiceScanPagePaths, type InvoiceScanRow } from "./scans.types";
 import {
   createInvoiceScanDeps,
   discardInvoiceScan,
@@ -18,6 +18,7 @@ import {
   INVOICE_HASH_MISMATCH_MESSAGE,
   INVOICE_MIXED_TYPES_MESSAGE,
   INVOICE_READ_URL_TTL_SECONDS,
+  INVOICE_SCAN_IMAGE_GONE_MESSAGE,
   INVOICE_SCAN_IN_PROGRESS_MESSAGE,
   readUploadedPages,
   scanInvoice,
@@ -245,7 +246,9 @@ describe("scanInvoice · fallo del proveedor", () => {
       details: { reason: "TIMEOUT" },
       status: 502,
     });
-    expect((error as ApiError).message).toMatch(/tardó demasiado/);
+    expect((error as ApiError).message).toBe(
+      "La lectura de la factura tardó demasiado. Intenta de nuevo; si se repite, registra la compra a mano.",
+    );
 
     const sha = sha256OfPages(pages.map((item) => item.data));
     expect(failedRow(ctx, sha)).toMatchObject({ error: "TIMEOUT", extracted: null, status: "failed" });
@@ -535,8 +538,9 @@ describe("createInvoiceScanDeps", () => {
     const built = createInvoiceScanDeps("mock");
 
     expect(built.repo).toBe(mockRepo);
-    await expect(built.storage.signedReadUrl("s/x/p1.jpg", 300)).resolves.toMatch(/^https:\/\/mock-storage\.local\//);
+    await expect(built.storage.signedReadUrl("s/x/p1.jpg", 300)).rejects.toMatchObject({ status: 404 });
     await built.storage.upload("s/x/p1.jpg", new Uint8Array([1]), "image/jpeg");
+    await expect(built.storage.signedReadUrl("s/x/p1.jpg", 300)).resolves.toMatch(/^https:\/\/mock-storage\.local\//);
     await expect(built.storage.download("s/x/p1.jpg")).resolves.toEqual(new Uint8Array([1]));
     await expect(built.storage.download("s/x/p9.jpg")).rejects.toMatchObject({ status: 404 });
   });
@@ -750,5 +754,89 @@ describe("readUploadedPages · tope multipart (SCN-03h)", () => {
       message: expect.stringMatching(/4 MB.*upload-url/),
       status: 413,
     });
+  });
+});
+
+describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-03n)", () => {
+  function rows() {
+    return mockState("invoice-scan:scans", () => new Map<string, InvoiceScanRow>());
+  }
+
+  function tamper(id: string, patch: Partial<InvoiceScanRow>) {
+    rows().set(id, { ...(rows().get(id) as InvoiceScanRow), ...patch });
+  }
+
+  it.each([
+    ["con otra forma", { lines: "ilegible", x: 1 }],
+    ["vacía ({} en la columna)", null],
+  ])("una lectura en caché %s no se sirve: se vuelve a leer, se cobra y solo se registra el código (C4)", async (_label, extracted) => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const ctx = newContext();
+    const { built, extract } = deps();
+    const pages = [page(`caché roto ${String(extracted)}`)];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    tamper(first.scanId, { extracted: extracted as unknown as InvoiceScanRow["extracted"] });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again).toMatchObject({ cached: false, extraction: singlePageExtraction, scanId: first.scanId });
+    expect(extract).toHaveBeenCalledTimes(2);
+    expect(again.limits.used).toBe(2);
+    expect(await mockRepo.getScan(ctx, first.scanId)).toMatchObject({ extracted: singlePageExtraction, status: "extracted" });
+    expect(warn).toHaveBeenCalledWith("[invoice-scan] lectura en caché fuera del contrato", {
+      code: "INVALID_CACHED_EXTRACTION",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("ilegible");
+    warn.mockRestore();
+  });
+
+  it("una lectura vieja no pisa la nueva: si otra reserva tomó la fila, complete responde 409 y la fila sigue con el intento nuevo (C1/C2)", async () => {
+    const ctx = newContext();
+    const pages = [page("intento viejo")];
+    const sha = sha256OfPages(pages.map((item) => item.data));
+    const extract = jest.fn(async () => {
+      // Mientras el modelo lee, la ventana caduca y otra petición vuelve a reservar.
+      tamper((failedRow(ctx, sha) as InvoiceScanRow).id, { createdAt: new Date(Date.now() - 10 * 60_000).toISOString() });
+      await mockRepo.reserveScan(ctx, {
+        imageSha256: sha,
+        limit: 50,
+        model: "invoice-scan-mock",
+        pages: 1,
+        provider: "mock",
+        storagePath: `${ctx.storeId}/${sha}/p1.jpg`,
+      });
+      return extractResult();
+    });
+    const { built } = deps({ extract });
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: INVOICE_SCAN_STALE_ATTEMPT_MESSAGE,
+      status: 409,
+    });
+    expect(failedRow(ctx, sha)).toMatchObject({ extracted: null, status: "processing", usagePages: 2 });
+  });
+
+  it("el detalle de un escaneo cuya imagen ya no está en el bucket es 404 en español, no 503 (C6)", async () => {
+    const ctx = newContext();
+    const { built, storage } = deps();
+    const { scanId } = await scanInvoice(built, ctx, { pages: [page("sin imagen")], source: "upload" });
+    (storage.signedReadUrl as jest.Mock).mockRejectedValueOnce(new ApiError(404, "NOT_FOUND", "no está"));
+
+    await expect(getInvoiceScanDetail(built, ctx, scanId)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: INVOICE_SCAN_IMAGE_GONE_MESSAGE,
+      status: 404,
+    });
+    expect(INVOICE_SCAN_IMAGE_GONE_MESSAGE).toBe("La imagen de esta factura ya no está disponible.");
+  });
+
+  it("si Storage está caído, el detalle sigue respondiendo 503", async () => {
+    const ctx = newContext();
+    const { built, storage } = deps();
+    const { scanId } = await scanInvoice(built, ctx, { pages: [page("storage caído detalle")], source: "upload" });
+    (storage.signedReadUrl as jest.Mock).mockRejectedValueOnce(new ApiError(503, "INTERNAL_ERROR", "caído"));
+
+    await expect(getInvoiceScanDetail(built, ctx, scanId)).rejects.toMatchObject({ status: 503 });
   });
 });

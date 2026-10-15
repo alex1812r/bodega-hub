@@ -16,10 +16,11 @@ import type { ApiDataSource } from "@/lib/api/dataSource";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { mockState } from "@/shared/mocks/mockStore";
 
-import type {
-  InvoiceExtraction,
-  InvoiceMatch,
-  InvoiceScanResponse,
+import {
+  invoiceExtractionSchema,
+  type InvoiceExtraction,
+  type InvoiceMatch,
+  type InvoiceScanResponse,
 } from "../contracts";
 import {
   extractInvoice,
@@ -108,6 +109,10 @@ export const INVOICE_SCAN_IN_PROGRESS_MESSAGE =
 export const INVOICE_SCAN_CLIENT_ABORTED = "CLIENT_ABORTED";
 export const INVOICE_SCAN_CHANGED_MESSAGE =
   "La lectura de esta factura cambió mientras se procesaba. Vuelve a intentarlo.";
+/** Código que se registra (sin contenido) cuando la lectura en caché no cumple el contrato. */
+export const INVOICE_SCAN_INVALID_CACHE = "INVALID_CACHED_EXTRACTION";
+/** 404 del detalle cuando una página ya no está en el bucket (caos-3 C6). */
+export const INVOICE_SCAN_IMAGE_GONE_MESSAGE = "La imagen de esta factura ya no está disponible.";
 
 /**
  * Tope del cuerpo multipart: Vercel corta a 4,5 MB con un 413 que no es de la
@@ -357,16 +362,49 @@ export type ScanInvoiceOptions = {
 };
 
 /**
+ * La lectura guardada de un `cached`, solo si `extracted` cumple el contrato y
+ * hay emparejamiento; null si no (caos-3 C4: no se sirve). 409 si la fila ya
+ * no está.
+ */
+async function readCachedScan(
+  deps: InvoiceScanDeps,
+  ctx: InvoiceScanContext,
+  id: string,
+): Promise<InvoiceScanResponse | null> {
+  const cached = await deps.repo.getScan(ctx, id);
+
+  if (!cached) {
+    throw new ApiError(409, "CONFLICT", INVOICE_SCAN_CHANGED_MESSAGE);
+  }
+
+  const extraction = invoiceExtractionSchema.safeParse(cached.extracted);
+
+  if (!extraction.success || !cached.matched) {
+    return null;
+  }
+
+  return {
+    cached: true,
+    extraction: extraction.data,
+    limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
+    matched: cached.matched,
+    scanId: cached.id,
+  };
+}
+
+/**
  * `POST /api/purchases/invoice-scan`: valida los bytes → reserva atómica
  * (`reserveScan`, lock por tienda) → según el resultado:
- * - `cached`: la lectura guardada, sin modelo ni cuota;
+ * - `cached`: la lectura guardada, sin modelo ni cuota. Si no cumple el
+ *   contrato se descarta y se vuelve a leer, cobrando (solo se registra el código);
  * - `in_progress`: 409, otra petición está leyendo la misma foto;
  * - `quota`: 429;
  * - `reserved` (páginas ya cobradas): subida → few-shot → extracción →
  *   emparejamiento → `extracted`. Un fallo deja la fila `failed` con el código
  *   (nunca el contenido); si es del modelo responde 502. Si falla la subida
  *   (antes de llamar al modelo) se devuelven las páginas cobradas; un corte del
- *   cliente durante la lectura queda como `CLIENT_ABORTED`.
+ *   cliente durante la lectura queda como `CLIENT_ABORTED`. El cierre lleva el
+ *   `attemptId` de la reserva: si otra reserva tomó la fila, 409.
  * Un escaneo `failed` o `discarded` se vuelve a leer y cobra otra vez.
  */
 export async function scanInvoice(
@@ -378,29 +416,32 @@ export async function scanInvoice(
   const scan = await loadScan(deps, ctx, input);
   const pageCount = scan.pages.length;
   const model = deps.model();
-  const reservation = await deps.repo.reserveScan(ctx, {
-    imageSha256: scan.sha256,
-    limit: deps.dailyLimit,
-    model: model.modelId,
-    pages: pageCount,
-    provider: model.provider,
-    storagePath: scan.storagePath,
-  });
+  const reserve = () =>
+    deps.repo.reserveScan(ctx, {
+      imageSha256: scan.sha256,
+      limit: deps.dailyLimit,
+      model: model.modelId,
+      pages: pageCount,
+      provider: model.provider,
+      storagePath: scan.storagePath,
+    });
+  let reservation = await reserve();
 
   if (reservation.outcome === "cached") {
-    const cached = await deps.repo.getScan(ctx, reservation.id);
+    const cached = await readCachedScan(deps, ctx, reservation.id);
 
-    if (!cached?.extracted || !cached.matched) {
-      throw new ApiError(409, "CONFLICT", INVOICE_SCAN_CHANGED_MESSAGE);
+    if (cached) {
+      return cached;
     }
 
-    return {
-      cached: true,
-      extraction: cached.extracted,
-      limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
-      matched: cached.matched,
-      scanId: cached.id,
-    };
+    console.warn("[invoice-scan] lectura en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHE });
+    await deps.repo.discardScan(ctx, reservation.id);
+    reservation = await reserve();
+  }
+
+  if (reservation.outcome === "cached") {
+    // Otra petición volvió a leerla entre el descarte y la nueva reserva.
+    throw new ApiError(409, "CONFLICT", INVOICE_SCAN_CHANGED_MESSAGE);
   }
 
   if (reservation.outcome === "in_progress") {
@@ -411,9 +452,10 @@ export async function scanInvoice(
     throw limitReached(reservation.limit, reservation.used, pageCount);
   }
 
+  const { attemptId, id: scanId } = reservation;
   // Las páginas ya están cobradas: cualquier fallo cierra la reserva como failed,
   // y si el modelo aún no se llamó, las devuelve.
-  const fail = (code: string, refundPages = false) => deps.repo.failScan(ctx, reservation.id, code, refundPages);
+  const fail = (code: string, refundPages = false) => deps.repo.failScan(ctx, scanId, attemptId, code, refundPages);
   let result: Awaited<ReturnType<typeof extractInvoice>>;
   let matched: InvoiceMatch;
 
@@ -448,7 +490,7 @@ export async function scanInvoice(
     throw error;
   }
 
-  const row = await deps.repo.completeScan(ctx, reservation.id, {
+  const row = await deps.repo.completeScan(ctx, scanId, attemptId, {
     durationMs: result.durationMs,
     extracted: result.extraction,
     inputTokens: result.inputTokens,
@@ -469,6 +511,11 @@ export async function scanInvoice(
   };
 }
 
+/**
+ * Escaneo con una URL firmada por página. Si una página ya no está en el
+ * bucket (p. ej. `failed` por UPLOAD_ERROR) responde 404 con
+ * `INVOICE_SCAN_IMAGE_GONE_MESSAGE`, no 503: Storage está sano (caos-3 C6).
+ */
 export async function getInvoiceScanDetail(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
@@ -479,7 +526,13 @@ export async function getInvoiceScanDetail(
   assertPathInStore(row.storagePath, ctx.storeId);
   const imageUrls = await Promise.all(
     invoiceScanPagePaths(row.storagePath, row.pages).map((path) => deps.storage.signedReadUrl(path, INVOICE_READ_URL_TTL_SECONDS)),
-  );
+  ).catch((error: unknown) => {
+    if (error instanceof ApiError && error.status === 404) {
+      throw new ApiError(404, "NOT_FOUND", INVOICE_SCAN_IMAGE_GONE_MESSAGE);
+    }
+
+    throw error;
+  });
 
   return {
     createdAt: row.createdAt,
@@ -516,18 +569,26 @@ function mockObjects() {
   return mockState("invoice-scan:objects", () => new Map<string, Uint8Array>());
 }
 
-/** Storage en memoria del modo mock, con URLs de lectura falsas y deterministas. */
+function mockObject(path: string) {
+  const data = mockObjects().get(path);
+
+  if (!data) {
+    throw new ApiError(404, "NOT_FOUND", INVOICE_PAGE_NOT_FOUND_MESSAGE);
+  }
+
+  return data;
+}
+
+/**
+ * Storage en memoria del modo mock, con URLs de lectura falsas y deterministas.
+ * Como Storage, no firma (404) la lectura de un objeto que no existe.
+ */
 export const mockInvoiceStorage: InvoiceScanStorage = {
   async download(path) {
-    const data = mockObjects().get(path);
-
-    if (!data) {
-      throw new ApiError(404, "NOT_FOUND", INVOICE_PAGE_NOT_FOUND_MESSAGE);
-    }
-
-    return data;
+    return mockObject(path);
   },
   async signedReadUrl(path, expiresInSeconds) {
+    mockObject(path);
     return `https://mock-storage.local/storage/v1/object/sign/${INVOICE_SCANS_BUCKET}/${path}?token=mock-read-${expiresInSeconds}`;
   },
   async upload(path, data) {

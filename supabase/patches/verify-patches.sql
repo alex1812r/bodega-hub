@@ -2497,7 +2497,7 @@ select
   )
 union all
 select
-  'reserve_invoice_scan existe, security definer y search_path vacio (20261019e)',
+  'reserve_invoice_scan existe, security definer y search_path vacio (20261019e; firma con p_store_id/p_user_id de 20261019i)',
   exists (
     select 1 from pg_proc p
     where p.pronamespace = 'public'::regnamespace
@@ -2505,17 +2505,16 @@ select
       and p.prosecdef
       and p.proconfig @> array['search_path=""']
       and pg_get_function_identity_arguments(p.oid)
-        = 'p_sha256 text, p_storage_path text, p_pages integer, p_limit integer, p_provider text, p_model text'
+        = 'p_store_id uuid, p_user_id uuid, p_sha256 text, p_storage_path text, p_pages integer, p_limit integer, p_provider text, p_model text'
   )
 union all
 select
-  'reserve_invoice_scan: execute para authenticated y service_role, no para anon (20261019e)',
+  'reserve_invoice_scan: execute para service_role, no para anon (20261019e; authenticated lo pierde en 20261019i)',
   exists (
     select 1 from pg_proc p
     where p.pronamespace = 'public'::regnamespace
       and p.proname = 'reserve_invoice_scan'
       and not has_function_privilege('anon', p.oid, 'execute')
-      and has_function_privilege('authenticated', p.oid, 'execute')
       and has_function_privilege('service_role', p.oid, 'execute')
   )
 union all
@@ -2583,20 +2582,78 @@ select
   )
 union all
 select
-  'complete/fail/discard_invoice_scan: security definer, search_path vacio, execute solo authenticated y service_role (20261019g)',
+  'complete/fail/discard_invoice_scan: security definer y search_path vacio (20261019g; firmas y execute de 20261019i)',
   (
     select count(*) = 3 from pg_proc p
     where p.pronamespace = 'public'::regnamespace
       and p.prosecdef
       and p.proconfig @> array['search_path=""']
-      and not has_function_privilege('anon', p.oid, 'execute')
+      and (p.proname, pg_get_function_identity_arguments(p.oid)) in (
+        ('complete_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_extracted jsonb, p_matched jsonb, p_input_tokens integer, p_output_tokens integer, p_duration_ms integer'),
+        ('fail_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_error text, p_refund_pages boolean'),
+        ('discard_invoice_scan', 'p_store_id uuid, p_id uuid')
+      )
+  )
+union all
+select
+  'reserve/complete/fail/discard_invoice_scan: execute solo service_role, sin public, anon ni authenticated (20261019i)',
+  (
+    select count(*) = 4 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
       and not has_function_privilege('public', p.oid, 'execute')
-      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
       and has_function_privilege('service_role', p.oid, 'execute')
       and (p.proname, pg_get_function_identity_arguments(p.oid)) in (
-        ('complete_invoice_scan', 'p_id uuid, p_extracted jsonb, p_matched jsonb, p_input_tokens integer, p_output_tokens integer, p_duration_ms integer'),
-        ('fail_invoice_scan', 'p_id uuid, p_error text, p_refund_pages boolean'),
-        ('discard_invoice_scan', 'p_id uuid')
+        ('reserve_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_sha256 text, p_storage_path text, p_pages integer, p_limit integer, p_provider text, p_model text'),
+        ('complete_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_extracted jsonb, p_matched jsonb, p_input_tokens integer, p_output_tokens integer, p_duration_ms integer'),
+        ('fail_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_error text, p_refund_pages boolean'),
+        ('discard_invoice_scan', 'p_store_id uuid, p_id uuid')
       )
+  )
+union all
+select
+  'reserve/complete/fail/discard_invoice_scan: no quedan firmas viejas ni otras sobrecargas (20261019i)',
+  (
+    select count(*) = 4 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('reserve_invoice_scan', 'complete_invoice_scan', 'fail_invoice_scan', 'discard_invoice_scan')
+  )
+union all
+select
+  'reserve/complete/fail/discard_invoice_scan sin auth.uid() ni current_user_store_id(); reserve acota paginas 1..10 y limite 0..10000; complete/fail exigen el intento (20261019i)',
+  (
+    select count(*) = 4 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('reserve_invoice_scan', 'complete_invoice_scan', 'fail_invoice_scan', 'discard_invoice_scan')
+      and p.prosrc not ilike '%auth.uid()%'
+      and p.prosrc not ilike '%current_user_store_id()%'
+      and (
+        (p.proname = 'reserve_invoice_scan'
+          and p.prosrc ilike '%p_pages > 10%' and p.prosrc ilike '%p_limit > 10000%'
+          and p.prosrc ilike '%attempt_id = v_attempt_id%')
+        or (p.proname in ('complete_invoice_scan', 'fail_invoice_scan')
+          and p.prosrc ilike '%attempt_id is distinct from p_attempt_id%')
+        or p.proname = 'discard_invoice_scan'
+      )
+  )
+union all
+select
+  'invoice_scans.attempt_id uuid (20261019i)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'attempt_id' and data_type = 'uuid'
+  )
+union all
+select
+  'invoice_scans_payload_size (extracted y matched <= 512 KB) existe y esta validado (20261019i)',
+  exists (
+    select 1 from pg_constraint c
+    where c.conrelid = 'public.invoice_scans'::regclass
+      and c.conname = 'invoice_scans_payload_size'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%octet_length((extracted)::text) <= 524288%'
+      and pg_get_constraintdef(c.oid) ilike '%octet_length((matched)::text) <= 524288%'
   )
 order by 1;

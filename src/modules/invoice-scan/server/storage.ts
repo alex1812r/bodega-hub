@@ -181,16 +181,21 @@ export async function downloadInvoicePage(client: StorageClient, path: string): 
   );
 
   if (result.error || !result.data) {
-    // Objeto inexistente: Storage lo marca con 404 en `status` o en `statusCode`
-    // (según versión); el resto se trata como caída.
-    if (result.error?.status === 404 || result.error?.statusCode === "404") {
-      throw new ApiError(404, "NOT_FOUND", INVOICE_PAGE_NOT_FOUND_MESSAGE);
-    }
-
+    throwIfObjectNotFound(result.error);
     storageUnavailable();
   }
 
   return new Uint8Array(await result.data.arrayBuffer());
+}
+
+/**
+ * Objeto inexistente: Storage lo marca con 404 en `status` o en `statusCode`
+ * (según versión) → 404. El llamador trata el resto como caída (503).
+ */
+function throwIfObjectNotFound(error: { status?: number; statusCode?: string } | null) {
+  if (error?.status === 404 || error?.statusCode === "404") {
+    throw new ApiError(404, "NOT_FOUND", INVOICE_PAGE_NOT_FOUND_MESSAGE);
+  }
 }
 
 export async function createInvoiceSignedReadUrl(
@@ -204,6 +209,7 @@ export async function createInvoiceSignedReadUrl(
     .catch(() => storageUnavailable());
 
   if (result.error || !result.data?.signedUrl) {
+    throwIfObjectNotFound(result.error);
     storageUnavailable();
   }
 

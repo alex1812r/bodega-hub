@@ -2,11 +2,13 @@
  * Repositorio de escaneos de factura para el modo mock del BFF: en memoria y
  * por tienda, con la misma semántica que `scans.server.ts` (unique tienda +
  * hash, reserva atómica como `reserve_invoice_scan` con la ruta ligada a la
- * tienda, cierre/fallo/descarte como las RPCs de 20261019g, cuota por día de Caracas
- * sobre `usagePages`, few-shot ≤ 3, 404 entre tiendas, purga a 90 días de
- * filas y de objetos sin escaneo vivo).
+ * tienda y páginas/límite acotados, cierre/fallo/descarte como las RPCs de
+ * 20261019g/i con el intento vigente, tope de 512 KB de la lectura, cuota por
+ * día de Caracas sobre `usagePages`, few-shot ≤ 3, 404 entre tiendas, purga a
+ * 90 días de filas y de objetos sin escaneo vivo).
  */
 import { ApiError } from "@/lib/api/apiError";
+import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
 import { mockState } from "@/shared/mocks/mockStore";
 import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
@@ -15,8 +17,11 @@ import {
   DISCARD_NOT_ALLOWED_MESSAGES,
   type ExpiredScan,
   INVALID_SCAN_DATA_MESSAGE,
+  INVOICE_SCAN_PAYLOAD_MAX_BYTES,
+  INVOICE_SCAN_STALE_ATTEMPT_MESSAGE,
   invoiceScanPagePaths,
   invoiceScanProcessingWindowMs,
+  isReserveInputInRange,
   isScanStoragePathInScope,
   MAX_FEW_SHOT_EXAMPLES,
   type StoredFewShotExample,
@@ -30,6 +35,11 @@ import {
 
 function scans() {
   return mockState("invoice-scan:scans", () => new Map<string, InvoiceScanRow>());
+}
+
+/** Columna `attempt_id` por id de escaneo: cada reserva la renueva (20261019i). */
+function attempts() {
+  return mockState("invoice-scan:attempts", () => new Map<string, string>());
 }
 
 function byNewest(a: InvoiceScanRow, b: InvoiceScanRow) {
@@ -65,14 +75,17 @@ function usedToday(ctx: InvoiceScanContext, now: Date) {
 }
 
 /**
- * Paridad con `reserve_invoice_scan` (20261019e y 20261019g). El cuerpo es
+ * Paridad con `reserve_invoice_scan` (20261019e, g e i). El cuerpo es
  * síncrono (sin `await`): en un solo hilo equivale al lock por tienda de la RPC.
  */
 export async function reserveScan(
   ctx: InvoiceScanContext,
   input: InvoiceScanReserveInput,
 ): Promise<InvoiceScanReservation> {
-  if (!isScanStoragePathInScope(ctx.storeId, input.imageSha256, input.storagePath)) {
+  if (
+    !isReserveInputInRange(input.pages, input.limit) ||
+    !isScanStoragePathInScope(ctx.storeId, input.imageSha256, input.storagePath)
+  ) {
     throw new ApiError(400, "BAD_REQUEST", INVALID_SCAN_DATA_MESSAGE);
   }
 
@@ -120,19 +133,53 @@ export async function reserveScan(
     supplierId: existing?.supplierId ?? null,
     usagePages: sameDay && existing ? existing.usagePages + input.pages : input.pages,
   });
+  const attemptId = crypto.randomUUID();
+  attempts().set(row.id, attemptId);
 
-  return { id: row.id, limit: input.limit, outcome: "reserved", used: used + input.pages };
+  return { attemptId, id: row.id, limit: input.limit, outcome: "reserved", used: used + input.pages };
+}
+
+/**
+ * Como `complete_invoice_scan` / `fail_invoice_scan` (20261019i): null si la
+ * fila no es de la tienda; 409 si no está `processing`, el intento no es el
+ * vigente o la reservó otro usuario.
+ */
+function liveAttempt(ctx: InvoiceScanContext, id: string, attemptId: string) {
+  const scan = ownScan(ctx, id);
+
+  if (!scan) {
+    return null;
+  }
+
+  if (scan.status !== "processing" || attempts().get(id) !== attemptId || scan.createdBy !== ctx.userId) {
+    throw new ApiError(409, "CONFLICT", INVOICE_SCAN_STALE_ATTEMPT_MESSAGE);
+  }
+
+  return scan;
+}
+
+/**
+ * Check `invoice_scans_payload_size` (23514 → 400). Aproximación: mide
+ * `JSON.stringify`, algo más compacto que el `jsonb::text` de Postgres.
+ */
+function exceedsPayloadLimit(value: unknown) {
+  return new TextEncoder().encode(JSON.stringify(value)).length > INVOICE_SCAN_PAYLOAD_MAX_BYTES;
 }
 
 export async function completeScan(
   ctx: InvoiceScanContext,
   id: string,
+  attemptId: string,
   completion: InvoiceScanCompletion,
 ): Promise<InvoiceScanRow | null> {
-  const scan = ownScan(ctx, id);
+  const scan = liveAttempt(ctx, id, attemptId);
 
-  if (!scan || scan.status !== "processing") {
+  if (!scan) {
     return null;
+  }
+
+  if (exceedsPayloadLimit(completion.extracted) || exceedsPayloadLimit(completion.matched)) {
+    throw new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
   }
 
   return save({ ...scan, ...completion, error: null, status: "extracted" });
@@ -141,12 +188,13 @@ export async function completeScan(
 export async function failScan(
   ctx: InvoiceScanContext,
   id: string,
+  attemptId: string,
   errorCode: string,
   refundPages = false,
 ): Promise<void> {
-  const scan = ownScan(ctx, id);
+  const scan = liveAttempt(ctx, id, attemptId);
 
-  if (scan && scan.status === "processing") {
+  if (scan) {
     save({
       ...scan,
       error: errorCode,

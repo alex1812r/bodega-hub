@@ -3,6 +3,7 @@
  * parche 20261019a; plan factura-escaneo-gtm §3 "Idempotencia y cuota",
  * "Trazabilidad" y §4). Los comparten `scans.server.ts` y `scans.mock-server.ts`.
  */
+import { INVOICE_MAX_PAGES } from "../client/invoiceLimits";
 import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
 
 /** `processing`: reservado por `reserveScan` mientras el modelo lee (parche 20261019e). */
@@ -83,6 +84,36 @@ export function isScanStoragePathInScope(storeId: string, imageSha256: string, s
 /** Mensaje 22023 de `reserve_invoice_scan` y demás RPCs del escaneo. */
 export const INVALID_SCAN_DATA_MESSAGE = "Datos de escaneo no válidos.";
 
+/**
+ * Topes que `reserve_invoice_scan` exige a `p_limit` (0..10000) y a `p_pages`
+ * (1..INVOICE_MAX_PAGES); fuera de ellos responde 22023 (parche 20261019i, caos-3 C3).
+ */
+export const INVOICE_SCAN_MAX_DAILY_LIMIT = 10_000;
+
+export function isReserveInputInRange(pages: number, limit: number): boolean {
+  return (
+    Number.isInteger(pages) &&
+    pages >= 1 &&
+    pages <= INVOICE_MAX_PAGES &&
+    Number.isInteger(limit) &&
+    limit >= 0 &&
+    limit <= INVOICE_SCAN_MAX_DAILY_LIMIT
+  );
+}
+
+/**
+ * Tope de `extracted` y de `matched` (check `invoice_scans_payload_size`,
+ * 20261019i, caos-3 C7): `octet_length(<columna>::text)` ≤ 512 KB.
+ */
+export const INVOICE_SCAN_PAYLOAD_MAX_BYTES = 512 * 1024;
+
+/**
+ * PT409 de `complete_invoice_scan` y `fail_invoice_scan` (20261019i) cuando el
+ * intento no es el vigente de la fila: otra reserva la tomó, ya se cerró o la
+ * reservó otro usuario.
+ */
+export const INVOICE_SCAN_STALE_ATTEMPT_MESSAGE = "Esta lectura ya no está vigente.";
+
 /** Entrada de `reserveScan` (RPC `reserve_invoice_scan`, parche 20261019e). */
 export type InvoiceScanReserveInput = {
   imageSha256: string;
@@ -99,12 +130,14 @@ export type InvoiceScanReserveInput = {
  * - `in_progress`: otra petición la está leyendo (processing dentro de la ventana por páginas);
  * - `quota`: las páginas no caben en la cuota de hoy;
  * - `reserved`: fila en `processing` y páginas cobradas; `used` ya las incluye.
+ *   `attemptId` (columna `attempt_id`, nueva en cada reserva) es lo que piden
+ *   `completeScan` y `failScan` para cerrar este intento y no otro (20261019i).
  */
 export type InvoiceScanReservation =
   | { outcome: "cached"; id: string }
   | { outcome: "in_progress"; id: string }
   | { outcome: "quota"; used: number; limit: number }
-  | { outcome: "reserved"; id: string; used: number; limit: number };
+  | { outcome: "reserved"; id: string; attemptId: string; used: number; limit: number };
 
 /**
  * Lectura que cierra una reserva (`processing` → `extracted`). Proveedor y
@@ -160,7 +193,11 @@ export const DISCARD_NOT_ALLOWED_MESSAGES: Record<Exclude<InvoiceScanStatus, "ex
 export const MAX_FEW_SHOT_EXAMPLES = 3;
 export const INVOICE_SCAN_RETENTION_DAYS = 90;
 
-/** Páginas por tienda y día operativo de Caracas (`INVOICE_SCAN_DAILY_LIMIT`, por defecto 50). */
+/**
+ * Páginas por tienda y día operativo de Caracas (`INVOICE_SCAN_DAILY_LIMIT`,
+ * por defecto 50), como mucho `INVOICE_SCAN_MAX_DAILY_LIMIT`: más arriba la
+ * RPC rechazaría todas las reservas.
+ */
 export function readInvoiceScanDailyLimit(
   env: Record<string, string | undefined> = process.env,
 ): number {
@@ -170,5 +207,5 @@ export function readInvoiceScanDailyLimit(
     return DEFAULT_INVOICE_SCAN_DAILY_LIMIT;
   }
 
-  return Number(raw);
+  return Math.min(Number(raw), INVOICE_SCAN_MAX_DAILY_LIMIT);
 }

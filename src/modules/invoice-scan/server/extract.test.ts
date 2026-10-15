@@ -361,7 +361,10 @@ describe("extractInvoice: legibilidad (plan §6.1)", () => {
 describe("toInvoiceScanApiError", () => {
   it.each<[InvoiceExtractionErrorCode, RegExp]>([
     ["PROVIDER_ERROR", /servicio de IA no está disponible/],
-    ["TIMEOUT", /tardó demasiado/],
+    [
+      "TIMEOUT",
+      /^La lectura de la factura tardó demasiado\. Intenta de nuevo; si se repite, registra la compra a mano\.$/,
+    ],
     ["INVALID_OUTPUT", /No pudimos leer la factura/],
     ["QUOTA", /cuota/],
   ])("maps %s to a 502 in Spanish", (code, message) => {

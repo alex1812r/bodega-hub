@@ -58,7 +58,7 @@ const ERROR_MESSAGES: Record<InvoiceExtractionErrorCode, string> = {
   QUOTA:
     "Se agotó la cuota del servicio de IA por ahora. Intenta más tarde o registra la compra a mano.",
   TIMEOUT:
-    "La lectura de la factura tardó demasiado. Intenta de nuevo con una foto más liviana.",
+    "La lectura de la factura tardó demasiado. Intenta de nuevo; si se repite, registra la compra a mano.",
 };
 
 export class InvoiceExtractionError extends Error {
