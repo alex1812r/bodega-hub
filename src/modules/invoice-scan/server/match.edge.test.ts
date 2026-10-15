@@ -195,10 +195,18 @@ describe("matchInvoice · empaque fuera del enum o solo en el texto (caos M5, 6.
     },
   );
 
-  it("sin unit, 'CAJA' en el texto y un solo empaque registrado: usa ese", () => {
+  // Caos A-n1: la palabra del texto ya no confirma por sí sola el empaque único.
+  it("sin unit, 'CAJA' solo en el texto y un solo empaque registrado: dudosa con ese empaque propuesto", () => {
+    const line = one({ description: "2 CAJA MALTA POLAR", rawText: "2 CAJA MALTA POLAR", supplierSku: "MAL-355", quantity: 2, unitPrice: 300, lineTotal: 600 }).lines[0];
+
+    expect(line).toMatchObject({ status: "doubtful", entryMode: "pack", packUnitId: "pu-malta-6", unitsPerPack: 6 });
+  });
+
+  it("sin unit, 'CAJA' en el texto y alias aprendido en modo unidad: modo unidad (manda el alias)", () => {
     const line = one({ rawText: "2 CAJA MALTA POLAR 355 ML", quantity: 2, unitPrice: 300, lineTotal: 600 }).lines[0];
 
-    expect(line).toMatchObject({ status: "confirmed", entryMode: "pack", packUnitId: "pu-malta-6", unitsPerPack: 6 });
+    expect(line).toMatchObject({ entryMode: "unit" });
+    expect(line.packUnitId).toBeUndefined();
   });
 });
 
