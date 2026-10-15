@@ -79,6 +79,12 @@ function resolveRecipe(input: PackInput, readSize: number | undefined, aliasSize
       `El alias aprendido es de ${aliasSize} unidades por empaque y la receta del producto es de ${conversion}: confirma las unidades por empaque.`,
     );
   }
+  if (input.line.unit === "unidad") {
+    // "24 UND" de un producto-empaque: ¿24 empaques o 24 unidades sueltas? No se confirma (caos B-r4-1).
+    issues.push(
+      `La factura dice "unidad" y el producto es un empaque de ${conversion} unidades: confirma si son empaques o unidades sueltas.`,
+    );
+  }
   const registered = input.packUnits.find((pack) => pack.unitsPerPack === conversion);
   return {
     entryMode: "pack",
@@ -168,8 +174,9 @@ function resolveWithSize(size: number, input: PackInput, fromAlias: boolean): Pa
  *   (modo unidad); si no, el empaque único queda propuesto con aviso (caos
  *   A-n1). Ninguno o varios -> dudosa pidiendo unidades por empaque. Nunca
  *   entra como 1 unidad (6.19, caos M5).
+ * - Componente de receta (`componentPackSizes`): ver `resolvePack`.
  */
-export function resolvePack(input: PackInput): PackResolution {
+function resolvePackMode(input: PackInput): PackResolution {
   const { line, alias } = input;
   const readSize = isPositive(line.unitsPerPack) ? line.unitsPerPack : undefined;
   const aliasSize = isPositive(alias?.unitsPerPack) ? alias?.unitsPerPack : undefined;
@@ -232,5 +239,31 @@ export function resolvePack(input: PackInput): PackResolution {
   return {
     entryMode: "pack",
     issues: [`La factura no dice cuántas unidades trae cada ${packWord(line)}: indícalo.`],
+  };
+}
+
+/**
+ * Modo de entrada de la línea (`resolvePackMode`) más la guarda de componente
+ * de receta (caos M-r4-1): si el producto es la unidad de una receta activa de
+ * otro producto, `create_purchase` solo acepta en modo empaque los tamaños de
+ * esas recetas (`componentPackSizes`, 20261010d `v_unit_pack_sizes`). Un tamaño
+ * fuera de ellos deja la línea dudosa con aviso que nombra los permitidos y sin
+ * fijar el empaque (el del proveedor no se puede guardar; se decide a mano).
+ */
+export function resolvePack(input: PackInput): PackResolution {
+  const resolution = resolvePackMode(input);
+  const allowed = (input.product?.componentPackSizes ?? []).filter((size) => isPositive(size));
+  const size = resolution.unitsPerPack;
+  if (resolution.entryMode !== "pack" || allowed.length === 0 || size === undefined || allowed.includes(size)) {
+    return resolution;
+  }
+  const sizes = allowed.join(" o ");
+  return {
+    entryMode: "pack",
+    ...(resolution.disassembleOnReceive ? { disassembleOnReceive: true } : {}),
+    issues: [
+      ...resolution.issues,
+      `El empaque es de ${size} unidades, pero este producto es componente de una receta de ${sizes} unidades por empaque: confirma las unidades por empaque (la compra solo acepta ${sizes}).`,
+    ],
   };
 }

@@ -18,6 +18,8 @@ export const NO_PRICE_ISSUE = "La línea no trae precio: escríbelo.";
 export const MISSING_RATE_WARNING = "Falta la tasa del día: los costos en REF no se precargaron.";
 export const INVALID_QUANTITY_ISSUE = "Cantidad inválida en la factura: revísala.";
 export const INVALID_PRICE_ISSUE = "Precio inválido en la factura: revísalo.";
+/** `unitPrice × quantity` no da `lineTotal` (ni por empaque ni por unidad dentro del empaque): caos A-r4-1. */
+export const UNIT_PRICE_MISMATCH_ISSUE = "El precio unitario no cuadra con el total de la línea: revísalo.";
 export const DECIMAL_QUANTITY_ISSUE = "Cantidad con decimales en la factura: la compra solo admite enteros, revísala.";
 /**
  * Sin ninguna tasa no se puede comparar con el último costo (en REF). Decisión:
@@ -137,21 +139,71 @@ export function hasPrice(line: InvoiceExtractionLine): boolean {
 }
 
 /**
+ * Tolerancia al conciliar `unitPrice × quantity (× unitsPerPack)` con
+ * `lineTotal`: la de los totales (1 % del total, mínimo 1 Bs) más medio
+ * céntimo por unidad facturada, porque el precio impreso viene redondeado al
+ * céntimo (3 a 33,33 = 99,99 frente a 100).
+ */
+function lineWithinTolerance(lineTotal: number, computed: number, units: number): boolean {
+  const tolerance = Math.max(TOTALS_RELATIVE_TOLERANCE * lineTotal, TOTALS_MIN_TOLERANCE_VES) + 0.005 * units;
+  return Math.abs(lineTotal - computed) <= tolerance;
+}
+
+/**
+ * Conciliación del precio unitario impreso con el total de la línea (caos
+ * A-r4-1). Solo si hay `unitPrice`, `lineTotal` y `quantity` válidos. Cuadra si
+ * `unitPrice × quantity ≈ lineTotal` (precio por unidad de entrada) o, en modo
+ * empaque con tamaño conocido, `unitPrice × quantity × unitsPerPack ≈ lineTotal`
+ * (precio impreso por unidad dentro del empaque). Si no cuadra ninguna,
+ * devuelve `UNIT_PRICE_MISMATCH_ISSUE`; el costo sale igual de `lineTotal`.
+ * En modo empaque sin `unitsPerPack` fijado no se concilia (la línea ya es
+ * dudosa por el empaque y la segunda lectura no se puede comprobar).
+ */
+export function unitPriceIssue(input: {
+  line: InvoiceExtractionLine;
+  unitsPerPack: number | undefined;
+  entryMode: "unit" | "pack";
+}): string | undefined {
+  const { line } = input;
+  if (!isAmount(line.unitPrice) || !isAmount(line.lineTotal) || !isQuantity(line.quantity)) {
+    return undefined;
+  }
+  if (lineWithinTolerance(line.lineTotal, line.unitPrice * line.quantity, line.quantity)) {
+    return undefined;
+  }
+  if (input.entryMode === "unit") {
+    return UNIT_PRICE_MISMATCH_ISSUE;
+  }
+  if (!isPositive(input.unitsPerPack)) {
+    // Empaque sin tamaño fijado: ya es dudosa por el empaque y no se sabe si el P.UNIT es por unidad dentro.
+    return undefined;
+  }
+  const units = line.quantity * input.unitsPerPack;
+  return lineWithinTolerance(line.lineTotal, line.unitPrice * units, units) ? undefined : UNIT_PRICE_MISMATCH_ISSUE;
+}
+
+/**
  * Costo por UNIDAD DE ENTRADA de la línea, sin IVA: por empaque en modo
  * `pack` (es el `packCostVes`/`packCostRef` de `purchaseItemInputSchema`; el
  * `unitCost*` de la compra es este ÷ `unitsPerPack`) y por unidad en modo
- * `unit` (es su `unitCostVes`/`unitCostRef`). Es el precio unitario impreso
- * (o `lineTotal ÷ quantity` si no lo trae), siempre en Bs.
+ * `unit` (es su `unitCostVes`/`unitCostRef`). Siempre en Bs.
+ *
+ * Sale de `lineTotal ÷ quantity` cuando ambos son válidos, para que
+ * `unitCostVes × quantity` sea el mismo importe que suma `lineAmount` en
+ * `totals.computed` (caos A-r4-1: el P.UNIT impreso puede ser por unidad
+ * dentro de la caja o venir cruzado; `unitPriceIssue` lo concilia). Sin
+ * `lineTotal` válido, el precio unitario impreso (y `lineAmount` usa
+ * `unitPrice × quantity`, la misma cifra).
  */
 export function lineEntryCosts(
   line: InvoiceExtractionLine,
   rate: number | undefined,
 ): { unitCostVes?: number; unitCostRef?: number } {
   let perEntry: number | undefined;
-  if (isAmount(line.unitPrice)) {
-    perEntry = line.unitPrice;
-  } else if (isAmount(line.lineTotal) && isQuantity(line.quantity)) {
+  if (isAmount(line.lineTotal) && isQuantity(line.quantity)) {
     perEntry = line.lineTotal / line.quantity;
+  } else if (isAmount(line.unitPrice)) {
+    perEntry = line.unitPrice;
   }
   if (perEntry === undefined) {
     return {};

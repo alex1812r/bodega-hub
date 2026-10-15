@@ -18,6 +18,7 @@ import {
   lineValueIssues,
   priceCoherenceIssue,
   resolveRate,
+  unitPriceIssue,
 } from "./match/money";
 import { resolvePack } from "./match/pack";
 import { matchLineProduct, type ProductLookup } from "./match/product";
@@ -90,6 +91,13 @@ function matchLine(
       });
   if (priceIssue) {
     issues.push(priceIssue);
+  }
+  // El costo precargado sale de lineTotal; un P.UNIT que no lo explica deja la línea dudosa (caos A-r4-1).
+  const unitPriceMismatch = state.usd
+    ? undefined
+    : unitPriceIssue({ line, unitsPerPack: pack.unitsPerPack, entryMode: pack.entryMode });
+  if (unitPriceMismatch) {
+    issues.push(unitPriceMismatch);
   }
   const priced = hasPrice(line);
   if (!priced) {
