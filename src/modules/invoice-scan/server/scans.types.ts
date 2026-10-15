@@ -61,7 +61,7 @@ export type InvoiceScanInsert = {
 };
 
 /** Ejemplo few-shot de la capa 2: imagen guardada + lectura confirmada. */
-export type InvoiceFewShotExample = {
+export type StoredFewShotExample = {
   scanId: string;
   storagePath: string;
   confirmed: InvoiceExtraction;

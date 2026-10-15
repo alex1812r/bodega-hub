@@ -268,6 +268,7 @@ describe("toInvoiceScanApiError", () => {
     const apiError = toInvoiceScanApiError(new InvoiceExtractionError(code));
 
     expect(apiError.status).toBe(502);
+    expect(apiError.code).toBe("INVOICE_SCAN_PROVIDER_ERROR");
     expect(apiError.message).toMatch(message);
     expect(apiError.details).toEqual({ reason: code });
   });
