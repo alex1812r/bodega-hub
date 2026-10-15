@@ -316,22 +316,27 @@ async function loadCatalog(
   return { supplierProducts, aliases: aliasRows, packUnits };
 }
 
-async function loadRecipeProductIds(
+/**
+ * Recetas activas de las que el producto es el empaque: `pack_product_id` ->
+ * `total_units` (la conversión que `create_purchase` exige como `units_per_pack`).
+ */
+async function loadRecipeConversions(
   supabase: MatchContextSupabaseClient,
   storeId: string,
   productIds: string[],
-): Promise<Set<string>> {
+): Promise<Map<string, number | undefined>> {
   if (productIds.length === 0) {
-    return new Set();
+    return new Map();
   }
   const { data, error } = await supabase
     .from("product_pack_conversions")
-    .select("pack_product_id")
+    .select("pack_product_id, total_units")
     .eq("store_id", storeId)
     .eq("is_active", true)
     .in("pack_product_id", productIds);
   throwIfSupabaseError(error);
-  return new Set(((data ?? []) as Array<{ pack_product_id: string }>).map((row) => row.pack_product_id));
+  const rows = (data ?? []) as Array<{ pack_product_id: string; total_units: number | string | null }>;
+  return new Map(rows.map((row) => [row.pack_product_id, toNumber(row.total_units)]));
 }
 
 /** Última línea recibida por producto, del proveedor o de cualquiera (misma consulta que `purchaseLastCosts.server.ts`). */
@@ -437,9 +442,9 @@ export async function loadMatchContext(
   const productIds = [...referenced];
   const missing = productIds.filter((id) => !loaded.has(id));
 
-  const [extraRows, recipeIds, supplierCosts, anyCosts] = await Promise.all([
+  const [extraRows, recipes, supplierCosts, anyCosts] = await Promise.all([
     loadProductsWhere(supabase, storeId, "id", missing),
-    loadRecipeProductIds(supabase, storeId, productIds),
+    loadRecipeConversions(supabase, storeId, productIds),
     supplierId ? loadLastLines(supabase, storeId, productIds, supplierId) : Promise.resolve(new Map<string, number>()),
     loadLastLines(supabase, storeId, productIds),
   ]);
@@ -448,17 +453,21 @@ export async function loadMatchContext(
   }
 
   const linkedIds = new Set(catalog?.supplierProducts.map((link) => link.productId) ?? []);
-  const products: MatchProduct[] = [...loaded.values()].map((row) => ({
-    id: row.id,
-    name: row.name,
-    sku: row.sku,
-    barcode: row.barcode,
-    active: row.is_active,
-    taxRateCode: row.category?.tax_rate?.code ?? null,
-    lastUnitCostRef: supplierCosts.get(row.id) ?? anyCosts.get(row.id) ?? null,
-    linkedToSupplier: linkedIds.has(row.id),
-    hasRecipe: recipeIds.has(row.id),
-  }));
+  const products: MatchProduct[] = [...loaded.values()].map((row) => {
+    const recipeUnitsPerPack = recipes.get(row.id);
+    return {
+      id: row.id,
+      name: row.name,
+      sku: row.sku,
+      barcode: row.barcode,
+      active: row.is_active,
+      taxRateCode: row.category?.tax_rate?.code ?? null,
+      lastUnitCostRef: supplierCosts.get(row.id) ?? anyCosts.get(row.id) ?? null,
+      linkedToSupplier: linkedIds.has(row.id),
+      hasRecipe: recipes.has(row.id),
+      ...(recipeUnitsPerPack !== undefined ? { recipeUnitsPerPack } : {}),
+    };
+  });
 
   return {
     storeId,

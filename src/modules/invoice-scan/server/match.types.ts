@@ -114,6 +114,14 @@ export type MatchProduct = {
   linkedToSupplier?: boolean;
   /** Es un empaque con receta activa (`product_pack_conversions` / receta por componentes). */
   hasRecipe: boolean;
+  /**
+   * `product_pack_conversions.total_units` de la receta ACTIVA de la que el
+   * producto es el empaque (`pack_product_id`; una sola por el índice único de
+   * 20260811): unidades que salen de un empaque. `create_purchase` exige que una
+   * línea en modo empaque de este producto mande exactamente este
+   * `units_per_pack` (20261009d / 20261010d). Sin receta, `undefined`.
+   */
+  recipeUnitsPerPack?: number;
 };
 
 /** Cómo llegó un candidato difuso. */

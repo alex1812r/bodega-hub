@@ -159,7 +159,7 @@ function fullTables(): Record<string, TableHandler> {
       data: [{ alias_norm: "caja surtida", product_id: CAJA_ID, pack_label: "CAJA", units_per_pack: 12, hits: 3 }],
       error: null,
     }),
-    product_pack_conversions: () => ({ data: [{ pack_product_id: CAJA_ID }], error: null }),
+    product_pack_conversions: () => ({ data: [{ pack_product_id: CAJA_ID, total_units: 12 }], error: null }),
     products: (query) => {
       const select = String(argsOf(query, "select")[0]?.[0] ?? "");
       if (select.startsWith("id, purchase_items")) {
@@ -243,7 +243,9 @@ describe("loadMatchContext", () => {
     });
     expect(byId.get(MALTA_ID)).toMatchObject({ barcode: "7591234", lastUnitCostRef: 1.1, linkedToSupplier: false });
     expect(byId.get(ARROZ_ID)).toMatchObject({ active: false, taxRateCode: null, lastUnitCostRef: null });
-    expect(byId.get(CAJA_ID)).toMatchObject({ taxRateCode: null, hasRecipe: true });
+    // La conversión registrada (product_pack_conversions.total_units) es lo que create_purchase exige (caos M-r3-1).
+    expect(byId.get(CAJA_ID)).toMatchObject({ taxRateCode: null, hasRecipe: true, recipeUnitsPerPack: 12 });
+    expect(byId.get(HARINA_ID)?.recipeUnitsPerPack).toBeUndefined();
 
     expect(ctx.taxRates).toEqual([
       { code: "exento", pct: 0, kind: "exento", isDefault: false },
@@ -308,6 +310,7 @@ describe("loadMatchContext", () => {
 
     const [recipes] = queriesOf(stub.queries, "product_pack_conversions");
     expect(hasEq(recipes, "is_active", true)).toBe(true);
+    expect(String(argsOf(recipes, "select")[0]?.[0])).toContain("total_units");
   });
 
   it("sin proveedor, sin número y sin barcodes no consulta catálogo, escaneos ni barcode", async () => {
@@ -435,6 +438,24 @@ describe("loadMatchContext", () => {
     expect(match.lines[1].productId).toBe(MALTA_ID);
     expect(match.rate?.system).toBe(45.5);
     expect(match.duplicateOfScanId).toBe("scan-1");
+  });
+
+  it("producto con receta: el match sale con la conversión registrada que create_purchase acepta (caos M-r3-1)", async () => {
+    const stub = createSupabaseStub({
+      candidates: { ...candidates, lines: [] },
+      tables: fullTables(),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+    const recipeExtraction: InvoiceExtraction = {
+      ...extraction,
+      number: undefined,
+      lines: [{ rawText: "CAJA SURTIDA", description: "Caja surtida", quantity: 2, unitPrice: 1200, lineTotal: 2400, confidence: 0.9 }],
+    };
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, recipeExtraction);
+    const [line] = matchInvoice(recipeExtraction, ctx).lines;
+
+    expect(line).toMatchObject({ status: "confirmed", productId: CAJA_ID, entryMode: "pack", unitsPerPack: 12, disassembleOnReceive: true });
   });
 });
 

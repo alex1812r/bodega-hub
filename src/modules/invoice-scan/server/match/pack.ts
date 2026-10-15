@@ -26,8 +26,10 @@ export type PackInput = {
   product?: MatchProduct;
   /** Empaques activos del proveedor resuelto para ese producto. */
   packUnits: MatchPackUnit[];
-  /** Alias exacto usado, si lo hubo. */
+  /** Alias exacto usado, si lo hubo (en líneas por SKU, el del mismo producto con el proveedor). */
   alias?: MatchAlias;
+  /** `alias` es otro texto del mismo producto (línea por SKU): en modo unidad no gana a la palabra del texto. */
+  aliasOfProduct?: boolean;
 };
 
 function packWord(line: InvoiceExtractionLine): string {
@@ -51,17 +53,65 @@ function declaresPack(line: InvoiceExtractionLine): boolean {
   return line.unit !== undefined && PACK_UNITS.has(line.unit);
 }
 
-function withRecipe(resolution: PackResolution, product?: MatchProduct): PackResolution {
-  if (!product?.hasRecipe) {
-    return resolution;
+/**
+ * Producto con receta: ES el empaque. Siempre en modo empaque, desarmado al
+ * recibir y con la conversión registrada (`recipeUnitsPerPack`), la única que
+ * acepta `create_purchase` (caos M-r3-1). Un tamaño leído o aprendido distinto
+ * deja la línea dudosa con la conversión propuesta. Sin conversión conocida,
+ * dudosa pidiendo unidades (nunca 1).
+ */
+function resolveRecipe(input: PackInput, readSize: number | undefined, aliasSize: number | undefined): PackResolution {
+  const conversion = isPositive(input.product?.recipeUnitsPerPack) ? input.product.recipeUnitsPerPack : undefined;
+  if (conversion === undefined) {
+    return {
+      entryMode: "pack",
+      disassembleOnReceive: true,
+      issues: ["No se conoce la conversión registrada de este empaque: confirma las unidades por empaque."],
+    };
   }
-  // Empaque con receta: siempre en modo empaque y desarmado al recibir. Sin
-  // tamaño leído ni registrado, cada unidad del producto-empaque es 1 empaque.
+  const issues: string[] = [];
+  if (readSize !== undefined && readSize !== conversion) {
+    issues.push(
+      `La factura dice ${packWord(input.line)} de ${readSize} unidades y la receta del producto es de ${conversion}: confirma las unidades por empaque.`,
+    );
+  } else if (aliasSize !== undefined && aliasSize !== conversion) {
+    issues.push(
+      `El alias aprendido es de ${aliasSize} unidades por empaque y la receta del producto es de ${conversion}: confirma las unidades por empaque.`,
+    );
+  }
+  const registered = input.packUnits.find((pack) => pack.unitsPerPack === conversion);
   return {
-    ...resolution,
     entryMode: "pack",
-    unitsPerPack: resolution.entryMode === "pack" ? resolution.unitsPerPack : 1,
+    ...(registered ? { packUnitId: registered.id } : {}),
+    unitsPerPack: conversion,
     disassembleOnReceive: true,
+    issues,
+  };
+}
+
+/**
+ * El proveedor ya lo facturó por unidad (alias en modo unidad) y ahora la
+ * factura DECLARA un empaque: nunca confirma (caos A-r3-1, plan §10). Propone
+ * el tamaño leído o el empaque único registrado, con aviso de contradicción.
+ */
+function resolveUnitAliasContradiction(input: PackInput, readSize: number | undefined): PackResolution {
+  const { line, packUnits } = input;
+  let base: PackResolution;
+  if (readSize !== undefined) {
+    base = resolveWithSize(readSize, input, false);
+  } else if (packUnits.length === 1) {
+    base = { entryMode: "pack", packUnitId: packUnits[0].id, unitsPerPack: packUnits[0].unitsPerPack, issues: [] };
+  } else {
+    base = { entryMode: "pack", issues: [`La factura no dice cuántas unidades trae cada ${packWord(line)}: indícalo.`] };
+  }
+  const proposed = packUnits.find((pack) => pack.id === base.packUnitId);
+  const what = proposed ? `empaques "${proposed.label}" de ${proposed.unitsPerPack} unidades` : "empaques";
+  return {
+    ...base,
+    issues: [
+      `Antes este proveedor lo facturó por unidad; ahora dice ${packWord(line)}: confirma si son ${what} o unidades sueltas.`,
+      ...base.issues,
+    ],
   };
 }
 
@@ -96,6 +146,11 @@ function resolveWithSize(size: number, input: PackInput, fromAlias: boolean): Pa
 
 /**
  * Modo de entrada de una línea (plan §3 "Unidades y empaques"):
+ * - Producto con receta -> modo empaque + `disassembleOnReceive` con la
+ *   conversión registrada; otro tamaño leído o aprendido -> dudosa (caos M-r3-1).
+ * - Alias del proveedor aprendido en modo unidad (`unitsPerPack` null) y la
+ *   factura DECLARA caja/bulto/paquete/display -> dudosa con aviso de
+ *   contradicción y el empaque solo propuesto, nunca confirmado (caos A-r3-1).
  * - Tamaño leído = empaque registrado -> modo empaque con `packUnitId`.
  * - Tamaño leído distinto del registrado o del alias -> dudosa con aviso, SIN
  *   fijar `unitsPerPack` (6.8, caos A1).
@@ -107,81 +162,75 @@ function resolveWithSize(size: number, input: PackInput, fromAlias: boolean): Pa
  *   precio avisa si el importe es de empaque). Sin ningún indicio -> dudosa en
  *   modo unidad: nunca se multiplica sin indicio (caos A1).
  * - Empaque sin número: si la factura lo declara (`unit` caja/bulto/paquete/
- *   display) y hay un solo empaque registrado -> ese. Si el indicio es solo
- *   una palabra del texto o `unit: "otro"`, nunca confirma por sí solo: un
- *   alias del proveedor aprendido en modo unidad (`unitsPerPack` null) manda
+ *   display), sin alias en modo unidad, y hay un solo empaque registrado ->
+ *   ese. Si el indicio es solo una palabra del texto o `unit: "otro"`, nunca
+ *   confirma por sí solo: un alias del proveedor aprendido en modo unidad manda
  *   (modo unidad); si no, el empaque único queda propuesto con aviso (caos
  *   A-n1). Ninguno o varios -> dudosa pidiendo unidades por empaque. Nunca
  *   entra como 1 unidad (6.19, caos M5).
- * - Producto con receta -> modo empaque + `disassembleOnReceive`.
  */
 export function resolvePack(input: PackInput): PackResolution {
   const { line, alias } = input;
   const readSize = isPositive(line.unitsPerPack) ? line.unitsPerPack : undefined;
   const aliasSize = isPositive(alias?.unitsPerPack) ? alias?.unitsPerPack : undefined;
+
+  if (input.product?.hasRecipe) {
+    return resolveRecipe(input, readSize, aliasSize);
+  }
+  const declared = declaresPack(line);
+  if (declared && alias && aliasSize === undefined) {
+    return resolveUnitAliasContradiction(input, readSize);
+  }
   const indicated = indicatesPack(line, input.product);
 
   if (readSize !== undefined) {
     if (aliasSize !== undefined && aliasSize !== readSize) {
-      return withRecipe(
-        {
-          entryMode: "pack",
-          issues: [
-            `La factura dice ${packWord(line)} de ${readSize} unidades y el alias aprendido es de ${aliasSize}: confirma las unidades por empaque.`,
-          ],
-        },
-        input.product,
-      );
+      return {
+        entryMode: "pack",
+        issues: [
+          `La factura dice ${packWord(line)} de ${readSize} unidades y el alias aprendido es de ${aliasSize}: confirma las unidades por empaque.`,
+        ],
+      };
     }
     if (indicated || readSize > 1) {
-      return withRecipe(resolveWithSize(readSize, input, false), input.product);
+      return resolveWithSize(readSize, input, false);
     }
   } else if (aliasSize !== undefined && line.unit !== "unidad") {
     if (indicated) {
-      return withRecipe(resolveWithSize(aliasSize, input, true), input.product);
+      return resolveWithSize(aliasSize, input, true);
     }
     if (aliasSize > 1) {
-      return withRecipe(
-        {
-          entryMode: "unit",
-          issues: [
-            `La línea no dice que sea un empaque y el alias aprendido es de ${aliasSize} unidades por empaque: confirma si son unidades o empaques.`,
-          ],
-        },
-        input.product,
-      );
+      return {
+        entryMode: "unit",
+        issues: [
+          `La línea no dice que sea un empaque y el alias aprendido es de ${aliasSize} unidades por empaque: confirma si son unidades o empaques.`,
+        ],
+      };
     }
   }
 
   if (!indicated) {
-    return withRecipe({ entryMode: "unit", issues: [] }, input.product);
+    return { entryMode: "unit", issues: [] };
   }
-  const declared = declaresPack(line);
-  if (!declared && alias && aliasSize === undefined) {
+  if (alias && aliasSize === undefined && !input.aliasOfProduct) {
     // Alias aprendido en modo unidad: gana a la palabra del texto o a "otro" (caos A-n1).
-    return withRecipe({ entryMode: "unit", issues: [] }, input.product);
+    return { entryMode: "unit", issues: [] };
   }
   if (input.packUnits.length === 1) {
     const [only] = input.packUnits;
-    return withRecipe(
-      {
-        entryMode: "pack",
-        packUnitId: only.id,
-        unitsPerPack: only.unitsPerPack,
-        issues: declared
-          ? []
-          : [
-              `La factura no declara la unidad de empaque (solo se intuye del texto): confirma si son empaques "${only.label}" de ${only.unitsPerPack} unidades o unidades sueltas.`,
-            ],
-      },
-      input.product,
-    );
-  }
-  return withRecipe(
-    {
+    return {
       entryMode: "pack",
-      issues: [`La factura no dice cuántas unidades trae cada ${packWord(line)}: indícalo.`],
-    },
-    input.product,
-  );
+      packUnitId: only.id,
+      unitsPerPack: only.unitsPerPack,
+      issues: declared
+        ? []
+        : [
+            `La factura no declara la unidad de empaque (solo se intuye del texto): confirma si son empaques "${only.label}" de ${only.unitsPerPack} unidades o unidades sueltas.`,
+          ],
+    };
+  }
+  return {
+    entryMode: "pack",
+    issues: [`La factura no dice cuántas unidades trae cada ${packWord(line)}: indícalo.`],
+  };
 }

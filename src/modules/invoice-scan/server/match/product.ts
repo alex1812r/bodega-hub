@@ -3,7 +3,7 @@ import { normalizeAlias } from "@bodega/core/invoice";
 import type { InvoiceExtractionLine, InvoiceMatchCandidate, InvoiceMatchStatus } from "../../contracts";
 import type { MatchAlias, MatchFuzzyCandidate, MatchProduct, MatchSupplierCatalog } from "../match.types";
 
-import { formatDecimal, normalizeCode } from "./text";
+import { formatDecimal, isPositive, normalizeCode } from "./text";
 
 /** Score mínimo de un alias difuso (trigram) para proponerlo. */
 export const FUZZY_ALIAS_MIN_SCORE = 0.6;
@@ -25,6 +25,12 @@ export type ProductMatch = {
   candidates: InvoiceMatchCandidate[];
   /** Alias exacto usado (su `unitsPerPack` resuelve el empaque). */
   alias?: MatchAlias;
+  /**
+   * Línea por SKU: `alias` no es el de este texto sino otro del mismo producto
+   * con el proveedor. Informa del empaque (contradicción, tamaño) pero en modo
+   * unidad no gana a la palabra de empaque del texto.
+   */
+  aliasOfProduct?: boolean;
 };
 
 export type ProductLookup = {
@@ -72,6 +78,29 @@ function byExactAlias(line: InvoiceExtractionLine, lookup: ProductLookup): Match
   }
   const texts = unique([normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean));
   return lookup.catalog.aliases.filter((alias) => texts.includes(alias.aliasNorm));
+}
+
+/**
+ * Alias del proveedor que dice cómo factura el producto de una línea casada por
+ * SKU (caos A-r3-1, B-r3-1): el alias exacto de este texto hacia ese producto;
+ * si no lo hay, los del producto con ese proveedor cuando coinciden en modo
+ * (todos en unidad, o todos del mismo tamaño). Mezclados -> ninguno.
+ */
+function aliasForPack(
+  line: InvoiceExtractionLine,
+  lookup: ProductLookup,
+  productId: string,
+): Pick<ProductMatch, "alias" | "aliasOfProduct"> {
+  const exact = byExactAlias(line, lookup).find((alias) => alias.productId === productId);
+  if (exact) {
+    return { alias: exact };
+  }
+  const own = (lookup.catalog?.aliases ?? []).filter((alias) => alias.productId === productId);
+  const sizes = new Set(own.map((alias) => (isPositive(alias.unitsPerPack) ? alias.unitsPerPack : null)));
+  if (sizes.size !== 1) {
+    return {};
+  }
+  return { alias: own.reduce((best, alias) => (alias.hits > best.hits ? alias : best)), aliasOfProduct: true };
 }
 
 function byBarcode(line: InvoiceExtractionLine, lookup: ProductLookup): string[] {
@@ -143,7 +172,8 @@ function exactStep(candidates: InvoiceMatchCandidate[], alias?: MatchAlias): Pro
 export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLookup): ProductMatch {
   const skuCandidates = exactCandidates(bySupplierSku(line, lookup), lookup, "SKU del proveedor");
   if (skuCandidates.length > 0) {
-    return exactStep(skuCandidates);
+    const step = exactStep(skuCandidates);
+    return step.productId ? { ...step, ...aliasForPack(line, lookup, step.productId) } : step;
   }
 
   const aliases = byExactAlias(line, lookup);

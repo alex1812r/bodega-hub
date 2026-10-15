@@ -66,7 +66,13 @@ function matchLine(
   const product = productMatch.productId ? state.productsById.get(productMatch.productId) : undefined;
   const packUnits =
     product && state.catalog ? state.catalog.packUnits.filter((pack) => pack.productId === product.id) : [];
-  const pack = resolvePack({ line, product, packUnits, alias: productMatch.alias });
+  const pack = resolvePack({
+    line,
+    product,
+    packUnits,
+    alias: productMatch.alias,
+    aliasOfProduct: productMatch.aliasOfProduct,
+  });
 
   const issues = [...pack.issues, ...lineValueIssues(line)];
   if (product && !product.active) {
@@ -76,7 +82,8 @@ function matchLine(
     ? undefined
     : priceCoherenceIssue({
         line,
-        unitsPerPack: pack.unitsPerPack,
+        // Producto con receta: su último costo es por empaque (create_purchase lo guarda en modo unidad).
+        unitsPerPack: product?.hasRecipe ? 1 : pack.unitsPerPack,
         entryMode: pack.entryMode,
         rate: state.rate,
         lastUnitCostRef: product?.lastUnitCostRef,
