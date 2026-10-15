@@ -567,29 +567,91 @@ export function evaluateInvoice(input: InvoiceEvalInput): InvoiceMetrics {
 // ───────────────────────── costo ─────────────────────────
 
 /**
- * Precios en USD por millón de tokens (plan de pago, entrada de texto/imagen).
- * Fuentes: docs/factura-por-imagen-analisis.md (§2 y "Fuentes"):
- *   - Gemini: https://ai.google.dev/gemini-api/docs/pricing (consultado jun 2026).
- *   - Claude: https://platform.claude.com/docs/en/about-claude/pricing (Haiku 4.5: $1 / $5).
- * El análisis cita Flash-Lite $0,25–0,30 y Flash $0,75 de entrada para la
- * generación vigente sin dar salida; aquí se usan los precios publicados por
- * modelo concreto. Verificar en la página oficial antes de decidir con dinero
- * y actualizar esta tabla (una fila por id de modelo).
+ * Precios en USD por millón de tokens (plan de pago, nivel Standard, entrada de
+ * texto/imagen; la salida incluye thinking). Fuentes oficiales consultadas el
+ * 2026-10-15 (resumen en .notes/factura-escaneo/evaluacion/research-precios-vertex.md):
+ *   - https://ai.google.dev/gemini-api/docs/pricing
+ *   - https://ai.google.dev/gemini-api/docs/models
+ *   - https://platform.claude.com/docs/en/about-claude/pricing
+ *   - https://platform.claude.com/docs/en/about-claude/models/overview
+ * Notas:
+ *   - gemini-3.6-flash y gemini-3.8-flash cuestan $0.75 / $3.75 hasta el
+ *     2026-12-31 y suben a $1.50 / $7.50 desde el 2027-01-01 (fila con
+ *     `effectiveFrom`; se elige por la fecha de la corrida, en UTC).
+ *   - claude-haiku-5-5 tiene dos tramos: prompt ≤100k tokens $0.10 / $0.50;
+ *     si el prompt supera 100k, toda la petición va a $0.50 / $2.50.
+ *   - gemini-3.5-flash (solo Vertex) no tiene precio confirmado: no está en la tabla.
+ * Verificar en la página oficial antes de decidir con dinero.
  */
-export const MODEL_PRICES_USD_PER_MTOK: Readonly<Record<string, { input: number; output: number }>> = {
-  "gemini-2.5-flash": { input: 0.3, output: 2.5 },
-  "gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
-  "gemini-3-flash": { input: 0.5, output: 3 },
-  "gemini-3-flash-preview": { input: 0.5, output: 3 },
-  "claude-haiku-4-5": { input: 1, output: 5 },
+export type ModelPrice = {
+  /** Fecha (YYYY-MM-DD, UTC) desde la que rige la fila; sin fecha = siempre. */
+  effectiveFrom?: string;
+  input: number;
+  output: number;
+  /** Tramo alto: aplica a toda la petición si los tokens de entrada superan el umbral. */
+  longContext?: { aboveInputTokens: number; input: number; output: number };
 };
 
-/** Costo estimado en USD; null si el modelo no está en la tabla. */
-export function estimateCostUsd(modelId: string, inputTokens: number, outputTokens: number): number | null {
-  const key = modelId.trim().replace(/^models\//, "");
-  const price = MODEL_PRICES_USD_PER_MTOK[key];
-  if (!price) return null;
-  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
+export const MODEL_PRICES_USD_PER_MTOK: Readonly<Record<string, readonly ModelPrice[]>> = {
+  "gemini-2.5-flash": [{ input: 0.3, output: 2.5 }],
+  "gemini-2.5-flash-lite": [{ input: 0.1, output: 0.4 }],
+  "gemini-3-flash-preview": [{ input: 0.5, output: 3 }],
+  "gemini-3.1-flash-lite": [{ input: 0.25, output: 1.5 }],
+  "gemini-3.5-flash-lite": [{ input: 0.3, output: 2.5 }],
+  "gemini-3.6-flash": [
+    { input: 0.75, output: 3.75 },
+    { effectiveFrom: "2027-01-01", input: 1.5, output: 7.5 },
+  ],
+  "gemini-3.8-flash": [
+    { input: 0.75, output: 3.75 },
+    { effectiveFrom: "2027-01-01", input: 1.5, output: 7.5 },
+  ],
+  "claude-haiku-4-5": [{ input: 1, output: 5 }],
+  "claude-haiku-5-5": [
+    { input: 0.1, output: 0.5, longContext: { aboveInputTokens: 100_000, input: 0.5, output: 2.5 } },
+  ],
+};
+
+/**
+ * Resuelve el id de la tabla para un id de API: quita `models/` y acepta
+ * sufijos de fecha/versión (`claude-haiku-4-5-20251001`) por prefijo más largo
+ * terminado en límite (`-`, `@` o fin). Desconocido → null.
+ */
+export function resolvePricedModelId(modelId: string): string | null {
+  const id = modelId.trim().replace(/^models\//, "");
+  let best: string | null = null;
+  for (const key of Object.keys(MODEL_PRICES_USD_PER_MTOK)) {
+    if (!id.startsWith(key)) continue;
+    const next = id.charAt(key.length);
+    if (next !== "" && next !== "-" && next !== "@") continue;
+    if (best === null || key.length > best.length) best = key;
+  }
+  return best;
+}
+
+function effectiveTime(date: string): number {
+  return Date.parse(`${date}T00:00:00Z`);
+}
+
+/** Costo estimado en USD; null si el modelo no está en la tabla. `at` = fecha de la corrida. */
+export function estimateCostUsd(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  at: Date = new Date(),
+): number | null {
+  const key = resolvePricedModelId(modelId);
+  if (key === null) return null;
+  const now = at.getTime();
+  let row: ModelPrice | null = null;
+  for (const candidate of MODEL_PRICES_USD_PER_MTOK[key] ?? []) {
+    const from = candidate.effectiveFrom === undefined ? -Infinity : effectiveTime(candidate.effectiveFrom);
+    const current = row?.effectiveFrom === undefined ? -Infinity : effectiveTime(row.effectiveFrom);
+    if (from <= now && (row === null || from >= current)) row = candidate;
+  }
+  if (row === null) return null;
+  const tier = row.longContext && inputTokens > row.longContext.aboveInputTokens ? row.longContext : row;
+  return (inputTokens * tier.input + outputTokens * tier.output) / 1_000_000;
 }
 
 // ───────────────────────── agregación ─────────────────────────

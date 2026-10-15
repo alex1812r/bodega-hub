@@ -15,6 +15,7 @@ import type {
 import {
   aggregate,
   estimateCostUsd,
+  resolvePricedModelId,
   evaluateHeader,
   evaluateInvoice,
   meetsTargets,
@@ -355,10 +356,67 @@ describe("cabecera", () => {
 });
 
 describe("costo", () => {
-  it("usa la tabla por modelo y devuelve null si no lo conoce", () => {
-    expect(estimateCostUsd("claude-haiku-4-5", 1_000_000, 1_000_000)).toBe(6);
-    expect(estimateCostUsd("models/gemini-2.5-flash-lite", 1_000_000, 0)).toBeCloseTo(0.1);
+  const M = 1_000_000;
+  const AT_2026 = new Date("2026-10-15T12:00:00Z");
+  const AT_2027 = new Date("2027-01-01T00:00:00Z");
+
+  it.each([
+    ["gemini-2.5-flash", 0.3, 2.5],
+    ["gemini-2.5-flash-lite", 0.1, 0.4],
+    ["gemini-3-flash-preview", 0.5, 3],
+    ["gemini-3.1-flash-lite", 0.25, 1.5],
+    ["gemini-3.5-flash-lite", 0.3, 2.5],
+    ["gemini-3.6-flash", 0.75, 3.75],
+    ["gemini-3.8-flash", 0.75, 3.75],
+    ["claude-haiku-4-5", 1, 5],
+    ["claude-haiku-5-5", 0.1, 0.5],
+  ])("%s cobra entrada %p y salida %p por millón (2026)", (id, input, output) => {
+    // 100k de entrada: dentro del tramo bajo de Haiku 5.5.
+    expect(estimateCostUsd(id, 100_000, 0, AT_2026)).toBeCloseTo(input / 10, 10);
+    expect(estimateCostUsd(id, 0, M, AT_2026)).toBeCloseTo(output, 10);
+  });
+
+  it("combina entrada y salida", () => {
+    expect(estimateCostUsd("claude-haiku-4-5", M, M, AT_2026)).toBe(6);
+  });
+
+  it("acepta prefijo models/ y sufijos de fecha o versión por prefijo más largo", () => {
+    expect(estimateCostUsd("models/gemini-2.5-flash-lite", M, 0, AT_2026)).toBeCloseTo(0.1, 10);
+    expect(estimateCostUsd("models/gemini-2.5-flash", M, 0, AT_2026)).toBeCloseTo(0.3, 10);
+    expect(estimateCostUsd("claude-haiku-4-5-20251001", M, M, AT_2026)).toBe(6);
+    expect(estimateCostUsd("gemini-2.5-flash-lite-preview-06-17", M, 0, AT_2026)).toBeCloseTo(0.1, 10);
+    expect(resolvePricedModelId("gemini-2.5-flash-001")).toBe("gemini-2.5-flash");
+    expect(resolvePricedModelId("claude-haiku-5-5@20261001")).toBe("claude-haiku-5-5");
+  });
+
+  it("Haiku 5.5 usa el tramo alto en toda la petición si el prompt supera 100k", () => {
+    expect(estimateCostUsd("claude-haiku-5-5", 100_000, 10_000, AT_2026)).toBeCloseTo(
+      (100_000 * 0.1 + 10_000 * 0.5) / M,
+      12,
+    );
+    expect(estimateCostUsd("claude-haiku-5-5", 100_001, 10_000, AT_2026)).toBeCloseTo(
+      (100_001 * 0.5 + 10_000 * 2.5) / M,
+      12,
+    );
+  });
+
+  it("gemini-3.8-flash y 3.6-flash suben desde el 2027-01-01", () => {
+    expect(estimateCostUsd("gemini-3.8-flash", M, M, new Date("2026-12-31T23:59:59Z"))).toBeCloseTo(4.5, 10);
+    expect(estimateCostUsd("gemini-3.8-flash", M, M, AT_2027)).toBeCloseTo(9, 10);
+    expect(estimateCostUsd("gemini-3.6-flash", M, 0, AT_2027)).toBeCloseTo(1.5, 10);
+    expect(estimateCostUsd("gemini-3.1-flash-lite", M, 0, AT_2027)).toBeCloseTo(0.25, 10);
+  });
+
+  it("sin fecha usa la fecha actual", () => {
+    const expected = estimateCostUsd("gemini-3.8-flash", M, 0, new Date());
+    expect(estimateCostUsd("gemini-3.8-flash", M, 0)).toBe(expected);
+  });
+
+  it("devuelve null si no conoce el modelo o solo coincide sin límite", () => {
     expect(estimateCostUsd("gpt-desconocido", 100, 100)).toBeNull();
+    expect(estimateCostUsd("gemini-3.5-flash", 100, 100)).toBeNull();
+    expect(estimateCostUsd("gemini-2.5-flashy", 100, 100)).toBeNull();
+    expect(resolvePricedModelId("claude-haiku")).toBeNull();
   });
 });
 
