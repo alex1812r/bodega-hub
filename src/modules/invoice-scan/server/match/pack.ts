@@ -66,12 +66,13 @@ function resolveWithSize(size: number, input: PackInput, fromAlias: boolean): Pa
     return { entryMode: "pack", packUnitId: registered.id, unitsPerPack: size, issues: [] };
   }
   if (input.packUnits.length > 0) {
-    // 6.8: tamaño leído distinto del registrado -> no se convierte sin confirmar.
+    // 6.8: tamaño (leído o del alias) distinto del registrado -> no se convierte sin confirmar.
     const sizes = input.packUnits.map((pack) => pack.unitsPerPack).join(" o ");
+    const source = fromAlias ? "El alias aprendido es de" : "La factura dice";
     return {
       entryMode: "pack",
       issues: [
-        `La factura dice ${packWord(input.line)} de ${size} unidades y el empaque registrado es de ${sizes}: confirma las unidades por empaque.`,
+        `${source} ${packWord(input.line)} de ${size} unidades y el empaque registrado es de ${sizes}: confirma las unidades por empaque.`,
       ],
     };
   }
