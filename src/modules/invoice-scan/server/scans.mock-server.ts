@@ -12,7 +12,6 @@ import type { InvoiceExtraction, InvoiceScanLimits } from "../contracts";
 import {
   DISCARD_NOT_ALLOWED_MESSAGE,
   type ExpiredScan,
-  INVOICE_SCAN_RETENTION_DAYS,
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
   type StoredFewShotExample,
@@ -162,13 +161,16 @@ export async function listFewShotExamples(
 /** El mock no usa cliente: el primer argumento existe por paridad con `scans.server.ts`. */
 export async function listExpiredScans(
   _adminClient: unknown,
-  olderThanDays: number = INVOICE_SCAN_RETENTION_DAYS,
-  now: Date = new Date(),
+  olderThanDays: number,
+  now: Date,
+  limit: number,
 ): Promise<ExpiredScan[]> {
   const cutoff = now.getTime() - olderThanDays * 24 * 60 * 60 * 1000;
 
   return [...scans().values()]
     .filter((scan) => new Date(scan.createdAt).getTime() < cutoff)
+    .sort((a, b) => byNewest(b, a))
+    .slice(0, limit)
     .map((scan) => ({ id: scan.id, storagePaths: invoiceScanPagePaths(scan.storagePath, scan.pages) }));
 }
 

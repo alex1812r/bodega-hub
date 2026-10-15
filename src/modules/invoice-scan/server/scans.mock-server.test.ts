@@ -198,15 +198,16 @@ describe("scans.mock-server · purga a 90 días", () => {
     store().set(oldB.id, { ...oldB, createdAt: "2026-07-17T11:59:59.000Z" });
     store().set(fresh.id, { ...fresh, createdAt: "2026-07-17T12:00:00.000Z" });
 
-    const expired = await listExpiredScans(null, 90, now);
+    const expired = await listExpiredScans(null, 90, now, 100);
 
-    expect(expired.sort((a, b) => a.storagePaths[0].localeCompare(b.storagePaths[0]))).toEqual([
+    expect(expired).toEqual([
       {
         id: old.id,
         storagePaths: [`store-a/${sha}/p1.webp`, `store-a/${sha}/p2.webp`, `store-a/${sha}/p3.webp`],
       },
       { id: oldB.id, storagePaths: ["store-b/old.jpg"] },
     ]);
+    expect(await listExpiredScans(null, 90, now, 1)).toEqual([expired[0]]);
     expect(await getScan(storeA, old.id)).not.toBeNull();
 
     expect(await deleteScansByIds(null, [old.id, oldB.id])).toBe(2);

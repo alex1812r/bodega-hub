@@ -276,6 +276,7 @@ describe("scans.server · purga a 90 días", () => {
       client as unknown as AdminClient,
       90,
       new Date("2026-10-15T12:00:00.000Z"),
+      100,
     );
 
     expect(result).toEqual([
@@ -286,6 +287,8 @@ describe("scans.server · purga a 90 días", () => {
       ["from", "invoice_scans"],
       ["select", "id, storage_path, pages"],
       ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
+      ["order", "created_at", { ascending: true }],
+      ["limit", 100],
     ]);
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
   });
@@ -312,6 +315,8 @@ describe("scans.server · purga a 90 días", () => {
   it("propaga el error de Supabase", async () => {
     const { client } = fakeClient([{ data: null, error: { code: "42501", message: "denied" } }]);
 
-    await expect(listExpiredScans(client as unknown as AdminClient)).rejects.toBeInstanceOf(Error);
+    await expect(
+      listExpiredScans(client as unknown as AdminClient, 90, new Date(), 100),
+    ).rejects.toBeInstanceOf(Error);
   });
 });

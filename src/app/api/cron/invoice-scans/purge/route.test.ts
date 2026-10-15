@@ -16,6 +16,12 @@ jest.mock("../../../../../modules/invoice-scan/server/storage", () => ({
   ),
   removeInvoiceObjects: jest.fn(),
 }));
+jest.mock("../../../../../modules/invoice-scan/server/scans.mock-server", () => {
+  const actual = jest.requireActual<typeof import("@/modules/invoice-scan/server/scans.mock-server")>(
+    "../../../../../modules/invoice-scan/server/scans.mock-server",
+  );
+  return { ...actual, listExpiredScans: jest.fn(actual.listExpiredScans) };
+});
 
 const URL = "http://localhost/api/cron/invoice-scans/purge";
 const SECRET = "test-cron-secret";
@@ -26,13 +32,23 @@ const SHA_NEW = "b".repeat(64);
 
 const mockedAdmin = jest.mocked(createAdminSupabaseClient);
 const mockedRemove = jest.mocked(removeInvoiceObjects);
+const mockedListExpired = jest.mocked(mock.listExpiredScans);
 
 function authorized(method: "GET" | "POST" = "GET") {
   return new Request(URL, { headers: { authorization: `Bearer ${SECRET}` }, method });
 }
 
 type PurgeBody = { data: { deleted: number; objects: number } };
+type PurgeErrorBody = { error: { details: { deleted: number; objects: number } } };
 type ExpiredRow = { id: string; pages: number; storage_path: string };
+
+function expiredRows(count: number): ExpiredRow[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `scan-${index + 1}`,
+    pages: 1,
+    storage_path: `store-1/${index.toString(16).padStart(64, "0")}/p1.jpg`,
+  }));
+}
 
 describe("/api/cron/invoice-scans/purge", () => {
   const originalSecret = process.env.CRON_SECRET;
@@ -92,30 +108,62 @@ describe("/api/cron/invoice-scans/purge", () => {
       expect(await mock.getScan(ctx, old.id)).toBeNull();
       expect(await mock.getScan(ctx, recent.id)).not.toBeNull();
     });
+
+    it("purges 250 expired scans in three batches of at most 100", async () => {
+      const batchCtx = { storeId: "store-batches", userId: "user-1" };
+      jest.setSystemTime(new Date(NOW.getTime() - 91 * DAY_MS));
+      const ids: string[] = [];
+      for (let index = 0; index < 250; index += 1) {
+        const sha = `c${index.toString(16).padStart(63, "0")}`;
+        const scan = await mock.insertScan(batchCtx, {
+          imageSha256: sha,
+          model: "m",
+          provider: "p",
+          storagePath: `store-batches/${sha}/p1.jpg`,
+        });
+        ids.push(scan.id);
+      }
+
+      jest.setSystemTime(NOW);
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 250, objects: 250 });
+      expect(mockedListExpired.mock.calls.map((call) => call[3])).toEqual([100, 100, 100]);
+      for (const id of ids) {
+        expect(await mock.getScan(batchCtx, id)).toBeNull();
+      }
+    });
   });
 
   describe("supabase data source", () => {
     const calls: string[] = [];
     const lt = jest.fn();
+    const limit = jest.fn();
     const deleteIn = jest.fn();
-
-    function useExpiredRows(rows: ExpiredRow[]) {
-      lt.mockResolvedValue({ data: rows, error: null });
-    }
+    let table: ExpiredRow[] = [];
 
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "supabase";
       calls.length = 0;
       jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"], now: NOW });
 
-      useExpiredRows([
+      table = [
         { id: "scan-1", pages: 2, storage_path: `store-1/${SHA_OLD}/p1.jpg` },
         { id: "scan-2", pages: 1, storage_path: `store-2/${SHA_NEW}/p1.webp` },
-      ]);
+      ];
+      limit.mockImplementation(async (count: number) => {
+        calls.push("list");
+        return { data: table.slice(0, count), error: null };
+      });
+      lt.mockReturnValue({ order: () => ({ limit }) });
       deleteIn.mockImplementation((_column: string, ids: string[]) => ({
         select: async () => {
           calls.push("rows");
-          return { data: ids.map((id) => ({ id })), error: null };
+          const deleted = table.filter((row) => ids.includes(row.id));
+          table = table.filter((row) => !ids.includes(row.id));
+          return { data: deleted.map(({ id }) => ({ id })), error: null };
         },
       }));
       mockedAdmin.mockReturnValue({
@@ -132,7 +180,7 @@ describe("/api/cron/invoice-scans/purge", () => {
 
       expect(response.status).toBe(200);
       expect(body.data).toEqual({ deleted: 2, objects: 3 });
-      expect(calls).toEqual(["storage", "rows"]);
+      expect(calls).toEqual(["list", "storage", "rows"]);
       expect(lt).toHaveBeenCalledWith(
         "created_at",
         new Date(NOW.getTime() - 90 * DAY_MS).toISOString(),
@@ -146,7 +194,7 @@ describe("/api/cron/invoice-scans/purge", () => {
     });
 
     it("removes the three objects of a three-page scan", async () => {
-      useExpiredRows([{ id: "scan-3", pages: 3, storage_path: `store-1/${SHA_OLD}/p1.png` }]);
+      table = [{ id: "scan-3", pages: 3, storage_path: `store-1/${SHA_OLD}/p1.png` }];
 
       const response = await GET(authorized());
       const body = (await response.json()) as PurgeBody;
@@ -167,6 +215,49 @@ describe("/api/cron/invoice-scans/purge", () => {
 
       expect(response.status).toBe(503);
       expect(deleteIn).not.toHaveBeenCalled();
+    });
+
+    it("purges 250 expired scans in three batches: list, Storage and rows per batch", async () => {
+      table = expiredRows(250);
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 250, objects: 250 });
+      expect(calls).toEqual(["list", "storage", "rows", "list", "storage", "rows", "list", "storage", "rows"]);
+      expect(limit.mock.calls.map(([count]) => count)).toEqual([100, 100, 100]);
+      expect(mockedRemove.mock.calls.map(([, paths]) => paths.length)).toEqual([100, 100, 50]);
+      expect(deleteIn.mock.calls.map(([, ids]) => (ids as string[]).length)).toEqual([100, 100, 50]);
+      expect(table).toEqual([]);
+    });
+
+    it("stops at the batch whose Storage removal fails and keeps that batch's rows", async () => {
+      table = expiredRows(250);
+      mockedRemove
+        .mockImplementationOnce(async () => undefined)
+        .mockRejectedValueOnce(new ApiError(503, "INTERNAL_ERROR", "Storage caído"));
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeErrorBody;
+
+      expect(response.status).toBe(503);
+      expect(body.error.details).toEqual({ deleted: 100, objects: 100 });
+      expect(deleteIn).toHaveBeenCalledTimes(1);
+      expect(table).toHaveLength(150);
+      expect(table[0].id).toBe("scan-101");
+    });
+
+    it("caps a run at 20 batches and leaves the rest for the next run", async () => {
+      table = expiredRows(2050);
+
+      const response = await GET(authorized());
+      const body = (await response.json()) as PurgeBody;
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ deleted: 2000, objects: 2000 });
+      expect(limit).toHaveBeenCalledTimes(20);
+      expect(table).toHaveLength(50);
     });
   });
 });

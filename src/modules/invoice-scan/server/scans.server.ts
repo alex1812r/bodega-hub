@@ -16,7 +16,6 @@ import type { InvoiceExtraction, InvoiceMatch, InvoiceScanLimits } from "../cont
 import {
   DISCARD_NOT_ALLOWED_MESSAGE,
   type ExpiredScan,
-  INVOICE_SCAN_RETENTION_DAYS,
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
   type StoredFewShotExample,
@@ -316,19 +315,23 @@ export async function listFewShotExamples(
 
 /**
  * Escaneos de todas las tiendas creados hace más de `olderThanDays` días, con
- * las rutas de todas sus páginas (cron con service role). No borra nada: el
- * llamador borra Storage y solo entonces las filas con `deleteScansByIds`.
+ * las rutas de todas sus páginas (cron con service role): como mucho `limit`,
+ * los más antiguos primero. No borra nada: el llamador borra Storage y solo
+ * entonces las filas con `deleteScansByIds`.
  */
 export async function listExpiredScans(
   adminClient: AdminClient,
-  olderThanDays: number = INVOICE_SCAN_RETENTION_DAYS,
-  now: Date = new Date(),
+  olderThanDays: number,
+  now: Date,
+  limit: number,
 ): Promise<ExpiredScan[]> {
   const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await adminClient
     .from("invoice_scans")
     .select("id, storage_path, pages")
-    .lt("created_at", cutoff);
+    .lt("created_at", cutoff)
+    .order("created_at", { ascending: true })
+    .limit(limit);
 
   throwIfSupabaseError(error);
 

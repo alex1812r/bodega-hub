@@ -9,7 +9,7 @@ import { InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } f
 import { matchScan } from "./matchScan";
 import { createMockInvoiceScanModel } from "./mockModel";
 import * as mockRepo from "./scans.mock-server";
-import type { InvoiceScanRow } from "./scans.types";
+import { invoiceScanPagePaths, type InvoiceScanRow } from "./scans.types";
 import {
   createInvoiceScanDeps,
   discardInvoiceScan,
@@ -19,7 +19,6 @@ import {
   INVOICE_READ_URL_TTL_SECONDS,
   readUploadedPages,
   scanInvoice,
-  scanPagePaths,
   type InvoiceScanDeps,
   type InvoiceScanStorage,
 } from "./scanService";
@@ -460,16 +459,16 @@ describe("getInvoiceScanDetail y discardInvoiceScan", () => {
   });
 });
 
-describe("scanPagePaths", () => {
+describe("invoiceScanPagePaths", () => {
   it("deriva p1..pN de la ruta de la página 1", () => {
-    expect(scanPagePaths({ pages: 2, storagePath: `s/${"a".repeat(64)}/p1.webp` })).toEqual([
+    expect(invoiceScanPagePaths(`s/${"a".repeat(64)}/p1.webp`, 2)).toEqual([
       `s/${"a".repeat(64)}/p1.webp`,
       `s/${"a".repeat(64)}/p2.webp`,
     ]);
   });
 
   it("una ruta con otra forma se devuelve tal cual", () => {
-    expect(scanPagePaths({ pages: 3, storagePath: "s/legacy.jpg" })).toEqual(["s/legacy.jpg"]);
+    expect(invoiceScanPagePaths("s/legacy.jpg", 3)).toEqual(["s/legacy.jpg"]);
   });
 });
 

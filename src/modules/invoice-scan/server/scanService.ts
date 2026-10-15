@@ -34,10 +34,10 @@ import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 import * as mockRepo from "./scans.mock-server";
 import * as serverRepo from "./scans.server";
 import {
+  invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
   readInvoiceScanDailyLimit,
   type InvoiceScanContext,
-  type InvoiceScanRow,
   type InvoiceScanStatus,
 } from "./scans.types";
 import {
@@ -123,7 +123,6 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, InvoiceScanMediaType> = {
   webp: "image/webp",
 };
 const PAGE_FILE_EXTENSION = /\/p\d+\.(jpg|png|webp)$/;
-const FIRST_PAGE_PATH = /^(.+\/)p1\.(jpg|png|webp)$/;
 
 function badRequest(message: string): never {
   throw new ApiError(400, "BAD_REQUEST", message);
@@ -388,17 +387,6 @@ export async function scanInvoice(
   };
 }
 
-/** Rutas de todas las páginas: `<store>/<sha>/p<n>.<ext>` a partir de la página 1. */
-export function scanPagePaths(row: Pick<InvoiceScanRow, "pages" | "storagePath">): string[] {
-  const match = row.storagePath.match(FIRST_PAGE_PATH);
-
-  if (!match) {
-    return [row.storagePath];
-  }
-
-  return Array.from({ length: row.pages }, (_, index) => `${match[1]}p${index + 1}.${match[2]}`);
-}
-
 export async function getInvoiceScanDetail(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
@@ -406,7 +394,7 @@ export async function getInvoiceScanDetail(
 ): Promise<InvoiceScanDetail> {
   const row = (await deps.repo.getScan(ctx, id)) ?? notFound();
   const imageUrls = await Promise.all(
-    scanPagePaths(row).map((path) => deps.storage.signedReadUrl(path, INVOICE_READ_URL_TTL_SECONDS)),
+    invoiceScanPagePaths(row.storagePath, row.pages).map((path) => deps.storage.signedReadUrl(path, INVOICE_READ_URL_TTL_SECONDS)),
   );
 
   return {
