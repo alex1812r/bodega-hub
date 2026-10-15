@@ -1,0 +1,111 @@
+{
+  "id": "f06",
+  "synthetic": false,
+  "pages": [
+    "samples/f06.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00003854",
+    "date": "2026-09-11",
+    "currency": "VES",
+    "printedRate": 832.49,
+    "lines": [
+      {
+        "rawText": "JUSTY 1.5 [BULTO X 12,00]",
+        "description": "Justy 1,5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8699.52,
+        "lineTotal": 8699.52,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 1L [BULTO X 12,00]",
+        "description": "Glup sabores 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6460.12,
+        "lineTotal": 6460.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 1L [BULTO X 12,00]",
+        "description": "Glup cola 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 7142.76,
+        "lineTotal": 7142.76,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5286.31,
+        "lineTotal": 10572.62,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4254.02,
+        "lineTotal": 4254.02,
+        "confidence": 1
+      }
+    ],
+    "total": 37129.04,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "justy-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Impreso 'JUSTY 1.5' sin unidad; se asume litros"
+    },
+    {
+      "productKey": "glup-sabores-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "q×p=total en las 5 líneas; sum(lineTotal)=37.129,04 = Total impreso OK; Total Items 6 = 1+1+1+2+1 OK; 37.129,04/832,49 = 44,60 = Ref impreso OK"
+  }
+}

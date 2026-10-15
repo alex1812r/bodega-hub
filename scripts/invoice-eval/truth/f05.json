@@ -1,0 +1,181 @@
+{
+  "id": "f05",
+  "synthetic": false,
+  "pages": [
+    "samples/f05.jpg"
+  ],
+  "supplierKey": "mercaseu-2030",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C.A.",
+      "taxId": "J-506040310",
+      "address": "CALLE 500 EDIF LIRIO PISO PB LOCAL 1 Y 2 URB QTA CRESPO CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00005577",
+    "date": "2026-08-13",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "REFRESCO GLUP SABOR 2LT |[CAJA X 6.0]|",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 6,
+        "unitPrice": 3140.16,
+        "lineTotal": 3140.16,
+        "confidence": 1
+      },
+      {
+        "rawText": "HARINA PAN 1KG (E) |[BULTO X 20.0]|",
+        "description": "Harina PAN 1kg",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18320.29,
+        "lineTotal": 18320.29,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "HARINA DE MAIZ MARY 900GR (E) |[BULTO X 20.0]|",
+        "description": "Harina de maíz Mary 900g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 14823.41,
+        "lineTotal": 14823.41,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "PASTA HORIZONTE CORTA ( TODAS) 1KG (E) |[CAJA X 12.0]|",
+        "description": "Pasta Horizonte corta 1kg",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 15237.51,
+        "lineTotal": 15237.51,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "AZUCAR MIMASA 900GR (E) |[BULTO X 20.0]|",
+        "description": "Azúcar Mimasa 900g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19401.57,
+        "lineTotal": 19401.57,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "MANTEQUILLA MAVESA 250GR (E) |[CAJA X 24.0]|",
+        "description": "Mantequilla Mavesa 250g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 28987.32,
+        "lineTotal": 28987.32,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "ACEITE SOYA PAMPA 500ML (E) |[CAJA X 12.0]|",
+        "description": "Aceite de soya Pampa 500ml",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 16050.39,
+        "lineTotal": 16050.39,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "GALLETAS COQUI LUNA LIMON 150GR",
+        "description": "Galletas Coquí Luna limón 150g",
+        "quantity": 1,
+        "unitPrice": 475.98,
+        "lineTotal": 475.98,
+        "confidence": 1
+      },
+      {
+        "rawText": "GUISANTES VERDES LAILA 400G",
+        "description": "Guisantes verdes Laila 400g",
+        "quantity": 1,
+        "unitPrice": 628.03,
+        "lineTotal": 628.03,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 117064.66,
+    "tax": 679.07,
+    "total": 117743.73,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas; sin marca de IVA en la línea (cae en BI G al pie)"
+    },
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas"
+    },
+    {
+      "productKey": "harina-maiz-mary-900g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas"
+    },
+    {
+      "productKey": "pasta-horizonte-corta-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas; la '(E)' está tapada por un punto de bolígrafo, confirmada porque EXENTO 112.820,49 la incluye"
+    },
+    {
+      "productKey": "azucar-mimasa-900g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas"
+    },
+    {
+      "productKey": "mantequilla-mavesa-250g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas"
+    },
+    {
+      "productKey": "aceite-soya-pampa-500ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas"
+    },
+    {
+      "productKey": "galletas-coqui-luna-limon-150g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas; sin empaque ni marca de IVA (cae en BI G)"
+    },
+    {
+      "productKey": "guisantes-verdes-laila-400g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa; 1 por 'TOT: 9' = 9 líneas; sin empaque ni marca de IVA (cae en BI G)"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [
+      "La factura no imprime cantidad ni precio unitario por línea; quantity=1 sale de TOT: 9 con 9 líneas."
+    ],
+    "arithmetic": "sum(lineTotal)=117.064,66 = SUBTTL OK; líneas (E) suman 112.820,49 = EXENTO OK; Glup+Galletas+Guisantes = 4.244,17 = BI G OK; 4.244,17×16% = 679,07 = IVA G OK; 117.064,66+679,07 = 117.743,73 = TOTAL = BIOPAGO OK; TOT: 9 = 9 líneas"
+  }
+}
