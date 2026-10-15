@@ -85,6 +85,7 @@ function post(body: unknown, headers: Record<string, string> = {}) {
 }
 
 type FakeScan = {
+  claim_request_id?: string | null;
   extracted: unknown;
   id: string;
   purchase_id: string | null;
@@ -94,6 +95,7 @@ type FakeScan = {
 
 type FakeState = {
   failConfirm?: boolean;
+  failCreate?: boolean;
   failLearn?: boolean;
   purchases: { client_request_id: string | null; id: string; store_id: string; supplier_id: string }[];
   scans: FakeScan[];
@@ -102,7 +104,54 @@ type FakeState = {
 /** Cliente Supabase mínimo: lecturas con filtros `eq` y las RPC del flujo. */
 function createFake(state: FakeState) {
   const rpc = jest.fn(async (name: string, args: Record<string, unknown>) => {
+    if (name === "claim_invoice_scan") {
+      // Espejo de claim_invoice_scan (20261019b): un único UPDATE condicional.
+      const key = args.p_client_request_id as string;
+      const scan = state.scans.find((row) => row.id === args.p_scan_id && row.store_id === DEFAULT_STORE_ID);
+
+      if (!scan) {
+        return { data: null, error: { code: "PT404", message: "Escaneo no encontrado" } };
+      }
+
+      if (scan.status === "confirmed") {
+        const own = state.purchases.find(
+          (row) => row.store_id === DEFAULT_STORE_ID && row.client_request_id === key,
+        );
+        return own && own.id === scan.purchase_id
+          ? { data: "replay", error: null }
+          : { data: null, error: { code: "PT409", message: "El escaneo ya fue confirmado" } };
+      }
+
+      if (scan.status !== "extracted") {
+        return { data: null, error: { code: "PT409", message: "El escaneo no está disponible" } };
+      }
+
+      if (scan.claim_request_id && scan.claim_request_id !== key) {
+        return {
+          data: null,
+          error: { code: "PT409", message: "El escaneo se está confirmando en otra compra" },
+        };
+      }
+
+      scan.claim_request_id = key;
+      return { data: "claimed", error: null };
+    }
+
+    if (name === "release_invoice_scan_claim") {
+      const scan = state.scans.find((row) => row.id === args.p_scan_id);
+
+      if (scan && scan.status === "extracted" && scan.claim_request_id === args.p_client_request_id) {
+        scan.claim_request_id = null;
+      }
+
+      return { data: null, error: null };
+    }
+
     if (name === "create_purchase") {
+      if (state.failCreate) {
+        return { data: null, error: { code: "PT400", message: "Proveedor no encontrado" } };
+      }
+
       const key = (args.p_client_request_id as string | undefined) ?? null;
       const previous = key
         ? state.purchases.find((row) => row.store_id === DEFAULT_STORE_ID && row.client_request_id === key)
@@ -128,12 +177,18 @@ function createFake(state: FakeState) {
 
       const scan = state.scans.find((row) => row.id === args.p_scan_id);
 
-      if (scan) {
-        scan.status = "confirmed";
-        scan.purchase_id = args.p_purchase_id as string;
+      if (!scan || scan.claim_request_id !== args.p_client_request_id) {
+        return {
+          data: null,
+          error: { code: "PT409", message: "El escaneo se está confirmando en otra compra" },
+        };
       }
 
-      return { data: null, error: null };
+      scan.status = "confirmed";
+      scan.purchase_id = args.p_purchase_id as string;
+      scan.claim_request_id = null;
+
+      return { data: true, error: null };
     }
 
     if (name === "learn_invoice_aliases") {
@@ -220,9 +275,15 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
 
       expect(response.status).toBe(201);
       expect(payload.data.invoiceScan).toEqual({ confirmed: true, learned: 2 });
-      expect(fake.rpcNames()).toEqual(["create_purchase", "confirm_invoice_scan", "learn_invoice_aliases"]);
+      expect(fake.rpcNames()).toEqual([
+        "claim_invoice_scan",
+        "create_purchase",
+        "confirm_invoice_scan",
+        "learn_invoice_aliases",
+      ]);
+      expect(fake.rpc.mock.calls[0][1]).toEqual({ p_client_request_id: PURCHASE_KEY, p_scan_id: SCAN_ID });
 
-      const confirmArgs = fake.rpc.mock.calls[1][1];
+      const confirmArgs = fake.rpc.mock.calls[2][1];
       expect(confirmArgs).toEqual({
         p_confirmed: {
           confirmedAt: expect.any(String),
@@ -234,10 +295,11 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
           purchaseId,
           supplierId: SUPPLIER_ID,
         },
+        p_client_request_id: PURCHASE_KEY,
         p_purchase_id: purchaseId,
         p_scan_id: SCAN_ID,
       });
-      expect(fake.rpc.mock.calls[2][1]).toEqual({
+      expect(fake.rpc.mock.calls[3][1]).toEqual({
         p_lines: [
           { alias_norm: "ref malta 1 5 x6", pack_label: "Caja", product_id: PRODUCT_A, units_per_pack: 6 },
           { alias_norm: "azucar montalban", pack_label: null, product_id: PRODUCT_B, units_per_pack: null },
@@ -251,7 +313,7 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
     it("si learn falla la compra sigue siendo 201 y se registra el error", async () => {
       state.failLearn = true;
 
-      const response = await post({ ...purchase, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
       const payload = await response.json();
 
       expect(response.status).toBe(201);
@@ -266,22 +328,22 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
     it("si confirm falla: 201, learn NO se llama", async () => {
       state.failConfirm = true;
 
-      const response = await post({ ...purchase, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
 
       expect(response.status).toBe(201);
       expect((await response.json()).data.invoiceScan).toEqual({ confirmed: false, learned: null });
-      expect(fake.rpcNames()).toEqual(["create_purchase", "confirm_invoice_scan"]);
+      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase", "confirm_invoice_scan"]);
     });
 
     it("escaneo de otra tienda: 400 y create_purchase NO se llama", async () => {
       state.scans[0].store_id = OTHER_STORE_ID;
 
-      const response = await post({ ...purchase, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
       const payload = await response.json();
 
       expect(response.status).toBe(400);
       expect(payload.error.message).toBe("Escaneo no encontrado");
-      expect(fake.rpc).not.toHaveBeenCalled();
+      expect(fake.rpcNames()).not.toContain("create_purchase");
     });
 
     it("ya confirmado con otra compra: 400 sin crear", async () => {
@@ -303,16 +365,16 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
 
       expect(response.status).toBe(400);
       expect((await response.json()).error.message).toBe("El escaneo ya fue confirmado");
-      expect(fake.rpc).not.toHaveBeenCalled();
+      expect(fake.rpcNames()).not.toContain("create_purchase");
     });
 
     it("descartado: 400 sin crear", async () => {
       state.scans[0].status = "discarded";
 
-      const response = await post({ ...purchase, invoiceScanId: SCAN_ID });
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID });
 
       expect(response.status).toBe(400);
-      expect(fake.rpc).not.toHaveBeenCalled();
+      expect(fake.rpcNames()).not.toContain("create_purchase");
     });
 
     it("replay con el mismo clientRequestId: misma compra y learn NO se vuelve a llamar", async () => {
@@ -326,7 +388,85 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(secondResponse.status).toBe(201);
       expect(second.data.id).toBe(first.data.id);
       expect(second.data.invoiceScan).toEqual({ confirmed: true, learned: null });
-      expect(fake.rpcNames()).toEqual(["create_purchase"]);
+      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase"]);
+    });
+
+    it("8 intentos concurrentes con claves distintas: una sola compra; el resto 400 sin create_purchase (SCN-06-F1)", async () => {
+      const keys = Array.from({ length: 8 }, () => crypto.randomUUID());
+
+      const responses = await Promise.all(
+        keys.map((clientRequestId) =>
+          post({ ...purchase, clientRequestId, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines }),
+        ),
+      );
+      const statuses = responses.map((response) => response.status).sort();
+      const rejected = await Promise.all(
+        responses
+          .filter((response) => response.status === 400)
+          .map(async (response) => (await response.json()).error.message as string),
+      );
+
+      expect(statuses).toEqual([201, 400, 400, 400, 400, 400, 400, 400]);
+      expect(fake.rpcNames().filter((name) => name === "create_purchase")).toHaveLength(1);
+      expect(state.purchases).toHaveLength(1);
+      for (const message of rejected) {
+        expect(["El escaneo se está confirmando en otra compra", "El escaneo ya fue confirmado"]).toContain(message);
+      }
+      expect(state.scans[0]).toMatchObject({ purchase_id: state.purchases[0].id, status: "confirmed" });
+    });
+
+    it("reclamo vigente de otro intento: 400 y create_purchase NO se llama", async () => {
+      state.scans[0].claim_request_id = OTHER_PURCHASE_KEY;
+
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.message).toBe("El escaneo se está confirmando en otra compra");
+      expect(fake.rpcNames()).toEqual(["claim_invoice_scan"]);
+    });
+
+    it("create_purchase rechazada: libera el reclamo y otra clave puede reintentar", async () => {
+      state.failCreate = true;
+
+      const failed = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID });
+
+      expect(failed.status).toBe(400);
+      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase", "release_invoice_scan_claim"]);
+      expect(fake.rpc.mock.calls[2][1]).toEqual({ p_client_request_id: PURCHASE_KEY, p_scan_id: SCAN_ID });
+      expect(state.scans[0].claim_request_id).toBeNull();
+
+      state.failCreate = false;
+      const retry = await post({ ...purchase, clientRequestId: OTHER_PURCHASE_KEY, invoiceScanId: SCAN_ID });
+
+      expect(retry.status).toBe(201);
+      expect((await retry.json()).data.invoiceScan.confirmed).toBe(true);
+    });
+
+    it("invoiceScanId sin clientRequestId: 400 sin reclamar ni crear", async () => {
+      const response = await post({ ...purchase, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+
+      expect(response.status).toBe(400);
+      expect(fake.rpc).not.toHaveBeenCalled();
+    });
+
+    it("rawText cuyo alias normalizado pasa de 200 caracteres: se omite del aprendizaje y el resto se aprende", async () => {
+      state.scans[0].extracted = {
+        lines: [...extracted.lines, { rawText: Array.from({ length: 60 }, (_, index) => `palabra${index}`).join(" ") }],
+      };
+
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [...scanLines, { lineIndex: 3, productId: PRODUCT_A }],
+      });
+      const learnArgs = fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1] as {
+        p_lines: { alias_norm: string }[];
+      };
+
+      expect(response.status).toBe(201);
+      expect((await response.json()).data.invoiceScan).toEqual({ confirmed: true, learned: 2 });
+      expect(learnArgs.p_lines.map((line) => line.alias_norm)).toEqual(["ref malta 1 5 x6", "azucar montalban"]);
     });
 
     it("sin invoiceScanId: no lee escaneos, no llama confirm/learn y la respuesta no trae invoiceScan", async () => {
@@ -394,10 +534,23 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       ]);
     });
 
+    it("dos intentos concurrentes con claves distintas: una sola compra", async () => {
+      registerMockInvoiceScan({ extracted, id: SCAN_ID });
+
+      const responses = await Promise.all(
+        [PURCHASE_KEY, OTHER_PURCHASE_KEY].map((clientRequestId) =>
+          post({ ...purchase, clientRequestId, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines }),
+        ),
+      );
+
+      expect(responses.map((response) => response.status).sort()).toEqual([201, 400]);
+      expect(listMockLearnedAliases(DEFAULT_STORE_ID).every((alias) => alias.hits === 1)).toBe(true);
+    });
+
     it("escaneo de otra tienda: 400", async () => {
       registerMockInvoiceScan({ extracted, id: SCAN_ID, storeId: OTHER_STORE_ID });
 
-      const response = await post({ ...purchase, invoiceScanId: SCAN_ID });
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID });
 
       expect(response.status).toBe(400);
       expect(getMockInvoiceScan(SCAN_ID)?.status).toBe("extracted");

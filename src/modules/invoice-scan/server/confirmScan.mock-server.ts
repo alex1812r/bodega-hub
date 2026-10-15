@@ -5,6 +5,10 @@
  * - escaneo ajeno o inexistente → 400; confirmado con otra compra → 400;
  *   descartado/fallido → 400; replay con el mismo `clientRequestId` → pasa y no
  *   vuelve a aprender;
+ * - reclamo por intento (`claim_invoice_scan`, SCN-06-F1): `precheckInvoiceScan`
+ *   reclama el escaneo; otro intento con reclamo vigente (5 min) → 400 sin crear;
+ *   `releaseInvoiceScanClaim` lo suelta; `finalizeInvoiceScan` solo confirma con
+ *   el reclamo de su clave;
  * - aprendizaje por (tienda, proveedor, alias): mismo producto → `hits + 1`,
  *   producto distinto → reasigna el mismo registro con `hits = 1` (caos 6.10);
  *   dentro de una confirmación gana la última línea de cada alias.
@@ -22,19 +26,28 @@
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import { ApiError } from "@/lib/api/apiError";
+
 import {
   assertScanUsable,
   buildConfirmedPayload,
   buildLearnLines,
+  INVOICE_SCAN_CLAIM_TTL_MS,
+  INVOICE_SCAN_CLAIMED_MESSAGE,
   readExtractedRawTexts,
   type ConfirmedInvoiceScan,
   type FinalizeInvoiceScanInput,
+  type InvoiceScanClaimInput,
   type InvoiceScanOutcome,
   type InvoiceScanStatus,
   type PrecheckedInvoiceScan,
 } from "./confirmScan.server";
 
 export type MockInvoiceScan = {
+  /** Intento que tiene el reclamo (`claim_request_id`). */
+  claimRequestId: string | null;
+  /** Momento del reclamo en ms (`claimed_at`). */
+  claimedAt: number | null;
   /** Clave de idempotencia de la compra con la que se confirmó (replay). */
   confirmedClientRequestId: string | null;
   confirmed: ConfirmedInvoiceScan | null;
@@ -76,6 +89,8 @@ export function registerMockInvoiceScan(scan: {
   storeId?: string;
 }): MockInvoiceScan {
   const stored: MockInvoiceScan = {
+    claimRequestId: null,
+    claimedAt: null,
     confirmed: null,
     confirmedClientRequestId: null,
     extracted: scan.extracted,
@@ -107,19 +122,34 @@ export function resetMockInvoiceScans() {
 }
 
 export async function precheckInvoiceScan(
-  input: { clientRequestId?: string; scanId: string },
+  input: InvoiceScanClaimInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
   const stored = scans().get(input.scanId);
   const scan = stored && stored.storeId === storeId ? stored : null;
   const replayPurchaseId =
-    scan?.status === "confirmed" &&
-    input.clientRequestId &&
-    scan.confirmedClientRequestId === input.clientRequestId
+    scan?.status === "confirmed" && scan.confirmedClientRequestId === input.clientRequestId
       ? scan.purchaseId
       : null;
   const { replay } = assertScanUsable(scan, replayPurchaseId);
   const usable = scan as MockInvoiceScan;
+
+  // Espejo del UPDATE condicional de claim_invoice_scan (sin await en medio: atómico).
+  if (!replay) {
+    const now = Date.now();
+    const claimFree =
+      usable.claimRequestId === null ||
+      usable.claimRequestId === input.clientRequestId ||
+      usable.claimedAt === null ||
+      usable.claimedAt < now - INVOICE_SCAN_CLAIM_TTL_MS;
+
+    if (!claimFree) {
+      throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_CLAIMED_MESSAGE);
+    }
+
+    usable.claimRequestId = input.clientRequestId;
+    usable.claimedAt = now;
+  }
 
   return {
     id: usable.id,
@@ -127,6 +157,24 @@ export async function precheckInvoiceScan(
     rawTexts: readExtractedRawTexts(usable.extracted),
     replay,
   };
+}
+
+/** Espejo de `release_invoice_scan_claim`: no-op si el reclamo no es de esa clave. */
+export async function releaseInvoiceScanClaim(
+  input: InvoiceScanClaimInput,
+  storeId: string,
+): Promise<void> {
+  const stored = scans().get(input.scanId);
+
+  if (
+    stored &&
+    stored.storeId === storeId &&
+    stored.status === "extracted" &&
+    stored.claimRequestId === input.clientRequestId
+  ) {
+    stored.claimRequestId = null;
+    stored.claimedAt = null;
+  }
 }
 
 /** Espejo de `learn_invoice_aliases`: devuelve cuántos alias tocó. */
@@ -166,8 +214,15 @@ export async function finalizeInvoiceScan(
 
   const stored = scans().get(scan.id);
 
-  // Mismo rechazo que confirm_invoice_scan: ausente/ajeno o ya no `extracted`.
-  if (!stored || stored.storeId !== storeId || stored.status !== "extracted") {
+  // Mismo rechazo que confirm_invoice_scan: ausente/ajeno, ya no `extracted` o
+  // reclamado por otro intento.
+  if (
+    !stored ||
+    stored.storeId !== storeId ||
+    stored.status !== "extracted" ||
+    !input.clientRequestId ||
+    stored.claimRequestId !== input.clientRequestId
+  ) {
     console.error("[invoice-scan] confirm falló; la compra quedó creada", { scanId: scan.id });
     return { confirmed: stored?.purchaseId === input.purchaseId, learned: null };
   }
@@ -177,7 +232,9 @@ export async function finalizeInvoiceScan(
   stored.status = "confirmed";
   stored.confirmed = confirmed;
   stored.purchaseId = input.purchaseId;
-  stored.confirmedClientRequestId = input.clientRequestId ?? null;
+  stored.confirmedClientRequestId = input.clientRequestId;
+  stored.claimRequestId = null;
+  stored.claimedAt = null;
 
   return { confirmed: true, learned: learnMockAliases(storeId, input.supplierId, confirmed) };
 }

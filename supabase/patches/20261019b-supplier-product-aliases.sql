@@ -17,9 +17,15 @@
 --   2. public.supplier_product_aliases (§4 + updated_at): un alias normalizado
 --      por (tienda, proveedor). Lectura por RLS para la tienda con
 --      purchases.view; sin escritura directa para authenticated (solo RPC).
---   3. confirm_invoice_scan(p_scan_id, p_purchase_id, p_confirmed): marca el
---      escaneo confirmado con la compra creada. Replay con la misma compra =
---      no-op.
+--   3. claim_invoice_scan(p_scan_id, p_client_request_id) -> 'claimed' |
+--      'replay': reclamo atomico del escaneo ANTES de create_purchase (un
+--      unico UPDATE condicional; caduca a los 5 min). release_invoice_scan_claim
+--      (mismos args) lo suelta si create_purchase fue rechazada.
+--      confirm_invoice_scan(p_scan_id, p_purchase_id, p_confirmed,
+--      p_client_request_id) -> boolean: marca el escaneo confirmado con la
+--      compra creada si el reclamo es de ese intento y lo limpia; true si
+--      confirmo en esta llamada, false en el replay con la misma compra.
+--      (SCN-06-F1: la firma vieja (uuid, uuid, jsonb) void se elimina.)
 --   4. learn_invoice_aliases(p_scan_id, p_lines): upsert de alias desde un
 --      escaneo confirmado. Mismo producto -> hits + 1; producto distinto ->
 --      REASIGNA el mismo registro con hits = 1 (caos 6.10). Devuelve las filas
@@ -31,12 +37,16 @@
 --   purchases.view   = rol admin | almacen | contador
 --
 -- Errores (src/lib/supabase/errors.ts mapea PT4xx a HTTP):
---   PT403 'No autorizado para confirmar escaneos de facturas'  (confirm)
+--   PT403 'No autorizado para confirmar escaneos de facturas'  (claim / release / confirm)
 --   PT403 'No autorizado para aprender alias de facturas'      (learn)
 --   PT404 'Escaneo no encontrado'          (no existe o es de otra tienda)
 --   PT404 'Compra no encontrada'           (confirm: no existe o es de otra tienda)
 --   PT409 'El escaneo ya fue confirmado'   (confirm con OTRA compra)
---   PT409 'El escaneo no está disponible'  (confirm de un escaneo discarded/failed)
+--   PT409 'El escaneo no está disponible'  (claim / confirm de un escaneo discarded/failed)
+--   PT409 'El escaneo ya fue confirmado'   (claim: confirmado con la compra de otra clave)
+--   PT409 'El escaneo se está confirmando en otra compra' (claim: reclamo vigente de
+--         otra clave; confirm sin el reclamo de su clave)
+--   PT400 'Falta la clave del intento de compra' (claim sin p_client_request_id)
 --   PT409 'El escaneo no está confirmado'  (learn sobre escaneo sin confirmar)
 --   PT400 'Confirmación inválida' / 'Líneas de alias inválidas' /
 --         'Alias inválido en la línea %s' / 'Producto inválido en la línea %s' /
@@ -86,6 +96,12 @@ create table if not exists public.invoice_scans (
 
 -- Sin politicas = nadie lee ni escribe por PostgREST hasta que 19a ponga las suyas.
 alter table public.invoice_scans enable row level security;
+
+-- Reclamo del intento que confirma el escaneo (SCN-06-F1, seccion 3). Aditivo
+-- e idempotente: vale para la tabla de 19a y para este fallback.
+alter table public.invoice_scans
+  add column if not exists claim_request_id uuid,
+  add column if not exists claimed_at timestamptz;
 
 -- -----------------------------------------------------------------------------
 -- 2. supplier_product_aliases
@@ -146,15 +162,134 @@ grant select on public.supplier_product_aliases to authenticated;
 grant all on public.supplier_product_aliases to service_role;
 
 -- -----------------------------------------------------------------------------
--- 3. confirm_invoice_scan
+-- 3. Reclamo atomico del escaneo y confirm_invoice_scan (SCN-06-F1)
+--
+--    POST /api/purchases reclama el escaneo ANTES de create_purchase con un
+--    unico UPDATE condicional: de N intentos concurrentes con claves distintas
+--    solo uno pasa (los demas esperan el bloqueo de fila y reevaluan el WHERE).
+--    El reclamo caduca a los 5 minutos (intento caido sin liberar).
 -- -----------------------------------------------------------------------------
+
+create or replace function public.claim_invoice_scan(
+  p_scan_id uuid,
+  p_client_request_id uuid
+)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_store_id uuid;
+  v_scan public.invoice_scans;
+  v_rows integer;
+begin
+  v_store_id := public.assert_store_context();
+
+  if coalesce(public.current_user_role()::text, '') not in ('admin', 'almacen') then
+    raise exception using errcode = 'PT403', message = 'No autorizado para confirmar escaneos de facturas';
+  end if;
+
+  if p_client_request_id is null then
+    raise exception using errcode = 'PT400', message = 'Falta la clave del intento de compra';
+  end if;
+
+  update public.invoice_scans s
+  set claim_request_id = p_client_request_id,
+      claimed_at = now()
+  where s.id = p_scan_id
+    and s.store_id = v_store_id
+    and s.status = 'extracted'
+    and (
+      s.claim_request_id is null
+      or s.claim_request_id = p_client_request_id
+      or s.claimed_at is null
+      or s.claimed_at < now() - interval '5 minutes'
+    );
+
+  get diagnostics v_rows = row_count;
+  if v_rows = 1 then
+    return 'claimed';
+  end if;
+
+  select s.*
+  into v_scan
+  from public.invoice_scans s
+  where s.id = p_scan_id
+    and s.store_id = v_store_id;
+
+  if v_scan.id is null then
+    raise exception using errcode = 'PT404', message = 'Escaneo no encontrado';
+  end if;
+
+  if v_scan.status = 'confirmed' then
+    -- Replay: la compra que esta tienda ya creo con la misma clave.
+    if exists (
+      select 1
+      from public.purchases p
+      where p.id = v_scan.purchase_id
+        and p.store_id = v_store_id
+        and p.client_request_id = p_client_request_id
+    ) then
+      return 'replay';
+    end if;
+    raise exception using errcode = 'PT409', message = 'El escaneo ya fue confirmado';
+  end if;
+
+  if v_scan.status <> 'extracted' then
+    raise exception using errcode = 'PT409', message = 'El escaneo no está disponible';
+  end if;
+
+  raise exception using errcode = 'PT409', message = 'El escaneo se está confirmando en otra compra';
+end;
+$$;
+
+revoke all on function public.claim_invoice_scan(uuid, uuid) from public, anon;
+grant execute on function public.claim_invoice_scan(uuid, uuid) to authenticated, service_role;
+
+-- Suelta el reclamo del mismo intento si create_purchase fue rechazada. No-op si
+-- el escaneo ya no esta reclamado por esa clave (otro intento o confirmado).
+create or replace function public.release_invoice_scan_claim(
+  p_scan_id uuid,
+  p_client_request_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_store_id uuid;
+begin
+  v_store_id := public.assert_store_context();
+
+  if coalesce(public.current_user_role()::text, '') not in ('admin', 'almacen') then
+    raise exception using errcode = 'PT403', message = 'No autorizado para confirmar escaneos de facturas';
+  end if;
+
+  update public.invoice_scans s
+  set claim_request_id = null,
+      claimed_at = null
+  where s.id = p_scan_id
+    and s.store_id = v_store_id
+    and s.status = 'extracted'
+    and s.claim_request_id = p_client_request_id;
+end;
+$$;
+
+revoke all on function public.release_invoice_scan_claim(uuid, uuid) from public, anon;
+grant execute on function public.release_invoice_scan_claim(uuid, uuid) to authenticated, service_role;
+
+-- Firma vieja (uuid, uuid, jsonb) returns void: no exigia el reclamo.
+drop function if exists public.confirm_invoice_scan(uuid, uuid, jsonb);
 
 create or replace function public.confirm_invoice_scan(
   p_scan_id uuid,
   p_purchase_id uuid,
-  p_confirmed jsonb
+  p_confirmed jsonb,
+  p_client_request_id uuid
 )
-returns void
+returns boolean
 language plpgsql
 security definer
 set search_path = public
@@ -194,13 +329,18 @@ begin
 
   if v_scan.status = 'confirmed' then
     if v_scan.purchase_id = p_purchase_id then
-      return; -- replay idempotente del mismo hook
+      return false; -- replay idempotente del mismo hook: el BFF no vuelve a aprender
     end if;
     raise exception using errcode = 'PT409', message = 'El escaneo ya fue confirmado';
   end if;
 
   if v_scan.status <> 'extracted' then
     raise exception using errcode = 'PT409', message = 'El escaneo no está disponible';
+  end if;
+
+  -- Solo confirma el intento que tiene el reclamo (claim_invoice_scan).
+  if p_client_request_id is null or v_scan.claim_request_id is distinct from p_client_request_id then
+    raise exception using errcode = 'PT409', message = 'El escaneo se está confirmando en otra compra';
   end if;
 
   if p_confirmed is null or jsonb_typeof(p_confirmed) not in ('object', 'array') then
@@ -211,7 +351,9 @@ begin
   set status = 'confirmed',
       confirmed = p_confirmed,
       purchase_id = p_purchase_id,
-      confirmed_at = now()
+      confirmed_at = now(),
+      claim_request_id = null,
+      claimed_at = null
   where s.id = p_scan_id
     and s.status = 'extracted';
 
@@ -231,11 +373,13 @@ begin
     execute 'update public.invoice_scans set supplier_id = $1 where id = $2'
       using v_supplier_id, p_scan_id;
   end if;
+
+  return true;
 end;
 $$;
 
-revoke all on function public.confirm_invoice_scan(uuid, uuid, jsonb) from public, anon;
-grant execute on function public.confirm_invoice_scan(uuid, uuid, jsonb) to authenticated, service_role;
+revoke all on function public.confirm_invoice_scan(uuid, uuid, jsonb, uuid) from public, anon;
+grant execute on function public.confirm_invoice_scan(uuid, uuid, jsonb, uuid) to authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
 -- 4. learn_invoice_aliases

@@ -195,18 +195,31 @@ export async function POST(request: Request) {
       }
     }
 
-    // SCN-06 · caos 6.14: escaneo ajeno, inexistente o ya confirmado → 400 sin
-    // crear la compra (salvo el replay del mismo intento).
+    // SCN-06 · caos 6.14: escaneo ajeno, inexistente, ya confirmado o reclamado por
+    // otro intento → 400 sin crear la compra (salvo el replay del mismo intento).
+    // El esquema exige clientRequestId junto a invoiceScanId (SCN-06-F1).
     const scanService = getInvoiceScanService();
-    const scan = invoiceScanId
-      ? await scanService.precheckInvoiceScan(
-          { clientRequestId: input.clientRequestId, scanId: invoiceScanId },
-          auth.storeId,
-        )
-      : null;
+    const scanClaim =
+      invoiceScanId && input.clientRequestId
+        ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
+        : null;
+    const scan = scanClaim ? await scanService.precheckInvoiceScan(scanClaim, auth.storeId) : null;
 
     const service = getPurchasesService();
-    const purchase = await service.createPurchase(input, auth.storeId);
+    let purchase: Awaited<ReturnType<typeof service.createPurchase>>;
+
+    try {
+      purchase = await service.createPurchase(input, auth.storeId);
+    } catch (error) {
+      // Rechazo definitivo (4xx): la compra no existe y se suelta el reclamo para
+      // reintentar con otra clave. Resultado incierto (5xx, red): el reclamo se
+      // queda; el mismo intento lo recupera y, si no vuelve, caduca.
+      if (scanClaim && error instanceof ApiError && error.status < 500) {
+        await scanService.releaseInvoiceScanClaim(scanClaim, auth.storeId);
+      }
+
+      throw error;
+    }
 
     // Nunca lanza: la compra ya existe; el resultado viaja en `invoiceScan`.
     const invoiceScan = scan
