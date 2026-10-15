@@ -16,7 +16,8 @@
  * Diferencias asumidas: el replay se reconoce por la `clientRequestId` con la que
  * se confirmó el escaneo (en la base, por `purchases.client_request_id`; mismo
  * significado) y no se comprueba que `productId` sea un producto de la tienda
- * (la RPC ignora los ajenos).
+ * (la RPC ignora los ajenos). M1 (SCN-06-F2): el mock solo rechaza la compra ya
+ * ligada a otro escaneo; no guarda `client_request_id` por compra.
  *
  * Punto de integración: el mock de Extracción (`POST /api/purchases/invoice-scan`
  * en modo mock) debe llamar a `registerMockInvoiceScan` con el `scanId`, la tienda
@@ -34,6 +35,7 @@ import {
   buildLearnLines,
   INVOICE_SCAN_CLAIM_TTL_MS,
   INVOICE_SCAN_CLAIMED_MESSAGE,
+  INVOICE_SCAN_KEY_REUSED_MESSAGE,
   readExtractedRawTexts,
   type ConfirmedInvoiceScan,
   type FinalizeInvoiceScanInput,
@@ -177,26 +179,35 @@ export async function releaseInvoiceScanClaim(
   }
 }
 
-/** Espejo de `learn_invoice_aliases`: devuelve cuántos alias tocó. */
-function learnMockAliases(storeId: string, supplierId: string, confirmed: ConfirmedInvoiceScan) {
-  const lastByAlias = new Map(buildLearnLines(confirmed.lines).map((line) => [line.alias_norm, line]));
+/**
+ * Espejo de `learn_invoice_aliases`: devuelve cuántos alias tocó. Con el mismo
+ * producto, una clave de empaque presente (aunque sea `null`) sobrescribe y una
+ * ausente conserva (SCN-06-F2 · A1).
+ */
+function learnMockAliases(
+  storeId: string,
+  supplierId: string,
+  confirmed: ConfirmedInvoiceScan,
+  items: FinalizeInvoiceScanInput["items"],
+) {
+  const lastByAlias = new Map(buildLearnLines(confirmed.lines, items).map((line) => [line.alias_norm, line]));
   const store = aliases();
 
   for (const line of lastByAlias.values()) {
     const key = aliasKey(storeId, supplierId, line.alias_norm);
     const previous = store.get(key);
     const sameProduct = previous?.productId === line.product_id;
+    const keep = <T,>(hasKey: boolean, next: T | null | undefined, kept: T | null | undefined) =>
+      hasKey || !sameProduct ? (next ?? null) : (kept ?? null);
 
     store.set(key, {
       aliasNorm: line.alias_norm,
       hits: previous && sameProduct ? previous.hits + 1 : 1,
-      packLabel: sameProduct ? (line.pack_label ?? previous?.packLabel ?? null) : line.pack_label,
+      packLabel: keep("pack_label" in line, line.pack_label, previous?.packLabel),
       productId: line.product_id,
       storeId,
       supplierId,
-      unitsPerPack: sameProduct
-        ? (line.units_per_pack ?? previous?.unitsPerPack ?? null)
-        : line.units_per_pack,
+      unitsPerPack: keep("units_per_pack" in line, line.units_per_pack, previous?.unitsPerPack),
     });
   }
 
@@ -227,6 +238,18 @@ export async function finalizeInvoiceScan(
     return { confirmed: stored?.purchaseId === input.purchaseId, learned: null };
   }
 
+  // SCN-06-F2 · M1: compra ya ligada a otro escaneo (la clave se reutilizó y el mock
+  // de compras devolvió la compra vieja) → suelta el reclamo y 400.
+  const linkedElsewhere = [...scans().values()].some(
+    (other) => other.id !== stored.id && other.storeId === storeId && other.purchaseId === input.purchaseId,
+  );
+
+  if (linkedElsewhere) {
+    stored.claimRequestId = null;
+    stored.claimedAt = null;
+    throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_KEY_REUSED_MESSAGE);
+  }
+
   const confirmed = buildConfirmedPayload(readExtractedRawTexts(stored.extracted), input);
 
   stored.status = "confirmed";
@@ -236,5 +259,5 @@ export async function finalizeInvoiceScan(
   stored.claimRequestId = null;
   stored.claimedAt = null;
 
-  return { confirmed: true, learned: learnMockAliases(storeId, input.supplierId, confirmed) };
+  return { confirmed: true, learned: learnMockAliases(storeId, input.supplierId, confirmed, input.items) };
 }

@@ -25,7 +25,12 @@
  *    de 200 caracteres no se aprende (nunca coincidiría exacto al recortarlo y la
  *    RPC rechazaría la llamada entera), pero sigue en el JSON confirmado.
  *    Nunca lanza: la compra ya existe; un fallo se registra en el log y se informa
- *    en `invoiceScan` de la respuesta.
+ *    en `invoiceScan` de la respuesta. ÚNICA excepción (SCN-06-F2 · M1): si
+ *    `confirm_invoice_scan` rechaza la compra porque no es de este intento (ya
+ *    ligada a otro escaneo o de otra clave), `create_purchase` devolvió una compra
+ *    VIEJA por idempotencia: se suelta el reclamo y se lanza 400.
+ *    Solo se aprenden las líneas cuyo producto está en los items de la compra, y el
+ *    empaque se toma del item (SCN-06-F2 · M3; ver `buildLearnLines`).
  */
 import { normalizeAlias } from "@bodega/core/invoice";
 import { z } from "zod";
@@ -93,6 +98,29 @@ export const INVOICE_SCAN_ALREADY_CONFIRMED_MESSAGE = "El escaneo ya fue confirm
 export const INVOICE_SCAN_UNAVAILABLE_MESSAGE = "El escaneo no está disponible";
 export const INVOICE_SCAN_CLAIMED_MESSAGE = "El escaneo se está confirmando en otra compra";
 
+/**
+ * SCN-06-F2 · M1: la clave del intento ya creó otra compra (ligada a otro escaneo o
+ * de otra clave). `create_purchase` devolvió esa compra vieja; el escaneo no se
+ * confirma, se suelta su reclamo y la respuesta es 400 (no se creó nada nuevo).
+ */
+export const INVOICE_SCAN_KEY_REUSED_MESSAGE =
+  "La clave de esta compra ya se usó en otra compra: la factura escaneada no se registró. Vuelve a guardarla como una compra nueva.";
+
+/** Rechazos de `confirm_invoice_scan` que indican una compra que no es de este intento. */
+const KEY_REUSE_REJECTIONS = new Set([
+  "La compra ya está ligada a otro escaneo",
+  "La compra no corresponde a este intento",
+]);
+
+export function isInvoiceScanKeyReuseRejection(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return code === "PT409" && typeof message === "string" && KEY_REUSE_REJECTIONS.has(message);
+}
+
 export type InvoiceScanStatus = "extracted" | "confirmed" | "discarded" | "failed";
 
 /** Escaneo validado antes de crear la compra. */
@@ -113,8 +141,21 @@ export type InvoiceScanOutcome = {
   learned: number | null;
 };
 
+/**
+ * Lo que el hook necesita de cada item de la compra (`purchaseItemInputSchema`): el
+ * producto y, en modo empaque, `packLabel` y `unitsPerPack`.
+ */
+export type InvoiceScanPurchaseItem = {
+  entryMode: "unit" | "pack";
+  packLabel?: string;
+  productId: string;
+  unitsPerPack?: number;
+};
+
 export type FinalizeInvoiceScanInput = {
   clientRequestId?: string;
+  /** Items de la compra creada: las líneas del escaneo se validan contra ellos (M3). */
+  items: readonly InvoiceScanPurchaseItem[];
   lines: InvoiceScanLineInput[];
   purchaseId: string;
   supplierId: string;
@@ -133,11 +174,17 @@ export type ConfirmedInvoiceScan = {
   supplierId: string;
 };
 
+/**
+ * Línea para `learn_invoice_aliases`. Las claves de empaque viajan SIEMPRE salvo
+ * cuando el empaque de la línea no coincide con el item: `null` = modo unidad (la
+ * RPC borra el empaque del alias); sin clave = no se aprende el empaque (la RPC
+ * conserva el que tenía).
+ */
 export type LearnAliasLine = {
   alias_norm: string;
-  pack_label: string | null;
+  pack_label?: string | null;
   product_id: string;
-  units_per_pack: number | null;
+  units_per_pack?: number | null;
 };
 
 /** `rawText` por índice desde `extracted` guardado; tolera un JSON incompleto. */
@@ -179,17 +226,56 @@ export function buildConfirmedLines(
  * 200 caracteres (la RPC rechazaría la llamada entera; recortar daría un alias que
  * nunca coincide exacto con `normalizeAlias(rawText)`).
  */
-export function buildLearnLines(confirmedLines: ConfirmedInvoiceScanLine[]): LearnAliasLine[] {
+export function buildLearnLines(
+  confirmedLines: ConfirmedInvoiceScanLine[],
+  items: readonly InvoiceScanPurchaseItem[],
+): LearnAliasLine[] {
   return confirmedLines
     .filter(
-      (line) => line.aliasNorm !== "" && Array.from(line.aliasNorm).length <= MAX_ALIAS_NORM_LENGTH,
+      (line) =>
+        line.aliasNorm !== "" &&
+        Array.from(line.aliasNorm).length <= MAX_ALIAS_NORM_LENGTH &&
+        items.some((item) => item.productId === line.productId),
     )
     .map((line) => ({
       alias_norm: line.aliasNorm,
-      pack_label: line.packLabel?.trim() ? line.packLabel.trim() : null,
       product_id: line.productId,
-      units_per_pack: line.unitsPerPack ?? null,
+      ...resolveLearnPack(line, items),
     }));
+}
+
+/** Líneas cuyo producto no está en los items de la compra (no se aprenden; M3). */
+export function countLinesOutsideItems(
+  lines: readonly InvoiceScanLineInput[],
+  items: readonly InvoiceScanPurchaseItem[],
+): number {
+  return lines.filter((line) => !items.some((item) => item.productId === line.productId)).length;
+}
+
+/**
+ * Empaque a aprender, tomado del ITEM de la compra (SCN-06-F2 · M3):
+ * - la línea dice `unitsPerPack` y hay un item en modo empaque del producto con ese
+ *   mismo tamaño → `{ pack_label: item.packLabel, units_per_pack }`;
+ * - la línea no dice empaque y el producto entra en modo unidad → claves en `null`
+ *   (borra el empaque del alias; A1);
+ * - cualquier otro caso (tamaño distinto del item, empaque sin item de empaque o
+ *   unidad sin item de unidad) → sin claves: no se aprende el empaque.
+ */
+function resolveLearnPack(
+  line: InvoiceScanLineInput,
+  items: readonly InvoiceScanPurchaseItem[],
+): Pick<LearnAliasLine, "pack_label" | "units_per_pack"> {
+  const own = items.filter((item) => item.productId === line.productId);
+
+  if (line.unitsPerPack != null) {
+    const pack = own.find((item) => item.entryMode === "pack" && item.unitsPerPack === line.unitsPerPack);
+
+    return pack
+      ? { pack_label: pack.packLabel?.trim() || null, units_per_pack: line.unitsPerPack }
+      : {};
+  }
+
+  return own.some((item) => item.entryMode === "unit") ? { pack_label: null, units_per_pack: null } : {};
 }
 
 export function buildConfirmedPayload(
@@ -335,7 +421,7 @@ export async function releaseInvoiceScanClaim(
 export async function finalizeInvoiceScan(
   scan: PrecheckedInvoiceScan,
   input: FinalizeInvoiceScanInput,
-  _storeId: string,
+  storeId: string,
 ): Promise<InvoiceScanOutcome> {
   if (scan.replay) {
     return { confirmed: scan.purchaseId === input.purchaseId, learned: null };
@@ -351,6 +437,7 @@ export async function finalizeInvoiceScan(
   }
 
   const confirmed = buildConfirmedPayload(scan.rawTexts, input);
+  let keyReused = false;
 
   try {
     const { data, error } = await supabase.rpc("confirm_invoice_scan", {
@@ -360,7 +447,9 @@ export async function finalizeInvoiceScan(
       p_scan_id: scan.id,
     });
 
-    if (error) {
+    if (error && isInvoiceScanKeyReuseRejection(error)) {
+      keyReused = true;
+    } else if (error) {
       logInvoiceScanFailure("confirm", scan.id, error);
       return { confirmed: false, learned: null };
     }
@@ -375,7 +464,26 @@ export async function finalizeInvoiceScan(
     return { confirmed: false, learned: null };
   }
 
-  const learnLines = buildLearnLines(confirmed.lines);
+  // M1: la compra devuelta no es de este intento (la clave ya creó otra compra);
+  // no se creó nada nuevo, así que se suelta el reclamo y se rechaza la petición.
+  if (keyReused) {
+    if (input.clientRequestId) {
+      await releaseInvoiceScanClaim({ clientRequestId: input.clientRequestId, scanId: scan.id }, storeId);
+    }
+
+    throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_KEY_REUSED_MESSAGE);
+  }
+
+  const outside = countLinesOutsideItems(input.lines, input.items);
+
+  if (outside > 0) {
+    console.error("[invoice-scan] líneas del escaneo fuera de la compra; no se aprenden", {
+      count: outside,
+      scanId: scan.id,
+    });
+  }
+
+  const learnLines = buildLearnLines(confirmed.lines, input.items);
 
   if (learnLines.length === 0) {
     return { confirmed: true, learned: 0 };

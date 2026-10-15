@@ -221,12 +221,15 @@ export async function POST(request: Request) {
       throw error;
     }
 
-    // Nunca lanza: la compra ya existe; el resultado viaja en `invoiceScan`.
+    // No lanza salvo una excepción: la compra ya existe y el resultado viaja en
+    // `invoiceScan`. Si la compra devuelta es de OTRO intento (clave reutilizada con
+    // otro escaneo; SCN-06-F2 · M1) lanza 400 sin confirmar el escaneo.
     const invoiceScan = scan
       ? await scanService.finalizeInvoiceScan(
           scan,
           {
             clientRequestId: input.clientRequestId,
+            items: input.items,
             lines: invoiceScanLines ?? [],
             purchaseId: purchase.id,
             supplierId: purchase.supplierId ?? input.supplierId,

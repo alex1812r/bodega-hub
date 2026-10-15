@@ -2477,6 +2477,27 @@ select
   ), false)
 union all
 select
+  'invoice_scans.learned_at timestamptz; learn una vez por escaneo, alias_norm canonico y claves de empaque presentes sobrescriben; confirm exige compra de este intento sin otro escaneo y tope 256 KB / 500 lineas (20261019b, SCN-06-F2)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'learned_at' and data_type = 'timestamp with time zone'
+  )
+  and coalesce((
+    select p.prosrc ilike '%set learned_at = now()%learned_at is null%'
+      and p.prosrc ilike '%v_alias <> lower(v_alias)%'
+      and p.prosrc ilike '%not v_row.has_units_per_pack%'
+      and p.prosrc not ilike '%coalesce(excluded.units_per_pack%'
+    from pg_proc p where p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%pg_column_size(p_confirmed) > 262144%'
+      and p.prosrc ilike '%v_purchase_key is distinct from p_client_request_id%'
+      and p.prosrc ilike '%La compra ya está ligada a otro escaneo%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+union all
+select
   'invoice_scans: RLS activa y al menos una politica select (19a o fallback de 20261019b) para el pre-check de POST /api/purchases (SCN-06)',
   coalesce((select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.invoice_scans')), false)
   and exists (
