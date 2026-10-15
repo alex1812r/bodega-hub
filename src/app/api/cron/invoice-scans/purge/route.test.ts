@@ -83,7 +83,7 @@ describe("/api/cron/invoice-scans/purge", () => {
 
     it("purges only scans older than 90 days and counts every page", async () => {
       jest.setSystemTime(new Date(NOW.getTime() - 91 * DAY_MS));
-      const old = await mock.insertScan(ctx, {
+      const old = await mock.seedScanForTest(ctx, {
         imageSha256: SHA_OLD,
         model: "m",
         pages: 3,
@@ -92,7 +92,7 @@ describe("/api/cron/invoice-scans/purge", () => {
       });
 
       jest.setSystemTime(new Date(NOW.getTime() - 89 * DAY_MS));
-      const recent = await mock.insertScan(ctx, {
+      const recent = await mock.seedScanForTest(ctx, {
         imageSha256: SHA_NEW,
         model: "m",
         provider: "p",
@@ -115,7 +115,7 @@ describe("/api/cron/invoice-scans/purge", () => {
       const ids: string[] = [];
       for (let index = 0; index < 250; index += 1) {
         const sha = `c${index.toString(16).padStart(63, "0")}`;
-        const scan = await mock.insertScan(batchCtx, {
+        const scan = await mock.seedScanForTest(batchCtx, {
           imageSha256: sha,
           model: "m",
           provider: "p",
@@ -349,9 +349,9 @@ describe("/api/cron/invoice-scans/purge", () => {
       const old = new Date(NOW.getTime() - 91 * DAY_MS).toISOString();
       const orphan = `store-orphans/${SHA_ORPHAN}/p1.jpg`;
       const liveImage = `store-orphans/${SHA_LIVE}/p1.jpg`;
-      mock.recordScanObject(orphan, old);
-      mock.recordScanObject(liveImage, old);
-      await mock.insertScan(ctx, {
+      mock.seedScanObjectForTest(orphan, old);
+      mock.seedScanObjectForTest(liveImage, old);
+      await mock.seedScanForTest(ctx, {
         imageSha256: SHA_LIVE,
         model: "m",
         provider: "p",

@@ -11,15 +11,14 @@ import {
   failScan,
   getDailyUsage,
   getScan,
-  insertScan,
   listFewShotExamples,
   deleteScansByIds,
   listExpiredScanObjects,
   listExpiredScans,
-  markScanFailed,
-  recordScanObject,
   removeScanObjects,
   reserveScan,
+  seedScanForTest,
+  seedScanObjectForTest,
 } from "./scans.mock-server";
 import {
   DEFAULT_INVOICE_SCAN_DAILY_LIMIT,
@@ -171,37 +170,26 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
   });
 });
 
-describe("scans.mock-server · insertScan (fixtures)", () => {
+describe("scans.mock-server · seedScanForTest (fixtures)", () => {
   it("no duplica filas por tienda + hash y reutiliza una fila failed", async () => {
-    const failed = await insertScan(
+    const failed = await seedScanForTest(
       storeA,
       input({ error: "Tiempo de espera agotado", extracted: null, status: "failed" }),
     );
-    const retry = await insertScan(storeA, input({ inputTokens: 1200 }));
-    const again = await insertScan(storeA, input({ provider: "otro" }));
-    await insertScan(storeB, input({ storagePath: "store-b/hash-1.jpg" }));
+    const retry = await seedScanForTest(storeA, input({ inputTokens: 1200 }));
+    const again = await seedScanForTest(storeA, input({ provider: "otro" }));
+    await seedScanForTest(storeB, input({ storagePath: "store-b/hash-1.jpg" }));
 
     expect(failed.extracted).toBeNull();
     expect(retry).toMatchObject({ error: null, id: failed.id, inputTokens: 1200, status: "extracted" });
     expect(again).toMatchObject({ id: failed.id, provider: "mock" });
     expect(store().size).toBe(2);
   });
-
-  it("markScanFailed solo afecta a escaneos extracted de la propia tienda", async () => {
-    const scan = await insertScan(storeA, input());
-
-    expect(await markScanFailed(storeB, scan.id, "x")).toBeNull();
-    expect(await markScanFailed(storeA, scan.id, "Fallo al emparejar")).toMatchObject({
-      error: "Fallo al emparejar",
-      status: "failed",
-    });
-    expect(await markScanFailed(storeA, scan.id, "otra vez")).toBeNull();
-  });
 });
 
 describe("scans.mock-server · tienda y descarte", () => {
   it("getScan y discardScan devuelven null (404) para un escaneo de otra tienda", async () => {
-    const scan = await insertScan(storeA, input());
+    const scan = await seedScanForTest(storeA, input());
 
     expect(await getScan(storeB, scan.id)).toBeNull();
     expect(await discardScan(storeB, scan.id)).toBeNull();
@@ -210,7 +198,7 @@ describe("scans.mock-server · tienda y descarte", () => {
   });
 
   it("solo descarta desde extracted; después responde 409", async () => {
-    const scan = await insertScan(storeA, input());
+    const scan = await seedScanForTest(storeA, input());
 
     expect(await discardScan(storeA, scan.id)).toMatchObject({ status: "discarded" });
     await expect(discardScan(storeA, scan.id)).rejects.toMatchObject({ status: 409 });
@@ -223,15 +211,15 @@ describe("scans.mock-server · cuota diaria (día operativo de Caracas)", () => 
     jest.useFakeTimers();
     // 23:30 del 14-oct en Caracas (UTC-4) = 03:30Z del 15-oct.
     jest.setSystemTime(new Date("2026-10-15T03:30:00.000Z"));
-    await insertScan(storeA, input({ imageSha256: "late-1", pages: 2 }));
-    await insertScan(storeA, input({ error: "x", imageSha256: "late-2", status: "failed" }));
-    await insertScan(storeB, input({ imageSha256: "b-1", pages: 5 }));
+    await seedScanForTest(storeA, input({ imageSha256: "late-1", pages: 2 }));
+    await seedScanForTest(storeA, input({ error: "x", imageSha256: "late-2", status: "failed" }));
+    await seedScanForTest(storeB, input({ imageSha256: "b-1", pages: 5 }));
 
     expect(await getDailyUsage(storeA, 50)).toEqual({ limit: 50, remaining: 47, used: 3 });
 
     // 00:10 del 15-oct en Caracas: día nuevo aunque en UTC sea el mismo día que antes.
     jest.setSystemTime(new Date("2026-10-15T04:10:00.000Z"));
-    await insertScan(storeA, input({ imageSha256: "early-1" }));
+    await seedScanForTest(storeA, input({ imageSha256: "early-1" }));
 
     expect(await getDailyUsage(storeA, 50)).toEqual({ limit: 50, remaining: 49, used: 1 });
     expect(await getDailyUsage(storeA, 1)).toEqual({ limit: 1, remaining: 0, used: 1 });
@@ -248,14 +236,14 @@ describe("scans.mock-server · cuota diaria (día operativo de Caracas)", () => 
 describe("scans.mock-server · few-shot por proveedor", () => {
   it("devuelve como mucho 3 confirmados del proveedor y la tienda, los más recientes primero", async () => {
     for (let day = 1; day <= 5; day += 1) {
-      const scan = await insertScan(
+      const scan = await seedScanForTest(
         storeA,
         input({ imageSha256: `s-${day}`, storagePath: `store-a/s-${day}.jpg` }),
       );
       confirm(scan.id, `2026-10-0${day}T12:00:00.000Z`);
     }
-    await insertScan(storeA, input({ imageSha256: "sin-confirmar" }));
-    const other = await insertScan(storeB, input({ imageSha256: "b" }));
+    await seedScanForTest(storeA, input({ imageSha256: "sin-confirmar" }));
+    const other = await seedScanForTest(storeB, input({ imageSha256: "b" }));
     confirm(other.id, "2026-10-09T12:00:00.000Z");
 
     const examples = await listFewShotExamples(storeA, supplierId);
@@ -276,12 +264,12 @@ describe("scans.mock-server · purga a 90 días", () => {
   it("lista sin borrar los escaneos anteriores al corte en todas las tiendas, con todas sus páginas", async () => {
     const now = new Date("2026-10-15T12:00:00.000Z");
     const sha = "c".repeat(64);
-    const old = await insertScan(
+    const old = await seedScanForTest(
       storeA,
       input({ imageSha256: sha, pages: 3, storagePath: `store-a/${sha}/p1.webp` }),
     );
-    const oldB = await insertScan(storeB, input({ imageSha256: "old-b", storagePath: "store-b/old.jpg" }));
-    const fresh = await insertScan(storeA, input({ imageSha256: "fresh" }));
+    const oldB = await seedScanForTest(storeB, input({ imageSha256: "old-b", storagePath: "store-b/old.jpg" }));
+    const fresh = await seedScanForTest(storeA, input({ imageSha256: "fresh" }));
     store().set(old.id, { ...old, createdAt: "2026-07-01T12:00:00.000Z" });
     store().set(oldB.id, { ...oldB, createdAt: "2026-07-17T11:59:59.000Z" });
     store().set(fresh.id, { ...fresh, createdAt: "2026-07-17T12:00:00.000Z" });
@@ -311,11 +299,11 @@ describe("scans.mock-server · purga a 90 días", () => {
     const orphanB = `store-b/${"f".repeat(64)}/p1.png`;
     const liveImage = `store-a/${live}/p1.jpg`;
     const fresh = `store-a/${"0".repeat(64)}/p1.jpg`;
-    recordScanObject(orphanB, "2026-07-10T00:00:00.000Z");
-    recordScanObject(orphanA, "2026-07-01T00:00:00.000Z");
-    recordScanObject(liveImage, "2026-07-01T00:00:00.000Z");
-    recordScanObject(fresh, "2026-07-17T12:00:00.000Z");
-    const retried = await insertScan(storeA, input({ imageSha256: live, storagePath: liveImage }));
+    seedScanObjectForTest(orphanB, "2026-07-10T00:00:00.000Z");
+    seedScanObjectForTest(orphanA, "2026-07-01T00:00:00.000Z");
+    seedScanObjectForTest(liveImage, "2026-07-01T00:00:00.000Z");
+    seedScanObjectForTest(fresh, "2026-07-17T12:00:00.000Z");
+    const retried = await seedScanForTest(storeA, input({ imageSha256: live, storagePath: liveImage }));
     store().set(retried.id, { ...retried, createdAt: "2026-07-17T12:00:00.000Z" });
 
     expect(await listExpiredScanObjects(null, 90, now, 100)).toEqual([orphanA, orphanB]);

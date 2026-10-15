@@ -16,7 +16,6 @@ import {
   deleteScansByIds,
   listExpiredScanObjects,
   listExpiredScans,
-  markScanFailed,
   reserveScan,
 } from "./scans.server";
 
@@ -197,7 +196,7 @@ describe("scans.server · completeScan / failScan", () => {
   });
 });
 
-describe("scans.server · getScan / markScanFailed / discardScan", () => {
+describe("scans.server · getScan / discardScan", () => {
   it("getScan filtra por tienda; null si no es de la tienda o el id no es uuid", async () => {
     const { calls } = useRouteClient([ok(null)]);
 
@@ -205,19 +204,6 @@ describe("scans.server · getScan / markScanFailed / discardScan", () => {
     expect(calls[0]).toEqual(expect.arrayContaining([["eq", "store_id", ctx.storeId]]));
     expect(await getScan(ctx, "no-uuid")).toBeNull();
     expect(calls).toHaveLength(1);
-  });
-
-  it("markScanFailed solo actualiza extracted de la tienda", async () => {
-    const { calls } = useRouteClient([ok(dbRow({ error: "x", status: "failed" }))]);
-
-    expect(await markScanFailed(ctx, scanId, "x")).toMatchObject({ error: "x", status: "failed" });
-    expect(calls[0]).toEqual(
-      expect.arrayContaining([
-        ["update", { error: "x", status: "failed" }],
-        ["eq", "store_id", ctx.storeId],
-        ["eq", "status", "extracted"],
-      ]),
-    );
   });
 
   it("discardScan: null (404) si no es de la tienda, 409 si ya no está extracted", async () => {

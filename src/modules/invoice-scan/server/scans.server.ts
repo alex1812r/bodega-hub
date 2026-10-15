@@ -171,31 +171,6 @@ export async function failScan(ctx: InvoiceScanContext, id: string, errorCode: s
   throwIfSupabaseError(error);
 }
 
-/** Marca como fallido un escaneo aún sin confirmar. null si no existe en la tienda o ya no está `extracted`. */
-export async function markScanFailed(
-  ctx: InvoiceScanContext,
-  id: string,
-  errorMessage: string,
-): Promise<InvoiceScanRow | null> {
-  if (!UUID_PATTERN.test(id)) {
-    return null;
-  }
-
-  const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("invoice_scans")
-    .update({ error: errorMessage, status: "failed" })
-    .eq("id", id)
-    .eq("store_id", ctx.storeId)
-    .eq("status", "extracted")
-    .select(scanSelect)
-    .maybeSingle<DbInvoiceScanRow>();
-
-  throwIfSupabaseError(error);
-
-  return data ? mapScan(data) : null;
-}
-
 /** null si el id no es de la tienda de la sesión (la ruta responde 404). */
 export async function getScan(ctx: InvoiceScanContext, id: string): Promise<InvoiceScanRow | null> {
   if (!UUID_PATTERN.test(id)) {

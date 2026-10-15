@@ -139,8 +139,12 @@ export async function failScan(ctx: InvoiceScanContext, id: string, errorCode: s
   }
 }
 
-/** Alta directa para fixtures de tests (la purga y este repositorio); el BFF usa `reserveScan`. */
-export async function insertScan(
+/**
+ * SOLO TESTS: siembra una fila directamente (estado y lectura a elección) para
+ * fixtures de la purga y de este repositorio. Ningún código de producción debe
+ * llamarla; el BFF crea filas con `reserveScan` + `completeScan` / `failScan`.
+ */
+export async function seedScanForTest(
   ctx: InvoiceScanContext,
   input: InvoiceScanInsert,
 ): Promise<InvoiceScanRow> {
@@ -173,20 +177,6 @@ export async function insertScan(
     supplierId: null,
     usagePages: input.pages ?? 1,
   });
-}
-
-export async function markScanFailed(
-  ctx: InvoiceScanContext,
-  id: string,
-  errorMessage: string,
-): Promise<InvoiceScanRow | null> {
-  const scan = ownScan(ctx, id);
-
-  if (!scan || scan.status !== "extracted") {
-    return null;
-  }
-
-  return save({ ...scan, error: errorMessage, status: "failed" });
 }
 
 export async function getScan(ctx: InvoiceScanContext, id: string): Promise<InvoiceScanRow | null> {
@@ -264,8 +254,11 @@ function objectDates() {
   return mockState("invoice-scan:object-dates", () => new Map<string, string>());
 }
 
-/** Registra un objeto del bucket en memoria con su fecha de subida. */
-export function recordScanObject(path: string, createdAt: string = new Date().toISOString()): void {
+/**
+ * SOLO TESTS: registra un objeto del bucket en memoria con su fecha de subida
+ * para fixtures de la purga. Ningún código de producción debe llamarla.
+ */
+export function seedScanObjectForTest(path: string, createdAt: string = new Date().toISOString()): void {
   objectDates().set(path, createdAt);
 }
 
