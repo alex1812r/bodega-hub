@@ -15,6 +15,7 @@ import {
   isUsdDocument,
   lineAmount,
   lineEntryCosts,
+  lineValueIssues,
   priceCoherenceIssue,
   resolveRate,
 } from "./match/money";
@@ -25,6 +26,8 @@ import { resolveTaxRateCode, taxPctOf } from "./match/tax";
 import type { MatchContext, MatchProduct, MatchSupplierCatalog } from "./match.types";
 
 export type { MatchContext } from "./match.types";
+
+export const INACTIVE_PRODUCT_ISSUE = "El producto está inactivo: actívalo o elige otro.";
 
 type DocumentState = {
   catalog?: MatchSupplierCatalog;
@@ -65,7 +68,10 @@ function matchLine(
     product && state.catalog ? state.catalog.packUnits.filter((pack) => pack.productId === product.id) : [];
   const pack = resolvePack({ line, product, packUnits, alias: productMatch.alias });
 
-  const issues = [...pack.issues];
+  const issues = [...pack.issues, ...lineValueIssues(line)];
+  if (product && !product.active) {
+    issues.push(INACTIVE_PRODUCT_ISSUE);
+  }
   const priceIssue = state.usd
     ? undefined
     : priceCoherenceIssue({

@@ -169,4 +169,29 @@ describe("matchInvoice · cascada de producto", () => {
     expect(result.supplier.contactId).toBeUndefined();
     expect(result.lines[0].status).not.toBe("confirmed");
   });
+
+  it.each([
+    ["alias", buildLine({ description: "GALLETA MARIA" })],
+    ["SKU", buildLine({ description: "GALLETAS SURTIDAS", supplierSku: "GAL-9" })],
+  ])("%s exacto hacia un producto inactivo: dudosa con aviso y conserva el candidato", (_via, input) => {
+    const ctx = buildContext();
+    ctx.supplierCatalogs[SUPPLIER_POLAR].aliases.push({
+      aliasNorm: "galleta maria",
+      productId: "p-galleta",
+      packLabel: null,
+      unitsPerPack: null,
+      hits: 3,
+    });
+    ctx.supplierCatalogs[SUPPLIER_POLAR].supplierProducts.push({
+      supplierProductId: "sp-galleta",
+      productId: "p-galleta",
+      supplierSku: "GAL-9",
+    });
+    const line = matchInvoice(buildExtraction({ lines: [input] }), ctx).lines[0];
+
+    expect(line.status).toBe("doubtful");
+    expect(line.productId).toBe("p-galleta");
+    expect(line.candidates?.map((c) => c.productId)).toEqual(["p-galleta"]);
+    expect(line.issues).toContain("El producto está inactivo: actívalo o elige otro.");
+  });
 });

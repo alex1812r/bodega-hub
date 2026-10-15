@@ -16,6 +16,10 @@ export const USD_DOCUMENT_ISSUE =
   "La factura parece estar en dólares ($/USD): revisa los precios, no se precargaron como Bs.";
 export const NO_PRICE_ISSUE = "La línea no trae precio: escríbelo.";
 export const MISSING_RATE_WARNING = "Falta la tasa del día: los costos en REF no se precargaron.";
+export const INVALID_QUANTITY_ISSUE = "Cantidad inválida en la factura: revísala.";
+export const INVALID_PRICE_ISSUE = "Precio inválido en la factura: revísalo.";
+/** Tolerancia de coma flotante al comparar el desvío con el límite (4,20 vs 3,00 es 40 % justo, no más). */
+const DEVIATION_EPSILON = 1e-9;
 
 const USD_MARK = /\$|\bUSD\b|\bUS\s?\$/i;
 
@@ -76,6 +80,23 @@ export function lineAmount(line: InvoiceExtractionLine): number {
   return 0;
 }
 
+/**
+ * Avisos por valores imposibles leídos en la línea: cantidad no finita o <= 0;
+ * precio unitario o total negativos o no finitos cuando el otro sí es válido
+ * (sin ningún precio válido ya avisa `NO_PRICE_ISSUE`).
+ */
+export function lineValueIssues(line: InvoiceExtractionLine): string[] {
+  const issues: string[] = [];
+  if (!isPositive(line.quantity)) {
+    issues.push(INVALID_QUANTITY_ISSUE);
+  }
+  const invalid = (value: number) => !Number.isFinite(value) || value < 0;
+  if (hasPrice(line) && (invalid(line.unitPrice) || invalid(line.lineTotal))) {
+    issues.push(INVALID_PRICE_ISSUE);
+  }
+  return issues;
+}
+
 export function hasPrice(line: InvoiceExtractionLine): boolean {
   return isPositive(line.unitPrice) || isPositive(line.lineTotal);
 }
@@ -125,7 +146,7 @@ export function priceCoherenceIssue(input: {
   }
 
   const perUnitRef = amount / rate / (line.quantity * units);
-  if (Math.abs(perUnitRef - lastUnitCostRef) / lastUnitCostRef <= PRICE_DEVIATION_LIMIT) {
+  if (Math.abs(perUnitRef - lastUnitCostRef) / lastUnitCostRef <= PRICE_DEVIATION_LIMIT + DEVIATION_EPSILON) {
     return undefined;
   }
   return `¿Precio por caja o por unidad? Sale a ${formatDecimal(perUnitRef)} REF por unidad y el último costo fue ${formatDecimal(lastUnitCostRef)} REF.`;

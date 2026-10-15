@@ -166,4 +166,40 @@ describe("matchInvoice · totales", () => {
 
     expect(result.totals).toEqual({ computed: 600, mismatch: false });
   });
+
+  it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])(
+    "alias exacto con cantidad %p: dudosa con aviso de cantidad inválida",
+    (quantity) => {
+      const line = matchInvoice(buildExtraction({ lines: [buildLine({ quantity })] }), buildContext()).lines[0];
+
+      expect(line.status).toBe("doubtful");
+      expect(line.issues).toContain("Cantidad inválida en la factura: revísala.");
+    },
+  );
+
+  it.each([
+    ["unitPrice negativo", { unitPrice: -50 }],
+    ["unitPrice NaN", { unitPrice: Number.NaN }],
+    ["lineTotal negativo", { lineTotal: -600 }],
+    ["lineTotal infinito", { lineTotal: Number.POSITIVE_INFINITY }],
+  ])("alias exacto con %s y el otro importe válido: dudosa con aviso de precio inválido", (_label, overrides) => {
+    const line = matchInvoice(buildExtraction({ lines: [buildLine(overrides)] }), buildContext()).lines[0];
+
+    expect(line.status).toBe("doubtful");
+    expect(line.issues).toContain("Precio inválido en la factura: revísalo.");
+  });
+
+  it("desvío de exactamente +40 % no avisa (4,20 frente a 3,00); +40,01 % sí (6.18)", () => {
+    const at = (total: number) =>
+      matchInvoice(
+        buildExtraction({
+          lines: [buildLine({ description: "COLA 2L", supplierSku: "REF 2L", quantity: 1, unitPrice: total, lineTotal: total })],
+        }),
+        buildContext(),
+      ).lines[0];
+
+    expect(at(420)).toMatchObject({ status: "confirmed", issues: [] });
+    expect(at(420.03).status).toBe("doubtful");
+    expect(at(420.03).issues[0]).toMatch(/^¿Precio por caja o por unidad\?/);
+  });
 });
