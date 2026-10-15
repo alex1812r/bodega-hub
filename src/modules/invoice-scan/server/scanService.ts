@@ -104,6 +104,8 @@ export const INVOICE_HASH_MISMATCH_MESSAGE =
 export const INVOICE_MIXED_TYPES_MESSAGE = "Todas las páginas de la factura deben tener el mismo formato.";
 export const INVOICE_SCAN_IN_PROGRESS_MESSAGE =
   "Esta factura ya se está leyendo; espera unos segundos y vuelve a intentarlo.";
+/** Código guardado en `invoice_scans.error` cuando el cliente corta la petición durante la lectura. */
+export const INVOICE_SCAN_CLIENT_ABORTED = "CLIENT_ABORTED";
 export const INVOICE_SCAN_CHANGED_MESSAGE =
   "La lectura de esta factura cambió mientras se procesaba. Vuelve a intentarlo.";
 
@@ -313,7 +315,10 @@ function limitReached(limit: number, used: number, pages: number): ApiError {
   );
 }
 
-/** Hasta 3 escaneos confirmados del proveedor; una imagen que no se descarga se omite. */
+/**
+ * Hasta 3 escaneos confirmados del proveedor; una imagen que no se descarga, o
+ * cuya ruta guardada no es de la tienda de la sesión, se omite.
+ */
 async function loadFewShot(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
@@ -333,6 +338,7 @@ async function loadFewShot(
       }
 
       try {
+        assertPathInStore(example.storagePath, ctx.storeId);
         const data = await deps.storage.download(example.storagePath);
 
         return { confirmed: example.confirmed, page: { data, mediaType } };
@@ -358,7 +364,9 @@ export type ScanInvoiceOptions = {
  * - `quota`: 429;
  * - `reserved` (páginas ya cobradas): subida → few-shot → extracción →
  *   emparejamiento → `extracted`. Un fallo deja la fila `failed` con el código
- *   (nunca el contenido); si es del modelo responde 502.
+ *   (nunca el contenido); si es del modelo responde 502. Si falla la subida
+ *   (antes de llamar al modelo) se devuelven las páginas cobradas; un corte del
+ *   cliente durante la lectura queda como `CLIENT_ABORTED`.
  * Un escaneo `failed` o `discarded` se vuelve a leer y cobra otra vez.
  */
 export async function scanInvoice(
@@ -403,8 +411,9 @@ export async function scanInvoice(
     throw limitReached(reservation.limit, reservation.used, pageCount);
   }
 
-  // Las páginas ya están cobradas: cualquier fallo cierra la reserva como failed.
-  const fail = (code: string) => deps.repo.failScan(ctx, reservation.id, code);
+  // Las páginas ya están cobradas: cualquier fallo cierra la reserva como failed,
+  // y si el modelo aún no se llamó, las devuelve.
+  const fail = (code: string, refundPages = false) => deps.repo.failScan(ctx, reservation.id, code, refundPages);
   let result: Awaited<ReturnType<typeof extractInvoice>>;
   let matched: InvoiceMatch;
 
@@ -413,7 +422,7 @@ export async function scanInvoice(
       await deps.storage.upload(upload.path, upload.page.data, upload.page.mediaType);
     }
   } catch (error) {
-    await fail("UPLOAD_ERROR");
+    await fail("UPLOAD_ERROR", true);
     throw error;
   }
 
@@ -422,7 +431,13 @@ export async function scanInvoice(
   try {
     result = await deps.extract({ fewShot, model, pages: scan.pages, signal: options.signal });
   } catch (error) {
-    await fail(error instanceof InvoiceExtractionError ? error.code : "PROVIDER_ERROR");
+    await fail(
+      options.signal?.aborted
+        ? INVOICE_SCAN_CLIENT_ABORTED
+        : error instanceof InvoiceExtractionError
+          ? error.code
+          : "PROVIDER_ERROR",
+    );
     throw toInvoiceScanApiError(error);
   }
 
@@ -438,9 +453,7 @@ export async function scanInvoice(
     extracted: result.extraction,
     inputTokens: result.inputTokens,
     matched,
-    model: result.modelId,
     outputTokens: result.outputTokens,
-    provider: result.provider,
   });
 
   if (!row) {
@@ -462,6 +475,8 @@ export async function getInvoiceScanDetail(
   id: string,
 ): Promise<InvoiceScanDetail> {
   const row = (await deps.repo.getScan(ctx, id)) ?? notFound();
+  // La ruta guardada se vuelve a validar antes de firmar con service role.
+  assertPathInStore(row.storagePath, ctx.storeId);
   const imageUrls = await Promise.all(
     invoiceScanPagePaths(row.storagePath, row.pages).map((path) => deps.storage.signedReadUrl(path, INVOICE_READ_URL_TTL_SECONDS)),
   );

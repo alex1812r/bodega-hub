@@ -258,7 +258,7 @@ describe("POST /api/purchases/invoice-scan", () => {
     expect(response.status).toBe(404);
   });
 
-  it("si el cliente corta, la llamada al modelo se cancela y responde 502 sin esperar al timeout", async () => {
+  it("si el cliente corta, la llamada al modelo se cancela, responde 502 sin esperar al timeout y queda CLIENT_ABORTED", async () => {
     process.env.INVOICE_SCAN_MOCK_MODE = "timeout";
     const { image, storeId } = fresh();
     const controller = new AbortController();
@@ -270,8 +270,9 @@ describe("POST /api/purchases/invoice-scan", () => {
 
     expect(response.status).toBe(502);
     expect(rowByHash(storeId, sha256OfPages([bytes(image)]))).toMatchObject({
-      error: "TIMEOUT",
+      error: "CLIENT_ABORTED",
       status: "failed",
+      usagePages: 1,
     });
   }, 5000);
 

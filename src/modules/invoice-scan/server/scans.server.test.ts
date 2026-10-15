@@ -149,54 +149,104 @@ describe("scans.server · reserveScan", () => {
   });
 });
 
-describe("scans.server · completeScan / failScan", () => {
+describe("scans.server · completeScan / failScan / discardScan por RPC (SCN-03l)", () => {
   const completion = {
     durationMs: 900,
     extracted: { confidence: 1, currency: "VES" as const, lines: [], supplier: { name: "Alfa" }, warnings: [] },
     inputTokens: 10,
     matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
-    model: "m",
     outputTokens: 20,
-    provider: "mock",
   };
 
-  it("completeScan pasa la fila de processing a extracted en la tienda", async () => {
-    const { calls } = useRouteClient([ok(dbRow())]);
+  /** Cliente sin `from`: authenticated ya no puede escribir la tabla, solo por RPC (20261019g). */
+  function useRpcClient(result: Result) {
+    const calls: Call[] = [];
+    const builder: Record<string, unknown> = {
+      maybeSingle: () => {
+        calls.push(["maybeSingle"]);
+        return Promise.resolve(result);
+      },
+      select: (...args: unknown[]) => {
+        calls.push(["select", ...args]);
+        return builder;
+      },
+      then: (resolve: (value: Result) => unknown) => Promise.resolve(result).then(resolve),
+    };
+    const rpc = jest.fn((...args: unknown[]) => {
+      calls.push(["rpc", ...args]);
+      return builder;
+    });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+    return calls;
+  }
+
+  it("completeScan llama a complete_invoice_scan y devuelve la fila extracted", async () => {
+    const calls = useRpcClient(ok(dbRow()));
 
     expect(await completeScan(ctx, scanId, completion)).toMatchObject({ id: scanId, status: "extracted" });
-    expect(calls[0]).toEqual(
-      expect.arrayContaining([
-        ["eq", "id", scanId],
-        ["eq", "store_id", ctx.storeId],
-        ["eq", "status", "processing"],
-      ]),
-    );
-    const update = calls[0].find(([method]) => method === "update");
-    expect(update?.[1]).toMatchObject({ error: null, input_tokens: 10, status: "extracted" });
+    expect(calls[0]).toEqual([
+      "rpc",
+      "complete_invoice_scan",
+      {
+        p_duration_ms: 900,
+        p_extracted: completion.extracted,
+        p_id: scanId,
+        p_input_tokens: 10,
+        p_matched: completion.matched,
+        p_output_tokens: 20,
+      },
+    ]);
+    expect(calls).toContainEqual(["maybeSingle"]);
   });
 
-  it("completeScan devuelve null si la fila ya no está processing", async () => {
-    useRouteClient([ok(null)]);
+  it("completeScan devuelve null si la fila ya no está processing (la RPC no devuelve filas)", async () => {
+    useRpcClient(ok(null));
 
     expect(await completeScan(ctx, scanId, completion)).toBeNull();
   });
 
-  it("failScan deja failed con el código y la lectura vacía, solo desde processing", async () => {
-    const { calls } = useRouteClient([ok(null)]);
+  it("failScan llama a fail_invoice_scan con el código y sin reembolso por defecto", async () => {
+    const calls = useRpcClient(ok(null));
 
     await failScan(ctx, scanId, "TIMEOUT");
 
-    expect(calls[0]).toEqual(
-      expect.arrayContaining([
-        ["update", { error: "TIMEOUT", extracted: {}, matched: {}, status: "failed" }],
-        ["eq", "store_id", ctx.storeId],
-        ["eq", "status", "processing"],
-      ]),
-    );
+    expect(calls[0]).toEqual(["rpc", "fail_invoice_scan", { p_error: "TIMEOUT", p_id: scanId, p_refund_pages: false }]);
+  });
+
+  it("failScan con reembolso cuando el fallo es anterior al modelo", async () => {
+    const calls = useRpcClient(ok(null));
+
+    await failScan(ctx, scanId, "UPLOAD_ERROR", true);
+
+    expect(calls[0]).toEqual([
+      "rpc",
+      "fail_invoice_scan",
+      { p_error: "UPLOAD_ERROR", p_id: scanId, p_refund_pages: true },
+    ]);
+  });
+
+  it("discardScan llama a discard_invoice_scan; null (404) si no hay fila o el id no es uuid", async () => {
+    const calls = useRpcClient(ok(dbRow({ status: "discarded" })));
+    expect(await discardScan(ctx, scanId)).toMatchObject({ status: "discarded" });
+    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId }]);
+
+    useRpcClient(ok(null));
+    expect(await discardScan(ctx, scanId)).toBeNull();
+
+    const none = useRpcClient(ok(null));
+    expect(await discardScan(ctx, "no-uuid")).toBeNull();
+    expect(none).toHaveLength(0);
+  });
+
+  it("discardScan propaga el 409 de la RPC (PT409) con su mensaje por estado", async () => {
+    const message = "Este escaneo todavía se está leyendo; espera a que termine para descartarlo.";
+    useRpcClient({ data: null, error: { code: "PT409", message } });
+
+    await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
   });
 });
 
-describe("scans.server · getScan / discardScan", () => {
+describe("scans.server · getScan", () => {
   it("getScan filtra por tienda; null si no es de la tienda o el id no es uuid", async () => {
     const { calls } = useRouteClient([ok(null)]);
 
@@ -204,18 +254,6 @@ describe("scans.server · getScan / discardScan", () => {
     expect(calls[0]).toEqual(expect.arrayContaining([["eq", "store_id", ctx.storeId]]));
     expect(await getScan(ctx, "no-uuid")).toBeNull();
     expect(calls).toHaveLength(1);
-  });
-
-  it("discardScan: null (404) si no es de la tienda, 409 si ya no está extracted", async () => {
-    useRouteClient([ok(null)]);
-    expect(await discardScan(ctx, scanId)).toBeNull();
-
-    useRouteClient([ok(dbRow({ status: "confirmed" })), ok(null)]);
-    await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
-
-    const { calls } = useRouteClient([ok(dbRow()), ok(dbRow({ status: "discarded" }))]);
-    expect(await discardScan(ctx, scanId)).toMatchObject({ status: "discarded" });
-    expect(calls[1]).toEqual(expect.arrayContaining([["eq", "status", "extracted"]]));
   });
 });
 

@@ -59,7 +59,7 @@ describe("POST /api/purchases/invoice-scan/[id]/discard", () => {
 
     expect(second.status).toBe(409);
     expect((await second.json()).error.message).toBe(
-      "Solo se puede descartar un escaneo que aún no se ha confirmado.",
+      "Este escaneo ya estaba descartado.",
     );
   });
 

@@ -2764,7 +2764,9 @@ paths:
         `INVOICE_SCAN_DAILY_LIMIT` paginas por tienda y dia operativo de Caracas
         (50 por defecto) y se reserva de forma atomica antes de llamar al
         modelo; cada intento cuenta sus paginas, tambien un reintento fallido o
-        un reescaneo tras descartar. Con `supplierId` se
+        un reescaneo tras descartar, salvo si falla la subida a Storage antes de
+        llamar al modelo (se devuelven). Si el cliente corta durante la lectura,
+        el escaneo queda en `failed` con el codigo `CLIENT_ABORTED`. Con `supplierId` se
         usan hasta 3 escaneos confirmados de ese proveedor como ejemplos. Un
         fallo del proveedor de IA deja el escaneo en `failed` (solo con el codigo
         del fallo) y el reintento con la misma imagen reutiliza esa fila. Una
@@ -2973,7 +2975,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: El escaneo ya esta confirmado, descartado o fallido.
+          description: >-
+            El escaneo no esta en `extracted`: se esta leyendo, ya esta
+            confirmado, ya estaba descartado o su lectura fallo. El mensaje en
+            espanol explica cual.
           content:
             application/json:
               schema:

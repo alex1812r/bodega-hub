@@ -1,14 +1,15 @@
 /**
  * Repositorio de `public.invoice_scans` contra Supabase (parche 20261019a).
  *
- * Usa el cliente con el JWT del usuario: la RLS limita a la tienda de la sesión
- * (lee `purchases.view`, escribe `purchases.create`) y además cada consulta
- * filtra por `ctx.storeId`. Solo la purga (cron) recibe el cliente service role.
+ * Usa el cliente con el JWT del usuario: la RLS limita la lectura a la tienda
+ * de la sesión (`purchases.view`) y además cada consulta filtra por
+ * `ctx.storeId`. authenticated no escribe la tabla directamente (parche
+ * 20261019g): reserva, cierre, fallo y descarte van por RPCs security definer
+ * que sacan la tienda del JWT. Solo la purga (cron) recibe el cliente service role.
  * Paridad en `scans.mock-server.ts`.
  */
 import { z } from "zod";
 
-import { ApiError } from "@/lib/api/apiError";
 import type { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
@@ -16,7 +17,6 @@ import { caracasDateToUtcRange, getCaracasIsoDate } from "@/shared/utils/caracas
 
 import type { InvoiceExtraction, InvoiceMatch, InvoiceScanLimits } from "../contracts";
 import {
-  DISCARD_NOT_ALLOWED_MESSAGE,
   type ExpiredScan,
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
@@ -127,29 +127,25 @@ export async function reserveScan(
   return reservationSchema.parse(data);
 }
 
-/** Cierra una reserva con la lectura. null si la fila ya no está `processing`. */
+/**
+ * Cierra una reserva con la lectura (RPC `complete_invoice_scan`, 20261019g).
+ * null si la fila ya no está `processing`.
+ */
 export async function completeScan(
-  ctx: InvoiceScanContext,
+  _ctx: InvoiceScanContext,
   id: string,
   completion: InvoiceScanCompletion,
 ): Promise<InvoiceScanRow | null> {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
-    .from("invoice_scans")
-    .update({
-      duration_ms: completion.durationMs,
-      error: null,
-      extracted: completion.extracted,
-      input_tokens: completion.inputTokens,
-      matched: completion.matched,
-      model: completion.model,
-      output_tokens: completion.outputTokens,
-      provider: completion.provider,
-      status: "extracted",
+    .rpc("complete_invoice_scan", {
+      p_duration_ms: completion.durationMs,
+      p_extracted: completion.extracted,
+      p_id: id,
+      p_input_tokens: completion.inputTokens,
+      p_matched: completion.matched,
+      p_output_tokens: completion.outputTokens,
     })
-    .eq("id", id)
-    .eq("store_id", ctx.storeId)
-    .eq("status", "processing")
     .select(scanSelect)
     .maybeSingle<DbInvoiceScanRow>();
 
@@ -158,15 +154,23 @@ export async function completeScan(
   return data ? mapScan(data) : null;
 }
 
-/** Cierra una reserva sin lectura: `failed` con el código (nunca el contenido). Las páginas ya se cobraron. */
-export async function failScan(ctx: InvoiceScanContext, id: string, errorCode: string): Promise<void> {
+/**
+ * Cierra una reserva sin lectura: `failed` con el código, nunca el contenido
+ * (RPC `fail_invoice_scan`, 20261019g). Las páginas ya se cobraron; con
+ * `refundPages` (fallo anterior a la llamada al modelo) se devuelven.
+ */
+export async function failScan(
+  _ctx: InvoiceScanContext,
+  id: string,
+  errorCode: string,
+  refundPages = false,
+): Promise<void> {
   const supabase = await createRouteSupabaseClient();
-  const { error } = await supabase
-    .from("invoice_scans")
-    .update({ error: errorCode, extracted: {}, matched: {}, status: "failed" })
-    .eq("id", id)
-    .eq("store_id", ctx.storeId)
-    .eq("status", "processing");
+  const { error } = await supabase.rpc("fail_invoice_scan", {
+    p_error: errorCode,
+    p_id: id,
+    p_refund_pages: refundPages,
+  });
 
   throwIfSupabaseError(error);
 }
@@ -191,41 +195,36 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
 }
 
 /**
- * Descarta un escaneo `extracted`. null si no es de la tienda (404); 409 si ya
- * está confirmado, descartado o fallido.
+ * Descarta un escaneo `extracted` (RPC `discard_invoice_scan`, 20261019g).
+ * null si no es de la tienda (404); en otro estado la RPC responde PT409 con el
+ * mensaje de ese estado (`DISCARD_NOT_ALLOWED_MESSAGES`).
  */
 export async function discardScan(
-  ctx: InvoiceScanContext,
+  _ctx: InvoiceScanContext,
   id: string,
 ): Promise<InvoiceScanRow | null> {
-  const current = await getScan(ctx, id);
-
-  if (!current) {
+  if (!UUID_PATTERN.test(id)) {
     return null;
   }
 
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
-    .from("invoice_scans")
-    .update({ status: "discarded" })
-    .eq("id", current.id)
-    .eq("store_id", ctx.storeId)
-    .eq("status", "extracted")
+    .rpc("discard_invoice_scan", { p_id: id })
     .select(scanSelect)
     .maybeSingle<DbInvoiceScanRow>();
 
   throwIfSupabaseError(error);
 
-  if (!data) {
-    throw new ApiError(409, "CONFLICT", DISCARD_NOT_ALLOWED_MESSAGE);
-  }
-
-  return mapScan(data);
+  return data ? mapScan(data) : null;
 }
 
 /**
  * Páginas cobradas hoy (día operativo de Caracas) por la tienda: suma de
  * `usage_pages`, que cuenta cada intento (fallidos y reescaneos incluidos).
+ *
+ * Limitación aceptada (caos-2 N9, parche 20261019g): al reutilizar una fila de
+ * otro día, `reserve_invoice_scan` la pasa a hoy con solo el intento nuevo, así
+ * que el consumo de aquel día pierde esas páginas. La cuota de hoy es correcta.
  */
 export async function getDailyUsage(
   ctx: InvoiceScanContext,

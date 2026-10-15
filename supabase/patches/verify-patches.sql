@@ -2426,9 +2426,9 @@ select
   and not has_table_privilege('anon', 'public.invoice_scans', 'select, insert, update, delete')
 union all
 select
-  'invoice_scans: politicas por tienda (lee purchases.view, escribe purchases.create), sin delete (20261019a)',
+  'invoice_scans: politicas por tienda (lee purchases.view; insert/update de purchases.create, que 20261019g retira), sin delete (20261019a)',
   (
-    select count(*) = 3 from pg_policies pol
+    select count(*) in (1, 3) from pg_policies pol
     where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
       and pol.policyname in (
         'Purchase viewers read invoice scans',
@@ -2436,6 +2436,11 @@ select
         'Purchase creators update invoice scans'
       )
       and coalesce(pol.qual, pol.with_check) ilike '%current_user_store_id()%'
+  )
+  and exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.policyname = 'Purchase viewers read invoice scans'
   )
   and not exists (
     select 1 from pg_policies pol
@@ -2529,5 +2534,69 @@ select
     where c.conrelid = 'public.invoice_scans'::regclass
       and c.conname = 'invoice_scans_status_check'
       and pg_get_constraintdef(c.oid) ilike '%processing%'
+  )
+union all
+select
+  'invoice_scans: authenticated sin insert, update ni delete directos y con select (20261019g)',
+  not has_table_privilege('authenticated', 'public.invoice_scans', 'INSERT')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'INSERT')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'UPDATE')
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'DELETE')
+  and has_table_privilege('authenticated', 'public.invoice_scans', 'SELECT')
+union all
+select
+  'invoice_scans: sin politicas de insert ni update, con la de lectura (20261019g)',
+  not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+  )
+  and exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.policyname = 'Purchase viewers read invoice scans'
+  )
+union all
+select
+  'invoice_scans_storage_path_scope y invoice_scans_usage_pages_nonnegative existen y estan validados (20261019g)',
+  (
+    select count(*) = 2 from pg_constraint c
+    where c.conrelid = 'public.invoice_scans'::regclass
+      and c.convalidated
+      and (
+        (c.conname = 'invoice_scans_storage_path_scope'
+          and pg_get_constraintdef(c.oid) ilike '%image_sha256%/p1.webp%')
+        or (c.conname = 'invoice_scans_usage_pages_nonnegative'
+          and pg_get_constraintdef(c.oid) ilike '%usage_pages >= 0%')
+      )
+  )
+union all
+select
+  'reserve_invoice_scan valida la ruta y usa la ventana de 50 s por pagina + 60 s (20261019g)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosrc ilike '%p_storage_path not in%'
+      and p.prosrc ilike '%interval ''50 seconds'' * v_row.pages + interval ''60 seconds''%'
+      and p.prosrc not ilike '%interval ''2 minutes''%'
+  )
+union all
+select
+  'complete/fail/discard_invoice_scan: security definer, search_path vacio, execute solo authenticated y service_role (20261019g)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('public', p.oid, 'execute')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and (p.proname, pg_get_function_identity_arguments(p.oid)) in (
+        ('complete_invoice_scan', 'p_id uuid, p_extracted jsonb, p_matched jsonb, p_input_tokens integer, p_output_tokens integer, p_duration_ms integer'),
+        ('fail_invoice_scan', 'p_id uuid, p_error text, p_refund_pages boolean'),
+        ('discard_invoice_scan', 'p_id uuid')
+      )
   )
 order by 1;

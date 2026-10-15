@@ -63,8 +63,25 @@ export type InvoiceScanInsert = {
   error?: string | null;
 };
 
-/** Una fila `processing` más reciente que esto bloquea otra lectura de la misma foto. */
-export const INVOICE_SCAN_PROCESSING_WINDOW_MS = 2 * 60 * 1000;
+/**
+ * Una fila `processing` más reciente que esto bloquea otra lectura de la misma
+ * foto: 50 s por página + 60 s, porque las páginas se leen en serie con hasta
+ * 45 s cada una (`reserve_invoice_scan`, parche 20261019g).
+ */
+export function invoiceScanProcessingWindowMs(pages: number): number {
+  return (50 * pages + 60) * 1000;
+}
+
+/**
+ * Regla de `invoice_scans_storage_path_scope` (parche 20261019g): la ruta de la
+ * página 1 es exactamente `<store_id>/<sha256>/p1.<jpg|png|webp>`.
+ */
+export function isScanStoragePathInScope(storeId: string, imageSha256: string, storagePath: string): boolean {
+  return ["jpg", "png", "webp"].some((extension) => storagePath === `${storeId}/${imageSha256}/p1.${extension}`);
+}
+
+/** Mensaje 22023 de `reserve_invoice_scan` y demás RPCs del escaneo. */
+export const INVALID_SCAN_DATA_MESSAGE = "Datos de escaneo no válidos.";
 
 /** Entrada de `reserveScan` (RPC `reserve_invoice_scan`, parche 20261019e). */
 export type InvoiceScanReserveInput = {
@@ -79,7 +96,7 @@ export type InvoiceScanReserveInput = {
 /**
  * Resultado de la reserva atómica (lock por tienda):
  * - `cached`: la foto ya tiene lectura (extracted o confirmed); no se llama al modelo;
- * - `in_progress`: otra petición la está leyendo (processing de < 2 min);
+ * - `in_progress`: otra petición la está leyendo (processing dentro de la ventana por páginas);
  * - `quota`: las páginas no caben en la cuota de hoy;
  * - `reserved`: fila en `processing` y páginas cobradas; `used` ya las incluye.
  */
@@ -89,10 +106,11 @@ export type InvoiceScanReservation =
   | { outcome: "quota"; used: number; limit: number }
   | { outcome: "reserved"; id: string; used: number; limit: number };
 
-/** Lectura que cierra una reserva (`processing` → `extracted`). */
+/**
+ * Lectura que cierra una reserva (`processing` → `extracted`). Proveedor y
+ * modelo ya quedaron en la fila al reservar.
+ */
 export type InvoiceScanCompletion = {
-  provider: string;
-  model: string;
   inputTokens: number | null;
   outputTokens: number | null;
   durationMs: number;
@@ -132,8 +150,13 @@ export function invoiceScanPagePaths(storagePath: string, pages: number): string
 }
 
 export const DEFAULT_INVOICE_SCAN_DAILY_LIMIT = 50;
-export const DISCARD_NOT_ALLOWED_MESSAGE =
-  "Solo se puede descartar un escaneo que aún no se ha confirmado.";
+/** 409 al descartar fuera de `extracted`, por estado (PT409 de `discard_invoice_scan`, 20261019g). */
+export const DISCARD_NOT_ALLOWED_MESSAGES: Record<Exclude<InvoiceScanStatus, "extracted">, string> = {
+  confirmed: "Este escaneo ya se confirmó en una compra y no se puede descartar.",
+  discarded: "Este escaneo ya estaba descartado.",
+  failed: "La lectura de este escaneo falló y no hay nada que descartar. Vuelve a escanear la factura.",
+  processing: "Este escaneo todavía se está leyendo; espera a que termine para descartarlo.",
+};
 export const MAX_FEW_SHOT_EXAMPLES = 3;
 export const INVOICE_SCAN_RETENTION_DAYS = 90;
 

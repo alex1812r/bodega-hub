@@ -68,16 +68,51 @@ beforeEach(() => {
 
 describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", () => {
   function reserve(ctx = storeA, overrides: Partial<InvoiceScanReserveInput> = {}) {
+    const imageSha256 = overrides.imageSha256 ?? "hash-1";
+
     return reserveScan(ctx, {
-      imageSha256: "hash-1",
+      imageSha256,
       limit: 50,
       model: "mock-model",
       pages: 1,
       provider: "mock",
-      storagePath: "store-a/hash-1/p1.jpg",
+      storagePath: `${ctx.storeId}/${imageSha256}/p1.jpg`,
       ...overrides,
     });
   }
+
+  it("rechaza (400) una ruta que no es <tienda>/<hash>/p1.<ext> de la propia tienda, sin crear fila (N1)", async () => {
+    for (const storagePath of ["store-b/hash-1/p1.jpg", "store-a/otro/p1.jpg", "store-a/hash-1/p2.jpg", "store-a/hash-1/p1.gif"]) {
+      await expect(reserve(storeA, { storagePath })).rejects.toMatchObject({ status: 400 });
+    }
+    expect(store().size).toBe(0);
+  });
+
+  it("la ventana de processing crece con las páginas: 50 s por página + 60 s (N6)", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-15T12:00:00.000Z"));
+    const id = ((await reserve(storeA, { pages: 10 })) as { id: string }).id;
+
+    // 5 min después una lectura de 10 páginas puede seguir viva (ventana 560 s).
+    jest.setSystemTime(new Date("2026-10-15T12:05:00.000Z"));
+    expect(await reserve(storeA, { pages: 10 })).toEqual({ id, outcome: "in_progress" });
+
+    jest.setSystemTime(new Date("2026-10-15T12:09:21.000Z"));
+    expect(await reserve(storeA, { pages: 10 })).toMatchObject({ id, outcome: "reserved" });
+  });
+
+  it("failScan con reembolso resta las páginas del intento sin bajar de 0 (N8)", async () => {
+    const id = ((await reserve(storeA, { pages: 2 })) as { id: string }).id;
+    await failScan(storeA, id, "UPLOAD_ERROR", true);
+
+    expect(store().get(id)).toMatchObject({ error: "UPLOAD_ERROR", status: "failed", usagePages: 0 });
+    expect(await getDailyUsage(storeA, 50)).toMatchObject({ used: 0 });
+
+    await reserve(storeA, { pages: 2 });
+    store().set(id, { ...(store().get(id) as InvoiceScanRow), usagePages: 1 });
+    await failScan(storeA, id, "UPLOAD_ERROR", true);
+    expect(store().get(id)).toMatchObject({ usagePages: 0 });
+  });
 
   it("reserva en processing y cobra; la misma foto mientras se lee es in_progress", async () => {
     const first = await reserve();
@@ -114,9 +149,7 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
       extracted: extraction,
       inputTokens: null,
       matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
-      model: "mock-model",
       outputTokens: null,
-      provider: "mock",
     });
 
     expect(await reserve()).toEqual({ id, outcome: "cached" });
@@ -162,9 +195,7 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
         extracted: extraction,
         inputTokens: null,
         matched: { lines: [], supplier: {}, totals: { computed: 0, mismatch: false } },
-        model: "m",
         outputTokens: null,
-        provider: "mock",
       }),
     ).toBeNull();
   });
@@ -203,6 +234,18 @@ describe("scans.mock-server · tienda y descarte", () => {
     expect(await discardScan(storeA, scan.id)).toMatchObject({ status: "discarded" });
     await expect(discardScan(storeA, scan.id)).rejects.toMatchObject({ status: 409 });
     await expect(discardScan(storeA, scan.id)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it.each([
+    ["processing", "Este escaneo todavía se está leyendo; espera a que termine para descartarlo."],
+    ["confirmed", "Este escaneo ya se confirmó en una compra y no se puede descartar."],
+    ["discarded", "Este escaneo ya estaba descartado."],
+    ["failed", "La lectura de este escaneo falló y no hay nada que descartar. Vuelve a escanear la factura."],
+  ] as const)("409 en %s con su mensaje en español (N7)", async (status, message) => {
+    const scan = await seedScanForTest(storeA, input());
+    store().set(scan.id, { ...(store().get(scan.id) as InvoiceScanRow), status });
+
+    await expect(discardScan(storeA, scan.id)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
   });
 });
 
