@@ -1,0 +1,106 @@
+{
+  "id": "s09",
+  "synthetic": true,
+  "pages": [
+    "samples/s09.jpg"
+  ],
+  "supplierKey": "sint-mayorista-los-andes",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6",
+      "phone": "0212-472.10.33",
+      "address": "AV. PRINCIPAL DE LA YAGUARA, GALPON 3, CARACAS"
+    },
+    "number": "0004633",
+    "date": "2026-09-18",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "COCA-COLA 2 LTS (G) [BULTO X 6]",
+        "description": "Coca-Cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7620,
+        "lineTotal": 15240,
+        "taxHint": "general",
+        "barcode": "7592711002044",
+        "confidence": 1
+      },
+      {
+        "rawText": "HARINA P.A.N. 1 KG (E) [BULTO X 20]",
+        "description": "Harina PAN 1kg",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18380,
+        "lineTotal": 18380,
+        "taxHint": "exento",
+        "barcode": "7591002100018",
+        "confidence": 1
+      },
+      {
+        "rawText": "ARROZ PRIMOR 1 KG (E) [BULTO X 24]",
+        "description": "Arroz Primor 1kg",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23460,
+        "lineTotal": 23460,
+        "taxHint": "exento",
+        "barcode": "7591002300104",
+        "confidence": 1
+      },
+      {
+        "rawText": "JABON AZUL LAS LLAVES 300 GR (G) [BULTO X 25]",
+        "description": "Jabón azul Las Llaves 300g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 25,
+        "unitPrice": 15125,
+        "lineTotal": 15125,
+        "taxHint": "general",
+        "barcode": "7591025030026",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 72205,
+    "tax": 4858.4,
+    "total": 77063.4,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "arroz-primor-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "jabon-azul-las-llaves-300g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s09 (§6.1): foto oscura y muy borrosa, casi ilegible; la verdad son los valores generados (todos impresos), el banco mide que el modelo no invente. cantidad × precio × (1 − desc. línea) = lineTotal en las 4 líneas OK; sum(lineTotal)=72.205,00; = SUB-TOTAL/SUBTTL OK; EXENTO 41.840,00; BI G 30.365,00 × 16% = IVA 4.858,40; 41.840,00 + 30.365,00 + 4.858,40 = TOTAL 77.063,40 OK"
+  }
+}

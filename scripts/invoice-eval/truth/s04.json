@@ -1,0 +1,151 @@
+{
+  "id": "s04",
+  "synthetic": true,
+  "pages": [
+    "samples/s04.jpg"
+  ],
+  "supplierKey": "sint-viveres-la-ceiba",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "VIVERES Y DISTRIBUCIONES LA CEIBA, C.A.",
+      "taxId": "J-31765420-9",
+      "phone": "0212-243.08.15",
+      "address": "CALLE 3, EDIF. LA CEIBA, PB, LA URBINA, CARACAS"
+    },
+    "number": "00000877",
+    "date": "2026-09-05",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "HARINA PAN BLANCA 1KG (E) BULTO X20",
+        "description": "Harina PAN 1kg",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18520,
+        "lineTotal": 37040,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "AZUCAR MIMASA 900G (E) BULTO X20",
+        "description": "Azúcar Mimasa 900g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19600,
+        "lineTotal": 19600,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "ACEITE PAMPA SOYA 500ML (E) CAJA X12",
+        "description": "Aceite de soya Pampa 500ml",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 16200,
+        "lineTotal": 32400,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "MANTEQUILLA MAVESA 250G (E) CAJA X24",
+        "description": "Mantequilla Mavesa 250g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 29280,
+        "lineTotal": 29280,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "MALTA POLAR 1,5L BULTO X6",
+        "description": "Malta Polar 1.5L",
+        "quantity": 3,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 9900,
+        "lineTotal": 29700,
+        "confidence": 1
+      },
+      {
+        "rawText": "CAFE FAMA DE AMERICA 200G (E) CAJA X24",
+        "description": "Café Fama de América 200g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 31320,
+        "lineTotal": 31320,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "JABON AZUL LAS LLAVES 300G BULTO X25",
+        "description": "Jabón azul Las Llaves 300g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 25,
+        "unitPrice": 15100,
+        "lineTotal": 15100,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 194440,
+    "tax": 7168,
+    "total": 201608,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "azucar-mimasa-900g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "aceite-soya-pampa-500ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "mantequilla-mavesa-250g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "malta-polar-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "cafe-fama-de-america-200g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "jabon-azul-las-llaves-300g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s04: sombra diagonal fuerte sobre la mitad inferior derecha de la factura. cantidad × precio × (1 − desc. línea) = lineTotal en las 7 líneas OK; sum(lineTotal)=194.440,00; = SUB-TOTAL/SUBTTL OK; EXENTO 149.640,00; BI G 44.800,00 × 16% = IVA 7.168,00; 149.640,00 + 44.800,00 + 7.168,00 = TOTAL 201.608,00 OK"
+  }
+}
