@@ -36,6 +36,7 @@ async function confirm(scanId: string, purchaseId: string, productId: string, ke
         { lineIndex: 1, productId },
         { lineIndex: 5, productId },
       ],
+      items: [{ entryMode: "pack", packLabel: "Bulto", productId, unitsPerPack: 20 }],
       purchaseId,
       supplierId: SUPPLIER,
     },
@@ -148,11 +149,71 @@ describe("confirmScan.mock-server", () => {
     await expect(
       finalizeInvoiceScan(
         first,
-        { clientRequestId: KEY_1, lines: [], purchaseId: "purchase-1", supplierId: SUPPLIER },
+        { clientRequestId: KEY_1, items: [], lines: [], purchaseId: "purchase-1", supplierId: SUPPLIER },
         DEFAULT_STORE_ID,
       ),
     ).resolves.toEqual({ confirmed: false, learned: null });
     expect(getMockInvoiceScan("scan-1")).toMatchObject({ claimRequestId: KEY_2, status: "extracted" });
+    jest.restoreAllMocks();
+  });
+
+  it("mismo producto en modo unidad borra el empaque aprendido; sin la clave lo conserva (SCN-06-F2 · A1)", async () => {
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+    registerMockInvoiceScan({ extracted, id: "scan-2" });
+    registerMockInvoiceScan({ extracted, id: "scan-3" });
+    await confirm("scan-1", "purchase-1", PRODUCT_A, KEY_1);
+
+    // Empaque que no coincide con el item: no se envía la clave → se conserva.
+    const second = await precheckInvoiceScan({ clientRequestId: KEY_2, scanId: "scan-2" }, DEFAULT_STORE_ID);
+    await finalizeInvoiceScan(
+      second,
+      {
+        clientRequestId: KEY_2,
+        items: [{ entryMode: "pack", packLabel: "Bulto", productId: PRODUCT_A, unitsPerPack: 20 }],
+        lines: [{ lineIndex: 0, packLabel: "x", productId: PRODUCT_A, unitsPerPack: 99 }],
+        purchaseId: "purchase-2",
+        supplierId: SUPPLIER,
+      },
+      DEFAULT_STORE_ID,
+    );
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)[0]).toMatchObject({ hits: 2, packLabel: "Bulto", unitsPerPack: 20 });
+
+    // Modo unidad: claves en null → se borra.
+    const key3 = "0d4e5f6a-7b8c-4d9e-9f0a-1b2c3d4e5f6a";
+    const third = await precheckInvoiceScan({ clientRequestId: key3, scanId: "scan-3" }, DEFAULT_STORE_ID);
+    await finalizeInvoiceScan(
+      third,
+      {
+        clientRequestId: key3,
+        items: [{ entryMode: "unit", productId: PRODUCT_A }],
+        lines: [{ lineIndex: 0, productId: PRODUCT_A }],
+        purchaseId: "purchase-3",
+        supplierId: SUPPLIER,
+      },
+      DEFAULT_STORE_ID,
+    );
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)[0]).toMatchObject({ hits: 3, packLabel: null, unitsPerPack: null });
+  });
+
+  it("línea con producto fuera de los items: no se aprende (SCN-06-F2 · M3)", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+
+    const scan = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    const outcome = await finalizeInvoiceScan(
+      scan,
+      {
+        clientRequestId: KEY_1,
+        items: [{ entryMode: "unit", productId: PRODUCT_A }],
+        lines: [{ lineIndex: 0, packLabel: "IGNORA", productId: PRODUCT_B, unitsPerPack: 100000 }],
+        purchaseId: "p-1",
+        supplierId: SUPPLIER,
+      },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(outcome).toEqual({ confirmed: true, learned: 0 });
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([]);
     jest.restoreAllMocks();
   });
 
@@ -163,7 +224,13 @@ describe("confirmScan.mock-server", () => {
     const scan = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
     const outcome = await finalizeInvoiceScan(
       scan,
-      { clientRequestId: KEY_1, lines: [{ lineIndex: 0, productId: PRODUCT_A }], purchaseId: "p-1", supplierId: SUPPLIER },
+      {
+        clientRequestId: KEY_1,
+        items: [{ entryMode: "unit", productId: PRODUCT_A }],
+        lines: [{ lineIndex: 0, productId: PRODUCT_A }],
+        purchaseId: "p-1",
+        supplierId: SUPPLIER,
+      },
       DEFAULT_STORE_ID,
     );
 

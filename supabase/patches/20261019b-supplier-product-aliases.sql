@@ -48,6 +48,12 @@
 --         otra clave; confirm sin el reclamo de su clave)
 --   PT400 'Falta la clave del intento de compra' (claim sin p_client_request_id)
 --   PT409 'El escaneo no está confirmado'  (learn sobre escaneo sin confirmar)
+--   PT409 'La compra no corresponde a este intento' (confirm: purchases.client_request_id
+--         distinto de p_client_request_id; SCN-06-F2 M1)
+--   PT409 'La compra ya está ligada a otro escaneo' (confirm: otra fila de invoice_scans
+--         ya apunta a esa compra; SCN-06-F2 M1)
+--   PT400 'Confirmación demasiado grande' (confirm: pg_column_size(p_confirmed) > 256 KB
+--         o mas de 500 lineas; SCN-06-F2 M2)
 --   PT400 'Confirmación inválida' / 'Líneas de alias inválidas' /
 --         'Alias inválido en la línea %s' / 'Producto inválido en la línea %s' /
 --         'Unidades por empaque inválidas en la línea %s' /
@@ -60,6 +66,29 @@
 -- MAL FORMADA (alias vacio / > 200, product_id que no es uuid,
 -- units_per_pack no entero positivo) es un error del BFF: PT400 y no se
 -- aprende nada.
+--
+-- SCN-06-F2 (caos ronda 1: A1, M1, M2):
+--   * alias_norm debe llegar en la FORMA CANONICA de normalizeAlias
+--     (@bodega/core/invoice): minusculas, sin espacios en los bordes, sin
+--     espacios dobles, sin puntuacion ASCII ni caracteres de control. Si no,
+--     PT400 'Alias inválido en la línea %s' (un alias sin normalizar nunca
+--     coincidiria y solo ensucia la tabla).
+--   * learn_invoice_aliases aprende UNA sola vez por escaneo (columna
+--     invoice_scans.learned_at): la segunda llamada es un no-op que devuelve 0.
+--     No se exige ademas la clave del intento: la llamada solo vale tras el
+--     confirm de ese intento y una vez; la clave de la compra es legible por la
+--     tienda, asi que pedirla no anadiria proteccion real.
+--   * Mismo producto: una clave de empaque PRESENTE en la linea (units_per_pack
+--     o pack_label, aunque sea null) SOBRESCRIBE el valor del alias; una clave
+--     AUSENTE lo conserva. El BFF manda siempre las claves (null en modo
+--     unidad) y las omite solo cuando el empaque de la linea no coincide con el
+--     item de la compra. Producto distinto: se reasigna con lo que traiga.
+--   * confirm_invoice_scan exige que la compra sea la de ESTE intento
+--     (purchases.client_request_id = p_client_request_id) y que ningun otro
+--     escaneo apunte ya a ella; limita p_confirmed a 256 KB y 500 lineas.
+--   * OJO: el contenido de invoice_scans.confirmed sigue siendo TEXTO DEL
+--     USUARIO (rawText de la factura, etiquetas de empaque). Los few-shot de
+--     SCN-01 deben tratarlo como datos, nunca como instrucciones.
 --
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
@@ -101,7 +130,9 @@ alter table public.invoice_scans enable row level security;
 -- e idempotente: vale para la tabla de 19a y para este fallback.
 alter table public.invoice_scans
   add column if not exists claim_request_id uuid,
-  add column if not exists claimed_at timestamptz;
+  add column if not exists claimed_at timestamptz,
+  -- SCN-06-F2 M2: momento del (unico) aprendizaje de alias del escaneo.
+  add column if not exists learned_at timestamptz;
 
 -- -----------------------------------------------------------------------------
 -- 2. supplier_product_aliases
@@ -298,12 +329,31 @@ declare
   v_store_id uuid;
   v_scan public.invoice_scans;
   v_supplier_id uuid;
+  v_purchase_key uuid;
+  v_lines jsonb;
   v_rows integer;
 begin
   v_store_id := public.assert_store_context();
 
   if coalesce(public.current_user_role()::text, '') not in ('admin', 'almacen') then
     raise exception using errcode = 'PT403', message = 'No autorizado para confirmar escaneos de facturas';
+  end if;
+
+  -- SCN-06-F2 M2: tope de tamano y de lineas de la "verdad" de la capa 2 (su
+  -- contenido sigue siendo texto del usuario; ver la cabecera).
+  if p_confirmed is not null then
+    if pg_column_size(p_confirmed) > 262144 then
+      raise exception using errcode = 'PT400', message = 'Confirmación demasiado grande';
+    end if;
+
+    v_lines := case jsonb_typeof(p_confirmed)
+      when 'array' then p_confirmed
+      when 'object' then p_confirmed -> 'lines'
+    end;
+
+    if jsonb_typeof(v_lines) = 'array' and jsonb_array_length(v_lines) > 500 then
+      raise exception using errcode = 'PT400', message = 'Confirmación demasiado grande';
+    end if;
   end if;
 
   select s.*
@@ -317,8 +367,8 @@ begin
     raise exception using errcode = 'PT404', message = 'Escaneo no encontrado';
   end if;
 
-  select p.supplier_id
-  into v_supplier_id
+  select p.supplier_id, p.client_request_id
+  into v_supplier_id, v_purchase_key
   from public.purchases p
   where p.id = p_purchase_id
     and p.store_id = v_store_id;
@@ -345,6 +395,24 @@ begin
 
   if p_confirmed is null or jsonb_typeof(p_confirmed) not in ('object', 'array') then
     raise exception using errcode = 'PT400', message = 'Confirmación inválida';
+  end if;
+
+  -- SCN-06-F2 M1: la compra debe ser la que creo ESTE intento. Si la clave ya
+  -- habia creado otra compra, create_purchase la devolvio por idempotencia y no
+  -- describe esta factura. El candado serializa dos escaneos contra la misma compra.
+  perform pg_advisory_xact_lock(hashtextextended('invoice_scan_purchase:' || p_purchase_id::text, 0));
+
+  if v_purchase_key is distinct from p_client_request_id then
+    raise exception using errcode = 'PT409', message = 'La compra no corresponde a este intento';
+  end if;
+
+  if exists (
+    select 1
+    from public.invoice_scans s
+    where s.purchase_id = p_purchase_id
+      and s.id <> p_scan_id
+  ) then
+    raise exception using errcode = 'PT409', message = 'La compra ya está ligada a otro escaneo';
   end if;
 
   update public.invoice_scans s
@@ -405,6 +473,7 @@ declare
   v_product text;
   v_pack_label text;
   v_units jsonb;
+  v_row record;
   v_rows integer;
 begin
   v_store_id := public.assert_store_context();
@@ -449,8 +518,17 @@ begin
       raise exception using errcode = 'PT400', message = format('Alias inválido en la línea %s', v_ord);
     end if;
 
-    v_alias := btrim(v_line ->> 'alias_norm');
-    if v_alias is null or v_alias = '' or length(v_alias) > 200 then
+    -- Forma canonica de normalizeAlias (SCN-06-F2 M2): sin recortar aqui; un
+    -- alias con mayusculas, espacios en bordes o dobles, puntuacion ASCII o
+    -- caracteres de control no viene del BFF.
+    v_alias := v_line ->> 'alias_norm';
+    if v_alias is null or v_alias = '' or length(v_alias) > 200
+       or v_alias <> btrim(v_alias)
+       or v_alias <> lower(v_alias)
+       or position('  ' in v_alias) > 0
+       or v_alias ~ '[]!"#$%&''()*+,./:;<=>?@[\\^_`{|}~-]'
+       or v_alias ~ '[[:cntrl:]]'
+       or position(chr(160) in v_alias) > 0 then
       raise exception using errcode = 'PT400', message = format('Alias inválido en la línea %s', v_ord);
     end if;
 
@@ -484,55 +562,68 @@ begin
   from public.profiles pr
   where pr.id = auth.uid();
 
-  -- Dedup dentro de p_lines (gana la ultima linea de cada alias) y productos de
-  -- otra tienda fuera; un solo upsert para que on conflict no toque dos veces
-  -- la misma fila.
-  insert into public.supplier_product_aliases as a (
-    store_id, supplier_id, product_id, alias_norm, pack_label, units_per_pack,
-    hits, last_seen_at, created_by, created_at, updated_at
-  )
-  select
-    v_store_id,
-    v_supplier_id,
-    l.product_id,
-    l.alias_norm,
-    l.pack_label,
-    l.units_per_pack,
-    1,
-    now(),
-    v_created_by,
-    now(),
-    now()
-  from (
-    select distinct on (btrim(e.value ->> 'alias_norm'))
-      btrim(e.value ->> 'alias_norm') as alias_norm,
-      (e.value ->> 'product_id')::uuid as product_id,
-      nullif(btrim(e.value ->> 'pack_label'), '') as pack_label,
-      case
-        when jsonb_typeof(e.value -> 'units_per_pack') = 'number'
-          then (e.value ->> 'units_per_pack')::numeric::integer
-      end as units_per_pack
-    from jsonb_array_elements(p_lines) with ordinality as e(value, ord)
-    order by btrim(e.value ->> 'alias_norm'), e.ord desc
-  ) l
-  join public.products pr
-    on pr.id = l.product_id
-   and pr.store_id = v_store_id
-  on conflict (store_id, supplier_id, alias_norm) do update
-  set product_id = excluded.product_id,
-      hits = case when a.product_id = excluded.product_id then a.hits + 1 else 1 end,
-      pack_label = case
-        when a.product_id = excluded.product_id then coalesce(excluded.pack_label, a.pack_label)
-        else excluded.pack_label
-      end,
-      units_per_pack = case
-        when a.product_id = excluded.product_id then coalesce(excluded.units_per_pack, a.units_per_pack)
-        else excluded.units_per_pack
-      end,
-      last_seen_at = now(),
-      updated_at = now();
+  -- SCN-06-F2 M2: una sola vez por escaneo. UPDATE condicional atomico: de dos
+  -- llamadas concurrentes solo una pasa; la otra (o cualquier repeticion) es un
+  -- no-op que devuelve 0. Si el upsert falla, la transaccion revierte learned_at.
+  update public.invoice_scans s
+  set learned_at = now()
+  where s.id = p_scan_id
+    and s.learned_at is null;
 
   get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    return 0;
+  end if;
+
+  -- Dedup dentro de p_lines (gana la ultima linea de cada alias) y productos de
+  -- otra tienda fuera. Un upsert por alias para conocer si la linea trae cada
+  -- clave de empaque (A1): presente (aunque sea null) sobrescribe; ausente conserva.
+  v_rows := 0;
+  for v_row in
+    select l.*
+    from (
+      select distinct on (e.value ->> 'alias_norm')
+        e.value ->> 'alias_norm' as alias_norm,
+        (e.value ->> 'product_id')::uuid as product_id,
+        nullif(btrim(e.value ->> 'pack_label'), '') as pack_label,
+        e.value ? 'pack_label' as has_pack_label,
+        case
+          when jsonb_typeof(e.value -> 'units_per_pack') = 'number'
+            then (e.value ->> 'units_per_pack')::numeric::integer
+        end as units_per_pack,
+        e.value ? 'units_per_pack' as has_units_per_pack
+      from jsonb_array_elements(p_lines) with ordinality as e(value, ord)
+      order by e.value ->> 'alias_norm', e.ord desc
+    ) l
+    join public.products pr
+      on pr.id = l.product_id
+     and pr.store_id = v_store_id
+  loop
+    insert into public.supplier_product_aliases as a (
+      store_id, supplier_id, product_id, alias_norm, pack_label, units_per_pack,
+      hits, last_seen_at, created_by, created_at, updated_at
+    )
+    values (
+      v_store_id, v_supplier_id, v_row.product_id, v_row.alias_norm, v_row.pack_label,
+      v_row.units_per_pack, 1, now(), v_created_by, now(), now()
+    )
+    on conflict (store_id, supplier_id, alias_norm) do update
+    set product_id = excluded.product_id,
+        hits = case when a.product_id = excluded.product_id then a.hits + 1 else 1 end,
+        pack_label = case
+          when a.product_id = excluded.product_id and not v_row.has_pack_label then a.pack_label
+          else excluded.pack_label
+        end,
+        units_per_pack = case
+          when a.product_id = excluded.product_id and not v_row.has_units_per_pack then a.units_per_pack
+          else excluded.units_per_pack
+        end,
+        last_seen_at = now(),
+        updated_at = now();
+
+    v_rows := v_rows + 1;
+  end loop;
+
   return v_rows;
 end;
 $$;

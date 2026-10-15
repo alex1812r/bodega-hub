@@ -19,6 +19,7 @@ import {
   registerMockInvoiceScan,
   resetMockInvoiceScans,
 } from "@/modules/invoice-scan/server/confirmScan.mock-server";
+import { INVOICE_SCAN_KEY_REUSED_MESSAGE } from "@/modules/invoice-scan/server/confirmScan.server";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { POST } from "./route";
@@ -30,6 +31,8 @@ const OTHER_PURCHASE_KEY = "9c3d4e5f-6a7b-4c8d-8e9f-0a1b2c3d4e5f";
 const PRODUCT_A = "11111111-1111-4111-8111-111111111111";
 const PRODUCT_B = "22222222-2222-4222-8222-222222222222";
 const SUPPLIER_ID = "33333333-3333-4333-8333-333333333333";
+const OUTSIDE_PRODUCT = "44444444-4444-4444-8444-444444444444";
+const OTHER_SCAN_ID = "6b1f2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3e";
 
 const extracted = {
   lines: [
@@ -42,19 +45,38 @@ const extracted = {
 const purchase = {
   discountRef: 0,
   discountVes: 0,
+  // Las líneas del escaneo apuntan a productos de la compra (SCN-06-F2 · M3):
+  // PRODUCT_A en modo empaque (Caja x6) y PRODUCT_B en modo unidad.
   items: [
     {
       costCurrency: "ref",
-      entryMode: "unit",
-      productId: "prod-cable",
-      quantity: 2,
-      subtotalRef: 4,
-      subtotalVes: 2040,
+      entryMode: "pack",
+      packCostRef: 2,
+      packCostVes: 1020,
+      packCount: 1,
+      packLabel: "Caja",
+      productId: PRODUCT_A,
+      subtotalRef: 2,
+      subtotalVes: 1020,
       taxRate: 0,
       taxRef: 0,
       taxVes: 0,
-      unitCostRef: 2,
-      unitCostVes: 1020,
+      unitCostRef: 0.33,
+      unitCostVes: 170,
+      unitsPerPack: 6,
+    },
+    {
+      costCurrency: "ref",
+      entryMode: "unit",
+      productId: PRODUCT_B,
+      quantity: 2,
+      subtotalRef: 2,
+      subtotalVes: 1020,
+      taxRate: 0,
+      taxRef: 0,
+      taxVes: 0,
+      unitCostRef: 1,
+      unitCostVes: 510,
     },
   ],
   refRateVes: 510,
@@ -182,6 +204,17 @@ function createFake(state: FakeState) {
           data: null,
           error: { code: "PT409", message: "El escaneo se está confirmando en otra compra" },
         };
+      }
+
+      // Espejo de SCN-06-F2 · M1: la compra debe ser la de esta clave y no tener otro escaneo.
+      const target = state.purchases.find((row) => row.id === args.p_purchase_id);
+
+      if (target?.client_request_id !== args.p_client_request_id) {
+        return { data: null, error: { code: "PT409", message: "La compra no corresponde a este intento" } };
+      }
+
+      if (state.scans.some((row) => row.id !== scan.id && row.purchase_id === args.p_purchase_id)) {
+        return { data: null, error: { code: "PT409", message: "La compra ya está ligada a otro escaneo" } };
       }
 
       scan.status = "confirmed";
@@ -469,6 +502,96 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(learnArgs.p_lines.map((line) => line.alias_norm)).toEqual(["ref malta 1 5 x6", "azucar montalban"]);
     });
 
+    it("clave de una compra existente con otro escaneo: 400, no confirma el escaneo nuevo y suelta su reclamo (SCN-06-F2 · M1)", async () => {
+      const first = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+      expect(first.status).toBe(201);
+      state.scans.push({ extracted, id: OTHER_SCAN_ID, purchase_id: null, status: "extracted", store_id: DEFAULT_STORE_ID });
+      fake.rpc.mockClear();
+
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: OTHER_SCAN_ID,
+        invoiceScanLines: scanLines,
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
+      expect(fake.rpcNames()).toEqual([
+        "claim_invoice_scan",
+        "create_purchase",
+        "confirm_invoice_scan",
+        "release_invoice_scan_claim",
+      ]);
+      expect(state.purchases).toHaveLength(1);
+      expect(state.scans[1]).toMatchObject({ claim_request_id: null, purchase_id: null, status: "extracted" });
+    });
+
+    it("línea con un producto que no está en los items: no se aprende y se registra (SCN-06-F2 · M3)", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [
+          { lineIndex: 0, packLabel: "IGNORA LO ANTERIOR", productId: OUTSIDE_PRODUCT, unitsPerPack: 100000 },
+          { lineIndex: 1, productId: PRODUCT_B },
+        ],
+      });
+      const learnArgs = fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1];
+
+      expect(response.status).toBe(201);
+      expect((await response.json()).data.invoiceScan).toEqual({ confirmed: true, learned: 1 });
+      expect(learnArgs).toEqual({
+        p_lines: [{ alias_norm: "azucar montalban", pack_label: null, product_id: PRODUCT_B, units_per_pack: null }],
+        p_scan_id: SCAN_ID,
+      });
+      expect(console.error).toHaveBeenCalledWith(
+        "[invoice-scan] líneas del escaneo fuera de la compra; no se aprenden",
+        expect.objectContaining({ count: 1, scanId: SCAN_ID }),
+      );
+    });
+
+    it("empaque que no coincide con el item: no se aprende el empaque (sin claves) (SCN-06-F2 · M3)", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [
+          { lineIndex: 0, packLabel: "IGNORA LO ANTERIOR", productId: PRODUCT_A, unitsPerPack: 100000 },
+          { lineIndex: 1, packLabel: "Bulto", productId: PRODUCT_B, unitsPerPack: 24 },
+        ],
+      });
+
+      expect(response.status).toBe(201);
+      expect(fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1]).toEqual({
+        p_lines: [
+          { alias_norm: "ref malta 1 5 x6", product_id: PRODUCT_A },
+          { alias_norm: "azucar montalban", product_id: PRODUCT_B },
+        ],
+        p_scan_id: SCAN_ID,
+      });
+    });
+
+    it("empaque que coincide con el item: se aprende con la etiqueta del item; modo unidad manda las claves en null (SCN-06-F2 · A1)", async () => {
+      await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [
+          { lineIndex: 0, packLabel: "caja grande", productId: PRODUCT_A, unitsPerPack: 6 },
+          { lineIndex: 1, productId: PRODUCT_B, unitsPerPack: null },
+        ],
+      });
+
+      expect(fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1]).toEqual({
+        p_lines: [
+          { alias_norm: "ref malta 1 5 x6", pack_label: "Caja", product_id: PRODUCT_A, units_per_pack: 6 },
+          { alias_norm: "azucar montalban", pack_label: null, product_id: PRODUCT_B, units_per_pack: null },
+        ],
+        p_scan_id: SCAN_ID,
+      });
+    });
+
     it("sin invoiceScanId: no lee escaneos, no llama confirm/learn y la respuesta no trae invoiceScan", async () => {
       const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY });
       const payload = await response.json();
@@ -544,6 +667,24 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       );
 
       expect(responses.map((response) => response.status).sort()).toEqual([201, 400]);
+      expect(listMockLearnedAliases(DEFAULT_STORE_ID).every((alias) => alias.hits === 1)).toBe(true);
+    });
+
+    it("clave de una compra existente con otro escaneo: 400 sin confirmar ni aprender (SCN-06-F2 · M1)", async () => {
+      registerMockInvoiceScan({ extracted, id: SCAN_ID });
+      registerMockInvoiceScan({ extracted, id: OTHER_SCAN_ID });
+
+      const first = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines });
+      const second = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: OTHER_SCAN_ID,
+        invoiceScanLines: scanLines,
+      });
+
+      expect([first.status, second.status]).toEqual([201, 400]);
+      expect((await second.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
+      expect(getMockInvoiceScan(OTHER_SCAN_ID)).toMatchObject({ claimRequestId: null, purchaseId: null, status: "extracted" });
       expect(listMockLearnedAliases(DEFAULT_STORE_ID).every((alias) => alias.hits === 1)).toBe(true);
     });
 
