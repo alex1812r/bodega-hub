@@ -1,0 +1,63 @@
+{
+  "id": "f13",
+  "synthetic": false,
+  "pages": [
+    "samples/f13.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00002076",
+    "date": "2026-08-20",
+    "currency": "VES",
+    "printedRate": 777.42,
+    "lines": [
+      {
+        "rawText": "GLUP SABORES 1L [BULTO X 12,00]",
+        "description": "Glup sabores 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6188.26,
+        "lineTotal": 6188.26,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 4,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4034.81,
+        "lineTotal": 16139.24,
+        "confidence": 1
+      }
+    ],
+    "total": 22327.5,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-sabores-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "qty×unitPrice=lineTotal en las 2 líneas; sum(lineTotal)=22327.5 = Total impreso OK; Total Items impreso 5 = suma de cantidades OK; Ref 28,72 = 22327.50/777.42 OK"
+  }
+}

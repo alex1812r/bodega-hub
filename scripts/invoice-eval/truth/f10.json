@@ -1,0 +1,95 @@
+{
+  "id": "f10",
+  "synthetic": false,
+  "pages": [
+    "samples/f10.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00004260",
+    "date": "2026-09-16",
+    "currency": "VES",
+    "printedRate": 846.52,
+    "lines": [
+      {
+        "rawText": "JUSTY 1.5 [BULTO X 12,00]",
+        "description": "Justy 1.5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8846.13,
+        "lineTotal": 8846.13,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4198.74,
+        "lineTotal": 4198.74,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L [BULTO X 6,00]",
+        "description": "Coca-Cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7390.12,
+        "lineTotal": 7390.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5214.56,
+        "lineTotal": 5214.56,
+        "confidence": 1
+      }
+    ],
+    "total": 25649.55,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "justy-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "qty×unitPrice=lineTotal en las 4 líneas; sum(lineTotal)=25649.55 = Total impreso OK; Total Items impreso 4 = suma de cantidades OK; Ref 30,30 = 25649.55/846.52 OK"
+  }
+}

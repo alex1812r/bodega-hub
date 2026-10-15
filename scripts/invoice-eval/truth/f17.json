@@ -1,0 +1,111 @@
+{
+  "id": "f17",
+  "synthetic": false,
+  "pages": [
+    "samples/f17.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00003199",
+    "date": "2026-09-04",
+    "currency": "VES",
+    "printedRate": 804.81,
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5158.83,
+        "lineTotal": 5158.83,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L [BULTO X 6,00]",
+        "description": "Coca-Cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7082.33,
+        "lineTotal": 7082.33,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 [BULTO X 12,00]",
+        "description": "Justy 1.5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8852.91,
+        "lineTotal": 8852.91,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4104.53,
+        "lineTotal": 4104.53,
+        "confidence": 1
+      },
+      {
+        "rawText": "FANTA  2L [BULTO X 6,00]",
+        "description": "Fanta 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7058.18,
+        "lineTotal": 7058.18,
+        "confidence": 1
+      }
+    ],
+    "total": 32256.78,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "justy-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "fanta-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Impreso con doble espacio \"FANTA  2L\""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "qty×unitPrice=lineTotal en las 5 líneas; sum(lineTotal)=32256.78 = Total impreso OK; Total Items impreso 5 = suma de cantidades OK; Ref 40,08 = 32256.78/804.81 OK"
+  }
+}
