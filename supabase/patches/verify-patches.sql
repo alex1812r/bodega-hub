@@ -2439,18 +2439,42 @@ select
   and not has_table_privilege('anon', 'public.supplier_product_aliases', 'select, insert, update, delete')
 union all
 select
-  'confirm_invoice_scan(uuid, uuid, jsonb) void y learn_invoice_aliases(uuid, jsonb) integer: security definer, search_path=public, execute authenticated / service_role, no anon (20261019b)',
+  'confirm_invoice_scan(uuid, uuid, jsonb, uuid) boolean, claim_invoice_scan(uuid, uuid) text, release_invoice_scan_claim(uuid, uuid) void y learn_invoice_aliases(uuid, jsonb) integer: security definer, search_path=public, execute authenticated / service_role, no anon (20261019b, SCN-06-F1)',
   (
-    select count(*) = 2
+    select count(*) = 4
       and bool_and(p.prosecdef)
       and bool_and(coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false))
       and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
       and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
     from pg_proc p
-    where (p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb)') and p.prorettype = 'void'::regtype)
+    where (p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)') and p.prorettype = 'boolean'::regtype)
+       or (p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)') and p.prorettype = 'text'::regtype)
+       or (p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)') and p.prorettype = 'void'::regtype)
        or (p.oid = to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)') and p.prorettype = 'integer'::regtype)
   )
+union all
+select
+  'invoice_scans: reclamo claim_request_id uuid / claimed_at timestamptz, firma vieja confirm_invoice_scan(uuid, uuid, jsonb) eliminada, claim con UPDATE condicional y confirm exige el reclamo (20261019b, SCN-06-F1)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'claim_request_id' and data_type = 'uuid'
+  )
+  and exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'claimed_at' and data_type = 'timestamp with time zone'
+  )
+  and to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb)') is null
+  and coalesce((
+    select p.prosrc ilike '%update public.invoice_scans s%set claim_request_id = p_client_request_id%s.status = ''extracted''%claimed_at < now() - interval%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%claim_request_id is distinct from p_client_request_id%claim_request_id = null%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
 union all
 select
   'invoice_scans: RLS activa y al menos una politica select (19a o fallback de 20261019b) para el pre-check de POST /api/purchases (SCN-06)',

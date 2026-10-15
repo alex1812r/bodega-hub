@@ -3,16 +3,27 @@
  * (plan factura-escaneo-gtm §3 "Aprendizaje" y "Trazabilidad", §4, caos 6.10 y 6.14).
  *
  * Flujo, siempre con la tienda del servidor (`auth.storeId`), nunca la del cliente:
- * 1. `precheckInvoiceScan` ANTES de crear la compra: el escaneo debe existir en la
- *    tienda y estar `extracted`. Ajeno, inexistente, confirmado con otra compra,
- *    descartado o fallido → 400 y la compra no se crea. Excepción (replay): si ya
- *    está `confirmed` con la compra que la tienda creó con el mismo
- *    `clientRequestId`, se deja pasar para que `create_purchase` devuelva la misma
- *    compra, y NO se vuelve a aprender.
- * 2. `finalizeInvoiceScan` DESPUÉS de crear la compra: `confirm_invoice_scan` con el
- *    JSON confirmado (la verdad de la capa 2) y, solo si confirmó en esta llamada,
- *    UNA llamada a `learn_invoice_aliases` (cada llamada suma `hits`). El alias sale
- *    del `rawText` GUARDADO en el escaneo (`normalizeAlias`), nunca del cliente.
+ * 1. `precheckInvoiceScan` ANTES de crear la compra RECLAMA el escaneo para el
+ *    intento (`claim_invoice_scan`, un único UPDATE condicional; SCN-06-F1): de N
+ *    intentos concurrentes con claves distintas solo uno pasa. Ajeno, inexistente,
+ *    confirmado con otra compra, descartado, fallido o reclamado por otro intento
+ *    vigente → 400 y la compra no se crea. Excepción (replay): si ya está
+ *    `confirmed` con la compra que la tienda creó con el mismo `clientRequestId`,
+ *    se deja pasar para que `create_purchase` devuelva la misma compra, y NO se
+ *    vuelve a aprender. Con `invoiceScanId`, `clientRequestId` es obligatorio (la
+ *    página de nueva compra siempre lo envía vía `useRequestAttempt`).
+ *    Los rechazos del reclamo (PT404/PT409) se devuelven como 400, el contrato de
+ *    caos 6.14; PT403 sigue siendo 403.
+ * 2. Si `create_purchase` se RECHAZA (4xx, la compra no existe),
+ *    `releaseInvoiceScanClaim` suelta el reclamo para reintentar con otra clave.
+ *    Con resultado incierto (5xx, red) el reclamo se queda: caduca a los 5 min.
+ * 3. `finalizeInvoiceScan` DESPUÉS de crear la compra: `confirm_invoice_scan` con el
+ *    JSON confirmado (la verdad de la capa 2), exige el reclamo del mismo intento y,
+ *    solo si confirmó en esta llamada (devuelve `true`), UNA llamada a
+ *    `learn_invoice_aliases` (cada llamada suma `hits`). El alias sale del `rawText`
+ *    GUARDADO en el escaneo (`normalizeAlias`), nunca del cliente; un alias de más
+ *    de 200 caracteres no se aprende (nunca coincidiría exacto al recortarlo y la
+ *    RPC rechazaría la llamada entera), pero sigue en el JSON confirmado.
  *    Nunca lanza: la compra ya existe; un fallo se registra en el log y se informa
  *    en `invoiceScan` de la respuesta.
  */
@@ -20,11 +31,17 @@ import { normalizeAlias } from "@bodega/core/invoice";
 import { z } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
-import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 /** Máximo de líneas confirmadas por escaneo (mismo tope que `learn_invoice_aliases`). */
 export const MAX_INVOICE_SCAN_LINES = 500;
+
+/** Largo máximo de `alias_norm` que acepta `learn_invoice_aliases`. */
+export const MAX_ALIAS_NORM_LENGTH = 200;
+
+/** Vigencia del reclamo de un intento (mismo intervalo que `claim_invoice_scan`). */
+export const INVOICE_SCAN_CLAIM_TTL_MS = 5 * 60 * 1000;
 
 export const invoiceScanLineInputSchema = z.object({
   /** Índice de la línea en `extraction.lines` del escaneo guardado. */
@@ -50,9 +67,18 @@ export const invoiceScanBodySchema = z
   .superRefine((value, context) => addInvoiceScanBodyIssues(value, context));
 
 export function addInvoiceScanBodyIssues(
-  value: { invoiceScanId?: string; invoiceScanLines?: InvoiceScanLineInput[] },
+  value: { clientRequestId?: string; invoiceScanId?: string; invoiceScanLines?: InvoiceScanLineInput[] },
   context: z.RefinementCtx,
 ) {
+  // El reclamo del escaneo es por intento: sin clave no hay replay ni reclamo seguro.
+  if (value.invoiceScanId && !value.clientRequestId) {
+    context.addIssue({
+      code: "custom",
+      message: "El escaneo requiere clientRequestId.",
+      path: ["clientRequestId"],
+    });
+  }
+
   if (value.invoiceScanLines && !value.invoiceScanId) {
     context.addIssue({
       code: "custom",
@@ -65,6 +91,7 @@ export function addInvoiceScanBodyIssues(
 export const INVOICE_SCAN_NOT_FOUND_MESSAGE = "Escaneo no encontrado";
 export const INVOICE_SCAN_ALREADY_CONFIRMED_MESSAGE = "El escaneo ya fue confirmado";
 export const INVOICE_SCAN_UNAVAILABLE_MESSAGE = "El escaneo no está disponible";
+export const INVOICE_SCAN_CLAIMED_MESSAGE = "El escaneo se está confirmando en otra compra";
 
 export type InvoiceScanStatus = "extracted" | "confirmed" | "discarded" | "failed";
 
@@ -147,10 +174,16 @@ export function buildConfirmedLines(
   });
 }
 
-/** Líneas para `learn_invoice_aliases`: sin las que normalizan a "". */
+/**
+ * Líneas para `learn_invoice_aliases`: sin las que normalizan a "" ni las de más de
+ * 200 caracteres (la RPC rechazaría la llamada entera; recortar daría un alias que
+ * nunca coincide exacto con `normalizeAlias(rawText)`).
+ */
 export function buildLearnLines(confirmedLines: ConfirmedInvoiceScanLine[]): LearnAliasLine[] {
   return confirmedLines
-    .filter((line) => line.aliasNorm !== "")
+    .filter(
+      (line) => line.aliasNorm !== "" && Array.from(line.aliasNorm).length <= MAX_ALIAS_NORM_LENGTH,
+    )
     .map((line) => ({
       alias_norm: line.aliasNorm,
       pack_label: line.packLabel?.trim() ? line.packLabel.trim() : null,
@@ -173,7 +206,11 @@ export function buildConfirmedPayload(
 }
 
 /** Log sin datos de la factura: solo ids y el código/mensaje del rechazo. */
-export function logInvoiceScanFailure(step: "confirm" | "learn", scanId: string, error: unknown) {
+export function logInvoiceScanFailure(
+  step: "confirm" | "learn" | "release",
+  scanId: string,
+  error: unknown,
+) {
   const details =
     error && typeof error === "object"
       ? {
@@ -216,11 +253,37 @@ type DbInvoiceScanRow = {
   status: string;
 };
 
+/** Clave del reclamo: el escaneo y el intento de compra que lo confirma. */
+export type InvoiceScanClaimInput = { clientRequestId: string; scanId: string };
+
+/**
+ * Rechazos del reclamo en la respuesta: PT404 / PT409 → 400 (contrato de caos
+ * 6.14, mismo código que el pre-check anterior); el resto (PT403, 5xx) tal cual.
+ */
+function toClaimRejection(error: unknown): ApiError {
+  const mapped = mapSupabaseError(error);
+
+  return mapped.status === 404 || mapped.status === 409
+    ? new ApiError(400, "BAD_REQUEST", mapped.message)
+    : mapped;
+}
+
 export async function precheckInvoiceScan(
-  input: { clientRequestId?: string; scanId: string },
+  input: InvoiceScanClaimInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
   const supabase = await createRouteSupabaseClient();
+
+  // Reclamo atómico ANTES de create_purchase (SCN-06-F1): la RPC filtra por la
+  // tienda de la sesión y decide entre reclamado, replay o rechazo.
+  const { data: claim, error: claimError } = await supabase.rpc("claim_invoice_scan", {
+    p_client_request_id: input.clientRequestId,
+    p_scan_id: input.scanId,
+  });
+
+  if (claimError) {
+    throw toClaimRejection(claimError);
+  }
 
   // Filtro explícito por tienda además de la RLS (caos 6.14).
   const { data, error } = await supabase
@@ -233,34 +296,40 @@ export async function precheckInvoiceScan(
   throwIfSupabaseError(error);
 
   const row = (data as DbInvoiceScanRow | null) ?? null;
-  let replayPurchaseId: string | null = null;
 
-  if (row?.status === "confirmed" && row.purchase_id && input.clientRequestId) {
-    // Replay: la compra que esta tienda ya creó con la misma clave de idempotencia.
-    const { data: previous, error: previousError } = await supabase
-      .from("purchases")
-      .select("id")
-      .eq("store_id", storeId)
-      .eq("client_request_id", input.clientRequestId)
-      .maybeSingle();
-
-    throwIfSupabaseError(previousError);
-    replayPurchaseId = (previous as { id: string } | null)?.id ?? null;
+  if (!row) {
+    throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_NOT_FOUND_MESSAGE);
   }
 
-  const { replay } = assertScanUsable(
-    row ? { purchaseId: row.purchase_id, status: row.status } : null,
-    replayPurchaseId,
-  );
-  // assertScanUsable ya rechazó el escaneo ausente.
-  const usable = row as DbInvoiceScanRow;
-
   return {
-    id: usable.id,
-    purchaseId: usable.purchase_id,
-    rawTexts: readExtractedRawTexts(usable.extracted),
-    replay,
+    id: row.id,
+    purchaseId: row.purchase_id,
+    rawTexts: readExtractedRawTexts(row.extracted),
+    replay: claim === "replay",
   };
+}
+
+/**
+ * Suelta el reclamo del intento tras un rechazo de `create_purchase`. Best effort:
+ * nunca lanza (el error de la compra es el que viaja); si falla, el reclamo caduca.
+ */
+export async function releaseInvoiceScanClaim(
+  input: InvoiceScanClaimInput,
+  _storeId: string,
+): Promise<void> {
+  try {
+    const supabase = await createRouteSupabaseClient();
+    const { error } = await supabase.rpc("release_invoice_scan_claim", {
+      p_client_request_id: input.clientRequestId,
+      p_scan_id: input.scanId,
+    });
+
+    if (error) {
+      logInvoiceScanFailure("release", input.scanId, error);
+    }
+  } catch (error) {
+    logInvoiceScanFailure("release", input.scanId, error);
+  }
 }
 
 export async function finalizeInvoiceScan(
@@ -284,7 +353,8 @@ export async function finalizeInvoiceScan(
   const confirmed = buildConfirmedPayload(scan.rawTexts, input);
 
   try {
-    const { error } = await supabase.rpc("confirm_invoice_scan", {
+    const { data, error } = await supabase.rpc("confirm_invoice_scan", {
+      p_client_request_id: input.clientRequestId ?? null,
       p_confirmed: confirmed,
       p_purchase_id: input.purchaseId,
       p_scan_id: scan.id,
@@ -293,6 +363,12 @@ export async function finalizeInvoiceScan(
     if (error) {
       logInvoiceScanFailure("confirm", scan.id, error);
       return { confirmed: false, learned: null };
+    }
+
+    // `false`: ya estaba confirmado con esta compra (otra llamada del mismo
+    // intento); no se vuelve a aprender.
+    if (data === false) {
+      return { confirmed: true, learned: null };
     }
   } catch (error) {
     logInvoiceScanFailure("confirm", scan.id, error);

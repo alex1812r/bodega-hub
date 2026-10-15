@@ -11,6 +11,7 @@ import {
   listMockLearnedAliases,
   precheckInvoiceScan,
   registerMockInvoiceScan,
+  releaseInvoiceScanClaim,
   resetMockInvoiceScans,
 } from "./confirmScan.mock-server";
 
@@ -48,11 +49,11 @@ describe("confirmScan.mock-server", () => {
   it("escaneo ajeno o inexistente → 400 Escaneo no encontrado", async () => {
     registerMockInvoiceScan({ extracted, id: "scan-ajeno", storeId: OTHER_STORE_ID });
 
-    await expect(precheckInvoiceScan({ scanId: "scan-ajeno" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
+    await expect(precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-ajeno" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
       message: "Escaneo no encontrado",
       status: 400,
     });
-    await expect(precheckInvoiceScan({ scanId: "no-existe" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
+    await expect(precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "no-existe" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
       status: 400,
     });
   });
@@ -60,7 +61,7 @@ describe("confirmScan.mock-server", () => {
   it.each(["discarded", "failed"] as const)("escaneo %s → 400", async (status) => {
     registerMockInvoiceScan({ extracted, id: "scan-x", status });
 
-    await expect(precheckInvoiceScan({ scanId: "scan-x" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
+    await expect(precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-x" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
       message: "El escaneo no está disponible",
       status: 400,
     });
@@ -121,5 +122,53 @@ describe("confirmScan.mock-server", () => {
     expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([
       expect.objectContaining({ hits: 1, productId: PRODUCT_B }),
     ]);
+  });
+
+  it("reclamo: otro intento vigente → 400 antes de crear; el mismo intento puede reintentar (SCN-06-F1)", async () => {
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+
+    await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    await expect(
+      precheckInvoiceScan({ clientRequestId: KEY_2, scanId: "scan-1" }, DEFAULT_STORE_ID),
+    ).rejects.toMatchObject({ message: "El escaneo se está confirmando en otra compra", status: 400 });
+    await expect(
+      precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID),
+    ).resolves.toMatchObject({ replay: false });
+    expect(getMockInvoiceScan("scan-1")?.claimRequestId).toBe(KEY_1);
+  });
+
+  it("liberar el reclamo deja reclamar con otra clave; finalize con reclamo ajeno no confirma", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+
+    const first = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    await releaseInvoiceScanClaim({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    await precheckInvoiceScan({ clientRequestId: KEY_2, scanId: "scan-1" }, DEFAULT_STORE_ID);
+
+    await expect(
+      finalizeInvoiceScan(
+        first,
+        { clientRequestId: KEY_1, lines: [], purchaseId: "purchase-1", supplierId: SUPPLIER },
+        DEFAULT_STORE_ID,
+      ),
+    ).resolves.toEqual({ confirmed: false, learned: null });
+    expect(getMockInvoiceScan("scan-1")).toMatchObject({ claimRequestId: KEY_2, status: "extracted" });
+    jest.restoreAllMocks();
+  });
+
+  it("alias normalizado de más de 200 caracteres: se guarda en confirmed pero no se aprende", async () => {
+    const longText = Array.from({ length: 60 }, (_, index) => `palabra${index}`).join(" ");
+    registerMockInvoiceScan({ extracted: { lines: [{ rawText: longText }] }, id: "scan-1" });
+
+    const scan = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    const outcome = await finalizeInvoiceScan(
+      scan,
+      { clientRequestId: KEY_1, lines: [{ lineIndex: 0, productId: PRODUCT_A }], purchaseId: "p-1", supplierId: SUPPLIER },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(outcome).toEqual({ confirmed: true, learned: 0 });
+    expect(getMockInvoiceScan("scan-1")?.confirmed?.lines[0].rawText).toBe(longText);
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([]);
   });
 });
