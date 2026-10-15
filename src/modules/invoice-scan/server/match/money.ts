@@ -18,10 +18,40 @@ export const NO_PRICE_ISSUE = "La línea no trae precio: escríbelo.";
 export const MISSING_RATE_WARNING = "Falta la tasa del día: los costos en REF no se precargaron.";
 export const INVALID_QUANTITY_ISSUE = "Cantidad inválida en la factura: revísala.";
 export const INVALID_PRICE_ISSUE = "Precio inválido en la factura: revísalo.";
+export const DECIMAL_QUANTITY_ISSUE = "Cantidad con decimales en la factura: la compra solo admite enteros, revísala.";
+/**
+ * Sin ninguna tasa no se puede comparar con el último costo (en REF). Decisión:
+ * si había coherencia que comprobar (último costo e importe), la línea no se
+ * confirma en silencio; si no la había, no se avisa (ya lo dice el documento).
+ */
+export const NO_RATE_PRICE_ISSUE = "Sin tasa no se verificó el precio contra el último costo: revísalo.";
+/** Importe o precio en Bs por encima de esto es una lectura imposible (1e308, etc.). */
+export const MAX_AMOUNT_VES = 1e12;
+/** Cantidad máxima de una línea (entero de 32 bits de la compra). */
+export const MAX_QUANTITY = 2_147_483_647;
 /** Tolerancia de coma flotante al comparar el desvío con el límite (4,20 vs 3,00 es 40 % justo, no más). */
 const DEVIATION_EPSILON = 1e-9;
 
-const USD_MARK = /\$|\bUSD\b|\bUS\s?\$/i;
+/**
+ * Marca de dólar sobre el texto plegado (NFKD sin diacríticos: "＄" -> "$",
+ * "DÓLARES" -> "DOLARES"): cualquier "$" (US$, U$S, 5$), o USD/DOLAR(ES)/DLS/DLR(S)
+ * como palabra, admitiendo cifras pegadas ("5USD", "USD5.00"), nunca dentro de
+ * otra palabra ("HANDLS").
+ */
+const USD_MARK = /\$|(?<![A-Z])(?:USD|DOLAR(?:ES)?|DLS|DLRS?)(?![A-Z])/i;
+
+function hasUsdMark(text: string): boolean {
+  return USD_MARK.test(text.normalize("NFKD").replace(/[̀-ͯ]/g, ""));
+}
+
+/** Importe en Bs leído válido: finito, > 0 y no gigante. */
+function isAmount(value: number | null | undefined): value is number {
+  return isPositive(value) && value <= MAX_AMOUNT_VES;
+}
+
+function isQuantity(value: number | null | undefined): value is number {
+  return isPositive(value) && value <= MAX_QUANTITY;
+}
 
 export type RateResolution = {
   /** Bs por 1 REF usada para convertir; `undefined` si no hay ninguna. */
@@ -64,17 +94,20 @@ export function resolveRate(systemRate: number | undefined, printedRate: number 
   return { info: { warning: MISSING_RATE_WARNING } };
 }
 
-/** Documento en dólares: `currency` USD o `$`/`USD` en el texto de alguna línea (6.21). */
+/** Documento en dólares: `currency` USD o una marca de dólar en el texto o la descripción de alguna línea (6.21). */
 export function isUsdDocument(extraction: InvoiceExtraction): boolean {
-  return extraction.currency === "USD" || extraction.lines.some((line) => USD_MARK.test(line.rawText));
+  return (
+    extraction.currency === "USD" ||
+    extraction.lines.some((line) => hasUsdMark(line.rawText) || hasUsdMark(line.description))
+  );
 }
 
-/** Importe de la línea en Bs: `lineTotal`; si no, `unitPrice × quantity`; 0 si no hay precio. */
+/** Importe de la línea en Bs: `lineTotal`; si no, `unitPrice × quantity`; 0 si no hay precio válido. */
 export function lineAmount(line: InvoiceExtractionLine): number {
-  if (isPositive(line.lineTotal)) {
+  if (isAmount(line.lineTotal)) {
     return line.lineTotal;
   }
-  if (isPositive(line.unitPrice) && isPositive(line.quantity)) {
+  if (isAmount(line.unitPrice) && isQuantity(line.quantity) && isAmount(line.unitPrice * line.quantity)) {
     return line.unitPrice * line.quantity;
   }
   return 0;
@@ -87,10 +120,12 @@ export function lineAmount(line: InvoiceExtractionLine): number {
  */
 export function lineValueIssues(line: InvoiceExtractionLine): string[] {
   const issues: string[] = [];
-  if (!isPositive(line.quantity)) {
+  if (!isQuantity(line.quantity)) {
     issues.push(INVALID_QUANTITY_ISSUE);
+  } else if (!Number.isInteger(line.quantity)) {
+    issues.push(DECIMAL_QUANTITY_ISSUE);
   }
-  const invalid = (value: number) => !Number.isFinite(value) || value < 0;
+  const invalid = (value: number) => !Number.isFinite(value) || value < 0 || value > MAX_AMOUNT_VES;
   if (hasPrice(line) && (invalid(line.unitPrice) || invalid(line.lineTotal))) {
     issues.push(INVALID_PRICE_ISSUE);
   }
@@ -113,9 +148,9 @@ export function lineEntryCosts(
   rate: number | undefined,
 ): { unitCostVes?: number; unitCostRef?: number } {
   let perEntry: number | undefined;
-  if (isPositive(line.unitPrice)) {
+  if (isAmount(line.unitPrice)) {
     perEntry = line.unitPrice;
-  } else if (isPositive(line.lineTotal) && isPositive(line.quantity)) {
+  } else if (isAmount(line.lineTotal) && isQuantity(line.quantity)) {
     perEntry = line.lineTotal / line.quantity;
   }
   if (perEntry === undefined) {
@@ -141,8 +176,11 @@ export function priceCoherenceIssue(input: {
   const { line, rate, lastUnitCostRef } = input;
   const units = input.entryMode === "pack" ? input.unitsPerPack : 1;
   const amount = lineAmount(line);
-  if (!isPositive(lastUnitCostRef) || rate === undefined || !isPositive(units) || !isPositive(line.quantity) || amount <= 0) {
+  if (!isPositive(lastUnitCostRef) || !isPositive(units) || !isQuantity(line.quantity) || amount <= 0) {
     return undefined;
+  }
+  if (rate === undefined) {
+    return NO_RATE_PRICE_ISSUE;
   }
 
   const perUnitRef = amount / rate / (line.quantity * units);
