@@ -49,7 +49,7 @@ Foto / PDF de la factura (móvil o web)
 
 - El modelo **no decide** nada de dinero: propone números; la UI recalcula totales con las alícuotas del catálogo (`tax_rates`) y marca en rojo cualquier línea cuyo total leído no coincida con cantidad × precio.
 - Nada se guarda hasta que el usuario confirma la compra; el escaneo no crea productos ni vínculos por sí solo.
-- Moneda: si la factura está en Bs, los costos entran en Bs con la tasa del día (el toggle REF/Bs de la compra ya existe); si está en USD, en REF.
+- Moneda: toda factura fiscal es en Bs (las impresoras fiscales solo emiten en bolívares); los costos entran en Bs y se convierten a REF con la tasa del día. Si la factura trae tasa impresa, se usa para validar. Las compras en USD son informales y siguen registrándose a mano.
 - Empaques: si la línea dice "CAJA x6" y el producto tiene receta o empaque de 6, la línea entra en modo empaque; si no coincide, dudosa.
 - Idempotencia por hash de la imagen: subir dos veces la misma foto devuelve el mismo resultado sin volver a llamar al modelo.
 - Límite por tienda y día (p. ej. 50 escaneos) para proteger la cuota free, con contador visible.
