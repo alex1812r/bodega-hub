@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import type { InvoiceMatchCandidate } from "@/modules/invoice-scan/contracts";
 import {
@@ -41,18 +41,6 @@ function candidateOption(candidate: InvoiceMatchCandidate): ProductEntityOption 
 }
 
 /**
- * Pone `text` en el campo como si se hubiera tecleado: `EntityAutocomplete` no
- * acepta un texto inicial y su estado se alimenta del evento `input` de React.
- * Queda seleccionado: lo que el usuario teclee lo reemplaza.
- */
-function typeInitialText(input: HTMLInputElement, text: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setter?.call(input, text);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.select();
-}
-
-/**
  * Buscador de producto de una línea de la factura (SCN-08): `EntityAutocomplete`
  * que se abre ya con la descripción leída como búsqueda y con los candidatos del
  * emparejamiento primero, para que el usuario confirme en vez de teclear.
@@ -64,7 +52,6 @@ export function InvoiceReviewProductSearch({
   label,
   onPick,
 }: InvoiceReviewProductSearchProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const reasons = useMemo(
     () => new Map(candidates.map((candidate) => [candidate.productId, candidate])),
     [candidates],
@@ -85,22 +72,14 @@ export function InvoiceReviewProductSearch({
     [candidates, fetcher, readQuery, reasons],
   );
 
-  useEffect(() => {
-    const input = containerRef.current?.querySelector<HTMLInputElement>("input");
-    if (input && readQuery) {
-      typeInitialText(input, readQuery);
-    }
-    // Solo al abrir: después el texto es del usuario.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
-    <div ref={containerRef}>
+    <div>
       <EntityAutocomplete
         autoFocus
         entity="product"
         fetcher={withCandidates}
         filters={PRODUCT_FILTERS}
+        initialQuery={readQuery}
         label={label}
         onChange={(option) => {
           if (option) {
