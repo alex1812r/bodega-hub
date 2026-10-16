@@ -226,4 +226,31 @@ describe("modo mock · escaneo → compra (SCN-13a)", () => {
       name: singlePageExtraction.supplier.name,
     });
   });
+
+  it('SCN-13a-F1 · la lectura corregida (invoiceScanExtraction) con "" o solo espacios se confirma sin esos textos', async () => {
+    const { scanId } = (await (await scan(image)).json()).data;
+    const corrected: InvoiceExtraction = {
+      ...singlePageExtraction,
+      lines: singlePageExtraction.lines.map((line) => ({ ...line, barcode: "", supplierSku: " " })),
+      number: "",
+      supplier: { address: " ", name: singlePageExtraction.supplier.name, phone: "", taxId: "  " },
+    };
+
+    const response = await buy({
+      ...purchase,
+      clientRequestId: KEY_1,
+      invoiceScanExtraction: corrected,
+      invoiceScanId: scanId,
+      invoiceScanLines,
+    });
+    const confirmed = getMockInvoiceScan(scanId)?.confirmed?.extraction as InvoiceExtraction;
+
+    expect(response.status).toBe(201);
+    expect("number" in confirmed).toBe(false);
+    expect(confirmed.supplier).toEqual({ name: singlePageExtraction.supplier.name });
+    expect(confirmed.lines.every((line) => !("barcode" in line) && !("supplierSku" in line))).toBe(true);
+    expect(confirmed.lines.map((line) => line.description)).toEqual(
+      singlePageExtraction.lines.map((line) => line.description),
+    );
+  });
 });

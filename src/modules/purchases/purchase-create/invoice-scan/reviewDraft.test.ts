@@ -7,14 +7,11 @@ jest.mock("../../../../lib/supabase/route-client", () => ({
 }));
 
 import { draftToPurchaseItemInput } from "@bodega/core/purchases";
-import { z } from "zod";
 
 import { invoiceExtractionSchema } from "@/modules/invoice-scan/contracts";
-import {
-  addInvoiceScanBodyIssues,
-  invoiceScanBodyFields,
-} from "@/modules/invoice-scan/server/confirmScan.server";
-import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
+import { normalizeExtractionForMatch } from "@/modules/invoice-scan/server/matchScan";
+import { createPurchaseSchema } from "@/modules/purchases/schemas/createPurchase.schema";
+import { roundMoney } from "@/shared/utils/currency";
 
 import { buildInvoiceReviewDraft, buildCorrectedExtraction, taxHintFromCode, type InvoiceReviewDraft } from "./reviewDraft";
 import {
@@ -31,14 +28,8 @@ import { createInvoiceReviewState, reviewReducer, type InvoiceReviewContext } fr
 
 const PURCHASE_KEY = "7a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
 
-/** El mismo body que `createPurchaseSchema` en `src/app/api/purchases/route.ts` (campos del escaneo e items). */
-const purchaseBodySchema = z
-  .object({
-    clientRequestId: z.string().uuid().optional(),
-    ...invoiceScanBodyFields,
-    items: z.array(purchaseItemInputSchema).min(1),
-  })
-  .superRefine((value, context) => addInvoiceScanBodyIssues(value, context));
+/** El body real de `POST /api/purchases` (SCN-08a-F1: antes era una copia parcial). */
+const purchaseBodySchema = createPurchaseSchema;
 
 const ctx: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES };
 
@@ -50,15 +41,30 @@ function stateOf(
   return createInvoiceReviewState(makeReviewResponse({ lines, ...extra }), context);
 }
 
+/** Body completo como lo arma la página: cabecera de la compra + bloque del escaneo + líneas. */
 function bodyOf(draft: InvoiceReviewDraft) {
+  const items = draft.lines.map((line) => ({
+    ...draftToPurchaseItemInput(line.item, draft.rateVes ?? 0),
+    taxRateCode: line.taxRateCode,
+    ...(line.disassembleOnReceive ? { disassembleOnReceive: true } : {}),
+  }));
+  const sum = (key: "subtotalRef" | "subtotalVes" | "taxRef" | "taxVes") =>
+    roundMoney(items.reduce((total, item) => total + item[key], 0));
+
   return {
     clientRequestId: PURCHASE_KEY,
+    discountRef: 0,
+    discountVes: 0,
+    ...(draft.purchaseNumber ? { purchaseNumber: draft.purchaseNumber } : {}),
+    refRateVes: draft.rateVes,
+    status: "recibido",
+    subtotalRef: sum("subtotalRef"),
+    subtotalVes: sum("subtotalVes"),
+    supplierId: draft.supplier.contactId,
+    taxRef: sum("taxRef"),
+    taxVes: sum("taxVes"),
     ...draft.body,
-    items: draft.lines.map((line) => ({
-      ...draftToPurchaseItemInput(line.item, draft.rateVes ?? 0),
-      taxRateCode: line.taxRateCode,
-      ...(line.disassembleOnReceive ? { disassembleOnReceive: true } : {}),
-    })),
+    items,
   };
 }
 
@@ -192,6 +198,25 @@ describe("buildCorrectedExtraction", () => {
     expect(extraction.number).toBeUndefined();
     expect(extraction.lines[0].unitsPerPack).toBeUndefined();
     expect(invoiceExtractionSchema.safeParse(extraction).success).toBe(true);
+  });
+
+  it('textos opcionales "" o solo espacios en cabecera y líneas: el body pasa el schema real y el borde del servidor los quita', () => {
+    const state = stateOf([{ read: { barcode: "", supplierSku: "  " } }, { read: { barcode: " ", supplierSku: "" } }], {
+      extraction: { number: "", supplier: { address: " ", name: "Chevere Depot", phone: "", taxId: "  " } },
+    });
+    const draft = buildInvoiceReviewDraft(state);
+    expect(draft).not.toBeNull();
+    if (!draft) return;
+
+    expect("number" in draft.body.invoiceScanExtraction).toBe(false);
+    const parsed = purchaseBodySchema.safeParse(bodyOf(draft));
+    expect(parsed.error?.issues).toBeUndefined();
+
+    // Lo que se guarda en confirmed.extraction (route.ts, SCN-13a-F1).
+    const confirmed = normalizeExtractionForMatch(parsed.data?.invoiceScanExtraction ?? draft.body.invoiceScanExtraction);
+    expect(confirmed.supplier).toEqual({ name: "Chevere Depot" });
+    expect(confirmed.lines.every((line) => !("barcode" in line) && !("supplierSku" in line))).toBe(true);
+    expect(confirmed.lines.map((line) => line.quantity)).toEqual([2, 2]);
   });
 
   it("taxHint desde el código o el porcentaje", () => {
