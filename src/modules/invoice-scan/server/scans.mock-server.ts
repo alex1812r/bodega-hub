@@ -248,6 +248,14 @@ export async function seedScanForTest(
   });
 }
 
+/** Escaneos de la tienda, del más nuevo al más viejo (duplicados del emparejamiento mock). */
+export function listMockScansOfStore(storeId: string): InvoiceScanRow[] {
+  return [...scans().values()]
+    .filter((scan) => scan.storeId === storeId)
+    .sort(byNewest)
+    .map((scan) => ({ ...scan }));
+}
+
 export async function getScan(ctx: InvoiceScanContext, id: string): Promise<InvoiceScanRow | null> {
   const scan = ownScan(ctx, id);
 
