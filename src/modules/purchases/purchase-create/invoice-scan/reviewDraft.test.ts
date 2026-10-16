@@ -152,6 +152,7 @@ describe("buildInvoiceReviewDraft", () => {
     const draft = buildInvoiceReviewDraft(state);
     expect(draft?.costCurrency).toBe("ref");
     expect(draft?.rateVes).toBe(900);
+    expect(draft?.invoiceRateVes).toBe(875.65);
     expect(draft?.lines[0].item).toMatchObject({ costCurrency: "ref", unitCostRef: 10.28 });
   });
 
@@ -173,6 +174,7 @@ describe("buildInvoiceReviewDraft", () => {
     state = reviewReducer(state, { type: "acceptUsdAnomaly" });
     const draft = buildInvoiceReviewDraft(state);
     expect(draft?.costCurrency).toBe("ref");
+    expect(draft?.invoiceRateVes).toBeUndefined();
     expect(draft?.lines[0].item).toMatchObject({ costCurrency: "ref", unitCostRef: 3.5, quantity: 2 });
     expect(draft?.body.invoiceScanExtraction.currency).toBe("USD");
     expect(draft && purchaseBodySchema.safeParse(bodyOf(draft)).success).toBe(true);

@@ -77,6 +77,12 @@ export type InvoiceReviewDraft = {
    * existe, si no la elegida. `undefined` solo en factura USD aceptada sin tasa.
    */
   rateVes?: number;
+  /**
+   * Tasa elegida en la revisión con la que los Bs de la factura pasan a REF.
+   * Ausente en una factura en dólares aceptada: sus precios ya son REF. Con ella el
+   * formulario devuelve sus costos finales a Bs de la factura (D10).
+   */
+  invoiceRateVes?: number;
   lines: InvoiceReviewDraftLine[];
   body: InvoiceReviewScanBody;
 };
@@ -245,6 +251,7 @@ export function buildInvoiceReviewDraft(
     ...(state.header.date ? { date: state.header.date } : {}),
     costCurrency,
     ...(mirrorRate !== undefined ? { rateVes: mirrorRate } : {}),
+    ...(chosenRate !== undefined && !isUsdAccepted(state) ? { invoiceRateVes: chosenRate } : {}),
     lines,
     body: {
       invoiceScanId: state.scanId,

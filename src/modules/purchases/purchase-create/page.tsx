@@ -10,6 +10,7 @@ import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { apiFetch } from "@/shared/api/apiFetch";
 import { usePermission } from "@/shared/auth/usePermission";
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { ErrorState } from "@/shared/components/ErrorState";
@@ -29,6 +30,16 @@ import {
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
+import { InvoiceReviewPanel } from "./invoice-scan/components/InvoiceReviewPanel";
+import {
+  applyInvoiceReviewDraft,
+  buildInvoiceScanSubmission,
+  describeInvoiceForNotes,
+  describeLearnedAliases,
+  pruneLoadedInvoiceScan,
+  type LoadedInvoiceScan,
+} from "./invoice-scan/loadedInvoiceScan";
+import type { InvoiceReviewDraft } from "./invoice-scan/reviewDraft";
 import { PurchaseConfirmModal } from "./components/PurchaseConfirmModal";
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
 import { PurchaseDraftBanner } from "./components/PurchaseDraftBanner";
@@ -74,6 +85,7 @@ import {
   describeDraftSupplierUnavailable,
   restorePurchaseDraft,
   storedDraftSourceItems,
+  toStoredInvoiceScan,
   type PurchaseDraftContent,
 } from "./utils/purchaseDraftStorage";
 import { describePurchaseInProgress } from "./utils/purchaseProcessLabel";
@@ -107,6 +119,8 @@ import {
 const INVOICE_SCAN_QUERY_PARAM = "scan";
 const INVOICE_SCAN_PROCESS_LABEL = "Escaneo de factura en curso";
 const INVOICE_SCAN_LEAVE_DESCRIPTION = "Si sales ahora, la lectura de la factura se cancela.";
+const INVOICE_REVIEW_PROCESS_LABEL = "Revisión de factura en curso";
+const INVOICE_REVIEW_LEAVE_DESCRIPTION = "Si sales ahora, se pierde lo que revisaste de la factura.";
 
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
 
@@ -126,6 +140,13 @@ type PendingDuplicate = {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : undefined;
+}
+
+/** Motivo en español de una petición que falló; sin respuesta (red), se dice así. */
+function requestErrorMessage(error: unknown) {
+  return error instanceof TypeError
+    ? "No pudimos conectar con el servidor. Revisa tu conexión."
+    : errorMessage(error);
 }
 
 export function PurchaseCreatePage() {
@@ -216,13 +237,38 @@ export function PurchaseCreatePage() {
   const [invoiceScanOpen, setInvoiceScanOpen] = useState(false);
   // Preparando, subiendo o leyendo: el guardia nombra el escaneo.
   const [invoiceScanBusy, setInvoiceScanBusy] = useState(false);
-  // TODO(SCN-08c): abrir la revisión con la factura leída y cargarla en el formulario.
-  const [, setScannedInvoice] = useState<InvoiceScanResponse | null>(null);
+  // Factura leída en revisión (SCN-08c): mientras haya una, la página muestra la
+  // revisión en lugar del formulario.
+  const [scannedInvoice, setScannedInvoice] = useState<InvoiceScanResponse | null>(null);
+  const reviewingInvoice = scannedInvoice !== null;
+  // Escaneo cargado en el formulario: viaja con la compra y en el borrador local.
+  const [loadedScan, setLoadedScan] = useState<LoadedInvoiceScan | null>(null);
+  // Factura de otro proveedor con una compra en curso: espera «Reemplazar».
+  const [invoiceReplaceRequest, setInvoiceReplaceRequest] = useState<InvoiceReviewDraft | null>(
+    null,
+  );
+  const [isLoadingInvoice, setIsLoadingInvoice] = useState(false);
+  const invoiceLoadingRef = useRef(false);
   const scanParamHandledRef = useRef(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
   const catalog = productSearchResult.catalog;
   const currentRateVes = exchangeRate.data?.rateVes;
   const activeRateVes = currentRateVes ?? 510;
+  // Código → % del catálogo: todo para la pista de la extracción, solo activas para la revisión.
+  const taxPctByCode = useMemo(
+    () => Object.fromEntries(taxRates.rates.map((rate) => [rate.code, rate.pct])),
+    [taxRates.rates],
+  );
+  const reviewContext = useMemo(
+    () => ({
+      // La tasa del sistema, no el respaldo de 510: sin tasa del día la revisión lo dice.
+      ...(currentRateVes !== undefined ? { systemRateVes: currentRateVes } : {}),
+      taxRates: Object.fromEntries(
+        taxRates.rates.filter((rate) => rate.isActive).map((rate) => [rate.code, rate.pct]),
+      ),
+    }),
+    [currentRateVes, taxRates.rates],
+  );
 
   // `/purchases/create?scan=1` (vacío de la lista): abre el escaneo una vez, cuando se
   // conocen los permisos, y quita el parámetro para que recargar no lo vuelva a abrir.
@@ -380,6 +426,16 @@ export function PurchaseCreatePage() {
     () => ({
       costCurrency,
       discountRef,
+      ...(loadedScan
+        ? {
+            invoiceScan: toStoredInvoiceScan(
+              pruneLoadedInvoiceScan(
+                loadedScan,
+                items.map((item) => item.id),
+              ),
+            ),
+          }
+        : {}),
       lineMeta: Object.fromEntries(
         items.flatMap((item) => {
           const meta = lineMetaByProductId.get(item.productId);
@@ -401,6 +457,7 @@ export function PurchaseCreatePage() {
       discountRef,
       items,
       lineMetaByProductId,
+      loadedScan,
       locks,
       notes,
       review,
@@ -439,16 +496,24 @@ export function PurchaseCreatePage() {
       : saveBlock === "storage"
         ? "Este navegador no dejó guardar el borrador (almacenamiento lleno o bloqueado): si sales, esta compra se pierde."
         : undefined;
+  // La revisión de una factura leída (SCN-08c) también lo activa y le da nombre.
+  const invoiceLeaveDescription = invoiceScanBusy
+    ? INVOICE_SCAN_LEAVE_DESCRIPTION
+    : reviewingInvoice
+      ? INVOICE_REVIEW_LEAVE_DESCRIPTION
+      : null;
   const guard = useProcessGuard({
-    active: purchaseInProgress || invoiceScanBusy,
-    description: invoiceScanBusy
-      ? [INVOICE_SCAN_LEAVE_DESCRIPTION, purchaseInProgress ? purchaseSaveDescription : undefined]
+    active: purchaseInProgress || invoiceScanBusy || reviewingInvoice,
+    description: invoiceLeaveDescription
+      ? [invoiceLeaveDescription, purchaseInProgress ? purchaseSaveDescription : undefined]
           .filter(Boolean)
           .join(" ")
       : purchaseSaveDescription,
     label: invoiceScanBusy
       ? INVOICE_SCAN_PROCESS_LABEL
-      : describePurchaseInProgress({
+      : reviewingInvoice
+        ? INVOICE_REVIEW_PROCESS_LABEL
+        : describePurchaseInProgress({
           lineCount: items.length,
           supplierId,
           supplierName,
@@ -486,6 +551,7 @@ export function PurchaseCreatePage() {
       setProductSearch("");
       setLineMetaByProductId(duplicated.lineMeta);
       dispatchLines({ state: duplicated.lines, type: "linesRestored" });
+      setLoadedScan(null);
       setNotices(duplicated.notices);
       setPendingDuplicate(null);
     };
@@ -547,6 +613,7 @@ export function PurchaseCreatePage() {
     setProductSearch("");
     setLineMetaByProductId(built.lineMeta);
     dispatchLines({ state: built.lines, type: "linesRestored" });
+    setLoadedScan(null);
     setNotices([]);
     setPendingDuplicate(null);
     setPendingRestock(null);
@@ -620,6 +687,7 @@ export function PurchaseCreatePage() {
     setStatus("recibido");
     dispatchLines({ type: "supplierChanged" });
     setLineMetaByProductId(new Map());
+    setLoadedScan(null);
     setNotices([]);
     setPendingDuplicate(null);
     setFormError(null);
@@ -669,6 +737,7 @@ export function PurchaseCreatePage() {
         setSupplierName(supplier?.name ?? stored.supplierName ?? null);
         setLineMetaByProductId(restored.lineMeta);
         dispatchLines({ state: restored.lines, type: "linesRestored" });
+        setLoadedScan(restored.invoiceScan ?? null);
         setNotices(restored.notices);
         setPendingDuplicate(null);
       } else {
@@ -678,6 +747,7 @@ export function PurchaseCreatePage() {
         setSupplierName(null);
         setLineMetaByProductId(new Map());
         dispatchLines({ type: "supplierChanged" });
+        setLoadedScan(null);
         setNotices([]);
         setPendingDuplicate({
           fromDraft: true,
@@ -731,6 +801,8 @@ export function PurchaseCreatePage() {
     setProductSearch("");
     dispatchLines({ type: "supplierChanged" });
     setLineMetaByProductId(new Map());
+    // Las líneas de la factura se fueron con el proveedor: el escaneo ya no viaja.
+    setLoadedScan(null);
 
     // Reposición sin proveedor: sus líneas entran con el que se elija.
     if (pendingRestock && nextSupplierId) {
@@ -897,6 +969,13 @@ export function PurchaseCreatePage() {
       })),
       notes: notes.trim() || undefined,
       refRateVes: activeRateVes,
+      // Escaneo cargado (SCN-08c): desde las líneas que se envían, con sus cifras finales.
+      ...(loadedScan
+        ? buildInvoiceScanSubmission(loadedScan, validLines, {
+            costCurrency,
+            taxRates: taxPctByCode,
+          })
+        : {}),
       status,
       subtotalRef: submitTotals.subtotalRef,
       subtotalVes: submitTotals.subtotalVes,
@@ -908,10 +987,110 @@ export function PurchaseCreatePage() {
     return { initialPayment, input };
   }
 
-  /** La revisión de la factura leída llega en SCN-08c; por ahora se guarda y se cierra el modal. */
+  /** La factura leída abre su revisión en la página, en lugar del formulario. */
   function onInvoiceScanned(response: InvoiceScanResponse) {
     setScannedInvoice(response);
     setInvoiceScanOpen(false);
+  }
+
+  /**
+   * «Cargar en la compra»: las líneas de la factura entran al formulario bloqueadas
+   * (COM-12) con proveedor, moneda y, en las notas vacías, número y fecha de la factura.
+   * `replace`: sustituyen a la compra en curso (que era de otro proveedor).
+   */
+  async function loadInvoiceDraft(reviewDraft: InvoiceReviewDraft, replace: boolean) {
+    if (invoiceLoadingRef.current) {
+      return;
+    }
+
+    invoiceLoadingRef.current = true;
+    setIsLoadingInvoice(true);
+
+    try {
+      const nextSupplierId = reviewDraft.supplier.contactId;
+      // Nombre, SKU, empaques y % de categoría del catálogo actual, como al restaurar.
+      const products = await resolvePurchaseProducts(
+        nextSupplierId,
+        reviewDraft.lines.map((line) => line.productId),
+      );
+      const applied = applyInvoiceReviewDraft(reviewDraft, {
+        current: { ...(disassemble ? { disassemble } : {}), items, locks, review, taxState },
+        currentCurrency: costCurrency,
+        lockExisting: lockOnAdd,
+        nextId: nextPurchaseLineId,
+        products,
+        rateVes: activeRateVes,
+        replace,
+      });
+      const keptNotes = replace ? "" : notes;
+      const invoiceNote = describeInvoiceForNotes(reviewDraft);
+
+      if (replace) {
+        // Otra compra: la clave del intento anterior (si falló) no viaja con esta.
+        requestAttempt.discard();
+        setDiscountRef(0);
+        setStatus("recibido");
+      }
+
+      setNotes(keptNotes.trim() || !invoiceNote ? keptNotes : invoiceNote);
+      setSupplierId(nextSupplierId);
+      setSupplierName(reviewDraft.supplier.name);
+      setProductSearch("");
+      setCostCurrency(applied.costCurrency);
+      setLineMetaByProductId((prev) => {
+        const next = new Map(replace ? [] : prev);
+
+        for (const [productId, meta] of applied.lineMeta) {
+          next.set(productId, meta);
+        }
+        return next;
+      });
+      dispatchLines({ state: applied.lines, type: "linesRestored" });
+      setLoadedScan(applied.loaded);
+      setNotices((current) => (replace ? applied.notices : [...current, ...applied.notices]));
+      setPendingDuplicate(null);
+
+      // Como restaurar: la factura sustituye a la reposición que esperaba proveedor.
+      if (pendingRestock) {
+        consumeRestockDraft(pendingRestock.id);
+        setPendingRestock(null);
+      }
+      setFormError(null);
+      setScannedInvoice(null);
+    } catch (error) {
+      showToast({
+        description: requestErrorMessage(error),
+        title: "No pudimos cargar la factura en la compra",
+        tone: "error",
+      });
+    } finally {
+      invoiceLoadingRef.current = false;
+      setIsLoadingInvoice(false);
+    }
+  }
+
+  // Con líneas de OTRO proveedor se pregunta antes: sus costos y vínculos no sirven a este.
+  function handleInvoiceLoad(reviewDraft: InvoiceReviewDraft) {
+    if (items.length > 0 && supplierId !== reviewDraft.supplier.contactId) {
+      setInvoiceReplaceRequest(reviewDraft);
+      return;
+    }
+
+    void loadInvoiceDraft(reviewDraft, false);
+  }
+
+  /** Descarta el escaneo en el servidor y vuelve al formulario tal como estaba. */
+  function discardScannedInvoice(response: InvoiceScanResponse) {
+    setScannedInvoice(null);
+    void apiFetch(`/api/purchases/invoice-scan/${encodeURIComponent(response.scanId)}/discard`, {
+      method: "POST",
+    }).catch((error: unknown) => {
+      showToast({
+        description: requestErrorMessage(error),
+        title: "No pudimos descartar el escaneo",
+        tone: "error",
+      });
+    });
   }
 
   // Lector con la confirmación abierta (CNF-F5): su Enter no llega al botón del modal. Como
@@ -990,7 +1169,14 @@ export function PurchaseCreatePage() {
       // La compra ya existe: el borrador sobra y salir no debe preguntar.
       setConfirmed(true);
       setConfirmKey(null);
+      setLoadedScan(null);
       draft.clear();
+
+      const learned = purchase.invoiceScan?.learned;
+
+      if (learned) {
+        showToast({ title: describeLearnedAliases(learned) });
+      }
 
       // La compra existe aunque el pago no haya entrado: se sale del formulario igual
       // (quedarse invitaría a crear otra) y el detalle ofrece registrar el pago.
@@ -1038,8 +1224,32 @@ export function PurchaseCreatePage() {
 
   return (
     <div className="space-y-6 pb-8">
-      <PurchaseCreateHeader onScanInvoice={canScanInvoice ? () => setInvoiceScanOpen(true) : undefined} />
+      <PurchaseCreateHeader
+        onScanInvoice={
+          canScanInvoice && !reviewingInvoice ? () => setInvoiceScanOpen(true) : undefined
+        }
+      />
 
+      {scannedInvoice ? (
+        <>
+          {isLoadingInvoice ? (
+            <LoadingState title="Cargando la factura en la compra..." variant="inline" />
+          ) : null}
+          <InvoiceReviewPanel
+            canCreateProduct={canCreateProduct}
+            context={reviewContext}
+            key={scannedInvoice.scanId}
+            onDiscard={() => discardScannedInvoice(scannedInvoice)}
+            onLoad={handleInvoiceLoad}
+            onRescan={() => {
+              discardScannedInvoice(scannedInvoice);
+              setInvoiceScanOpen(true);
+            }}
+            response={scannedInvoice}
+          />
+        </>
+      ) : (
+      <>
       {draft.pending ? (
         <PurchaseDraftBanner
           draft={draft.pending}
@@ -1190,6 +1400,8 @@ export function PurchaseCreatePage() {
         </div>
       </div>
       </div>
+      </>
+      )}
 
       {canCreateProduct ? (
         <PurchaseNewProductModal
@@ -1269,6 +1481,32 @@ export function PurchaseCreatePage() {
         }}
         open={restockConflict !== null}
         title="Tienes una compra en curso"
+        variant="danger"
+      />
+      <ConfirmActionModal
+        cancelLabel="Cancelar"
+        confirmLabel="Reemplazar la compra"
+        description={
+          invoiceReplaceRequest
+            ? `La factura es de ${invoiceReplaceRequest.supplier.name} y la compra en curso es de otro proveedor. Reemplazarla quita ${
+                items.length === 1 ? "su línea" : `sus ${items.length} líneas`
+              }, notas y descuento, y carga las de la factura.`
+            : ""
+        }
+        onConfirm={() => {
+          if (invoiceReplaceRequest) {
+            void loadInvoiceDraft(invoiceReplaceRequest, true);
+          }
+
+          setInvoiceReplaceRequest(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setInvoiceReplaceRequest(null);
+          }
+        }}
+        open={invoiceReplaceRequest !== null}
+        title="Reemplazar la compra en curso"
         variant="danger"
       />
       {canScanInvoice && invoiceScanOpen ? (
