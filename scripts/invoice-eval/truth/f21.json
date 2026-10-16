@@ -1,0 +1,48 @@
+{
+  "id": "f21",
+  "synthetic": false,
+  "pages": [
+    "samples/f21.jpg"
+  ],
+  "supplierKey": "confiplast-jld",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA CONFIPLAST JLD, C.A",
+      "taxId": "J-502410724",
+      "address": "CALLE ARGENTINA ENTRE SEGUNDA Y TERCERA AVENIDA LOCAL NRO 58 URB CATIA CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00354259",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "TORTILLITAS JACKS 190G QUESO / PICANTE",
+        "description": "Tortillitas Jacks 190g queso/picante",
+        "quantity": 3,
+        "unitPrice": 2036.02,
+        "lineTotal": 6108.06,
+        "taxHint": "general",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 6108.06,
+    "tax": 977.29,
+    "total": 7085.35,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "tortillitas-jacks-queso-picante-190g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad impresa 3,000 (tres decimales). \"|*REF: 8.10|\" bajo SUBTTL es el equivalente en divisa del subtotal (6.108,06 / 8,10 ≈ 754,08 Bs/USD implícito), no una tasa impresa: no se pone printedRate"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "3,000 × 2.036,02 = 6.108,06 = SUBTTL = BI G16,00% OK; 6.108,06 × 16% = 977,29 = IVA OK; 6.108,06 + 977,29 = 7.085,35 = TOTAL OK; Efectivo 7.000,00 + Punto de venta 85,35 = 7.085,35 OK. El Tlf 04122115325 está en el bloque del cliente (GENERICO CJA 1), no es del proveedor; el QR no es dato"
+  }
+}

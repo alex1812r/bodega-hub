@@ -1,0 +1,46 @@
+{
+  "id": "f19",
+  "synthetic": false,
+  "pages": [
+    "samples/f19.jpg"
+  ],
+  "supplierKey": "farmatodo",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "Farmatodo",
+      "phone": "0800-FARMATODO"
+    },
+    "number": "00362952",
+    "date": "2026-09-03",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "Azucar Montalban Refinada 1",
+        "description": "Azúcar Montalbán refinada 1kg",
+        "quantity": 1,
+        "unitPrice": 1750,
+        "lineTotal": 1750,
+        "taxHint": "exento",
+        "supplierSku": "111103216",
+        "confidence": 1
+      }
+    ],
+    "total": 1750,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "azucar-montalban-refinada-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cantidad no impresa: 1 por \"# ITEMS: 1\". El \"1\" final del nombre se toma como presentación (1kg), no como cantidad"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "1 × 1.750,00 = 1.750,00 = EXENTO = TOTAL = Biopago OK; # ITEMS: 1. Cabecera cortada: razón social y RIF de Farmatodo no visibles (se omite taxId; nombre tomado de \"FARMACIA OPALO, TLF:0800-FARMATODO\"); V26271369 y la razón social impresa son del cliente. El código de barras del pie es un código de control (T4XX6A911H1YECI4C1T49), no del producto"
+  }
+}

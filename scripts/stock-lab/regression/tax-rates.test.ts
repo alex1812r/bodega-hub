@@ -774,22 +774,25 @@ describe("tax_rates · catálogo: semilla, lectura por tienda y escritura solo d
 });
 
 describe("migración de 20261007a · datos anteriores al catálogo", () => {
-  /** Estado de todo lo que la migración puede tocar en las dos tiendas del lab. */
+  /**
+   * Estado de todo lo que la migración puede tocar en las dos tiendas del seed de stock-lab (`lab` y `default`).
+   * Otras tiendas del mismo lab (p. ej. `eval-facturas`, de scripts/invoice-eval/seed-lab.ts) quedan fuera.
+   */
   function snapshot(): Promise<Row> {
     return one(
       "estado migrado",
       `select
          (select jsonb_agg(jsonb_build_object('code', code, 'pct', pct, 'is_active', is_active, 'global', store_id is null, 'label', label)
-            order by store_id nulls first, pct, code) from public.tax_rates) as alicuotas,
+            order by store_id nulls first, pct, code) from public.tax_rates where store_id is null or store_id = any($3::uuid[])) as alicuotas,
          (select jsonb_agg(jsonb_build_object('name', c.name, 'pct', c.tax_rate, 'code', t.code) order by c.name)
             from public.categories c left join public.tax_rates t on t.id = c.tax_rate_id where c.store_id = $1) as categorias,
          (select jsonb_agg(jsonb_build_object('pct', s.default_tax_rate, 'code', t.code) order by s.store_id)
-            from public.app_settings s left join public.tax_rates t on t.id = s.default_tax_rate_id) as ajustes,
+            from public.app_settings s left join public.tax_rates t on t.id = s.default_tax_rate_id where s.store_id = any($3::uuid[])) as ajustes,
          (select jsonb_agg(jsonb_build_object('pct', pi.tax_rate, 'code', pi.tax_rate_code) order by pi.tax_rate)
             from public.purchase_items pi join public.purchases pu on pu.id = pi.purchase_id where pu.notes = $2) as lineas,
          (select jsonb_agg(jsonb_build_object('code', r.code, 'categorias', r.category_names, 'por_defecto', r.is_store_default) order by r.code)
-            from public.tax_rates_pending_review r) as por_revisar`,
-      [lab.storeId, TAG],
+            from public.tax_rates_pending_review r where r.store_id = any($3::uuid[])) as por_revisar`,
+      [lab.storeId, TAG, [lab.storeId, lab.defaultStoreId]],
     );
   }
 

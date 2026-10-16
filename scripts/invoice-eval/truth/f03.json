@@ -1,0 +1,113 @@
+{
+  "id": "f03",
+  "synthetic": false,
+  "pages": [
+    "samples/f03.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": "f02",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00003570",
+    "date": "2026-09-08",
+    "currency": "VES",
+    "printedRate": 814.7,
+    "lines": [
+      {
+        "rawText": "POWER MAX 400ML [CAJA X 15,00]",
+        "description": "Power Max 400ml",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 15,
+        "unitPrice": 4358.64,
+        "lineTotal": 4358.64,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5173.34,
+        "lineTotal": 5173.34,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L [BULTO X 6,00]",
+        "description": "Coca-Cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7226.39,
+        "lineTotal": 7226.39,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4163.12,
+        "lineTotal": 8326.24,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 400ML [BULTO X 15,00]",
+        "description": "Justy 400ml",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4032.77,
+        "lineTotal": 8065.54,
+        "confidence": 1
+      }
+    ],
+    "total": 33150.15,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "power-max-400ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "justy-400ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [
+      "La fecha (08/09/2026), 'ORDEN DE DESPACHO' y 'Nombre:' quedan tapados por el pulgar (solo se ve '...26'); la fecha se toma de f02 (misma factura: nº 00003570, hora 15:36, Ref 3704)"
+    ],
+    "arithmetic": "q×p=total en las 5 líneas; sum(lineTotal)=33.150,15 = Total impreso OK; Total Items 7 = 1+1+1+2+2 OK; 33.150,15/814,70 = 40,69 = Ref impreso OK. Todos los importes, cantidades, empaques, Tasa y Ref visibles coinciden con f02"
+  }
+}

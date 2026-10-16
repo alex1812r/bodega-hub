@@ -1,0 +1,111 @@
+{
+  "id": "f14",
+  "synthetic": false,
+  "pages": [
+    "samples/f14.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00002887",
+    "date": "2026-08-31",
+    "currency": "VES",
+    "printedRate": 795,
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5095.95,
+        "lineTotal": 5095.95,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L [BULTO X 6,00]",
+        "description": "Coca-Cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7115.25,
+        "lineTotal": 7115.25,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4054.5,
+        "lineTotal": 4054.5,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 1L [BULTO X 12,00]",
+        "description": "Glup cola 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6876.75,
+        "lineTotal": 6876.75,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 1L [BULTO X 12,00]",
+        "description": "Glup sabores 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6137.4,
+        "lineTotal": 6137.4,
+        "confidence": 1
+      }
+    ],
+    "total": 29279.85,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "qty×unitPrice=lineTotal en las 5 líneas; sum(lineTotal)=29279.85 = Total impreso OK; Total Items impreso 5 = suma de cantidades OK; Ref 36,83 = 29279.85/795.00 OK. Mismo Nº 00002887 que f11 pero de otro proveedor: no es duplicado"
+  }
+}

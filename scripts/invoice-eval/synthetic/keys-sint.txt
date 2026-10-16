@@ -1,0 +1,5 @@
+arroz-primor-1kg	Arroz Primor 1kg	s01,s02,s03,s06,s09,s10	24	977.50 (s09 23460.00/24)
+cafe-fama-de-america-200g	Café Fama de América 200g	s02,s04,s06	24	1308.33 (s06 31400.00/24)
+atun-margarita-140g	Atún Margarita 140g	s01,s03,s10	24	1285.20 (s10 30844.80/24)
+sardinas-la-gaviota-170g	Sardinas La Gaviota 170g	s05,s07	24	690.00 (s07 16560.00/24)
+jabon-azul-las-llaves-300g	Jabón azul Las Llaves 300g	s04,s05,s09	25	605.00 (s09 15125.00/25)

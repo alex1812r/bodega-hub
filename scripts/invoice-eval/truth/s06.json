@@ -1,0 +1,112 @@
+{
+  "id": "s06",
+  "synthetic": true,
+  "pages": [
+    "samples/s06.jpg"
+  ],
+  "supplierKey": "sint-viveres-la-ceiba",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "VIVERES Y DISTRIBUCIONES LA CEIBA, C.A.",
+      "taxId": "J-31765420-9",
+      "phone": "0212-243.08.15",
+      "address": "CALLE 3, EDIF. LA CEIBA, PB, LA URBINA, CARACAS"
+    },
+    "number": "0153",
+    "date": "2026-09-12",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "Harina Pan bulto x20",
+        "description": "Harina PAN 1kg",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18600,
+        "lineTotal": 37200,
+        "confidence": 1
+      },
+      {
+        "rawText": "Azúcar Mimasa bulto x20",
+        "description": "Azúcar Mimasa 900g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19650,
+        "lineTotal": 19650,
+        "confidence": 1
+      },
+      {
+        "rawText": "Arroz Primor bulto x24",
+        "description": "Arroz Primor 1kg",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23600,
+        "lineTotal": 23600,
+        "confidence": 1
+      },
+      {
+        "rawText": "Mantequilla Mavesa caja x24",
+        "description": "Mantequilla Mavesa 250g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 29300,
+        "lineTotal": 29300,
+        "confidence": 1
+      },
+      {
+        "rawText": "Café Fama 200g caja x24",
+        "description": "Café Fama de América 200g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 31400,
+        "lineTotal": 31400,
+        "confidence": 1
+      }
+    ],
+    "total": 141150,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "azucar-mimasa-900g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "arroz-primor-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "mantequilla-mavesa-250g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "cafe-fama-de-america-200g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s06: nota de entrega en talonario preimpreso llenada a mano; sin IVA, solo TOTAL. cantidad × precio × (1 − desc. línea) = lineTotal en las 5 líneas OK; sum(lineTotal)=141.150,00; = TOTAL impreso OK (nota de entrega sin IVA; total sin subtotal ni tax)"
+  }
+}

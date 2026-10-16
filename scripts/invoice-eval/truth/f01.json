@@ -1,0 +1,127 @@
+{
+  "id": "f01",
+  "synthetic": false,
+  "pages": [
+    "samples/f01.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00006894",
+    "date": "2026-10-12",
+    "currency": "VES",
+    "printedRate": 875.65,
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5726.75,
+        "lineTotal": 5726.75,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4562.14,
+        "lineTotal": 9124.28,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 1L [BULTO X 12,00]",
+        "description": "Glup sabores 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6943.9,
+        "lineTotal": 6943.9,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 [BULTO X 12,00]",
+        "description": "Justy 1,5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9570.85,
+        "lineTotal": 9570.85,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 400ML [BULTO X 15,00]",
+        "description": "Justy 400ml",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4299.44,
+        "lineTotal": 4299.44,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 1L [BULTO X 6,00]",
+        "description": "Coca-Cola 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4851.1,
+        "lineTotal": 4851.1,
+        "confidence": 1
+      }
+    ],
+    "total": 40516.32,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Rayón de bolígrafo cruza el total (6.943,90); confirmado por 1,00 x 6.943,90"
+    },
+    {
+      "productKey": "justy-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Impreso 'JUSTY 1.5' sin unidad; se asume litros"
+    },
+    {
+      "productKey": "justy-400ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "q×p=total en las 6 líneas; sum(lineTotal)=40.516,32 = Total impreso OK; Total Items 7 = 1+2+1+1+1+1 OK; 40.516,32/875,65 = 46,27 = Ref impreso OK"
+  }
+}
