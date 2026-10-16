@@ -3087,6 +3087,53 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/purchases/{id}/invoice-scan:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Purchases]
+      summary: Factura escaneada de una compra
+      description: >-
+        Escaneo confirmado del que salio la compra, con las lineas aprendidas
+        (texto de la factura y producto elegido) y URLs firmadas de lectura de
+        cada pagina, validas 5 minutos (falsas en modo mock). `data` es null si
+        la compra no salio de un escaneo. Una compra de otra tienda responde
+        404. Si la imagen ya se borro, `imageUrls` va vacio e `imageExpired` es
+        true. Con datos reales exige una sesion de usuario (la demo no sirve).
+      x-permission: purchases.view
+      parameters:
+        - name: images
+          in: query
+          required: false
+          description: Con `0` no firma las imagenes (`imageUrls` vacio); solo comprueba si hay escaneo.
+          schema:
+            type: string
+            enum: ["0", "1"]
+      responses:
+        "200":
+          description: Escaneo de la compra, o null si no tiene.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/PurchaseInvoiceScan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: El almacenamiento de facturas no esta disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/{id}/receive:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -7720,6 +7767,57 @@ components:
           description: URL firmada de lectura de cada pagina, valida 5 minutos.
           items:
             type: string
+    PurchaseInvoiceScan:
+      type: object
+      description: Escaneo confirmado de una compra y las lineas que se aprendieron de el.
+      required: [scanId, createdAt, confirmedAt, pages, imageUrls, imageExpired, lines, learned]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pages:
+          type: integer
+        imageUrls:
+          type: array
+          description: >-
+            URL firmada de lectura de cada pagina, valida 5 minutos. Vacio si la
+            imagen ya se borro (`imageExpired`) o si se pidio `images=0`.
+          items:
+            type: string
+        imageExpired:
+          type: boolean
+          description: La imagen ya no esta (retencion de 90 dias o ausente en el bucket).
+        learned:
+          type: integer
+          description: Cuantas lineas de la factura quedaron ligadas a un producto.
+        lines:
+          type: array
+          items:
+            type: object
+            required: [lineIndex, rawText, productId, productName]
+            properties:
+              lineIndex:
+                type: integer
+              rawText:
+                type: string
+                description: Texto de la linea tal como se leyo en la factura.
+              productId:
+                type: string
+              productName:
+                type: string
+                nullable: true
+                description: null si el producto ya no existe en la tienda.
+              packLabel:
+                type: string
+              unitsPerPack:
+                type: integer
     PurchaseLastCost:
       type: object
       description: Ultima linea de compra recibida de un producto.

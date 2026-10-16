@@ -14,7 +14,10 @@
  * reclamo y el descarte respeta un reclamo vigente.
  */
 import { ApiError } from "@/lib/api/apiError";
+import { mockEntityStoreId } from "@/lib/api/assertStoreResource";
 import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
+import { mockProducts } from "@/shared/mocks/erp-data";
 import { mockState } from "@/shared/mocks/mockStore";
 import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
@@ -325,6 +328,39 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
   const scan = ownScan(ctx, id);
 
   return scan ? { ...scan } : null;
+}
+
+/** Paridad con `scans.server.ts` (SCN-09a): compra de la tienda y su escaneo confirmado más reciente. */
+export async function findConfirmedScanByPurchase(
+  ctx: InvoiceScanContext,
+  purchaseId: string,
+): Promise<{ purchaseFound: boolean; scan: InvoiceScanRow | null }> {
+  const purchase = findMockPurchase(purchaseId);
+
+  if (!purchase || mockEntityStoreId(purchase) !== ctx.storeId) {
+    return { purchaseFound: false, scan: null };
+  }
+
+  const scan =
+    [...scans().values()]
+      .filter((row) => row.storeId === ctx.storeId && row.purchaseId === purchaseId && row.status === "confirmed")
+      .sort((a, b) => (b.confirmedAt ?? "").localeCompare(a.confirmedAt ?? ""))[0] ?? null;
+
+  return { purchaseFound: true, scan: scan ? { ...scan } : null };
+}
+
+/** Paridad con `scans.server.ts`: nombres de los productos de la tienda por id. */
+export async function getProductNames(
+  ctx: InvoiceScanContext,
+  productIds: readonly string[],
+): Promise<Record<string, string>> {
+  const ids = new Set(productIds);
+
+  return Object.fromEntries(
+    mockProducts
+      .filter((product) => ids.has(product.id) && mockEntityStoreId(product) === ctx.storeId)
+      .map((product) => [product.id, product.name]),
+  );
 }
 
 export async function discardScan(

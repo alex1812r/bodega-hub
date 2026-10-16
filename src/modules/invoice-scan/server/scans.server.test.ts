@@ -12,7 +12,9 @@ import {
   completeScan,
   discardScan,
   failScan,
+  findConfirmedScanByPurchase,
   getDailyUsage,
+  getProductNames,
   getScan,
   listFewShotExamples,
   deleteScansByIds,
@@ -466,5 +468,60 @@ describe("scans.server · purga a 90 días", () => {
     await expect(
       listExpiredScanObjects({ rpc } as unknown as AdminClient, 90, new Date(), 100),
     ).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe("scans.server · escaneo de una compra (SCN-09a)", () => {
+  const purchaseId = "66666666-6666-4666-8666-666666666666";
+  const productId = "77777777-7777-4777-8777-777777777777";
+
+  it("findConfirmedScanByPurchase comprueba la compra en la tienda y busca su escaneo confirmado más reciente", async () => {
+    const { calls } = useRouteClient([
+      ok({ id: purchaseId }),
+      ok(dbRow({ confirmed_at: "2026-10-15T13:00:00.000Z", purchase_id: purchaseId, status: "confirmed" })),
+    ]);
+
+    const result = await findConfirmedScanByPurchase(ctx, purchaseId);
+
+    expect(result.purchaseFound).toBe(true);
+    expect(result.scan).toMatchObject({ id: scanId, purchaseId, status: "confirmed" });
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([["from", "purchases"], ["eq", "id", purchaseId], ["eq", "store_id", ctx.storeId]]),
+    );
+    expect(calls[1]).toEqual(
+      expect.arrayContaining([
+        ["from", "invoice_scans"],
+        ["eq", "store_id", ctx.storeId],
+        ["eq", "purchase_id", purchaseId],
+        ["eq", "status", "confirmed"],
+        ["order", "confirmed_at", { ascending: false }],
+        ["limit", 1],
+      ]),
+    );
+  });
+
+  it("findConfirmedScanByPurchase: compra ajena o id no uuid → purchaseFound false sin buscar escaneo", async () => {
+    const { calls } = useRouteClient([ok(null)]);
+
+    expect(await findConfirmedScanByPurchase(ctx, purchaseId)).toEqual({ purchaseFound: false, scan: null });
+    expect(await findConfirmedScanByPurchase(ctx, "no-uuid")).toEqual({ purchaseFound: false, scan: null });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("findConfirmedScanByPurchase: compra sin escaneo → scan null", async () => {
+    useRouteClient([ok({ id: purchaseId }), ok(null)]);
+
+    expect(await findConfirmedScanByPurchase(ctx, purchaseId)).toEqual({ purchaseFound: true, scan: null });
+  });
+
+  it("getProductNames filtra por tienda e ids únicos; sin ids válidos no consulta", async () => {
+    const { calls } = useRouteClient([ok([{ id: productId, name: "Harina PAN" }])]);
+
+    expect(await getProductNames(ctx, [productId, productId, "no-uuid"])).toEqual({ [productId]: "Harina PAN" });
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([["from", "products"], ["eq", "store_id", ctx.storeId], ["in", "id", [productId]]]),
+    );
+    expect(await getProductNames(ctx, ["no-uuid"])).toEqual({});
+    expect(calls).toHaveLength(1);
   });
 });
