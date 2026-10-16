@@ -212,6 +212,72 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
 }
 
 /**
+ * Escaneo confirmado de la compra `purchaseId` (SCN-09a). `purchaseFound` es
+ * false si la compra no es de la tienda de la sesión (la ruta responde 404);
+ * `scan` es null si la compra no salió de un escaneo confirmado. Ambas
+ * consultas van con el JWT del usuario y filtran por `ctx.storeId`.
+ */
+export async function findConfirmedScanByPurchase(
+  ctx: InvoiceScanContext,
+  purchaseId: string,
+): Promise<{ purchaseFound: boolean; scan: InvoiceScanRow | null }> {
+  if (!UUID_PATTERN.test(purchaseId)) {
+    return { purchaseFound: false, scan: null };
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const purchase = await supabase
+    .from("purchases")
+    .select("id")
+    .eq("id", purchaseId)
+    .eq("store_id", ctx.storeId)
+    .maybeSingle<{ id: string }>();
+
+  throwIfSupabaseError(purchase.error);
+
+  if (!purchase.data) {
+    return { purchaseFound: false, scan: null };
+  }
+
+  const { data, error } = await supabase
+    .from("invoice_scans")
+    .select(scanSelect)
+    .eq("store_id", ctx.storeId)
+    .eq("purchase_id", purchaseId)
+    .eq("status", "confirmed")
+    .order("confirmed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<DbInvoiceScanRow>();
+
+  throwIfSupabaseError(error);
+
+  return { purchaseFound: true, scan: data ? mapScan(data) : null };
+}
+
+/** Nombre de cada producto de la tienda de la sesión por id; los ajenos o borrados no salen. */
+export async function getProductNames(
+  ctx: InvoiceScanContext,
+  productIds: readonly string[],
+): Promise<Record<string, string>> {
+  const ids = [...new Set(productIds)].filter((id) => UUID_PATTERN.test(id));
+
+  if (ids.length === 0) {
+    return {};
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, name")
+    .eq("store_id", ctx.storeId)
+    .in("id", ids);
+
+  throwIfSupabaseError(error);
+
+  return Object.fromEntries(((data ?? []) as { id: string; name: string }[]).map((row) => [row.id, row.name]));
+}
+
+/**
  * Descarta un escaneo `extracted` (RPC `discard_invoice_scan`, 20261019g/i,
  * solo service role, con la tienda de la sesión). null si no es de la tienda
  * (404); en otro estado la RPC responde PT409 con el mensaje de ese estado

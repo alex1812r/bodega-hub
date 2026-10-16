@@ -29,6 +29,7 @@ import {
   type InvoiceFewShotExample,
   type InvoicePage,
 } from "./extract";
+import { readExtractedRawTexts } from "./confirmScan.server";
 import { toFewShotFormat } from "./fewShot";
 import { inspectInvoiceImage } from "./imageInfo";
 import { invoiceMatchSchema } from "./invoiceMatchSchema";
@@ -37,8 +38,10 @@ import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 import * as mockRepo from "./scans.mock-server";
 import * as serverRepo from "./scans.server";
 import {
+  INVOICE_SCAN_RETENTION_DAYS,
   invoiceScanPagePaths,
   MAX_FEW_SHOT_EXAMPLES,
+  parseConfirmedScan,
   readInvoiceScanDailyLimit,
   type InvoiceScanContext,
   type InvoiceScanStatus,
@@ -61,7 +64,15 @@ import {
 
 export type InvoiceScanRepo = Pick<
   typeof serverRepo,
-  "completeScan" | "discardScan" | "failScan" | "getDailyUsage" | "getScan" | "listFewShotExamples" | "reserveScan"
+  | "completeScan"
+  | "discardScan"
+  | "failScan"
+  | "findConfirmedScanByPurchase"
+  | "getDailyUsage"
+  | "getProductNames"
+  | "getScan"
+  | "listFewShotExamples"
+  | "reserveScan"
 >;
 
 /** Bucket privado `invoice-scans`; las rutas ya vienen validadas bajo la tienda de la sesión. */
@@ -97,6 +108,34 @@ export type InvoiceScanDetail = {
 };
 
 export type DiscardedInvoiceScan = { scanId: string; status: InvoiceScanStatus };
+
+/** Línea confirmada (y aprendida) de la factura de una compra: texto leído → producto elegido. */
+export type PurchaseInvoiceScanLine = {
+  lineIndex: number;
+  rawText: string;
+  productId: string;
+  /** null si el producto ya no existe en la tienda. */
+  productName: string | null;
+  packLabel?: string;
+  unitsPerPack?: number;
+};
+
+/** `GET /api/purchases/[id]/invoice-scan` (SCN-09a). */
+export type PurchaseInvoiceScan = {
+  scanId: string;
+  createdAt: string;
+  confirmedAt: string | null;
+  pages: number;
+  /** URLs firmadas (5 min); [] si la imagen ya no está o si no se pidieron (`images: false`). */
+  imageUrls: string[];
+  /** La imagen ya se borró (retención de 90 días o ausente en el bucket). */
+  imageExpired: boolean;
+  lines: PurchaseInvoiceScanLine[];
+  learned: number;
+};
+
+export const PURCHASE_NOT_FOUND_MESSAGE = "Compra no encontrada.";
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Las URLs firmadas de lectura de las páginas caducan a los 5 minutos. */
 export const INVOICE_READ_URL_TTL_SECONDS = 300;
@@ -594,6 +633,82 @@ function validDetailMatch(matched: unknown): InvoiceMatch | null {
   console.warn("[invoice-scan] emparejamiento guardado fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
 
   return null;
+}
+
+/**
+ * Escaneo confirmado de una compra para su detalle (SCN-09a; plan §5.3 SCN-09).
+ * 404 si la compra no es de la tienda de la sesión; null si no salió de un
+ * escaneo confirmado. `lines` sale de `confirmed.lines` (D10) validado con
+ * `parseConfirmedScan`; el texto de cada línea es el de la lectura guardada.
+ * Con `images: false` no se firma nada (el detalle solo comprueba si hay escaneo).
+ * Nunca se registran URLs ni contenido de la factura.
+ */
+export async function getPurchaseInvoiceScan(
+  deps: InvoiceScanDeps,
+  ctx: InvoiceScanContext,
+  purchaseId: string,
+  options: { images?: boolean } = {},
+): Promise<PurchaseInvoiceScan | null> {
+  const { purchaseFound, scan } = await deps.repo.findConfirmedScanByPurchase(ctx, purchaseId);
+
+  if (!purchaseFound) {
+    throw new ApiError(404, "NOT_FOUND", PURCHASE_NOT_FOUND_MESSAGE);
+  }
+
+  if (!scan) {
+    return null;
+  }
+
+  const confirmed = parseConfirmedScan(scan.confirmed);
+  const rawTexts = readExtractedRawTexts(scan.extracted);
+  const confirmedLines = (confirmed?.lines ?? []).flatMap((line) => {
+    const rawText = rawTexts[line.lineIndex] ?? confirmed?.extraction.lines[line.lineIndex]?.rawText;
+    return typeof rawText === "string" && rawText.trim() !== "" ? [{ ...line, rawText }] : [];
+  });
+  const names = await deps.repo.getProductNames(
+    ctx,
+    confirmedLines.map((line) => line.productId),
+  );
+  const lines: PurchaseInvoiceScanLine[] = confirmedLines.map((line) => ({
+    lineIndex: line.lineIndex,
+    productId: line.productId,
+    productName: names[line.productId] ?? null,
+    rawText: line.rawText,
+    ...(line.packLabel !== undefined ? { packLabel: line.packLabel } : {}),
+    ...(line.unitsPerPack !== undefined ? { unitsPerPack: line.unitsPerPack } : {}),
+  }));
+  const pastRetention =
+    deps.now().getTime() - new Date(scan.createdAt).getTime() > INVOICE_SCAN_RETENTION_DAYS * DAY_MS;
+  let imageUrls: string[] = [];
+  let imageExpired = pastRetention;
+
+  if (options.images !== false && !pastRetention) {
+    // La ruta guardada se vuelve a validar antes de firmar con service role.
+    assertPathInStore(scan.storagePath, ctx.storeId);
+    imageUrls = await Promise.all(
+      invoiceScanPagePaths(scan.storagePath, scan.pages).map((path) =>
+        deps.storage.signedReadUrl(path, INVOICE_READ_URL_TTL_SECONDS),
+      ),
+    ).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 404) {
+        imageExpired = true;
+        return [];
+      }
+
+      throw error;
+    });
+  }
+
+  return {
+    confirmedAt: scan.confirmedAt,
+    createdAt: scan.createdAt,
+    imageExpired,
+    imageUrls,
+    learned: lines.length,
+    lines,
+    pages: scan.pages,
+    scanId: scan.id,
+  };
 }
 
 /** 404 si no es de la tienda; 409 (del repositorio) si ya no está `extracted`. */

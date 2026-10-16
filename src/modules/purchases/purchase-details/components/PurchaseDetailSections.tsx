@@ -14,6 +14,7 @@ import { PurchaseDetailInfoBanner } from "./PurchaseDetailInfoBanner";
 import { PurchaseDetailPaymentsTable } from "./PurchaseDetailPaymentsTable";
 import { PurchaseDetailProductsTable } from "./PurchaseDetailProductsTable";
 import { PurchaseDetailSupplierCard } from "./PurchaseDetailSupplierCard";
+import { PurchaseInvoiceScanSection } from "./PurchaseInvoiceScanSection";
 
 /** Claves de `localStorage` que recuerdan cada sección abierta o cerrada. */
 export const PURCHASE_DETAIL_SECTION_STORAGE_KEYS = {
@@ -103,6 +104,8 @@ export function PurchaseDetailSections({
           </div>
         ) : null}
       </CollapsibleSection>
+
+      <PurchaseInvoiceScanSection purchaseId={purchase.id} />
 
       <CollapsibleSection
         defaultOpen={paymentsOpenByDefault}

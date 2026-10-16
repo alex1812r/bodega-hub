@@ -4,13 +4,16 @@
 import { ApiError } from "@/lib/api/apiError";
 import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
 import { mockState } from "@/shared/mocks/mockStore";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
 import {
   completeScan,
   discardScan,
   failScan,
+  findConfirmedScanByPurchase,
   getDailyUsage,
+  getProductNames,
   getScan,
   listFewShotExamples,
   deleteScansByIds,
@@ -462,5 +465,39 @@ describe("scans.mock-server · purga a 90 días", () => {
 
     await removeScanObjects(null, [orphanA, orphanB]);
     expect(await listExpiredScanObjects(null, 90, now, 100)).toEqual([]);
+  });
+});
+
+describe("scans.mock-server · escaneo de una compra (paridad SCN-09a)", () => {
+  const defaultStore = { storeId: DEFAULT_STORE_ID, userId: "user-a" };
+
+  function linkToPurchase(id: string, purchaseId: string, confirmedAt: string) {
+    const scan = store().get(id) as InvoiceScanRow;
+    store().set(id, { ...scan, confirmed: { extraction, lines: [] }, confirmedAt, purchaseId, status: "confirmed" });
+  }
+
+  it("devuelve el confirmado más reciente de la compra de la tienda", async () => {
+    const older = await seedScanForTest(defaultStore, input({ imageSha256: "hash-old" }));
+    const newer = await seedScanForTest(defaultStore, input({ imageSha256: "hash-new" }));
+    linkToPurchase(older.id, "purchase-001", "2026-10-01T10:00:00.000Z");
+    linkToPurchase(newer.id, "purchase-001", "2026-10-02T10:00:00.000Z");
+
+    const result = await findConfirmedScanByPurchase(defaultStore, "purchase-001");
+
+    expect(result.purchaseFound).toBe(true);
+    expect(result.scan?.id).toBe(newer.id);
+  });
+
+  it("compra sin escaneo confirmado → scan null; ajena o inexistente → purchaseFound false", async () => {
+    await seedScanForTest(defaultStore, input());
+
+    expect(await findConfirmedScanByPurchase(defaultStore, "purchase-001")).toEqual({ purchaseFound: true, scan: null });
+    expect(await findConfirmedScanByPurchase(storeB, "purchase-001")).toEqual({ purchaseFound: false, scan: null });
+    expect(await findConfirmedScanByPurchase(defaultStore, "purchase-x")).toEqual({ purchaseFound: false, scan: null });
+  });
+
+  it("getProductNames solo nombra productos de la tienda", async () => {
+    expect(await getProductNames(defaultStore, ["prod-drill", "prod-nope"])).toEqual({ "prod-drill": "Taladro percutor" });
+    expect(await getProductNames(storeB, ["prod-drill"])).toEqual({});
   });
 });
