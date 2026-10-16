@@ -773,7 +773,7 @@ export function createInvoiceScanDeps(dataSource: ApiDataSource): InvoiceScanDep
     dataSource,
     extract: extractInvoice,
     matcher: matchScan,
-    model: createInvoiceScanModel,
+    model: () => createInvoiceScanModel({ requireRealProvider: supabase }),
     now: () => new Date(),
     repo: supabase ? serverRepo : mockRepo,
     storage: supabase ? createSupabaseInvoiceStorage() : mockInvoiceStorage,

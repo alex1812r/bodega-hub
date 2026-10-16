@@ -2659,21 +2659,18 @@ select
   )
 union all
 select
-  'storage invoice-scans: lectura e insercion por carpeta de tienda, sin update/delete (20261019a)',
+  'storage invoice-scans: solo lectura por carpeta de tienda, sin insert/update/delete (20261019a, CIE-08)',
   (
-    select count(*) = 2 from pg_policies pol
+    select count(*) = 1 from pg_policies pol
     where pol.schemaname = 'storage' and pol.tablename = 'objects'
-      and pol.policyname in (
-        'Purchase viewers read invoice scan images',
-        'Purchase creators upload invoice scan images'
-      )
+      and pol.policyname = 'Purchase viewers read invoice scan images'
       and coalesce(pol.qual, pol.with_check) ilike '%foldername%'
   )
   and not exists (
     select 1 from pg_policies pol
     where pol.schemaname = 'storage' and pol.tablename = 'objects'
       and coalesce(pol.qual, pol.with_check) ilike '%invoice-scans%'
-      and pol.cmd in ('UPDATE', 'DELETE', 'ALL')
+      and pol.cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
   )
 union all
 select
