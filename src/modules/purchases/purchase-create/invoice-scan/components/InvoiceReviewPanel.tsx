@@ -128,9 +128,9 @@ export function InvoiceReviewPanel({
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
   function requestFocus(target: number | null, next: InvoiceReviewState) {
     const line = target === null ? undefined : next.lines[target];
-    // Con producto pero sin poder resolverse (falta el tamaño del empaque, la cantidad…)
-    // el foco va al campo que falta.
-    const needs = line?.productId ? getLineNeeds(line) : [];
+    // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
+    // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
+    const needs = line?.productId && line.accepted ? getLineNeeds(line) : [];
     const need = NEED_FOCUS_ORDER.find((item) => needs.includes(item));
     setFocusRequest((current) => ({ seq: (current?.seq ?? 0) + 1, target, ...(need ? { need } : {}) }));
   }
@@ -169,6 +169,22 @@ export function InvoiceReviewPanel({
         event.preventDefault();
         setSearchIndex(null);
         requestFocus(index, state);
+      }
+      // Enter en un campo que la línea pide (unidades, cantidad, costo): como Enter en la
+      // fila, acepta el marcado si hace falta y salta a la siguiente pendiente.
+      if (
+        event.key === "Enter" &&
+        event.target instanceof HTMLElement &&
+        event.target.hasAttribute("data-need")
+      ) {
+        const current = state.lines[index];
+        if (current && isPendingStatus(current.status) && !current.accepted) {
+          const result = pressEnter(state, index);
+          dispatch({ type: "acceptMarked", index });
+          requestFocus(result.next, result.state);
+        } else if (current && !isPendingStatus(current.status)) {
+          requestFocus(nextPendingIndex(state, index), state);
+        }
       }
       return;
     }
