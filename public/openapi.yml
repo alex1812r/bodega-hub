@@ -2598,6 +2598,26 @@ paths:
         siendo 201 con la compra y `initialPayment.status = failed`: la compra queda
         pendiente de pago. Repetir la peticion con las mismas dos claves de
         idempotencia devuelve la misma compra y el mismo pago.
+
+
+        Con `invoiceScanId` la compra sale de un escaneo de factura (SCN-06):
+        `clientRequestId` es obligatorio (sin el, 400). Antes de crear la compra
+        el servidor reclama el escaneo para este intento, siempre en la tienda de
+        la sesion: un escaneo de otra tienda o inexistente ("Escaneo no
+        encontrado"), ya confirmado con otra compra ("El escaneo ya fue
+        confirmado"), descartado o fallido ("El escaneo no está disponible") o
+        reclamado por otro intento vigente ("El escaneo se está confirmando en
+        otra compra") responde 400 y no crea la compra. Si la creacion se rechaza
+        (4xx) el reclamo se suelta; con un resultado incierto caduca a los 5
+        minutos. Tras crear la compra se confirma el escaneo con
+        `invoiceScanExtraction` (o, sin ella, la lectura guardada) y las lineas
+        de `invoiceScanLines`, y se aprenden los alias de las lineas cuyo
+        producto esta en `items`; el texto del alias sale de la lectura
+        guardada, nunca del cliente. Un fallo al confirmar o aprender no deshace
+        la compra: se informa en `invoiceScan`. Repetir el mismo intento (misma
+        clave, escaneo ya confirmado con esa compra) devuelve la misma compra y
+        no vuelve a aprender. Si la clave ya creo otra compra (ligada a otro
+        escaneo o anterior al reclamo) responde 400 sin confirmar el escaneo.
       x-permission: purchases.create
       requestBody:
         required: true
@@ -2608,7 +2628,8 @@ paths:
       responses:
         "201":
           description: >-
-            Compra creada. Lleva `initialPayment` solo si la peticion lo envio.
+            Compra creada. Lleva `initialPayment` solo si la peticion lo envio e
+            `invoiceScan` solo si envio `invoiceScanId`.
           content:
             application/json:
               schema:
@@ -7591,12 +7612,15 @@ components:
           type: string
         date:
           type: string
-          format: date
+          description: Fecha de la factura, ISO `YYYY-MM-DD`. El servidor no valida el formato.
         currency:
           type: string
           enum: [VES, USD, unknown]
         printedRate:
           type: number
+          minimum: 0
+          exclusiveMinimum: true
+          description: Tasa Bs/USD impresa al pie, si la hay.
         lines:
           type: array
           items:
@@ -8063,6 +8087,53 @@ components:
               properties:
                 initialPayment:
                   $ref: "#/components/schemas/PurchaseInitialPaymentResult"
+                invoiceScan:
+                  $ref: "#/components/schemas/PurchaseInvoiceScanOutcome"
+    PurchaseInvoiceScanOutcome:
+      type: object
+      description: >-
+        Resultado del escaneo de factura de la compra. La compra ya existe aunque
+        `confirmed` sea false (el fallo queda en el log del servidor).
+      required: [confirmed, learned]
+      properties:
+        confirmed:
+          type: boolean
+          description: El escaneo quedo (o ya estaba, al repetir el intento) confirmado con esta compra.
+        learned:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: >-
+            Alias aprendidos en esta llamada; null si no se aprendio (intento
+            repetido, escaneo sin confirmar o fallo del aprendizaje).
+    PurchaseInvoiceScanLineInput:
+      type: object
+      description: >-
+        Producto elegido para una linea de la factura (D10). Una linea cuyo
+        `lineIndex` no existe en la lectura guardada se ignora; si su producto no
+        esta en `items` se guarda pero no se aprende. El empaque solo se aprende
+        si coincide con un item del mismo producto en modo empaque y el mismo
+        `unitsPerPack` (con la etiqueta del item); sin empaque y con el producto
+        en modo unidad, el alias queda sin empaque.
+      required: [lineIndex, productId]
+      properties:
+        lineIndex:
+          type: integer
+          minimum: 0
+          description: Indice de la linea en `extraction.lines` del escaneo guardado.
+        productId:
+          type: string
+          format: uuid
+        packLabel:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Se recorta de espacios.
+        unitsPerPack:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          nullable: true
     PurchaseInitialPaymentResult:
       description: >-
         Resultado del pago inicial. `registered`: el pago quedo registrado.
@@ -8126,7 +8197,16 @@ components:
           $ref: "#/components/schemas/PaymentDenominations"
     PurchaseCreateInput:
       type: object
-      required: [supplierId, items]
+      required:
+        - supplierId
+        - items
+        - discountRef
+        - discountVes
+        - refRateVes
+        - subtotalRef
+        - subtotalVes
+        - taxRef
+        - taxVes
       properties:
         initialPayment:
           $ref: "#/components/schemas/PurchaseInitialPaymentInput"
@@ -8155,13 +8235,47 @@ components:
         discountRef:
           type: number
           minimum: 0
+        discountVes:
+          type: number
+          minimum: 0
+        subtotalRef:
+          type: number
+          minimum: 0
+        subtotalVes:
+          type: number
+          minimum: 0
         taxRef:
+          type: number
+          minimum: 0
+        taxVes:
           type: number
           minimum: 0
         refRateVes:
           type: number
           minimum: 0
           exclusiveMinimum: true
+        invoiceScanId:
+          type: string
+          format: uuid
+          description: >-
+            Escaneo de factura del que sale la compra (`POST
+            /api/purchases/invoice-scan`). Exige `clientRequestId`. Escaneo de
+            otra tienda, inexistente, ya confirmado con otra compra, descartado,
+            fallido o reclamado por otro intento: 400 sin crear la compra.
+        invoiceScanLines:
+          type: array
+          maxItems: 500
+          description: Producto elegido por linea de la factura. Exige `invoiceScanId`.
+          items:
+            $ref: "#/components/schemas/PurchaseInvoiceScanLineInput"
+        invoiceScanExtraction:
+          description: >-
+            Lectura corregida por el usuario (D10), con el mismo contrato que la
+            del modelo y como maximo 500 lineas. Exige `invoiceScanId`. Se guarda
+            como la extraccion confirmada del escaneo (los textos opcionales
+            vacios quedan ausentes); sin ella se guarda la lectura del escaneo.
+          allOf:
+            - $ref: "#/components/schemas/InvoiceExtraction"
     Payment:
       type: object
       required: [id, direction, method, amount, amountVes, amountRef, contactId]
