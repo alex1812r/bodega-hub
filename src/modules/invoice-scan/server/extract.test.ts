@@ -245,6 +245,16 @@ describe("extractInvoice", () => {
     expect(error.message).toMatch(/foto más nítida/);
   });
 
+  it("CIE-06: a model output with U+0000 fails as INVALID_OUTPUT before it can reach jsonb (22P05)", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        generated({ ...singlePageExtraction, supplier: { ...singlePageExtraction.supplier, name: "X\u0000" } }, 10, 10),
+      ],
+    });
+
+    await expectCode(extractInvoice({ model: info(model), pages: [page()] }), "INVALID_OUTPUT");
+  });
+
   it("returns the not-an-invoice answer in empty mode", async () => {
     const result = await extractInvoice({ model: mockInfo("empty").info, pages: [page()] });
 

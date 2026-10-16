@@ -163,6 +163,14 @@ function requestErrorMessage(error: unknown) {
     : errorMessage(error);
 }
 
+/**
+ * CIE-06 (auditoría M1): la compra se creó pero el escaneo no quedó confirmado con
+ * ella (`invoiceScan.confirmed: false`). La factura sigue ligada a esa compra en el
+ * servidor y no puede registrar otra.
+ */
+export const INVOICE_SCAN_NOT_LINKED_MESSAGE =
+  "La compra se registró pero no se pudo vincular la factura. No la vuelvas a registrar.";
+
 export function PurchaseCreatePage() {
   const router = useRouter();
   const exchangeRate = useCurrentExchangeRate();
@@ -1310,7 +1318,9 @@ export function PurchaseCreatePage() {
 
       const learned = purchase.invoiceScan?.learned;
 
-      if (learned) {
+      if (purchase.invoiceScan?.confirmed === false) {
+        showToast({ title: INVOICE_SCAN_NOT_LINKED_MESSAGE, tone: "error" });
+      } else if (learned) {
         showToast({ title: describeLearnedAliases(learned) });
       }
 

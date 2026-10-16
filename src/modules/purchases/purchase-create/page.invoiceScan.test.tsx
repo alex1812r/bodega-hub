@@ -239,7 +239,7 @@ import {
   REVIEW_TAX_RATES,
 } from "./invoice-scan/reviewFixtures";
 import { createInvoiceReviewState, reviewReducer } from "./invoice-scan/reviewModel";
-import { PurchaseCreatePage } from "./page";
+import { INVOICE_SCAN_NOT_LINKED_MESSAGE, PurchaseCreatePage } from "./page";
 import { purchaseDraftStorageKey } from "./utils/purchaseDraftStorage";
 
 const draftKey = purchaseDraftStorageKey({ storeId: "store-1", userId: "user-1" });
@@ -684,6 +684,23 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     ]);
     expect((body.items as unknown[]).length).toBe(2);
     expect(await screen.findByText("Se aprendieron 2 alias de este proveedor")).toBeInTheDocument();
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
+  });
+
+  it("CIE-06 (M1): si la compra se crea pero la factura no se vincula (confirmed:false) lo avisa y abre la compra", async () => {
+    const api = installApi({
+      purchase: {
+        payload: { data: { id: "purchase-nueva", invoiceScan: { confirmed: false, learned: null } } },
+        status: 201,
+      },
+    });
+    renderPage();
+
+    await scanAndLoad();
+    await confirmPurchase(api);
+
+    expect(await screen.findByText(INVOICE_SCAN_NOT_LINKED_MESSAGE)).toBeInTheDocument();
+    expect(INVOICE_SCAN_NOT_LINKED_MESSAGE).toMatch(/^La compra se registró pero no se pudo vincular la factura/);
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
   });
 
