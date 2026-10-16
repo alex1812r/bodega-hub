@@ -6,6 +6,12 @@
  * 20261019g/i con el intento vigente, tope de 512 KB de la lectura, cuota por
  * día de Caracas sobre `usagePages`, few-shot ≤ 3, 404 entre tiendas, purga a
  * 90 días de filas y de objetos sin escaneo vivo).
+ *
+ * SCN-13a: es el ÚNICO almacén de escaneos del mock. `confirmScan.mock-server.ts`
+ * (confirmación dentro de `POST /api/purchases`) lee y escribe estas mismas filas;
+ * las columnas del reclamo de 20261019b, que `InvoiceScanRow` no tiene, viven al
+ * lado por id (`mockScanClaim`). Como 20261019k, reusar una fila limpia su
+ * reclamo y el descarte respeta un reclamo vigente.
  */
 import { ApiError } from "@/lib/api/apiError";
 import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
@@ -13,6 +19,7 @@ import { mockState } from "@/shared/mocks/mockStore";
 import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
 import type { InvoiceScanLimits } from "../contracts";
+import { INVOICE_SCAN_CLAIM_TTL_MS } from "./confirmScan.server";
 import {
   DISCARD_CLAIMED_MESSAGE,
   DISCARD_NOT_ALLOWED_MESSAGES,
@@ -42,6 +49,62 @@ function scans() {
 /** Columna `attempt_id` por id de escaneo: cada reserva la renueva (20261019i). */
 function attempts() {
   return mockState("invoice-scan:attempts", () => new Map<string, string>());
+}
+
+/** Columnas del reclamo de Emparejamiento (20261019b) por id de escaneo. */
+export type MockScanClaim = {
+  /** Intento que tiene el reclamo (`claim_request_id`). */
+  claimRequestId: string | null;
+  /** Momento del último reclamo en ms (`claimed_at`): mide la caducidad. */
+  claimedAt: number | null;
+  /** Primer reclamo de la clave vigente en ms (`claim_started_at`). */
+  claimStartedAt: number | null;
+  /** Clave de idempotencia de la compra con la que se confirmó (replay). */
+  confirmedClientRequestId: string | null;
+};
+
+function claims() {
+  return mockState("invoice-scan:claims", () => new Map<string, MockScanClaim>());
+}
+
+/** Reclamo (mutable) del escaneo `id`; vacío si nunca se reclamó. */
+export function mockScanClaim(id: string): MockScanClaim {
+  const store = claims();
+  let claim = store.get(id);
+
+  if (!claim) {
+    claim = { claimRequestId: null, claimStartedAt: null, claimedAt: null, confirmedClientRequestId: null };
+    store.set(id, claim);
+  }
+
+  return claim;
+}
+
+/** Fila guardada del escaneo `id` (copia), de cualquier tienda: el llamador filtra. */
+export function findMockScanRow(id: string): InvoiceScanRow | undefined {
+  const scan = scans().get(id);
+
+  return scan ? { ...scan } : undefined;
+}
+
+/** Guarda (o reemplaza) una fila completa. Lo usan la confirmación mock y sus fixtures. */
+export function putMockScanRow(row: InvoiceScanRow): InvoiceScanRow {
+  return save({ ...row });
+}
+
+/** SOLO TESTS: vacía filas, intentos y reclamos del almacén de escaneos. */
+export function resetMockScanStore() {
+  scans().clear();
+  attempts().clear();
+  claims().clear();
+}
+
+function hasActiveClaim(id: string, now: number) {
+  const claim = claims().get(id);
+
+  return Boolean(
+    claim?.claimRequestId && claim.claimedAt !== null && claim.claimedAt >= now - INVOICE_SCAN_CLAIM_TTL_MS,
+  );
 }
 
 function byNewest(a: InvoiceScanRow, b: InvoiceScanRow) {
@@ -137,6 +200,8 @@ export async function reserveScan(
   });
   const attemptId = crypto.randomUUID();
   attempts().set(row.id, attemptId);
+  // 20261019k: el reescaneo no hereda el reclamo de la fila reusada.
+  claims().delete(row.id);
 
   return { attemptId, id: row.id, limit: input.limit, outcome: "reserved", used: used + input.pages };
 }
@@ -276,8 +341,8 @@ export async function discardScan(
     throw new ApiError(409, "CONFLICT", DISCARD_NOT_ALLOWED_MESSAGES[scan.status]);
   }
 
-  // Guarda de 20261019k. El mock no tiene las columnas de reclamo de 19b.
-  if (scan.purchaseId !== null || scan.confirmed !== null) {
+  // Guarda de 20261019k: compra enlazada o reclamo vigente de Emparejamiento.
+  if (scan.purchaseId !== null || scan.confirmed !== null || hasActiveClaim(scan.id, Date.now())) {
     throw new ApiError(409, "CONFLICT", DISCARD_CLAIMED_MESSAGE);
   }
 
@@ -334,7 +399,10 @@ export async function listExpiredScans(
 }
 
 export async function deleteScansByIds(_adminClient: unknown, ids: readonly string[]): Promise<number> {
-  return ids.filter((id) => scans().delete(id)).length;
+  return ids.filter((id) => {
+    claims().delete(id);
+    return scans().delete(id);
+  }).length;
 }
 
 /** Fecha de subida de cada objeto del bucket (equivale a `storage.objects.created_at`). */

@@ -926,3 +926,54 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     await expect(getInvoiceScanDetail(built, ctx, scanId)).rejects.toMatchObject({ status: 503 });
   });
 });
+
+describe("scanInvoice · textos opcionales vacíos (SCN-13a)", () => {
+  const blankExtraction: InvoiceExtraction = {
+    ...singlePageExtraction,
+    lines: singlePageExtraction.lines.map((line, index) =>
+      index === 0 ? { ...line, barcode: "", supplierSku: "   " } : { ...line, barcode: "7591234567890" },
+    ),
+    number: "  ",
+    supplier: { address: "", name: singlePageExtraction.supplier.name, phone: " \t", taxId: "" },
+  };
+
+  function expectNoBlankOptionals(extraction: InvoiceExtraction | null | undefined) {
+    expect(extraction?.supplier).toEqual({ name: singlePageExtraction.supplier.name });
+    expect(extraction).not.toHaveProperty("number");
+    expect(extraction?.lines[0]).not.toHaveProperty("barcode");
+    expect(extraction?.lines[0]).not.toHaveProperty("supplierSku");
+    expect(extraction?.lines[1]?.barcode).toBe("7591234567890");
+  }
+
+  it('"" o solo espacios quedan ausentes en lo emparejado, lo guardado y la respuesta', async () => {
+    const ctx = newContext();
+    const { built, matcher } = deps({ extract: jest.fn(async () => extractResult({ extraction: blankExtraction })) });
+
+    const response = await scanInvoice(built, ctx, { pages: [page("blank")], source: "upload" });
+    const stored = await mockRepo.getScan(ctx, response.scanId);
+
+    expectNoBlankOptionals(matcher.mock.calls[0]?.[0]);
+    expectNoBlankOptionals(stored?.extracted);
+    expectNoBlankOptionals(response.extraction);
+  });
+
+  it("una fila en caché con textos vacíos se sirve ya normalizada", async () => {
+    const ctx = newContext();
+    const pages = [page("blank-cached")];
+    const sha = sha256OfPages(pages.map((item) => item.data));
+    await mockRepo.seedScanForTest(ctx, {
+      extracted: blankExtraction,
+      imageSha256: sha,
+      model: "invoice-scan-mock",
+      provider: "mock",
+      storagePath: `${ctx.storeId}/${sha}/p1.jpg`,
+    });
+    const { built, extract } = deps();
+
+    const response = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(response.cached).toBe(true);
+    expect(extract).not.toHaveBeenCalled();
+    expectNoBlankOptionals(response.extraction);
+  });
+});

@@ -31,16 +31,45 @@ const defaultDeps: MatchScanDeps = {
   loadMockContext: loadMockMatchContext,
 };
 
+/** Copia de `value` sin las claves de texto opcional presentes pero vacías o solo con espacios. */
+function withoutBlank<T extends object>(value: T, keys: readonly (keyof T)[]): T {
+  const blank = keys.filter((key) => {
+    const text = value[key];
+    return key in value && (typeof text !== "string" || text.trim() === "");
+  });
+
+  if (blank.length === 0) {
+    return value;
+  }
+
+  const copy = { ...value };
+  for (const key of blank) {
+    delete copy[key];
+  }
+
+  return copy;
+}
+
 /**
  * Lo que el modelo deja vacío no es un dato: Gemini devuelve `taxId: ""` cuando
- * no encuentra el RIF (qa-final O3). Se quita antes de emparejar para que la RPC
- * reciba `null` y nadie compare contra un RIF vacío.
+ * no encuentra el RIF (qa-final O3), y lo mismo con el número, el teléfono, la
+ * dirección, el código de barras o el código del proveedor. En el borde del
+ * servidor (SCN-13a), antes de guardar `extracted` y de emparejar, esos textos
+ * opcionales vacíos o solo con espacios quedan ausentes: la RPC recibe `null` y
+ * nadie compara contra un RIF vacío. Los textos con contenido no se tocan.
+ * Idempotente; devuelve la misma referencia si no había nada que quitar.
  */
 export function normalizeExtractionForMatch(extraction: InvoiceExtraction): InvoiceExtraction {
-  const { taxId, ...supplier } = extraction.supplier;
-  const trimmed = taxId?.trim();
+  const top = withoutBlank(extraction, ["number"]);
+  const supplier = withoutBlank(extraction.supplier, ["taxId", "phone", "address"]);
+  const lines = extraction.lines.map((line) => withoutBlank(line, ["barcode", "supplierSku"]));
+  const linesChanged = lines.some((line, index) => line !== extraction.lines[index]);
 
-  return trimmed ? extraction : { ...extraction, supplier };
+  if (top === extraction && supplier === extraction.supplier && !linesChanged) {
+    return extraction;
+  }
+
+  return { ...top, lines: linesChanged ? lines : extraction.lines, supplier };
 }
 
 /**
