@@ -2572,6 +2572,16 @@ select
   ), false)
 union all
 select
+  'invoice_match_candidates: tax_id_match como sameTaxId, mismos digitos y misma letra de tipo si ambos la traen; J-123 no casa con V-123 (20261019d, CIE-03b)',
+  coalesce((
+    select p.prosrc ilike '%v_tax_letter := coalesce(substring(v_tax_id from ''^[JVEGPC]''), '''')%'
+      and p.prosrc ilike '%regexp_replace(t.cmp, ''^[JVEGPC]'', '''') = v_tax_id%'
+      and p.prosrc ilike '%v_tax_letter = ''''%or coalesce(substring(t.cmp from ''^[JVEGPC]''), '''') in ('''', v_tax_letter)%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_candidates(text, text, text[], text[], uuid, integer)')
+  ), false)
+union all
+select
   'invoice_match_norm(text): immutable, translate + regexp_replace, execute authenticated, no anon (20261019d)',
   coalesce((
     select p.provolatile = 'i'

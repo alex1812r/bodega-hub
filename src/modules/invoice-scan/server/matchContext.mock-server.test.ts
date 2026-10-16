@@ -119,3 +119,21 @@ describe("loadMockMatchContext · tasa del día (paridad CIE-02)", () => {
     expect(matchInvoice(extraction, ctx).rate).toEqual({ warning: MISSING_RATE_WARNING });
   });
 });
+
+describe("loadMockMatchContext · RIF con letra de tipo (paridad CIE-03b, D19)", () => {
+  function extractionWithTaxId(taxId: string): InvoiceExtraction {
+    return { ...extractionWith("ARROZ BLANCO 1KG"), supplier: { name: "Nadie Se Llama Así S.A.", taxId } };
+  }
+
+  it.each(["J-00000002-2", "j000000022", "00000002-2"])("RIF %s casa con el proveedor J-00000002-2", (taxId) => {
+    const ctx = loadMockMatchContext(DEFAULT_STORE_ID, extractionWithTaxId(taxId));
+
+    expect(ctx.supplierCandidates?.map((candidate) => candidate.contactId)).toContain("cont-supplier");
+  });
+
+  it.each(["V-00000002-2", "E000000022", "G-00000002-2"])("RIF %s (otra letra, mismos dígitos) no casa con J-00000002-2", (taxId) => {
+    const ctx = loadMockMatchContext(DEFAULT_STORE_ID, extractionWithTaxId(taxId));
+
+    expect(ctx.supplierCandidates?.map((candidate) => candidate.contactId)).not.toContain("cont-supplier");
+  });
+});

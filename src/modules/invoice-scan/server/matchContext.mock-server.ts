@@ -53,7 +53,7 @@ import type {
   MatchSupplierCatalog,
 } from "./match.types";
 import { searchTextVariants } from "./match/searchText";
-import { normalizeInvoiceNumber, normalizeTaxId, textSimilarity } from "./match/text";
+import { normalizeInvoiceNumber, sameTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
 
 /** Mismos umbrales que `invoice_match_candidates` (20261019d). */
@@ -64,7 +64,6 @@ const FUZZY_MIN_SCORE = 0.6;
 const ofStore = (rowStoreId: string | null | undefined, storeId: string) => (rowStoreId ?? DEFAULT_STORE_ID) === storeId;
 
 function supplierCandidates(storeId: string, extraction: InvoiceExtraction): MatchSupplierCandidate[] {
-  const readTaxId = normalizeTaxId(extraction.supplier.taxId);
   const name = extraction.supplier.name ?? "";
 
   return mockContacts
@@ -74,7 +73,7 @@ function supplierCandidates(storeId: string, extraction: InvoiceExtraction): Mat
       name: contact.name,
       taxId: contact.taxId || null,
       score: textSimilarity(contact.name, name),
-      taxIdMatch: readTaxId !== "" && normalizeTaxId(contact.taxId) === readTaxId,
+      taxIdMatch: sameTaxId(extraction.supplier.taxId, contact.taxId),
     }))
     .filter((row) => row.taxIdMatch || row.score >= SUPPLIER_MIN_SCORE)
     .sort((a, b) => Number(b.taxIdMatch) - Number(a.taxIdMatch) || b.score - a.score)
