@@ -5,10 +5,21 @@
  * SCN-05b · `loadMatchContext`: arma el `MatchContext` con la RPC de candidatos
  * (20261019d) y consultas filtradas SIEMPRE por la tienda del servidor.
  */
+import { roundMoney } from "@bodega/core/currency";
+
+import { DOLAR_API_OFFICIAL_SOURCE } from "@/lib/exchange-rates/constants";
+import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
+
 import type { InvoiceExtraction } from "../contracts";
 
 import { loadMatchContext, MATCH_CANDIDATES_RPC, taxRateKind, type MatchContextSupabaseClient } from "./loadMatchContext";
 import { matchInvoice } from "./match";
+import { MISSING_RATE_WARNING, NO_RATE_PRICE_ISSUE } from "./match/money";
+
+// CIE-02: la tasa del día es la del formulario de compra (getCurrentExchangeRate), no la última fila de exchange_rates.
+jest.mock("../../settings/services/exchangeRates.server", () => ({ getCurrentExchangeRate: jest.fn() }));
+
+const getCurrentExchangeRateMock = jest.mocked(getCurrentExchangeRate);
 
 const STORE_ID = "00000000-0000-4000-8000-000000000001";
 const SUPPLIER_ID = "11111111-1111-4111-8111-111111111111";
@@ -132,7 +143,6 @@ const productRow = (id: string, name: string, extra: Partial<Record<string, unkn
 function fullTables(): Record<string, TableHandler> {
   return {
     app_settings: () => ({ data: { default_tax_rate_id: "rate-general" }, error: null }),
-    exchange_rates: () => ({ data: { rate_ves: "45.5", created_at: "2026-10-15T12:00:00Z" }, error: null }),
     invoice_scans: () => ({
       data: [
         { id: "scan-1", supplier_id: null, number: "0123", supplier_tax_id: "J123456789", matched_contact_id: SUPPLIER_ID },
@@ -197,6 +207,16 @@ const taxRateRows = [
   { id: "rate-lujo", code: "lujo", pct: "31", is_active: true },
   { id: "rate-old", code: "reducida", pct: 8, is_active: false },
 ];
+
+beforeEach(() => {
+  getCurrentExchangeRateMock.mockReset();
+  getCurrentExchangeRateMock.mockResolvedValue({
+    id: "live-official",
+    rateVes: 45.5,
+    source: DOLAR_API_OFFICIAL_SOURCE,
+    createdAt: "2026-10-15T12:00:00Z",
+  });
+});
 
 describe("loadMatchContext", () => {
   it("arma el contexto completo: proveedores, catálogo, productos, difusos, alícuotas, tasa y escaneos previos", async () => {
@@ -317,8 +337,8 @@ describe("loadMatchContext", () => {
   it("sin proveedor, sin número y sin barcodes no consulta catálogo, escaneos ni barcode", async () => {
     const stub = createSupabaseStub({
       candidates: { suppliers: [], supplier_id: null, lines: [] },
-      tables: { exchange_rates: () => ({ data: null, error: null }) },
     });
+    getCurrentExchangeRateMock.mockRejectedValueOnce(new Error("DolarAPI caída"));
     const bare: InvoiceExtraction = {
       ...extraction,
       number: undefined,
@@ -668,5 +688,74 @@ describe("loadMatchContext · duplicado prefiere el escaneo confirmado (SCN-UI-C
       ["scan-confirmado", "purchase-1"],
     ]);
     expect(matchInvoice(extraction, ctx).duplicateOfScanId).toBe("scan-confirmado");
+  });
+});
+
+describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, caos 6.7)", () => {
+  const loadWith = async (printedRate?: number) => {
+    const stub = createSupabaseStub({ candidates, tables: fullTables(), rpcs: { tax_rates_for_store: taxRateRows } });
+    const scanned: InvoiceExtraction = { ...extraction, ...(printedRate !== undefined ? { printedRate } : {}) };
+    const ctx = await loadMatchContext(stub.client, STORE_ID, scanned);
+    return { ctx, match: matchInvoice(scanned, ctx), stub };
+  };
+
+  it("usa getCurrentExchangeRate de la tienda del servidor y no lee exchange_rates", async () => {
+    getCurrentExchangeRateMock.mockResolvedValue({
+      id: "live-official",
+      rateVes: 52.25,
+      source: DOLAR_API_OFFICIAL_SOURCE,
+      createdAt: "2026-10-16T12:00:00Z",
+    });
+
+    const { ctx, match, stub } = await loadWith();
+
+    expect(getCurrentExchangeRateMock).toHaveBeenCalledWith(STORE_ID);
+    expect(stub.queries.map((query) => query.table)).not.toContain("exchange_rates");
+    expect(ctx.systemRate).toBe(52.25);
+    expect(match.rate).toEqual({ system: 52.25 });
+    const [harina] = match.lines;
+    expect(harina.unitCostRef).toBe(roundMoney(harina.unitCostVes! / 52.25));
+  });
+
+  it("DolarAPI caída y factura con tasa impresa: convierte con la impresa y lo avisa", async () => {
+    getCurrentExchangeRateMock.mockRejectedValue(new Error("DolarAPI caída"));
+
+    const { ctx, match } = await loadWith(45);
+
+    expect(ctx.systemRate).toBeUndefined();
+    expect(match.rate).toEqual({
+      printed: 45,
+      warning: "No hay tasa del día en el sistema: se usó la tasa impresa en la factura (45,00).",
+    });
+    const [harina] = match.lines;
+    expect(harina.unitCostRef).toBe(roundMoney(harina.unitCostVes! / 45));
+  });
+
+  it("DolarAPI caída y sin tasa impresa: no precarga costos REF, pide la tasa y no confirma en silencio", async () => {
+    getCurrentExchangeRateMock.mockRejectedValue(new Error("DolarAPI caída"));
+
+    const { ctx, match } = await loadWith();
+
+    expect(ctx.systemRate).toBeUndefined();
+    expect(match.rate).toEqual({ warning: MISSING_RATE_WARNING });
+    for (const line of match.lines) {
+      expect(line.unitCostRef).toBeUndefined();
+    }
+    // Harina tiene último costo (0,95 REF): sin tasa no se verificó y no queda confirmada.
+    expect(match.lines[0].status).not.toBe("confirmed");
+    expect(match.lines[0].issues).toContain(NO_RATE_PRICE_ISSUE);
+  });
+
+  it("tasa no positiva del servicio se trata como ausente", async () => {
+    getCurrentExchangeRateMock.mockResolvedValue({
+      id: "live-official",
+      rateVes: 0,
+      source: DOLAR_API_OFFICIAL_SOURCE,
+      createdAt: "2026-10-16T12:00:00Z",
+    });
+
+    const { ctx } = await loadWith();
+
+    expect(ctx.systemRate).toBeUndefined();
   });
 });

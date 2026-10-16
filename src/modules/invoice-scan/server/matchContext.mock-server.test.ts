@@ -1,9 +1,11 @@
+import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.mock-server";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
 import { singlePageExtraction } from "./__fixtures__/extractions";
 import { resetMockInvoiceScans } from "./confirmScan.mock-server";
 import { matchInvoice } from "./match";
+import { MISSING_RATE_WARNING } from "./match/money";
 import { loadMockMatchContext } from "./matchContext.mock-server";
 import { putMockScanRow, seedScanForTest } from "./scans.mock-server";
 
@@ -98,5 +100,22 @@ describe("loadMockMatchContext · duplicado prefiere el escaneo confirmado (pari
     const ctx = loadMockMatchContext(DEFAULT_STORE_ID, singlePageExtraction);
 
     expect(matchInvoice(singlePageExtraction, ctx).duplicateOfScanId).toBe(confirmed.id);
+  });
+});
+
+describe("loadMockMatchContext · tasa del día (paridad CIE-02)", () => {
+  it.each([DEFAULT_STORE_ID, STORE_SUR])("tienda %s: la misma tasa que da el formulario de compra en mock", (storeId) => {
+    const ctx = loadMockMatchContext(storeId, extractionWith("ARROZ BLANCO 1KG"));
+
+    expect(ctx.systemRate).toBe(getCurrentExchangeRate(storeId).rateVes);
+    expect(ctx.systemRate).toBeGreaterThan(0);
+  });
+
+  it("tienda sin tasas: sin tasa del sistema, y matchInvoice no precarga REF", () => {
+    const extraction = extractionWith("ARROZ BLANCO 1KG");
+    const ctx = loadMockMatchContext("00000000-0000-4000-8000-0000000000ff", extraction);
+
+    expect(ctx.systemRate).toBeUndefined();
+    expect(matchInvoice(extraction, ctx).rate).toEqual({ warning: MISSING_RATE_WARNING });
   });
 });
