@@ -486,6 +486,75 @@ describe("loadMatchContext", () => {
     expect(line.status).toBe("doubtful");
     expect(line.issues.join(" ")).toContain("componente de una receta de 12 unidades por empaque");
   });
+
+  it("línea sin candidatos por el empaque en el texto: reintenta con el texto limpio y queda dudosa con el producto (SCN-11-it1)", async () => {
+    const JUSTY_ID = "88888888-8888-4888-8888-888888888888";
+    const tables = fullTables();
+    const baseProducts = tables.products;
+    tables.products = (query) => {
+      const byId = argsOf(query, "in").find(([column]) => column === "id");
+      if (byId && (byId[1] as string[]).includes(JUSTY_ID)) {
+        return { data: [productRow(JUSTY_ID, "Justy pequeño 400 ml")], error: null };
+      }
+      return baseProducts(query);
+    };
+    const stub = createSupabaseStub({ candidates: null, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+    // Como el trigram de 20261019d: "justy 400ml" queda bajo 0,6 contra "justy pequeno 400 ml"; "justy 400 ml" no.
+    stub.rpc.mockImplementation(async (name: string, params?: unknown) => {
+      if (name !== MATCH_CANDIDATES_RPC) {
+        return { data: name === "tax_rates_for_store" ? taxRateRows : [], error: null };
+      }
+      const { p_descriptions: descriptions } = params as { p_descriptions: string[] };
+      return {
+        data: {
+          suppliers: candidates.suppliers,
+          supplier_id: SUPPLIER_ID,
+          lines: descriptions.flatMap((text, index) =>
+            text === "justy 400 ml" ? [{ ordinal: index + 1, product_id: JUSTY_ID, score: 0.619, via: "name" }] : [],
+          ),
+        },
+        error: null,
+      };
+    });
+    const justy: InvoiceExtraction = {
+      ...extraction,
+      number: undefined,
+      lines: [
+        {
+          rawText: "JUSTY 400ML [BULTO X 15,00]",
+          description: "Justy 400ml",
+          quantity: 2,
+          unit: "bulto",
+          unitsPerPack: 15,
+          unitPrice: 900,
+          lineTotal: 1800,
+          confidence: 0.9,
+        },
+      ],
+    };
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, justy);
+    const [line] = matchInvoice(justy, ctx).lines;
+
+    expect(ctx.fuzzy[0]).toEqual([{ productId: JUSTY_ID, score: 0.619, via: "name" }]);
+    expect(line.status).toBe("doubtful");
+    expect(line.candidates?.map((candidate) => candidate.productId)).toEqual([JUSTY_ID]);
+    // El reintento usa el proveedor ya elegido (mismos alias) y solo los textos limpios de las líneas sin candidatos.
+    const calls = (stub.rpc.mock.calls as unknown as Array<[string, { p_supplier_id?: string; p_texts: string[] }]>).filter(
+      ([name]) => name === MATCH_CANDIDATES_RPC,
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1].p_supplier_id).toBe(SUPPLIER_ID);
+    expect(calls[1][1].p_texts).toContain("justy 400 ml");
+  });
+
+  it("si todas las líneas traen candidatos no hay segunda llamada a la RPC", async () => {
+    const stub = createSupabaseStub({ candidates, tables: fullTables(), rpcs: { tax_rates_for_store: taxRateRows } });
+
+    await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    expect(stub.rpc.mock.calls.filter(([name]) => name === MATCH_CANDIDATES_RPC)).toHaveLength(1);
+  });
 });
 
 describe("taxRateKind", () => {
