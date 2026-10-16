@@ -30,6 +30,7 @@ import {
   type InvoiceReviewScanBody,
   type InvoiceReviewScanLine,
 } from "./reviewDraft";
+import { TAX_RESIDUAL_CENT } from "./reviewModel";
 
 /** Escaneo cargado en el formulario. */
 export type LoadedInvoiceScan = {
@@ -394,13 +395,15 @@ function invoicePrice(
 
 /**
  * SCN-UI-Q1 · Con precios con IVA incluido la extracción guarda el precio de la factura,
- * no la base: el leído si la base sigue siendo la que salió de él; si se editó en el
+ * no la base: el leído si la base sigue siendo la que salió de él (a un céntimo: la
+ * revisión reparte ahí el residuo de redondeo, `settleTaxResidual`); si se editó en el
  * formulario, base × (1 + alícuota).
  */
 function invoicePriceWithTax(base: number, read: InvoiceExtractionLine, taxRate: number) {
   const factor = 1 + Math.max(0, taxRate) / 100;
+  const fromRead = roundMoney(read.unitPrice / factor);
 
-  return roundMoney(read.unitPrice / factor) === base ? read.unitPrice : roundMoney(base * factor);
+  return Math.abs(roundMoney(fromRead - base)) <= TAX_RESIDUAL_CENT ? read.unitPrice : roundMoney(base * factor);
 }
 
 function validUnitsPerPack(item: PurchaseDraftItem) {

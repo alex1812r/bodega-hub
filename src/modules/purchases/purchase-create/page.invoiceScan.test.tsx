@@ -536,6 +536,40 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     expect(lineTexts()[0]).toBe(HARINA_LOCKED);
   });
 
+  it("BAJO-N3 (CIE-03a): el modal «Confirmar compra» muestra el contacto elegido, no el nombre leído", async () => {
+    mockReviewDraft = makeLoadedReviewDraft({
+      supplier: { contactId: REVIEW_SUPPLIER_ID, name: "PROVEEDOR UNO, C.A" },
+    });
+    renderPage();
+
+    await scanAndLoad();
+    click(/Confirmar Compra/);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Confirmar compra" })).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Chevere Depot");
+    expect(dialog).not.toHaveTextContent("PROVEEDOR UNO");
+  });
+
+  it("BAJO-N3 (CIE-03a): si el contacto no se puede leer, el modal usa el nombre de la revisión", async () => {
+    mockReviewDraft = makeLoadedReviewDraft({
+      supplier: { contactId: REVIEW_SUPPLIER_ID, name: "Nombre de la revisión" },
+    });
+    installApi();
+    const baseFetch = global.fetch;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("/api/purchases/suppliers?")
+        ? jsonResponse({ error: { code: "INTERNAL", message: "Falló." } }, 500)
+        : baseFetch(input, init),
+    ) as unknown as typeof fetch;
+    renderPage();
+
+    await scanAndLoad();
+    click(/Confirmar Compra/);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Nombre de la revisión");
+  });
+
   it("las notas que ya había no se pisan con el número de la factura", async () => {
     renderPage();
 

@@ -19,7 +19,7 @@ import type {
   InvoiceMatchStatus,
   InvoiceScanResponse,
 } from "@/modules/invoice-scan/contracts";
-import { USD_DOCUMENT_ISSUE } from "@/modules/invoice-scan/server/match/money";
+import { DECIMAL_QUANTITY_ISSUE, USD_DOCUMENT_ISSUE } from "@/modules/invoice-scan/server/match/money";
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 /** Diferencia relativa tasa impresa vs del sistema por encima de la cual se avisa (D8: 2 %). */
@@ -461,7 +461,10 @@ export function createInvoiceReviewState(
     header: {
       supplier: {
         ...(confirmedSupplier ? { contactId: confirmedSupplier } : {}),
-        name: extraction.supplier.name,
+        // El confirmado por el emparejamiento lleva su nombre de contacto si viene entre los candidatos.
+        name:
+          supplierCandidates.find((candidate) => candidate.contactId === confirmedSupplier)?.name ??
+          extraction.supplier.name,
         readName: extraction.supplier.name,
         candidates: supplierCandidates,
       },
@@ -826,18 +829,96 @@ function linePct(state: InvoiceReviewState, line: InvoiceReviewLine): number {
   return Math.max(0, state.taxRates[line.taxRateCode] ?? 0);
 }
 
+/** Paso con que la revisión reparte el residuo de redondeo del IVA incluido: un céntimo por base. */
+export const TAX_RESIDUAL_CENT = 0.01;
+
+/** Total con IVA que registra la compra para la línea con ese precio base (`getDraftLineTotals`). */
+function registeredLineTotal(state: InvoiceReviewState, line: InvoiceReviewLine, basePrice: number): number {
+  const base = roundMoney(line.quantity * basePrice);
+  return roundMoney(base + roundMoney(base * (linePct(state, line) / 100)));
+}
+
+/**
+ * BAJO-N1 (CIE-03a): quitar el IVA línea a línea redondea cada base al céntimo y la suma
+ * puede separarse unos céntimos de lo impreso (f02: 33.150,17 frente a 33.150,15). El
+ * residuo se reparte a un céntimo como mucho por base: cada paso mueve la línea que más
+ * acerca el total registrado a Σ cantidad × precio leído (primero las de menor cantidad y
+ * mayor importe) y para cuando ningún céntimo lo acerca más. El céntimo de más o de menos
+ * en la base no cambia el precio leído que vuelve en la extracción (`invoicePriceWithTax`).
+ */
+function settleTaxResidual(state: InvoiceReviewState, prices: number[]): number[] {
+  const active = state.lines
+    .filter(
+      (line) =>
+        !line.discarded &&
+        isPositive(line.quantity) &&
+        Number.isFinite(line.unitPrice) &&
+        Number.isFinite(prices[line.index]),
+    )
+    .sort((left, right) => left.quantity - right.quantity || getLineAmount(right) - getLineAmount(left));
+  const target = sumAmounts(active, getLineAmount);
+  let diff = roundMoney(target - sumAmounts(active, (line) => registeredLineTotal(state, line, prices[line.index])));
+  const moved = new Set<number>();
+  while (diff !== 0) {
+    const step = diff > 0 ? TAX_RESIDUAL_CENT : -TAX_RESIDUAL_CENT;
+    let best: { index: number; diff: number } | undefined;
+    for (const line of active.filter((candidate) => !moved.has(candidate.index))) {
+      const price = prices[line.index];
+      const change = registeredLineTotal(state, line, roundMoney(price + step)) - registeredLineTotal(state, line, price);
+      const next = roundMoney(diff - change);
+      if (Math.abs(next) < Math.abs(best?.diff ?? diff)) {
+        best = { index: line.index, diff: next };
+      }
+    }
+    if (!best) {
+      break;
+    }
+    prices[best.index] = roundMoney(prices[best.index] + step);
+    moved.add(best.index);
+    diff = best.diff;
+  }
+  return prices;
+}
+
+/** Bases por índice de línea; el estado es inmutable, así que se calculan una vez por estado. */
+const basePricesByState = new WeakMap<InvoiceReviewState, number[]>();
+
+function getBasePrices(state: InvoiceReviewState): number[] {
+  const cached = basePricesByState.get(state);
+  if (cached) {
+    return cached;
+  }
+  const included = getTaxInclusion(state).included;
+  const plain = state.lines.map((line) => {
+    if (!Number.isFinite(line.unitPrice)) {
+      return line.unitPrice;
+    }
+    return included ? roundMoney(line.unitPrice / (1 + linePct(state, line) / 100)) : roundMoney(line.unitPrice);
+  });
+  const prices = included ? settleTaxResidual(state, plain) : plain;
+  basePricesByState.set(state, prices);
+  return prices;
+}
+
 /**
  * Precio SIN IVA por unidad de entrada, en la moneda de la factura (redondeado al
  * céntimo, como el costo de la compra). Con "los precios incluyen IVA" es el precio
- * leído ÷ (1 + alícuota de la línea); si no, el precio tal cual.
+ * leído ÷ (1 + alícuota de la línea), con el residuo de redondeo repartido para que el
+ * total registrado sea el leído (`settleTaxResidual`); si no, el precio tal cual.
  */
 export function getLineBasePrice(state: InvoiceReviewState, line: InvoiceReviewLine): number {
-  if (!Number.isFinite(line.unitPrice)) {
-    return line.unitPrice;
-  }
-  return getTaxInclusion(state).included
-    ? roundMoney(line.unitPrice / (1 + linePct(state, line) / 100))
-    : roundMoney(line.unitPrice);
+  return getBasePrices(state)[line.index] ?? line.unitPrice;
+}
+
+/**
+ * Avisos de la línea que siguen vigentes. BAJO-N2 (CIE-03a): el de cantidad con
+ * decimales del servidor sobra en cuanto la cantidad es entera (convertida a unidades
+ * o corregida a mano).
+ */
+export function getLineIssues(line: InvoiceReviewLine): string[] {
+  return Number.isInteger(line.quantity)
+    ? line.issues.filter((issue) => issue !== DECIMAL_QUANTITY_ISSUE)
+    : line.issues;
 }
 
 function minTolerance(state: InvoiceReviewState): number {

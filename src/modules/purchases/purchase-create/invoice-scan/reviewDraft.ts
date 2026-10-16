@@ -162,6 +162,21 @@ function buildItem(
   });
 }
 
+const SUPPLIER_OPTIONAL_TEXT = ["taxId", "phone", "address"] as const;
+const LINE_OPTIONAL_TEXT = ["barcode", "supplierSku"] as const;
+
+/** Texto opcional en blanco viaja como ausente, no como `""` (CIE-03a). */
+function withoutBlankText<T extends object>(value: T, keys: readonly (keyof T)[]): T {
+  const copy = { ...value };
+  for (const key of keys) {
+    const field = copy[key];
+    if (typeof field === "string" && field.trim() === "") {
+      delete copy[key];
+    }
+  }
+  return copy;
+}
+
 /**
  * Extracción corregida (D10): cabecera (número, fecha), cantidades, precios,
  * unidades por empaque y alícuota → `taxHint`. Conserva TODAS las líneas (también
@@ -177,10 +192,11 @@ export function buildCorrectedExtraction(state: InvoiceReviewState): InvoiceExtr
   const { extraction, header } = state;
   const corrected: InvoiceExtraction = {
     ...extraction,
+    supplier: withoutBlankText(extraction.supplier, SUPPLIER_OPTIONAL_TEXT),
     lines: extraction.lines.map((read, index) => {
       const line = state.lines[index];
       const fixed: InvoiceExtractionLine = {
-        ...read,
+        ...withoutBlankText(read, LINE_OPTIONAL_TEXT),
         quantity: line.quantity,
         unitPrice: line.unitPrice,
         taxHint: taxHintFromCode(line.taxRateCode, state.taxRates),

@@ -1139,10 +1139,15 @@ export function PurchaseCreatePage() {
     try {
       const nextSupplierId = reviewDraft.supplier.contactId;
       // Nombre, SKU, empaques y % de categoría del catálogo actual, como al restaurar.
-      const products = await resolvePurchaseProducts(
-        nextSupplierId,
-        reviewDraft.lines.map((line) => line.productId),
-      );
+      // BAJO-N3 (CIE-03a): el modal muestra el contacto elegido, no el nombre leído en la
+      // factura; si no se puede leer el contacto queda el de la revisión.
+      const [products, supplier] = await Promise.all([
+        resolvePurchaseProducts(
+          nextSupplierId,
+          reviewDraft.lines.map((line) => line.productId),
+        ),
+        fetchPurchaseSupplier(nextSupplierId).catch(() => null),
+      ]);
       const applied = applyInvoiceReviewDraft(reviewDraft, {
         current: { ...(disassemble ? { disassemble } : {}), items, locks, review, taxState },
         currentCurrency: costCurrency,
@@ -1165,7 +1170,7 @@ export function PurchaseCreatePage() {
 
       setNotes(keptNotes.trim() || !invoiceNote ? keptNotes : invoiceNote);
       setSupplierId(nextSupplierId);
-      setSupplierName(reviewDraft.supplier.name);
+      setSupplierName(supplier?.name ?? reviewDraft.supplier.name);
       setProductSearch("");
       setCostCurrency(applied.costCurrency);
       setLineMetaByProductId((prev) => {
