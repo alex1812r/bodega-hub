@@ -264,6 +264,8 @@ function toPreviousScan(state: ScanState): MatchPreviousScan | null {
     supplierId: state.matched?.supplier.contactId ?? null,
     supplierTaxId: state.extraction.supplier.taxId ?? null,
     number: state.extraction.number ?? null,
+    date: state.extraction.date ?? null,
+    total: state.extraction.total ?? null,
   };
 }
 

@@ -676,3 +676,26 @@ describe("SCN-10-F3: robustez y pasada con alias", () => {
     expect(renderMarkdown(result)).toContain("Fugas de cabecera desde el few-shot");
   });
 });
+
+describe("SCN-11-F5: posible duplicado en el banco (fecha y total leídos)", () => {
+  const truths = TRUTHS.filter((t) => ["f02", "f03"].includes(t.id));
+  const withRead = (patch: Record<string, Partial<InvoiceExtraction>>): BenchExtractor => {
+    const base = fakeExtractor();
+    return async (input) => {
+      const result = await base(input);
+      const extra = patch[input.invoice?.id ?? ""];
+      return extra ? { ...result, extraction: { ...result.extraction, ...extra } } : result;
+    };
+  };
+
+  it("f03 con el número mal leído en un carácter: posible duplicado de f02 por fecha y total leídos", async () => {
+    const result = await runBench(options({ truths, extractor: withRead({ f03: { number: "00003571" } }) }));
+    expect(entry(result, "f03", "sinAlias").duplicateOfScanId).toBe("f02");
+  });
+
+  it("el total de previousScans sale de lo leído en f02, no de la verdad", async () => {
+    const extractor = withRead({ f02: { total: 1 }, f03: { number: "00003571" } });
+    const result = await runBench(options({ truths, extractor }));
+    expect(entry(result, "f03", "sinAlias").duplicateOfScanId).toBeUndefined();
+  });
+});
