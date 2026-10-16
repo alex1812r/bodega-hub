@@ -249,6 +249,32 @@ describe("runBench", () => {
     expect(result.meta.fewShot).toBe(true);
   });
 
+  it("empareja con la extracción normalizada como producción: taxId vacío no llega al contexto ni al match", async () => {
+    const base = fakeExtractor();
+    const extractor: BenchExtractor = async (input) => {
+      const result = await base(input);
+      return { ...result, extraction: { ...result.extraction, supplier: { ...result.extraction.supplier, taxId: "  " } } };
+    };
+    const seen: InvoiceExtraction[] = [];
+    const { loadContext } = buildLoadContext(TRUTHS);
+    const result = await runBench(
+      options({
+        truths: [TRUTHS[0]],
+        extractor,
+        loadContext: async (truth, extraction) => {
+          seen.push(extraction);
+          return loadContext(truth, extraction);
+        },
+      }),
+    );
+    expect(seen).toHaveLength(1);
+    expect("taxId" in seen[0].supplier).toBe(false);
+    const f01 = entry(result, "f01", "sinAlias");
+    // Lo medido es la lectura cruda (la que producción guarda en `extracted`).
+    expect(f01.predicted?.supplier.taxId).toBe("  ");
+    expect(f01.matched).not.toBeNull();
+  });
+
   it("un extractor que lanza deja la factura con error y la corrida sigue", async () => {
     const quota = Object.assign(new Error("Se agotó la cuota"), { code: "QUOTA" });
     const progress: string[] = [];

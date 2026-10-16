@@ -5,7 +5,9 @@
  * un extractor INYECTADO (estructuralmente compatible con `extractInvoice` de
  * `src/modules/invoice-scan/server/extract.ts`), empareja con `matchInvoice`
  * sobre un contexto INYECTADO (el CLI usa `loadMatchContext` contra la base lab)
- * y mide con `metrics.ts`. No hace IO propio salvo `readPage` (inyectado) y
+ * y mide con `metrics.ts`. Antes de cargar el contexto y emparejar aplica
+ * `normalizeExtractionForMatch`, igual que `createMatchScan` en producción; lo
+ * medido (`predicted`) es la extracción cruda, la que producción guarda. No hace IO propio salvo `readPage` (inyectado) y
  * nunca loguea imágenes ni claves.
  *
  * Pasadas:
@@ -24,6 +26,7 @@ import { normalizeAlias } from "@bodega/core/invoice";
 
 import type { InvoiceExtraction, InvoiceMatch } from "../../src/modules/invoice-scan/contracts";
 import { matchInvoice } from "../../src/modules/invoice-scan/server/match";
+import { normalizeExtractionForMatch } from "../../src/modules/invoice-scan/server/matchScan";
 import type {
   MatchAlias,
   MatchContext,
@@ -327,14 +330,16 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     let error = extracted.error;
     if (extraction) {
       try {
+        // Mismo camino que producción (`createMatchScan`): se empareja la lectura normalizada.
+        const forMatch = normalizeExtractionForMatch(extraction);
         let ctx = contextCache.get(input.contextKey);
         if (!ctx) {
-          ctx = await opts.loadContext(truth, extraction);
+          ctx = await opts.loadContext(truth, forMatch);
           contextCache.set(input.contextKey, ctx);
         }
         const contactId = expectedContactId(truth, scenario);
         const inject = input.aliases && contactId ? { contactId, aliases: input.aliases } : undefined;
-        matched = matchInvoice(extraction, prepareContext(ctx, input.previousScans, inject));
+        matched = matchInvoice(forMatch, prepareContext(ctx, input.previousScans, inject));
       } catch (caught) {
         error = toBenchError(caught);
       }

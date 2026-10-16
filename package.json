@@ -35,6 +35,7 @@
     "stock-lab:chaos": "npx tsx scripts/stock-lab/chaos/run.ts",
     "stock-lab:load": "npx tsx scripts/stock-lab/chaos/load.ts",
     "stock-lab:test": "jest --config jest.stock-lab.config.ts --runInBand",
+    "invoice-eval": "npx tsx scripts/invoice-eval/run.ts",
     "invoice-eval:export-finetune": "npx tsx scripts/invoice-eval/export-finetune.ts"
   },
   "dependencies": {
