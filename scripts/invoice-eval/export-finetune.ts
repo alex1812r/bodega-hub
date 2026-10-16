@@ -70,6 +70,7 @@ const PAGE_SIZE = 500;
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const FIRST_PAGE_PATH = /^(.+\/)p1\.(jpg|jpeg|png|webp)$/i;
+export const OUTSIDE_STORE_REASON = "storage_path fuera de la tienda exportada";
 const SAFE_STORAGE_PATH = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 
 export const SYSTEM_INSTRUCTION = [
@@ -111,6 +112,8 @@ export type BuildOptions = {
   gcsPrefix: string;
   /** MIME detectado por cabecera tras descargar, por ruta (pisa la extensión). */
   mimeOverrides?: Record<string, string>;
+  /** Tienda exportada: la fila cuya ruta no empieza por `<storeId>/` se omite (CIE-08 B3). */
+  storeId?: string;
 };
 
 export type BuildResult =
@@ -214,6 +217,9 @@ export function buildTuningExample(row: InvoiceScanExportRow, opts: BuildOptions
   }
   if (!SAFE_STORAGE_PATH.test(row.storage_path) || row.storage_path.split("/").includes("..")) {
     return { ok: false, reason: "storage_path inválido" };
+  }
+  if (opts.storeId !== undefined && !row.storage_path.startsWith(`${opts.storeId}/`)) {
+    return { ok: false, reason: OUTSIDE_STORE_REASON };
   }
 
   const imagePaths = invoiceScanPagePaths(row.storage_path, pages);
@@ -454,7 +460,10 @@ export async function runExport(options: ExportOptions, log: Logger = console): 
   let downloaded = 0;
 
   for (const row of rows) {
-    let result = buildTuningExample(row, { gcsPrefix: options.gcsPrefix });
+    let result = buildTuningExample(row, { gcsPrefix: options.gcsPrefix, storeId });
+    if (!result.ok && result.reason === OUTSIDE_STORE_REASON) {
+      log.warn(`AVISO: ${row.id} tiene un storage_path fuera de la tienda exportada; se omite sin descargar.`);
+    }
     if (result.ok && options.downloadDir) {
       const download = await downloadImages(client, options.downloadDir, result.imagePaths);
       if (!download.ok) {
@@ -462,7 +471,7 @@ export async function runExport(options: ExportOptions, log: Logger = console): 
         continue;
       }
       downloaded += result.imagePaths.length;
-      result = buildTuningExample(row, { gcsPrefix: options.gcsPrefix, mimeOverrides: download.mimes });
+      result = buildTuningExample(row, { gcsPrefix: options.gcsPrefix, mimeOverrides: download.mimes, storeId });
     }
     if (result.ok) built.push({ id: row.id, line: result.line, images: result.imagePaths.length });
     else skipped.push({ id: row.id, reason: result.reason });
