@@ -28,6 +28,8 @@ El modelo de IA **propone**; no escribe nada en productos, vínculos ni compras.
 ### 2. BFF (`scanService.ts`)
 
 1. Sesión real con `purchases.create`; la tienda sale siempre de la sesión. Recalcula el hash, comprueba por los bytes que cada página es la imagen declarada y valida que las rutas sean `<store_id>/<sha256>/p<n>.<ext>` de esa tienda.
+   - Una página con el lado mayor por encima de 1600 px responde 400 "La imagen supera 1.600 px en su lado mayor. Vuelve a subirla desde la app para que se reduzca." (CIE-07; sin `sharp` el servidor no redimensiona). En multipart se rechaza antes de subir, reservar o cobrar: no queda objeto ni fila. Con `storagePaths` se valida tras descargar y antes de reservar: el objeto ya subido con la URL firmada se queda en el bucket hasta la purga.
+   - Con datos en Supabase y sin ninguna key de IA responde 503 "El escaneo de facturas no está configurado: falta la key del proveedor de IA." antes de reservar: sin fila, sin cupo y sin caché (CIE-08). El mock solo se usa con `INVOICE_SCAN_PROVIDER=mock` o con datos mock.
 2. Reserva atómica (`reserve_invoice_scan`, lock por tienda):
    - misma foto ya leída → devuelve ese escaneo con `cached: true`, sin modelo y sin cuota;
    - otra petición la está leyendo → 409;
@@ -67,8 +69,11 @@ Determinista, sin IA.
 - `InvoiceReviewPanel` reemplaza al formulario mientras se revisa. Cada línea sale confirmada, dudosa (con candidatos) o sin emparejar, y se maneja con teclado.
 - Avisos de tasa (tasa de hoy, de la factura o manual; la elegida es la tasa de la compra y la compra se abre en los Bs exactos de la factura), de "¿precios incluyen IVA?", de factura en USD y de duplicado.
 - Al aplicar, las líneas precargan el formulario normal (modo unidad o empaque, "Desarmar al recibir"). Confirmar envía a `POST /api/purchases` `invoiceScanId`, `invoiceScanLines` y `invoiceScanExtraction`, que es la lectura corregida (D10).
-- Tras `create_purchase` el escaneo pasa a `confirmed` con `confirmed = { extraction, lines, … }` y se aprenden los alias. Si el aprendizaje falla, la compra ya existe; el resultado viaja en `invoiceScan: { confirmed, learned }`.
-- El detalle de la compra muestra la factura (`GET /api/purchases/{id}/invoice-scan`). Los escaneos sin confirmar se pueden descartar (`POST …/{id}/discard`). A los 90 días el cron borra imágenes y filas.
+- Textos de la factura (CIE-06): cada texto de `invoiceScanExtraction` (proveedor, número, fecha, `rawText`, `description`, `barcode`, `supplierSku` y avisos) rechaza U+0000, los caracteres de control C0/C1 (salvo tabulador, salto de línea y retorno de carro) y los surrogates sueltos, y admite como mucho 1000 caracteres; como mucho 50 avisos. Si no cumple, `POST /api/purchases` responde 400 ("Un texto de la factura tiene caracteres no permitidos." o "Cada texto de la factura puede tener como máximo 1000 caracteres.") antes de reclamar el escaneo y de crear la compra. La misma regla se aplica a los textos de `invoiceScanLines` (`packLabel`, CIE-09). Una salida del modelo que no cumpla falla como `INVALID_OUTPUT`.
+- Antes de crear la compra se reclama el escaneo para la clave (`clientRequestId`). Si la creación se rechaza (4xx), el reclamo se suelta. Con un resultado incierto (5xx, red) el reclamo caduca a los 5 minutos, salvo que la clave ya haya creado su compra (CIE-06): entonces queda ligado a esa compra, no caduca ni se suelta, y otra clave recibe 400 "Esta factura ya se registró en otra compra".
+- Tras `create_purchase` el escaneo pasa a `confirmed` con `confirmed = { extraction, lines, … }` y se aprenden los alias. Si el confirm o el aprendizaje fallan, la compra ya existe; el resultado viaja en `invoiceScan: { confirmed, learned }`. Repetir el mismo intento (misma clave) devuelve la misma compra y reintenta sobre ella lo que faltó: el confirm y, si `learned_at` sigue null, una llamada de aprendizaje.
+- Si la respuesta trae `invoiceScan.confirmed: false`, la UI avisa "La compra se registró pero no se pudo vincular la factura. No la vuelvas a registrar.": la factura sigue ligada a esa compra en el servidor.
+- El detalle de la compra muestra la factura (`GET /api/purchases/{id}/invoice-scan`). Un escaneo `extracted` se puede descartar (`POST …/{id}/discard`), salvo que una compra lo esté confirmando o que la clave de su reclamo ya haya creado su compra: 409 "Esta factura ya tiene una compra registrada y no se puede descartar." (CIE-06). A los 90 días el cron borra imágenes y filas.
 
 ## Las tres capas de aprendizaje
 
@@ -561,7 +566,8 @@ El script nunca imprime claves.
 - `confirmed.extraction` no cumple el schema;
 - `confirmed` tiene una forma desconocida, por ejemplo la anterior con solo `lines`, que ya no se reconstruye;
 - la extracción contiene un UUID (id interno);
-- las imágenes no cumplen los límites o el `storage_path` no sigue la convención multipágina.
+- las imágenes no cumplen los límites o el `storage_path` no sigue la convención multipágina;
+- el `storage_path` no empieza por `<store_id>/` de la tienda exportada ("storage_path fuera de la tienda exportada", CIE-08): se omite antes de descargar nada con service role. Hoy el check `invoice_scans_storage_path_scope` (19g) ya impide esa fila en la base.
 
 El resumen final indica cuántos ejemplos se omitieron y por qué. Con `--validation-ratio` > 0 siempre se escribe `<out>.validation.jsonl`; con pocos ejemplos puede salir **vacío** (0 bytes), porque el reparto por hash no garantiza que alguno caiga en validación (con 2 ejemplos y ratio 0,1, ninguno cayó).
 
@@ -615,18 +621,18 @@ Nada de esto está en producción. Producción y la tienda Las Luces no se tocan
 
 ### 1. Parches SQL
 
-Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con `notify pgrst, 'reload schema';`. `build-deploy-sql.test` ignora `20261019*`, así que **no** están en `supabase/patches/deploy/` y se aplican uno a uno. No hay 19f, 19h ni 19j.
+Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con `notify pgrst, 'reload schema';`. `build-deploy-sql.test` solo exige en sus listas los parches del plan ux-mejoras (de `20261007a` a `20261018a`) e ignora todos los posteriores (`20261019*` y `20261020a`), así que **no** están en `supabase/patches/deploy/` y se aplican uno a uno. No hay 19f, 19h ni 19j.
 
 | # | Parche | Qué hace |
 |---|--------|----------|
-| 1 | `20261019a-invoice-scans.sql` | Tabla `invoice_scans`, RLS de solo lectura (`purchases.view`) y bucket privado `invoice-scans` |
-| 2 | `20261019b-supplier-product-aliases.sql` | `pg_trgm`, tabla `supplier_product_aliases`, `claim_` / `release_invoice_scan_claim`, `confirm_invoice_scan` y `learn_invoice_aliases` |
+| 1 | `20261019a-invoice-scans.sql` | Tabla `invoice_scans`, RLS de solo lectura (`purchases.view`) y bucket privado `invoice-scans`. En Storage solo crea la política de lectura y borra (`drop policy if exists`) la de insert que creaban versiones anteriores: nadie sube directo por la API de Storage (CIE-08) |
+| 2 | `20261019b-supplier-product-aliases.sql` | `pg_trgm`, tabla `supplier_product_aliases`, `claim_` / `release_invoice_scan_claim`, `confirm_invoice_scan` y `learn_invoice_aliases`. CIE-06: un reclamo cuya clave ya creó su compra no caduca (otra clave recibe PT409 "Esta factura ya se registró en otra compra") y `release_invoice_scan_claim` no lo suelta |
 | 3 | `20261019c-invoice-scan-orphans.sql` | `list_expired_invoice_scan_objects`: imágenes subidas sin fila, para la purga |
 | 4 | `20261019d-invoice-match-candidates.sql` | `invoice_match_norm` e `invoice_match_candidates`: proveedores y candidatos por trigram |
 | 5 | `20261019e-invoice-scan-reserve.sql` | Estado `processing`, `usage_pages` y `reserve_invoice_scan`: reserva y cuota atómicas |
 | 6 | `20261019g-invoice-scan-writes-lockdown.sql` | Quita las escrituras directas, añade checks de ruta y cuota y crea `complete` / `fail` / `discard_invoice_scan`; redefine `reserve_invoice_scan` |
 | 7 | `20261019i-invoice-scan-service-only.sql` | RPCs de escritura solo para `service_role`, `attempt_id` y tope de 512 KB; redefine reserve, complete, fail y discard |
-| 8 | `20261019k-invoice-scan-claim-guard.sql` | El descarte respeta el reclamo de la compra en curso y la reserva exige usuario de la tienda; redefine reserve y discard |
+| 8 | `20261019k-invoice-scan-claim-guard.sql` | El descarte respeta el reclamo de la compra en curso (PT409) y la reserva exige usuario de la tienda; redefine reserve y discard. CIE-06: el descarte también da PT409 "Esta factura ya tiene una compra registrada y no se puede descartar." si la clave del reclamo ya creó su compra, aunque el reclamo haya caducado |
 | 9 | `20261020a-supplier-alias-remove.sql` | `remove_supplier_product_alias` (quitar un alias desde el proveedor) |
 
 **Cadena de reaplicación.** Varias funciones se redefinen en parches posteriores; la versión vigente es la del último:
@@ -636,10 +642,13 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 | `reserve_invoice_scan` | 19e → 19g → 19i → 19k | 19k |
 | `discard_invoice_scan` | 19g → 19i → 19k | 19k |
 | `complete_invoice_scan`, `fail_invoice_scan` | 19g → 19i | 19i |
+| `claim_invoice_scan`, `release_invoice_scan_claim`, `confirm_invoice_scan`, `learn_invoice_aliases` | 19b | 19b |
 
-- Reaplicar 19a (devuelve grants y políticas de escritura) obliga a reaplicar después 19g, 19i y 19k.
+- Cadenas: **19a → 19g → 19i → 19k** y **19b → 19k**.
+- Reaplicar 19a obliga a reaplicar después 19g, 19i y 19k. 19a ya no devuelve escrituras (solo concede select a `authenticated` y borra las políticas de insert y update de la tabla y la de insert de Storage), pero se mantiene el orden de despliegue.
 - Reaplicar 19e o 19g (vuelven las firmas viejas concedidas a `authenticated`) obliga a reaplicar después 19i y 19k.
 - Reaplicar 19i obliga a reaplicar después 19k.
+- Reaplicar 19b obliga a reaplicar después 19k: las guardas de 19k leen las columnas del reclamo que crea 19b (sin ellas solo miran `purchase_id` y `confirmed`).
 - 19b crea `invoice_scans` como respaldo solo si no existe (sin políticas); con 19a aplicado antes no hace nada. 19k funciona con y sin 19b, pero en despliegue 19b va antes.
 
 ### 2. Storage
@@ -654,6 +663,7 @@ El bucket **privado** `invoice-scans` lo crea 19a. No hay URLs públicas: subida
 |----------|---------|-------------|-------|
 | `INVOICE_SCAN_PROVIDER` | `google` \| `anthropic` \| `mock` | `google` | Si falta la key del proveedor pedido se usa el otro (con su modelo por defecto). Sin ninguna key, con datos en Supabase el escaneo responde 503 sin reservar ni cobrar (CIE-08); `mock` solo si se pide explícito o con datos mock. |
 | `INVOICE_SCAN_MODEL` | id del modelo | `gemini-3.5-flash-lite` (google) · `claude-haiku-5-5` (anthropic) | D22 / CIE-01. No cambia el modelo del asistente (`ASSISTANT_MODEL`, que conserva su propio default). |
+| `INVOICE_SCAN_MOCK_MODE` | `ok` \| `error` \| `timeout` \| `empty` \| `invalid` | `ok` | Solo QA y caos, y solo con el proveedor mock (`mockModel.ts`): `ok` devuelve la factura de fixture, `error` un fallo del proveedor (502), `timeout` no responde hasta que se aborta, `empty` "no es factura" (sin líneas y con aviso) e `invalid` un JSON que no cumple el schema. Un valor desconocido vale `ok`; se lee en cada llamada. No se configura en producción. |
 | `INVOICE_SCAN_DAILY_LIMIT` | entero | `50` | Páginas por tienda y día operativo de Caracas; máximo 10000. Un valor no numérico vuelve a 50. |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | key | — | Ya existe por el asistente. Debe estar en plan de pago: en free tier Google puede usar los datos y la cuota diaria corta el escaneo (D18). |
 | `ANTHROPIC_API_KEY` | key | — | Ya existe por el asistente; opcional. |
