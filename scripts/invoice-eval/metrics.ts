@@ -331,6 +331,8 @@ export type InvoiceEvalInput = {
   inputTokens?: number;
   outputTokens?: number;
   modelId?: string;
+  /** Fecha de la corrida para elegir la fila de precio; default: ahora. */
+  at?: Date;
 };
 
 export type InvoiceMetrics = {
@@ -529,7 +531,7 @@ export function evaluateInvoice(input: InvoiceEvalInput): InvoiceMetrics {
 
   const costUsd =
     input.modelId !== undefined && input.inputTokens !== undefined && input.outputTokens !== undefined
-      ? estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens)
+      ? estimateCostUsd(input.modelId, input.inputTokens, input.outputTokens, input.at)
       : null;
 
   return {
@@ -837,7 +839,13 @@ export function meetsTargets(global: GlobalMetrics): { ok: boolean; checks: Targ
 
 export type PairSide = { extraction: InvoiceExtraction | null; matched?: InvoiceMatch | null };
 
+export type PairNotEvaluableReason = "both_failed" | "a_failed" | "b_failed";
+
 export type PairConsistency = {
+  /** false si alguna extracción es null: el par no se puede comparar. */
+  evaluable: boolean;
+  notEvaluableReason?: PairNotEvaluableReason;
+  /** Siempre false si `evaluable` es false. */
   consistent: boolean;
   headerSame: boolean;
   headerDiffs: HeaderField[];
@@ -859,12 +867,13 @@ export function pairConsistency(a: PairSide, b: PairSide): PairConsistency {
   const ea = a.extraction;
   const eb = b.extraction;
   if (!ea || !eb) {
-    const same = !ea && !eb;
     return {
-      consistent: same,
-      headerSame: same,
-      headerDiffs: same ? [] : ["supplier", "date", "number", "total"],
-      linesSame: same,
+      evaluable: false,
+      notEvaluableReason: !ea && !eb ? "both_failed" : !ea ? "a_failed" : "b_failed",
+      consistent: false,
+      headerSame: false,
+      headerDiffs: ["supplier", "date", "number", "total"],
+      linesSame: false,
       unpairedA: ea ? ea.lines.map((_, i) => i) : [],
       unpairedB: eb ? eb.lines.map((_, i) => i) : [],
       valueDiffs: [],
@@ -924,6 +933,7 @@ export function pairConsistency(a: PairSide, b: PairSide): PairConsistency {
   const linesSame =
     unpairedA.length === 0 && unpairedB.length === 0 && valueDiffs.length === 0 && matchDiffs.length === 0;
   return {
+    evaluable: true,
     consistent: headerSame && linesSame,
     headerSame,
     headerDiffs,

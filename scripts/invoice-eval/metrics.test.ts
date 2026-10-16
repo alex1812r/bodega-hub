@@ -494,6 +494,35 @@ describe("pairConsistency", () => {
     expect(r.matchDiffs).toEqual([{ indexA: 0, indexB: 0 }]);
     expect(r.consistent).toBe(false);
   });
+
+  it("marca no evaluable (y no consistente) si ambas extracciones fallaron (f07/f16)", () => {
+    const r = pairConsistency({ extraction: null }, { extraction: null });
+    expect(r.consistent).toBe(false);
+    expect(r.evaluable).toBe(false);
+    expect(r.notEvaluableReason).toBe("both_failed");
+  });
+
+  it("marca no evaluable si solo una extracción falló", () => {
+    const r = pairConsistency({ extraction: extraction() }, { extraction: null });
+    expect(r.consistent).toBe(false);
+    expect(r.evaluable).toBe(false);
+    expect(r.notEvaluableReason).toBe("b_failed");
+    expect(pairConsistency({ extraction: null }, { extraction: extraction() }).notEvaluableReason).toBe("a_failed");
+  });
+
+  it("es evaluable cuando ambas extracciones existen", () => {
+    const r = pairConsistency({ extraction: extraction() }, { extraction: extraction() });
+    expect(r.evaluable).toBe(true);
+    expect(r.notEvaluableReason).toBeUndefined();
+  });
+});
+
+describe("evaluateInvoice: fecha del costo", () => {
+  it("usa `at` para elegir la fila de precio", () => {
+    const base = { modelId: "gemini-3.8-flash", inputTokens: 1_000_000, outputTokens: 0 };
+    expect(run({ ...base, at: new Date("2026-10-15T00:00:00Z") }).usage.costUsd).toBeCloseTo(0.75, 10);
+    expect(run({ ...base, at: new Date("2027-01-02T00:00:00Z") }).usage.costUsd).toBeCloseTo(1.5, 10);
+  });
 });
 
 describe("loadTruth", () => {
