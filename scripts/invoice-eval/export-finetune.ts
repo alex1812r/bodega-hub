@@ -28,21 +28,16 @@
  *
  * Salida del modelo: un `InvoiceExtraction` (src/modules/invoice-scan/contracts.ts)
  * corregido por el usuario y validado con `invoiceExtractionSchema`, sin ids internos.
- * `invoice_scans.confirmed` tiene hoy dos formas posibles y se aceptan las dos:
- * 1. `InvoiceExtraction` completo (lo que Extracción lee como few-shot): se usa tal cual.
- * 2. `ConfirmedInvoiceScan` (lo que escribe Emparejamiento en `confirm_invoice_scan`,
- *    `buildConfirmedPayload`): `lines[{ lineIndex, productId, packLabel, unitsPerPack,
- *    aliasNorm, rawText }]`. Se reconstruye desde `extracted` con estas reglas:
- *    - `confirmed` no guarda cantidades, precios ni totales: se conservan los de `extracted`;
- *    - `unitsPerPack` no nulo confirmado reemplaza el leído; nulo/ausente lo conserva
- *      (modo unidad = decisión de entrada, no prueba de que la factura no lo imprima);
- *    - `confirmed` solo referencia líneas de `extracted` (no puede añadir líneas);
- *    - si alguna línea de `extracted` no aparece en `confirmed`, el ejemplo se OMITE:
- *      no se distingue una línea mal leída de una línea no comprada;
- *    - si el `rawText` confirmado no coincide con el de `extracted`, o una misma línea
- *      se confirma con dos tamaños de empaque distintos, el ejemplo se OMITE;
- *    - `productId`, `supplierId`, `purchaseId`, alias y fechas de confirmación nunca
- *      pasan a la salida (el modelo no conoce los ids).
+ * `invoice_scans.confirmed` tiene forma única (D10, `buildConfirmedPayload` en
+ * src/modules/invoice-scan/server/confirmScan.server.ts):
+ *   `{ extraction: InvoiceExtraction | null, lines: [{ lineIndex, productId, packLabel?,
+ *      unitsPerPack?, aliasNorm, rawText }], confirmedAt, purchaseId, supplierId }`.
+ * La salida es `confirmed.extraction` tal cual (las claves ajenas al schema se descartan).
+ * `lines`, `productId`, `supplierId`, `purchaseId`, alias y fechas nunca pasan a la
+ * salida (el modelo no conoce los ids). Se OMITE la fila sin `extraction` (null) o
+ * con una `extraction` que no cumple el schema. Compatibilidad: un `confirmed` que ya
+ * es un `InvoiceExtraction` desnudo (forma anterior a D10) se acepta tal cual; la
+ * forma anterior con solo `lines` (sin `extraction`) ya no se reconstruye y se omite.
  *
  * Imágenes: `fileUri = <gcs-prefix>/<ruta>`; multipágina con la convención de
  * Extracción (`<store>/<sha>/p1.<ext>` → `p2.<ext>`…, `invoiceScanPagePaths`).
@@ -100,7 +95,6 @@ export type InvoiceScanExportRow = {
   id: string;
   storage_path: string;
   pages: number;
-  extracted: unknown;
   confirmed: unknown;
   created_at?: string;
 };
@@ -120,10 +114,11 @@ export type BuildOptions = {
 };
 
 export type BuildResult =
-  | { ok: true; example: TuningExample; line: string; imagePaths: string[]; source: "extraction" | "confirmed-lines" }
+  | { ok: true; example: TuningExample; line: string; imagePaths: string[]; source: ConfirmedSource }
   | { ok: false; reason: string };
 
-type ConfirmedLine = { lineIndex: number; rawText?: unknown; unitsPerPack?: unknown };
+/** `d10`: `confirmed.extraction`; `legacy-extraction`: `confirmed` es un `InvoiceExtraction` desnudo. */
+export type ConfirmedSource = "d10" | "legacy-extraction";
 
 // ---------------------------------------------------------------------------
 // Lógica pura
@@ -178,72 +173,29 @@ export function estimateTokens(example: TuningExample): number {
   return Math.ceil(chars / 3) + images * IMAGE_TOKEN_BUDGET;
 }
 
-function isConfirmedLinesShape(value: unknown): value is { lines: ConfirmedLine[] } {
-  const lines = (value as { lines?: unknown } | null)?.lines;
-  return (
-    Array.isArray(lines) &&
-    lines.every(
-      (line) =>
-        line !== null &&
-        typeof line === "object" &&
-        Number.isInteger((line as { lineIndex?: unknown }).lineIndex) &&
-        (line as { lineIndex: number }).lineIndex >= 0,
-    )
-  );
-}
-
 /**
- * Extracción corregida por el usuario o motivo de omisión (reglas en la cabecera).
+ * Extracción confirmada por el usuario (D10: `confirmed.extraction`) o motivo de omisión
+ * (reglas en la cabecera).
  */
-export function reconstructExtraction(
-  row: Pick<InvoiceScanExportRow, "extracted" | "confirmed">,
-): { ok: true; extraction: InvoiceExtraction; source: "extraction" | "confirmed-lines" } | { ok: false; reason: string } {
-  if (row.confirmed === null || row.confirmed === undefined) return { ok: false, reason: "confirmed vacío" };
-
-  const direct = invoiceExtractionSchema.safeParse(row.confirmed);
-  if (direct.success) return { ok: true, extraction: direct.data, source: "extraction" };
-
-  if (!isConfirmedLinesShape(row.confirmed)) {
-    return { ok: false, reason: "confirmed con forma desconocida" };
+export function readConfirmedExtraction(
+  row: Pick<InvoiceScanExportRow, "confirmed">,
+): { ok: true; extraction: InvoiceExtraction; source: ConfirmedSource } | { ok: false; reason: string } {
+  const confirmed = row.confirmed;
+  if (confirmed === null || typeof confirmed !== "object" || Array.isArray(confirmed)) {
+    return { ok: false, reason: "confirmed vacío" };
   }
 
-  const base = invoiceExtractionSchema.safeParse(row.extracted);
-  if (!base.success) return { ok: false, reason: "extracted no cumple invoiceExtractionSchema" };
-
-  const extraction = structuredClone(base.data);
-  const packByIndex = new Map<number, number | null>();
-
-  for (const line of row.confirmed.lines) {
-    const target = extraction.lines[line.lineIndex];
-    if (!target) return { ok: false, reason: "confirmed apunta a una línea que no existe en extracted" };
-    if (typeof line.rawText === "string" && line.rawText !== target.rawText) {
-      return { ok: false, reason: "rawText confirmado no coincide con extracted" };
-    }
-    const units =
-      typeof line.unitsPerPack === "number" && Number.isInteger(line.unitsPerPack) && line.unitsPerPack > 0
-        ? line.unitsPerPack
-        : null;
-    const previous = packByIndex.get(line.lineIndex);
-    if (previous !== undefined && previous !== null && units !== null && previous !== units) {
-      return { ok: false, reason: "una línea confirmada con dos tamaños de empaque" };
-    }
-    packByIndex.set(line.lineIndex, previous ?? units);
+  if ("extraction" in confirmed) {
+    const extraction = (confirmed as { extraction: unknown }).extraction;
+    if (extraction === null || extraction === undefined) return { ok: false, reason: "confirmed.extraction vacío" };
+    const parsed = invoiceExtractionSchema.safeParse(extraction);
+    if (!parsed.success) return { ok: false, reason: "confirmed.extraction no cumple invoiceExtractionSchema" };
+    return { ok: true, extraction: parsed.data, source: "d10" };
   }
 
-  if (packByIndex.size < extraction.lines.length) {
-    return {
-      ok: false,
-      reason: "confirmed no cubre todas las líneas de extracted (no se distingue línea mal leída de no comprada)",
-    };
-  }
-
-  for (const [index, units] of packByIndex) {
-    if (units !== null) extraction.lines[index] = { ...extraction.lines[index]!, unitsPerPack: units };
-  }
-
-  const checked = invoiceExtractionSchema.safeParse(extraction);
-  if (!checked.success) return { ok: false, reason: "la extracción corregida no cumple invoiceExtractionSchema" };
-  return { ok: true, extraction: checked.data, source: "confirmed-lines" };
+  const legacy = invoiceExtractionSchema.safeParse(confirmed);
+  if (legacy.success) return { ok: true, extraction: legacy.data, source: "legacy-extraction" };
+  return { ok: false, reason: "confirmed con forma desconocida (sin extraction)" };
 }
 
 export function assertGcsPrefix(prefix: string): string {
@@ -276,10 +228,10 @@ export function buildTuningExample(row: InvoiceScanExportRow, opts: BuildOptions
     fileParts.push({ fileData: { mimeType, fileUri: `${prefix}/${path}` } });
   }
 
-  const reconstructed = reconstructExtraction(row);
-  if (!reconstructed.ok) return reconstructed;
+  const fromConfirmed = readConfirmedExtraction(row);
+  if (!fromConfirmed.ok) return fromConfirmed;
 
-  const answer = JSON.stringify(reconstructed.extraction);
+  const answer = JSON.stringify(fromConfirmed.extraction);
   if (UUID_PATTERN.test(answer)) return { ok: false, reason: "la extracción contiene un id interno" };
 
   const example: TuningExample = {
@@ -292,7 +244,7 @@ export function buildTuningExample(row: InvoiceScanExportRow, opts: BuildOptions
   if (estimateTokens(example) > MAX_TOKENS_PER_EXAMPLE) {
     return { ok: false, reason: `supera ${MAX_TOKENS_PER_EXAMPLE} tokens por ejemplo (estimado)` };
   }
-  return { ok: true, example, line: JSON.stringify(example), imagePaths, source: reconstructed.source };
+  return { ok: true, example, line: JSON.stringify(example), imagePaths, source: fromConfirmed.source };
 }
 
 /** Fracción determinista en [0, 1) por hash SHA-256 del id. */
@@ -444,7 +396,7 @@ async function fetchConfirmedRows(client: SupabaseClient, storeId: string, since
   for (let from = 0; ; from += PAGE_SIZE) {
     let query = client
       .from("invoice_scans")
-      .select("id, storage_path, pages, extracted, confirmed, created_at")
+      .select("id, storage_path, pages, confirmed, created_at")
       .eq("store_id", storeId)
       .eq("status", "confirmed")
       .not("confirmed", "is", null);
