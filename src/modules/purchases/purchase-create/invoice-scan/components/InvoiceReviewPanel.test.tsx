@@ -274,7 +274,8 @@ describe("InvoiceReviewPanel", () => {
 
     await user.click(loadButton());
     const draft = (props.onLoad as jest.Mock).mock.calls[0][0] as InvoiceReviewDraft;
-    expect(draft.costCurrency).toBe("ref");
+    // SCN-UI-C1: la elegida es la tasa de la compra, que va en los Bs de la factura.
+    expect(draft).toMatchObject({ costCurrency: "ves", invoiceRateVes: 875.65, rateVes: 875.65 });
   });
 
   it("sin tasa del día ni impresa pide la tasa con NumberInput", async () => {

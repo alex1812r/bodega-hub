@@ -75,17 +75,17 @@ describe("applyInvoiceReviewDraft", () => {
       lockExisting: true,
       nextId: idSequence(),
       products: activeProducts(),
-      rateVes: 510,
+      rateVes: 500,
       replace: false,
     });
 
-    expect(applied.costCurrency).toBe("ref");
+    // SCN-UI-C1: la compra va en los Bs de la factura a la tasa elegida (la del formulario).
+    expect(applied.costCurrency).toBe("ves");
     expect(applied.lines.items.map((item) => [item.id, item.productId, item.costCurrency])).toEqual([
-      ["line-1", productUuid(1), "ref"],
-      ["line-2", productUuid(3), "ref"],
+      ["line-1", productUuid(1), "ves"],
+      ["line-2", productUuid(3), "ves"],
     ]);
-    // Espejo en Bs con la tasa del formulario; el REF de la revisión queda fijo.
-    expect(applied.lines.items[0]).toMatchObject({ unitCostRef: 10, unitCostVes: 5100 });
+    expect(applied.lines.items[0]).toMatchObject({ unitCostRef: 10, unitCostVes: 5000 });
     expect(applied.lines.locks.locked).toEqual({ "line-1": true, "line-2": true });
     expect(Object.keys(applied.lines.review.reviewed).sort()).toEqual(["line-1", "line-2"]);
     expect(applied.lines.taxState.choices).toEqual({ "line-1": "general", "line-2": "exento" });
@@ -106,7 +106,7 @@ describe("applyInvoiceReviewDraft", () => {
       currentCurrency: "ves" as const,
       nextId: idSequence(),
       products: activeProducts(),
-      rateVes: 510,
+      rateVes: 500,
     };
     const added = applyInvoiceReviewDraft(makeLoadedReviewDraft(), {
       ...options,
@@ -115,7 +115,7 @@ describe("applyInvoiceReviewDraft", () => {
     });
 
     expect(added.lines.items.map((item) => item.id)).toEqual(["line-1", "line-2", "line-old"]);
-    expect(added.lines.items[2]).toMatchObject({ costCurrency: "ref", unitCostRef: 2, unitCostVes: 1020 });
+    expect(added.lines.items[2]).toMatchObject({ costCurrency: "ves", unitCostVes: 1020 });
     expect(added.lines.locks.locked).toEqual({ "line-1": true, "line-2": true });
 
     const lockedAll = applyInvoiceReviewDraft(makeLoadedReviewDraft(), {
@@ -143,7 +143,7 @@ describe("applyInvoiceReviewDraft", () => {
       lockExisting: true,
       nextId: idSequence(),
       products,
-      rateVes: 510,
+      rateVes: 500,
       replace: false,
     });
 
@@ -163,7 +163,7 @@ describe("buildInvoiceScanSubmission", () => {
       lockExisting: false,
       nextId: idSequence(),
       products: activeProducts(),
-      rateVes: 510,
+      rateVes: 500,
       replace: false,
     });
   }

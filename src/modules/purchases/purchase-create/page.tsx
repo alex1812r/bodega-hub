@@ -35,6 +35,7 @@ import {
   applyInvoiceReviewDraft,
   buildInvoiceScanSubmission,
   describeInvoiceForNotes,
+  describeLoadedInvoiceRate,
   describeLearnedAliases,
   pruneLoadedInvoiceScan,
   type LoadedInvoiceScan,
@@ -258,9 +259,12 @@ export function PurchaseCreatePage() {
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
   const catalog = productSearchResult.catalog;
   const currentRateVes = exchangeRate.data?.rateVes;
-  // Con una factura cargada y sin tasa del día manda la elegida en la revisión (6.7): el
-  // respaldo fijo solo sirve a la compra manual. `undefined` = factura sin ninguna tasa.
-  const formRateVes = currentRateVes ?? (loadedScan ? loadedScan.invoiceRateVes : FALLBACK_RATE_VES);
+  // Con una factura cargada manda la tasa elegida en la revisión (SCN-UI-C1, 6.20; 6.7 sin
+  // tasa del día); después la del día; el respaldo fijo solo sirve a la compra manual.
+  // `undefined` = factura en dólares sin ninguna tasa.
+  const formRateVes =
+    loadedScan?.invoiceRateVes ?? currentRateVes ?? (loadedScan ? undefined : FALLBACK_RATE_VES);
+  const loadedInvoiceRateNotice = describeLoadedInvoiceRate(loadedScan, currentRateVes);
   const invoiceRateMissing = formRateVes === undefined;
   const activeRateVes = formRateVes ?? FALLBACK_RATE_VES;
   // Código → % del catálogo: todo para la pista de la extracción, solo activas para la revisión.
@@ -724,7 +728,8 @@ export function PurchaseCreatePage() {
                 stored.supplierId,
                 stored.lines.items.map((item) => item.productId),
               ),
-              rateVes: currentRateVes,
+              // Con un escaneo cargado, su tasa sigue siendo la de la compra (SCN-UI-C1).
+              rateVes: stored.invoiceScan?.invoiceRateVes ?? currentRateVes,
               taxRates: taxRates.rates,
             })
           : null;
@@ -1033,8 +1038,8 @@ export function PurchaseCreatePage() {
         lockExisting: lockOnAdd,
         nextId: nextPurchaseLineId,
         products,
-        // Aún no es la del formulario: sin tasa del día, la de esta factura.
-        rateVes: currentRateVes ?? reviewDraft.invoiceRateVes ?? reviewDraft.rateVes ?? FALLBACK_RATE_VES,
+        // Aún no es la del formulario: la elegida en la revisión (USD aceptado: la del día).
+        rateVes: reviewDraft.invoiceRateVes ?? currentRateVes ?? reviewDraft.rateVes ?? FALLBACK_RATE_VES,
         replace,
       });
       const keptNotes = replace ? "" : notes;
@@ -1293,6 +1298,8 @@ export function PurchaseCreatePage() {
       ) : null}
 
       <PurchaseFormNotices messages={notices} onDismiss={() => setNotices([])} />
+
+      {loadedInvoiceRateNotice ? <PurchaseFormNotices messages={[loadedInvoiceRateNotice]} /> : null}
 
       {dependencyError ? (
         <ErrorState

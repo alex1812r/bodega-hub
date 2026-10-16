@@ -122,7 +122,7 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
                   desbloquear {name}
                 </button>
                 <button
-                  onClick={() => onUpdateItem(item.id, { quantity: 3, unitCostRef: 11 })}
+                  onClick={() => onUpdateItem(item.id, { quantity: 3, unitCostRef: 11, unitCostVes: 5500 })}
                   type="button"
                 >
                   editar {name}
@@ -229,12 +229,16 @@ import { jsonResponse, createQueryWrapper } from "@/modules/inventory/utils/requ
 import { ToastProvider } from "@/shared/components/Toast";
 import Link from "next/link";
 
+import { buildInvoiceReviewDraft } from "./invoice-scan/reviewDraft";
 import {
   makeLoadedReviewDraft,
+  makeReviewResponse,
   productUuid,
   REVIEW_SCAN_ID,
   REVIEW_SUPPLIER_ID,
+  REVIEW_TAX_RATES,
 } from "./invoice-scan/reviewFixtures";
+import { createInvoiceReviewState, reviewReducer } from "./invoice-scan/reviewModel";
 import { PurchaseCreatePage } from "./page";
 import { purchaseDraftStorageKey } from "./utils/purchaseDraftStorage";
 
@@ -384,8 +388,8 @@ async function confirmPurchase(api: ReturnType<typeof installApi>) {
   return api.posts.find((post) => post.url === "/api/purchases")?.body ?? {};
 }
 
-const HARINA_LOCKED = "Harina PAN · 2 u a REF 10 / Bs 5100 · en ref · IVA general · bloqueada";
-const REFRESCO_LOCKED = "Refresco Cola · 1 Caja de 12 a REF 24 · en ref · IVA exento · bloqueada · desarmar";
+const HARINA_LOCKED = "Harina PAN · 2 u a REF 10 / Bs 5000 · en ves · IVA general · bloqueada";
+const REFRESCO_LOCKED = "Refresco Cola · 1 Caja de 12 a REF 24 · en ves · IVA exento · bloqueada · desarmar";
 
 beforeEach(() => {
   mockPush.mockReset();
@@ -519,7 +523,7 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     expect(reviewPanel()).not.toBeInTheDocument();
     expect(lineTexts()).toEqual([HARINA_LOCKED, REFRESCO_LOCKED]);
     expect(screen.getByText(`proveedor: ${REVIEW_SUPPLIER_ID}`)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "REF" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Bs" })).toHaveAttribute("aria-pressed", "true");
     expect(notesField()).toHaveValue("Factura 000123 del 14/10/2026");
     // Bloqueadas: editar no cambia nada hasta desbloquear.
     click("editar Harina PAN");
@@ -549,7 +553,7 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
       "Cable HDMI",
     ]);
     // La compra entera pasa a la moneda de la factura.
-    expect(lineTexts()[2]).toContain("en ref");
+    expect(lineTexts()[2]).toContain("en ves");
   });
 
   it("con líneas de otro proveedor pide reemplazar; Cancelar deja la revisión y la compra", async () => {
@@ -632,7 +636,7 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
       { lineIndex: 0, productId: productUuid(1) },
       { lineIndex: 2, packLabel: "Caja", productId: productUuid(3), unitsPerPack: 12 },
     ]);
-    // Cifras finales en Bs de la factura (tasa elegida 500): 3 × REF 11 → Bs 5 500; la caja REF 24 → Bs 12 000.
+    // Cifras finales en Bs de la factura (tasa elegida 500): 3 × Bs 5 500 (REF 11); la caja REF 24 → Bs 12 000.
     expect(extraction.lines.map((line) => [line.quantity, line.unitPrice])).toEqual([
       [3, 5500],
       [1, 10],
@@ -731,7 +735,7 @@ describe("PurchaseCreatePage · factura cargada sin tasa del día (SCN-08-F1, 6.
     await scanAndLoad();
 
     expect(lineTexts()[0]).toBe(
-      "Harina PAN · 2 u a REF 10 / Bs 5000 · en ref · IVA general · bloqueada",
+      "Harina PAN · 2 u a REF 10 / Bs 5000 · en ves · IVA general · bloqueada",
     );
 
     const body = await confirmPurchase(api);
@@ -771,5 +775,64 @@ describe("PurchaseCreatePage · factura cargada sin tasa del día (SCN-08-F1, 6.
     const body = await confirmPurchase(api);
 
     expect(body.refRateVes).toBe(510);
+  });
+});
+
+describe("PurchaseCreatePage · tasa de la factura distinta de la del día (SCN-UI-C1, 6.20)", () => {
+  /** Revisión real: Harina 2 × Bs 700,52 con tasa impresa 875,65 y tasa del día 900. */
+  function printedRateDraft(choice: "printed" | "system") {
+    let state = createInvoiceReviewState(
+      makeReviewResponse({
+        extraction: { printedRate: 875.65 },
+        lines: [{ read: { lineTotal: 1401.04, quantity: 2, unitPrice: 700.52 } }],
+      }),
+      { systemRateVes: 900, taxRates: REVIEW_TAX_RATES },
+    );
+    state = reviewReducer(state, { choice, type: "setRateChoice" });
+    const draft = buildInvoiceReviewDraft(state);
+
+    if (!draft) {
+      throw new Error("la revisión debería poder cargarse");
+    }
+    return draft;
+  }
+
+  beforeEach(() => {
+    mockExchangeRate = { data: { rateVes: 900 }, error: null };
+  });
+
+  it("con «Tasa de la factura» la compra va a esa tasa y en los Bs exactos de la factura", async () => {
+    const api = installApi();
+    mockReviewDraft = printedRateDraft("printed");
+    renderPage();
+
+    await scanAndLoad(1);
+
+    expect(screen.getByRole("button", { name: "Bs" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Tasa de la factura 875,65 (hoy 900,00)")).toBeInTheDocument();
+
+    const body = await confirmPurchase(api);
+    const items = body.items as Array<Record<string, unknown>>;
+    const extraction = body.invoiceScanExtraction as { lines: Array<Record<string, unknown>> };
+
+    expect(body.refRateVes).toBe(875.65);
+    expect(items[0]).toMatchObject({ quantity: 2, unitCostRef: 0.8, unitCostVes: 700.52 });
+    expect(body.subtotalVes).toBe(1401.04);
+    expect(extraction.lines[0]).toMatchObject({ quantity: 2, unitPrice: 700.52 });
+  });
+
+  it("con «Tasa de hoy» todo sigue a la del día y no hay aviso", async () => {
+    const api = installApi();
+    mockReviewDraft = printedRateDraft("system");
+    renderPage();
+
+    await scanAndLoad(1);
+
+    expect(screen.queryByText(/^Tasa de la factura/)).not.toBeInTheDocument();
+
+    const body = await confirmPurchase(api);
+
+    expect(body.refRateVes).toBe(900);
+    expect((body.items as Array<Record<string, unknown>>)[0]).toMatchObject({ unitCostVes: 700.52 });
   });
 });

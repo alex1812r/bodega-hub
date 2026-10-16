@@ -113,9 +113,10 @@ export function unmatchedLine(seed: number, withCandidates = true, extra: Review
 }
 
 /**
- * Salida de una revisión lista para cargar (SCN-08c): factura en Bs convertida a REF con
- * la tasa impresa (500) mientras el sistema tiene 510. Tres líneas leídas: la 0 por
- * unidad (2 × REF 10), la 1 descartada y la 2 una caja de 12 a desarmar (REF 24).
+ * Salida de una revisión lista para cargar (SCN-08c): factura en Bs con la tasa impresa
+ * (500) elegida mientras el sistema tiene 510; la compra va en los Bs de la factura a esa
+ * tasa (SCN-UI-C1). Tres líneas leídas: la 0 por unidad (2 × Bs 5 000 = REF 10), la 1
+ * descartada y la 2 una caja de 12 a desarmar (Bs 12 000 = REF 24).
  */
 export function makeLoadedReviewDraft(overrides: Partial<InvoiceReviewDraft> = {}): InvoiceReviewDraft {
   const extraction: InvoiceExtraction = {
@@ -146,8 +147,8 @@ export function makeLoadedReviewDraft(overrides: Partial<InvoiceReviewDraft> = {
     supplier: { contactId: REVIEW_SUPPLIER_ID, name: "Chevere Depot" },
     purchaseNumber: "000123",
     date: "2026-10-14",
-    costCurrency: "ref",
-    rateVes: 510,
+    costCurrency: "ves",
+    rateVes: 500,
     invoiceRateVes: 500,
     lines: [
       {
@@ -157,13 +158,13 @@ export function makeLoadedReviewDraft(overrides: Partial<InvoiceReviewDraft> = {
         productName: "Harina PAN",
         taxRateCode: "general",
         item: createUnitDraftItem({
-          costCurrency: "ref",
+          costCurrency: "ves",
           id: `invoice-scan-${REVIEW_SCAN_ID}-0`,
           productId: productUuid(1),
           quantity: 2,
-          rateVes: 510,
+          rateVes: 500,
           taxRate: 16,
-          unitCostRef: 10,
+          unitCostVes: 5000,
         }),
       },
       {
@@ -174,13 +175,13 @@ export function makeLoadedReviewDraft(overrides: Partial<InvoiceReviewDraft> = {
         taxRateCode: "exento",
         disassembleOnReceive: true,
         item: createPackDraftItem({
-          costCurrency: "ref",
+          costCurrency: "ves",
           id: `invoice-scan-${REVIEW_SCAN_ID}-2`,
-          packCostRef: 24,
+          packCostVes: 12000,
           packCount: 1,
           packLabel: "Caja",
           productId: productUuid(3),
-          rateVes: 510,
+          rateVes: 500,
           taxRate: 0,
           unitsPerPack: 12,
         }),

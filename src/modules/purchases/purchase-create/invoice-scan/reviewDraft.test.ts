@@ -142,7 +142,7 @@ describe("buildInvoiceReviewDraft", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("tasa impresa elegida: costos como REF convertidos con la impresa", () => {
+  it("tasa impresa elegida: es la tasa de la compra, en los Bs exactos de la factura (SCN-UI-C1)", () => {
     let state = stateOf([{ read: { quantity: 1, unitPrice: 9000, lineTotal: 9000 } }], {
       extraction: { printedRate: 875.65 },
     });
@@ -150,19 +150,32 @@ describe("buildInvoiceReviewDraft", () => {
 
     state = reviewReducer(state, { type: "setRateChoice", choice: "printed" });
     const draft = buildInvoiceReviewDraft(state);
-    expect(draft?.costCurrency).toBe("ref");
-    expect(draft?.rateVes).toBe(900);
+    expect(draft?.costCurrency).toBe("ves");
+    expect(draft?.rateVes).toBe(875.65);
     expect(draft?.invoiceRateVes).toBe(875.65);
-    expect(draft?.lines[0].item).toMatchObject({ costCurrency: "ref", unitCostRef: 10.28 });
+    expect(draft?.lines[0].item).toMatchObject({ costCurrency: "ves", unitCostRef: 10.28, unitCostVes: 9000 });
+    expect(draft && purchaseBodySchema.safeParse(bodyOf(draft)).data).toMatchObject({
+      refRateVes: 875.65,
+      items: [expect.objectContaining({ unitCostVes: 9000 })],
+    });
   });
 
-  it("sin tasa del sistema, la impresa: REF convertidos y espejo con la impresa", () => {
+  it("tasa manual distinta de la del día: también es la tasa de la compra (SCN-UI-C1)", () => {
+    let state = stateOf([{ read: { quantity: 1, unitPrice: 8500, lineTotal: 8500 } }]);
+    state = reviewReducer(state, { type: "setRateChoice", choice: "manual", manualRate: 850 });
+    const draft = buildInvoiceReviewDraft(state);
+
+    expect(draft).toMatchObject({ costCurrency: "ves", invoiceRateVes: 850, rateVes: 850 });
+    expect(draft?.lines[0].item).toMatchObject({ unitCostRef: 10, unitCostVes: 8500 });
+  });
+
+  it("sin tasa del sistema, la impresa: Bs de la factura y espejo con la impresa", () => {
     const state = stateOf([{ read: { quantity: 1, unitPrice: 8756.5, lineTotal: 8756.5 } }], {
       extraction: { printedRate: 875.65 },
     }, { taxRates: REVIEW_TAX_RATES });
     const draft = buildInvoiceReviewDraft(state);
 
-    expect(draft).toMatchObject({ costCurrency: "ref", rateVes: 875.65 });
+    expect(draft).toMatchObject({ costCurrency: "ves", rateVes: 875.65 });
     expect(draft?.lines[0].item).toMatchObject({ unitCostRef: 10, unitCostVes: 8756.5 });
   });
 
