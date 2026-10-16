@@ -17,7 +17,7 @@ import type {
 } from "../../src/modules/invoice-scan/server/match.types";
 
 import { alignLines } from "./metrics";
-import { ORACLE_BANNER, renderMarkdown, toJson, writeRunFiles } from "./report";
+import { ORACLE_BANNER, PAIR_NA, pairSummary, renderMarkdown, toJson, writeRunFiles } from "./report";
 import {
   createOracleExtractor,
   createReplayExtractor,
@@ -492,5 +492,40 @@ describe("writeRun en modos sin modelo (SCN-10l)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("pares no evaluables y fecha de la corrida (SCN-10m)", () => {
+  it("si falla una extracción del par: no evaluable con motivo, '—' en el resto y fuera del denominador", async () => {
+    const result = await runBench(
+      options({ extractor: fakeExtractor({ failFor: "f03", error: Object.assign(new Error("caído"), { status: 503 }) }) }),
+    );
+    const sin = result.pairs.filter((pair) => pair.bucket === "sinAlias");
+    const f03 = sin.find((pair) => pair.id === "f03");
+    expect(f03?.consistency).toMatchObject({ evaluable: false, notEvaluableReason: "b_failed", consistent: false });
+    expect(sin.find((pair) => pair.id === "f16")?.consistency).toMatchObject({ evaluable: true, consistent: true });
+    expect(pairSummary(sin)).toBe("Consistentes: 1/1 evaluables. No evaluables: 1.");
+
+    const markdown = renderMarkdown(result);
+    const row = markdown.split("\n").find((line) => line.startsWith("| sin alias | f02 / f03 |"));
+    expect(row).toBe(
+      `| sin alias | f02 / f03 | ${PAIR_NA} | no evaluable (falló la extracción del duplicado) | ${PAIR_NA} | ${PAIR_NA} | ${PAIR_NA} | ${PAIR_NA} |`,
+    );
+    const evaluable = result.pairs.filter((pair) => pair.consistency.evaluable);
+    const consistent = evaluable.filter((pair) => pair.consistency.consistent).length;
+    const notEvaluable = result.pairs.length - evaluable.length;
+    expect(notEvaluable).toBeGreaterThanOrEqual(1);
+    expect(markdown).toContain(`Consistentes: ${consistent}/${evaluable.length} evaluables. No evaluables: ${notEvaluable}.`);
+  });
+
+  it("el costo usa el precio vigente en la fecha de la corrida (`at`), no el reloj", async () => {
+    const base = fakeExtractor();
+    const extractor: BenchExtractor = async (input) => ({ ...(await base(input)), modelId: "gemini-3.8-flash" });
+    const run = (iso: string) => runBench(options({ truths: [TRUTHS[0]], extractor, now: () => new Date(iso) }));
+    const before = await run("2026-10-15T12:00:00.000Z");
+    const after = await run("2027-02-01T12:00:00.000Z");
+    expect(entry(before, "f01", "sinAlias").costUsd).toBeCloseTo((1000 * 0.75 + 200 * 3.75) / 1e6, 10);
+    expect(entry(after, "f01", "sinAlias").costUsd).toBeCloseTo((1000 * 1.5 + 200 * 7.5) / 1e6, 10);
+    expect(after.meta.date).toBe("2027-02-01T12:00:00.000Z");
   });
 });

@@ -291,6 +291,8 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
   const truths = [...opts.truths].sort(byId);
   const concurrency = opts.concurrency ?? 1;
   const { scenario } = opts;
+  /** Fecha de la corrida: fija el precio vigente del costo estimado y `meta.date`. */
+  const runAt = opts.now ? opts.now() : new Date();
   let provider: string | undefined;
   let modelId: string | undefined;
 
@@ -361,6 +363,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       catalog: scenario.products,
       bucket,
       expectedContactId: expectedContactId(truth, scenario),
+      at: runAt,
       ...(usage
         ? {
             durationMs: usage.durationMs,
@@ -533,7 +536,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     meta: {
       provider: provider ?? "desconocido",
       modelId: modelId ?? "desconocido",
-      date: (opts.now ? opts.now() : new Date()).toISOString(),
+      date: runAt.toISOString(),
       fewShot: opts.fewShot,
       invoices: {
         real: truths.filter((t) => !t.synthetic).length,

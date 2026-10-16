@@ -9,8 +9,15 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { BUCKETS, type AggregateMetrics, type Bucket, type HeaderField, type TargetCheck } from "./metrics";
-import type { BenchInvoiceResult, BenchResult } from "./runner";
+import {
+  BUCKETS,
+  type AggregateMetrics,
+  type Bucket,
+  type HeaderField,
+  type PairNotEvaluableReason,
+  type TargetCheck,
+} from "./metrics";
+import type { BenchInvoiceResult, BenchPairResult, BenchResult } from "./runner";
 
 /** Casos del plan donde lo importante es no inventar líneas (f07 dedo, f09 recibo al lado). */
 export const NO_INVENT_IDS: readonly string[] = ["f07", "f09"];
@@ -107,6 +114,42 @@ function table(header: readonly string[], rows: readonly (readonly string[])[]):
 
 function invoiceLabel(entry: Pick<BenchInvoiceResult, "id" | "synthetic">): string {
   return entry.synthetic ? `${entry.id} (sintética)` : entry.id;
+}
+
+// ───────────────────────── pares duplicados (SCN-10m) ─────────────────────────
+
+/** Celda de las columnas que no aplican a un par no evaluable. */
+export const PAIR_NA = "—";
+
+const PAIR_REASON_LABELS: Record<PairNotEvaluableReason, string> = {
+  both_failed: "fallaron ambas extracciones",
+  a_failed: "falló la extracción del original",
+  b_failed: "falló la extracción del duplicado",
+};
+
+/** Columnas Detectado..Emparejamiento distinto de un par. */
+function pairCells(pair: BenchPairResult): string[] {
+  const c = pair.consistency;
+  if (!c.evaluable) {
+    const reason = c.notEvaluableReason ? PAIR_REASON_LABELS[c.notEvaluableReason] : "extracción fallida";
+    return [PAIR_NA, `no evaluable (${reason})`, PAIR_NA, PAIR_NA, PAIR_NA, PAIR_NA];
+  }
+  return [
+    pair.detected ? `${OK}${pair.detectedOf ? ` (${pair.detectedOf})` : ""}` : FAIL,
+    c.consistent ? OK : FAIL,
+    c.headerDiffs.join(", ") || NONE,
+    `${c.unpairedA.length}/${c.unpairedB.length}`,
+    String(c.valueDiffs.length),
+    String(c.matchDiffs.length),
+  ];
+}
+
+/** Conteo de consistentes sobre los pares evaluables; los no evaluables van aparte. */
+export function pairSummary(pairs: readonly BenchPairResult[]): string {
+  const evaluable = pairs.filter((pair) => pair.consistency.evaluable);
+  const consistent = evaluable.filter((pair) => pair.consistency.consistent).length;
+  const notEvaluable = pairs.length - evaluable.length;
+  return `Consistentes: ${consistent}/${evaluable.length} evaluables. No evaluables: ${notEvaluable}.`;
 }
 
 function targetRows(checks: readonly TargetCheck[], mode: ReportMode = MODEL_MODE): string[][] {
@@ -260,18 +303,15 @@ export function renderMarkdown(result: BenchResult, mode: ReportMode = MODEL_MOD
   if (result.pairs.length === 0) {
     out.push("Sin pares evaluados.");
   } else {
+    out.push(pairSummary(result.pairs));
+    out.push("");
     out.push(
       ...table(
         ["Bucket", "Par", "Detectado", "Consistente", "Cabecera distinta", "Sin par (orig./dup.)", "Valores distintos", "Emparejamiento distinto"],
         result.pairs.map((pair) => [
           BUCKET_LABELS[pair.bucket],
           `${pair.duplicateOf} / ${pair.id}`,
-          pair.detected ? `${OK}${pair.detectedOf ? ` (${pair.detectedOf})` : ""}` : FAIL,
-          pair.consistency.consistent ? OK : FAIL,
-          pair.consistency.headerDiffs.join(", ") || NONE,
-          `${pair.consistency.unpairedA.length}/${pair.consistency.unpairedB.length}`,
-          String(pair.consistency.valueDiffs.length),
-          String(pair.consistency.matchDiffs.length),
+          ...pairCells(pair),
         ]),
       ),
     );

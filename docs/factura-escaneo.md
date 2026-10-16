@@ -171,25 +171,54 @@ Cada `truth/<id>.json` se valida con `invoiceTruthSchema`. Su `id` tiene que coi
 - las metas del §10 con ✓/✗;
 - los totales de cada bucket;
 - el detalle por factura;
-- los pares duplicados;
+- los pares duplicados (un par cuya extracción falló sale "no evaluable (motivo)" con "—" en las demás columnas y no entra en el denominador de consistentes, que se muestra como "Consistentes: X/Y evaluables. No evaluables: Z.");
 - los casos de no inventar (f07, f09);
 - los errores.
 
 ### Cómo correrlo
 
-**Pendiente de integrar.** El comando `npm run invoice-eval -- --provider google|anthropic|mock` lo añade el ticket SCN-10h cuando se integre el módulo Extracción. Hasta entonces no existe el script en `package.json` y no se documentan más opciones. Los informes saldrán en `scripts/invoice-eval/runs/`.
-
-Mientras tanto:
-
 1. Levantar la base lab con `npm run stock-lab:db-up`.
-2. Sembrar con `npx tsx scripts/invoice-eval/seed-lab.ts`.
-3. Correr los tests con `npx jest scripts/invoice-eval`.
+2. Sembrar el escenario con `npx tsx scripts/invoice-eval/seed-lab.ts`.
+3. Correr el banco con `npm run invoice-eval -- <flags>` (`npx tsx scripts/invoice-eval/run.ts`).
+4. Los tests del banco se corren con `npx jest scripts/invoice-eval`.
+
+Flags:
+
+| Flag | Qué hace |
+|------|----------|
+| `--provider google\|anthropic\|mock\|oracle` | Proveedor. Obligatorio salvo con `--replay` sin `--fill-missing`. `oracle` no llama a ningún modelo (ver "Emparejamiento con oráculo"). |
+| `--model <id>` | Modelo exacto (se pasa como `INVOICE_SCAN_MODEL`). Si se omite, el del proveedor por defecto. No vale con `oracle`. |
+| `--only f01,f02` | Solo esas facturas. |
+| `--no-fewshot` | Sin ejemplos few-shot en "con alias". Con `oracle` el few-shot no aplica nunca. |
+| `--concurrency n` | Extracciones en paralelo, entero de 1 a 8 (por defecto 2). El emparejamiento siempre es secuencial. |
+| `--out <dir>` | Carpeta de los informes (por defecto `scripts/invoice-eval/runs/`). |
+| `--label <texto>` | Sufijo del nombre del informe. |
+| `--replay <run.json>` | Reutiliza las extracciones guardadas de una corrida y recalcula solo el emparejamiento con el código y el lab actuales. Tokens, tiempo y costo salen de la corrida original. No admite `--no-fewshot` ni `oracle`. |
+| `--fill-missing` | Solo con `--replay`: las facturas sin extracción guardada se extraen de nuevo. Exige `--provider` y `--model` iguales a los de la corrida de origen. Sin este flag quedan con error `REPLAY_MISSING`. |
+| `--keys-env <ruta>` | Archivo del que se leen las keys de IA (por defecto `.env.local` del repo principal). |
+
+Los informes se guardan como `<fecha Caracas>-<proveedor>-<modelo>[-label].md|.json`; el oráculo como `<fecha>-oraculo-solo-emparejamiento[-label]` y el replay como `<fecha>-replay-<proveedor>-<modelo>[-label]`. Nunca se sobrescribe una corrida.
+
+Protecciones del CLI:
+
+- **Supabase solo del lab local.** Se lee únicamente de `.env.stock-lab` del worktree y el CLI aborta si la URL no es `127.0.0.1` o `localhost`.
+- **Solo las 2 keys de IA.** Del archivo de `--keys-env` (que apunta a producción) se leen solo `GOOGLE_GENERATIVE_AI_API_KEY` y `ANTHROPIC_API_KEY`, y solo la del proveedor pedido; nada más entra en `process.env` y las keys nunca se imprimen ni se escriben. El oráculo y el replay sin `--fill-missing` no leen el archivo.
+- **Cerrojo.** Mientras corre se toma `.notes/factura-escaneo/lab.lock` del repo principal; si otro proceso lo tiene, el CLI aborta.
+- **Cuota.** 3 errores de cuota seguidos cortan la pasada y el informe lo avisa.
 
 ---
 
 ## Resultados por proveedor de IA
 
-Todavía no hay corridas reales: la tabla se llena con los informes de `scripts/invoice-eval/runs/`. Las metas son las del §10 del plan.
+Las metas son las del §10 del plan. La tabla por modelo se llena con los informes completos de `scripts/invoice-eval/runs/`.
+
+### Corridas reales del 2026-10-15
+
+- **gemini-2.5-flash** (`runs/2026-10-15-google-gemini-2.5-flash.md`, few-shot sí): cortada por la cuota free diaria (429) tras 3 facturas. En esas 3: cabecera 100 %, exactitud 16/16 líneas, p95 17,6 s, $0,0076 por factura. No sirve como resultado del modelo: 3 facturas no son el banco.
+- **gemini-3.8-flash** (`runs/2026-10-15-google-gemini-3.8-flash.md`): sin respuestas (503/429); no hay métricas.
+- **Haiku 4.5 y Haiku 5.5**: no corridos, porque `ANTHROPIC_API_KEY` está vacía en el archivo de keys.
+
+La tabla por modelo queda **pendiente** hasta tener una corrida completa por modelo.
 
 | Métrica (meta sin alias / con alias) | Gemini sin alias | Gemini con alias | Haiku sin alias | Haiku con alias |
 |--------------------------------------|------------------|------------------|-----------------|-----------------|
@@ -202,6 +231,30 @@ Todavía no hay corridas reales: la tabla se llena con los informes de `scripts/
 | Costo medio por factura (≤ $0,01) | | — | | — |
 
 Por cada corrida que alimente la tabla se anotan el modelo exacto (`modelId`), la fecha, si fue con o sin few-shot y el informe de origen.
+
+### Emparejamiento con oráculo
+
+`npm run invoice-eval -- --provider oracle` usa la verdad de `truth/` como extracción: 0 llamadas a la IA, tokens y costo `null`, duración 0. Así mide **solo el emparejamiento** (proveedor, producto, alias, empaque) con una lectura perfecta. **No es una métrica del modelo**: el informe lo marca con un aviso, y cabecera, líneas, exactitud, tiempo y costo salen como "n/a (oráculo)". Sirve para iterar las reglas de emparejamiento sin gastar cuota.
+
+#### Iteración 1 (2026-10-15, oráculo)
+
+- Qué cambió: segunda pasada difusa con textos limpios (sin marcadores de empaque ni prefijos, y con la unidad separada del número) solo para las líneas sin ningún candidato, en `src/modules/invoice-scan/server/loadMatchContext.ts` y `src/modules/invoice-scan/server/match/searchText.ts`.
+- Informe antes: `runs/2026-10-15-oraculo-solo-emparejamiento-it1-antes.md` · Informe después: `runs/2026-10-15-oraculo-solo-emparejamiento-it1-despues.md`
+
+| Métrica | Bucket | Antes | Después |
+|---------|--------|-------|---------|
+| Emparejamiento correcto (conf. + dudosa) | sin alias | 85,1 % | 96,8 % |
+| Emparejamiento correcto (conf. + dudosa) | con alias | 96,2 % | 98,1 % |
+| Confirmadas mal | sin alias / con alias | 0 % | 0 % |
+| Sin emparejar (producto en catálogo) | sin alias | 28 | 6 |
+| Sin emparejar (producto en catálogo) | con alias | 4 | 2 |
+
+- Qué mejoró: 24 líneas pasan de sin emparejar a dudosa con el candidato correcto; ninguna otra línea cambia.
+- Qué empeoró: nada.
+- Pendiente:
+  - 6 líneas siguen sin emparejar: Ketchup, Solera, Papa rayada, Samy, Fanta y Protector. Arreglarlas pide bajar el umbral o cambiar la medida de similitud en SQL.
+  - Sin alias hay 0 confirmadas: sin empaque registrado para el proveedor, la regla §3 deja la línea dudosa aunque traiga SKU o código de barras. Si el código de barras debe confirmar es decisión del gerente.
+- Decisión: se mantiene.
 
 ### Iteraciones de ajuste (SCN-11)
 
