@@ -33,16 +33,15 @@ describe("invoiceReviewView", () => {
     expect(buildNewProductInitialValues(state, state.lines[0])).toEqual({ name: "Harina PAN 1kg" });
   });
 
-  it("elige el calculado más cercano al leído y solo da diferencia con descuadre", () => {
-    expect(getDisplayedTotals({ computed: 200, computedWithTax: 232, lineMismatches: [], mismatch: false, read: 200 })).toEqual({
-      computed: 200,
-      ok: true,
+  it("SCN-UI-Q1: muestra siempre el total a registrar y solo da diferencia con descuadre", () => {
+    const base = { base: 200, computed: 200, lineMismatches: [], registered: 232, tax: 32 };
+    expect(getDisplayedTotals({ ...base, mismatch: true, read: 200 })).toEqual({
+      difference: -32,
+      ok: false,
       read: 200,
+      registered: 232,
     });
-    expect(getDisplayedTotals({ computed: 200, computedWithTax: 232, lineMismatches: [], mismatch: false })).toEqual({
-      computed: 232,
-      ok: true,
-    });
+    expect(getDisplayedTotals({ ...base, mismatch: false })).toEqual({ ok: true, registered: 232 });
   });
 
   it("chips: candidatos y el propuesto si no está entre ellos", () => {

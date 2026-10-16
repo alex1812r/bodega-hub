@@ -10,6 +10,7 @@ import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import {
   getLineCosts,
   getLineNeeds,
+  getUnitConversion,
   MAX_REVIEW_UNITS_PER_PACK,
   type InvoiceReviewLine,
   type InvoiceReviewLineStatus,
@@ -139,7 +140,9 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
       return [`Indica cuántas unidades trae cada ${line.packLabel.trim().toLowerCase() || "empaque"}.`];
     }
     if (need === "quantity") {
-      return ["La cantidad debe ser un número entero mayor que 0."];
+      // Fraccionaria (0,50 cajas): con conversión posible la fila ofrece el botón; si no, dice qué editar.
+      const conversion = getUnitConversion(line);
+      return conversion.ok ? [] : [conversion.reason];
     }
     if (need === "unitPrice") {
       return ["Revisa el costo: no puede ser negativo ni estar vacío."];
@@ -150,28 +153,24 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
 
 export type DisplayedTotals = {
   read?: number;
-  /** El calculado que se compara con el leído: sin IVA o con IVA, el más cercano. */
-  computed: number;
-  /** Leído − calculado; solo con descuadre y total leído. */
+  /** Total que se va a registrar (base + IVA de las alícuotas elegidas). */
+  registered: number;
+  /** Leído − a registrar; solo con descuadre y total leído. */
   difference?: number;
   ok: boolean;
 };
 
 /**
- * Pie "Total leído X · Total calculado Y". El descuadre lo decide el modelo
- * (`totals.mismatch`); aquí solo se elige qué calculado mostrar junto al leído.
+ * Pie "Total a registrar X · Leído Y" (SCN-UI-Q1): siempre el total que se va a
+ * registrar, nunca "el calculado más cercano". El descuadre lo decide el modelo.
  */
 export function getDisplayedTotals(totals: InvoiceReviewTotals): DisplayedTotals {
-  const { read, computed, computedWithTax, mismatch } = totals;
-  if (read === undefined) {
-    return { computed: computedWithTax, ok: !mismatch };
-  }
-  const shown = Math.abs(read - computed) < Math.abs(read - computedWithTax) ? computed : computedWithTax;
+  const { read, registered, mismatch } = totals;
   return {
-    read,
-    computed: shown,
+    ...(read !== undefined ? { read } : {}),
+    registered,
     ok: !mismatch,
-    ...(mismatch ? { difference: roundMoney(read - shown) } : {}),
+    ...(mismatch && read !== undefined ? { difference: roundMoney(read - registered) } : {}),
   };
 }
 

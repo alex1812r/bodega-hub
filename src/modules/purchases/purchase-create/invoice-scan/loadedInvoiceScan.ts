@@ -44,6 +44,11 @@ export type LoadedInvoiceScan = {
    */
   invoiceRateVes?: number;
   /**
+   * SCN-UI-Q1 · Los precios de la factura incluyen IVA: el formulario lleva la base y la
+   * extracción que se envía (D10) devuelve el precio con IVA (el leído si no se tocó).
+   */
+  pricesIncludeTax?: true;
+  /**
    * SCN-UI-C3 · Costo en Bs de la factura (el del modo de entrada) de cada línea cargada
    * en Bs: alternar «Costos en» Bs → REF → Bs lo devuelve sin el redondeo del REF.
    */
@@ -178,6 +183,7 @@ export function applyInvoiceReviewDraft(
     loaded: {
       extraction: draft.body.invoiceScanExtraction,
       ...(draft.invoiceRateVes !== undefined ? { invoiceRateVes: draft.invoiceRateVes } : {}),
+      ...(draft.pricesIncludeTax ? { pricesIncludeTax: true as const } : {}),
       ...(added.length > 0 && costCurrency === "ves" ? { invoiceCostVesByItemId } : {}),
       lineIndexByItemId,
       scanId: draft.body.invoiceScanId,
@@ -386,6 +392,17 @@ function invoicePrice(
   return costCurrency === "ves" ? roundMoney(ves) : roundMoney(ref * loaded.invoiceRateVes);
 }
 
+/**
+ * SCN-UI-Q1 · Con precios con IVA incluido la extracción guarda el precio de la factura,
+ * no la base: el leído si la base sigue siendo la que salió de él; si se editó en el
+ * formulario, base × (1 + alícuota).
+ */
+function invoicePriceWithTax(base: number, read: InvoiceExtractionLine, taxRate: number) {
+  const factor = 1 + Math.max(0, taxRate) / 100;
+
+  return roundMoney(read.unitPrice / factor) === base ? read.unitPrice : roundMoney(base * factor);
+}
+
 function validUnitsPerPack(item: PurchaseDraftItem) {
   return item.entryMode === "pack" &&
     Number.isInteger(item.unitsPerPack) &&
@@ -432,7 +449,9 @@ export function buildInvoiceScanSubmission(
     const fixed: InvoiceExtractionLine = {
       ...read,
       quantity: item.entryMode === "pack" ? item.packCount : item.quantity,
-      unitPrice: invoicePrice(item, loaded, input.costCurrency),
+      unitPrice: loaded.pricesIncludeTax
+        ? invoicePriceWithTax(invoicePrice(item, loaded, input.costCurrency), read, item.taxRate)
+        : invoicePrice(item, loaded, input.costCurrency),
       ...(tax.code ? { taxHint: taxHintFromCode(tax.code, input.taxRates) } : {}),
     };
 

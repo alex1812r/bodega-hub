@@ -25,6 +25,15 @@ import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 /** Diferencia relativa tasa impresa vs del sistema por encima de la cual se avisa (D8: 2 %). */
 export const PRINTED_RATE_WARNING_DELTA = 0.02;
 /**
+ * SCN-UI-Q1 (MEDIO-4): una tasa impresa a más de ±25 % de la del día no es una tasa
+ * Bs/USD (p. ej. el total REF 86,75 frente a 880,12): se ignora. La misma constante
+ * vive en el servidor.
+ */
+export const PRINTED_RATE_MAX_DEVIATION = 0.25;
+/** Sin tasa del día: la impresa debe estar entre 0,5× y 2× la última tasa conocida. */
+export const PRINTED_RATE_LAST_KNOWN_MIN_FACTOR = 0.5;
+export const PRINTED_RATE_LAST_KNOWN_MAX_FACTOR = 2;
+/**
  * Tolerancia de totales (la misma del emparejamiento, `server/match/money.ts`):
  * máx(1 % del leído, 1 Bs). En facturas en dólares el mínimo es 0,01.
  */
@@ -53,6 +62,8 @@ export const USD_ANOMALY_NOTICE =
 export type InvoiceReviewContext = {
   /** Tasa Bs/REF vigente de la tienda; ausente si no hay tasa del día (6.7). */
   systemRateVes?: number;
+  /** Última tasa conocida (aunque no sea del día): sin tasa del día acota la impresa. */
+  lastKnownRateVes?: number;
   /** Catálogo de alícuotas activas: código → porcentaje (`{ general: 16, exento: 0 }`). */
   taxRates: Record<string, number>;
 };
@@ -121,6 +132,13 @@ export type InvoiceReviewRate = {
   warning?: string;
   /** Aviso de tasa que no es la del día (6.7): impresa usada o tasa manual pedida. */
   notice?: string;
+  /**
+   * La impresa se usa sin poder comprobarla (sin tasa del día ni última conocida):
+   * la UI la avisa con tono fuerte.
+   */
+  unverified?: boolean;
+  /** Tasa impresa inverosímil (fuera de `PRINTED_RATE_MAX_DEVIATION`…): no se ofrece. */
+  ignoredWarning?: string;
 };
 
 export type InvoiceReviewSupplier = {
@@ -148,6 +166,12 @@ export type InvoiceReviewState = {
   rate: InvoiceReviewRate;
   usd: { anomaly: boolean; accepted: boolean };
   taxRates: Record<string, number>;
+  /**
+   * SCN-UI-Q1 (ALTO-1): elección explícita "los precios incluyen IVA" (`true`) o no
+   * (`false`). Sin elegir manda la sugerencia de `getTaxInclusion`. Con IVA incluido
+   * `unitPrice` sigue siendo el precio leído y la base es precio ÷ (1 + alícuota).
+   */
+  pricesIncludeTax?: boolean;
   duplicateOfScanId?: string;
   /** Datos del emparejamiento por línea para restaurar empaque al volver al producto propuesto. */
   matchDefaults: MatchLineDefaults[];
@@ -178,6 +202,9 @@ export type InvoiceReviewAction =
   | { type: "editUnitsPerPack"; index: number; unitsPerPack: number | undefined }
   | { type: "editEntryMode"; index: number; entryMode: "unit" | "pack" }
   | { type: "editPackLabel"; index: number; packLabel: string }
+  /** Cantidad fraccionaria de empaques → unidades enteras (`getUnitConversion`). */
+  | { type: "convertPackToUnits"; index: number }
+  | { type: "setPricesIncludeTax"; included: boolean }
   | { type: "setSupplier"; supplier: { contactId: string; name: string } }
   | { type: "editHeader"; number?: string; date?: string }
   | { type: "setRateChoice"; choice: InvoiceRateChoice; manualRate?: number }
@@ -205,18 +232,59 @@ export function printedRateWarning(system: number, printed: number): string | un
     : undefined;
 }
 
+/** Tasa sin prefijo, como en el aviso: "86,75". */
+function formatRateValue(rate: number): string {
+  return rate.toLocaleString("es-VE", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+}
+
+/**
+ * ¿La tasa impresa puede ser una tasa Bs/USD? Con tasa del día, a ±25 % de ella; sin
+ * ella, entre 0,5× y 2× la última conocida. Sin ninguna referencia no se puede saber
+ * (`undefined`): se ofrece, pero con aviso fuerte.
+ */
+export function isPlausiblePrintedRate(
+  printed: number,
+  reference: { system?: number; lastKnown?: number },
+): boolean | undefined {
+  if (isPositive(reference.system)) {
+    return Math.abs(printed - reference.system) / reference.system <= PRINTED_RATE_MAX_DEVIATION;
+  }
+  if (isPositive(reference.lastKnown)) {
+    return (
+      printed >= reference.lastKnown * PRINTED_RATE_LAST_KNOWN_MIN_FACTOR &&
+      printed <= reference.lastKnown * PRINTED_RATE_LAST_KNOWN_MAX_FACTOR
+    );
+  }
+  return undefined;
+}
+
 function initialRate(response: InvoiceScanResponse, ctx: InvoiceReviewContext): InvoiceReviewRate {
   const system = isPositive(ctx.systemRateVes) ? ctx.systemRateVes : undefined;
   const printedRead = response.extraction.printedRate ?? response.matched.rate?.printed;
-  const printed = isPositive(printedRead) ? printedRead : undefined;
+  const plausible = isPositive(printedRead)
+    ? isPlausiblePrintedRate(printedRead, { system, lastKnown: ctx.lastKnownRateVes })
+    : undefined;
+  const ignored = isPositive(printedRead) && plausible === false;
+  const printed = isPositive(printedRead) && !ignored ? printedRead : undefined;
   const base = {
     ...(system !== undefined ? { system } : {}),
     ...(printed !== undefined ? { printed } : {}),
+    ...(ignored
+      ? { ignoredWarning: `La tasa leída (${formatRateValue(printedRead)}) no parece una tasa Bs/USD; se ignora.` }
+      : {}),
   };
 
   if (system !== undefined) {
     const warning = printed !== undefined ? printedRateWarning(system, printed) : undefined;
     return { ...base, choice: "system", ...(warning ? { warning } : {}) };
+  }
+  if (printed !== undefined && plausible === undefined) {
+    return {
+      ...base,
+      choice: "printed",
+      unverified: true,
+      notice: `No hay tasa del día ni una tasa anterior con qué comprobarla: se usa la tasa impresa en la factura (${formatVesBs(printed)}) sin verificar. Revísala antes de cargar.`,
+    };
   }
   if (printed !== undefined) {
     return {
@@ -228,7 +296,9 @@ function initialRate(response: InvoiceScanResponse, ctx: InvoiceReviewContext): 
   return {
     ...base,
     choice: "manual",
-    notice: "No hay tasa del día ni tasa impresa en la factura: escribe la tasa para convertir los costos.",
+    notice: ignored
+      ? "No hay tasa del día y la tasa leída en la factura no es válida: escribe la tasa para convertir los costos."
+      : "No hay tasa del día ni tasa impresa en la factura: escribe la tasa para convertir los costos.",
   };
 }
 
@@ -248,6 +318,49 @@ export function getLineNeeds(line: InvoiceReviewLine): InvoiceReviewLineNeed[] {
     needs.push("unitPrice");
   }
   return needs;
+}
+
+export type InvoiceUnitConversion =
+  | { ok: true; units: number; unitPrice: number }
+  | { ok: false; reason: string };
+
+function formatQuantity(value: number): string {
+  return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
+}
+
+/**
+ * SCN-UI-Q1 (MEDIO-3): la compra solo admite cantidades enteras
+ * (`purchaseItemInputSchema`: `quantity`/`packCount` int). Una cantidad fraccionaria
+ * de empaques (0,50 cajas) con unidades por empaque conocidas se carga como unidades:
+ * cantidad = empaques × unidades, costo = precio ÷ unidades. Si el producto no da
+ * entero o faltan las unidades, `reason` dice qué editar.
+ */
+export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversion {
+  const pack = line.packLabel.trim().toLowerCase() || "empaque";
+  if (!isPositive(line.quantity) || Number.isInteger(line.quantity)) {
+    return { ok: false, reason: "La cantidad debe ser un número entero mayor que 0." };
+  }
+  if (line.entryMode !== "pack") {
+    return {
+      ok: false,
+      reason: `La compra solo admite cantidades enteras. Si la factura vende por ${pack}, elige «Por ${pack}» e indica las unidades por empaque para cargarla como unidades; si no, corrige la cantidad.`,
+    };
+  }
+  if (!isValidUnitsPerPack(line.unitsPerPack)) {
+    return {
+      ok: false,
+      reason: `Indica cuántas unidades trae cada ${pack} para cargar ${formatQuantity(line.quantity)} ${pack} como unidades, o corrige la cantidad.`,
+    };
+  }
+  const exact = line.quantity * line.unitsPerPack;
+  const units = Math.round(exact);
+  if (Math.abs(exact - units) > 1e-9 || units < 1 || units > MAX_REVIEW_QUANTITY) {
+    return {
+      ok: false,
+      reason: `${formatQuantity(line.quantity)} × ${line.unitsPerPack} = ${formatQuantity(exact)} unidades no es un número entero: corrige la cantidad o las unidades por ${pack}.`,
+    };
+  }
+  return { ok: true, units, unitPrice: roundMoney(line.unitPrice / line.unitsPerPack) };
 }
 
 function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefined): InvoiceReviewLineStatus {
@@ -524,6 +637,22 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
       );
     case "editPackLabel":
       return updateLine(state, action.index, (line) => ({ ...line, packLabel: action.packLabel }));
+    case "convertPackToUnits":
+      return updateLine(state, action.index, (line) => {
+        const conversion = getUnitConversion(line);
+        return conversion.ok && !line.discarded
+          ? {
+              ...line,
+              entryMode: "unit",
+              quantity: conversion.units,
+              unitPrice: conversion.unitPrice,
+              packUnitId: undefined,
+              disassembleOnReceive: false,
+            }
+          : line;
+      });
+    case "setPricesIncludeTax":
+      return state.pricesIncludeTax === action.included ? state : { ...state, pricesIncludeTax: action.included };
     case "setSupplier":
       return {
         ...state,
@@ -682,14 +811,33 @@ export type InvoiceReviewLineCosts = {
 };
 
 export function getLineCosts(state: InvoiceReviewState, line: InvoiceReviewLine): InvoiceReviewLineCosts {
+  const price = getLineBasePrice(state, line);
   if (state.usd.anomaly) {
-    return isUsdAccepted(state) ? { ref: roundMoney(line.unitPrice) } : {};
+    return isUsdAccepted(state) ? { ref: price } : {};
   }
   const rate = getEffectiveRate(state);
   return {
-    ves: roundMoney(line.unitPrice),
-    ...(rate !== undefined ? { ref: roundMoney(line.unitPrice / rate) } : {}),
+    ves: price,
+    ...(rate !== undefined ? { ref: roundMoney(price / rate) } : {}),
   };
+}
+
+function linePct(state: InvoiceReviewState, line: InvoiceReviewLine): number {
+  return Math.max(0, state.taxRates[line.taxRateCode] ?? 0);
+}
+
+/**
+ * Precio SIN IVA por unidad de entrada, en la moneda de la factura (redondeado al
+ * céntimo, como el costo de la compra). Con "los precios incluyen IVA" es el precio
+ * leído ÷ (1 + alícuota de la línea); si no, el precio tal cual.
+ */
+export function getLineBasePrice(state: InvoiceReviewState, line: InvoiceReviewLine): number {
+  if (!Number.isFinite(line.unitPrice)) {
+    return line.unitPrice;
+  }
+  return getTaxInclusion(state).included
+    ? roundMoney(line.unitPrice / (1 + linePct(state, line) / 100))
+    : roundMoney(line.unitPrice);
 }
 
 function minTolerance(state: InvoiceReviewState): number {
@@ -717,17 +865,58 @@ export function isLineMismatch(state: InvoiceReviewState, line: InvoiceReviewLin
   return !withinTolerance(line.lineTotalRead, getLineAmount(line), minTolerance(state), LINE_TOLERANCE_PER_UNIT * units);
 }
 
+export type InvoiceTaxInclusion = {
+  /**
+   * La factura no desglosa IVA, Σ cantidad × precio ≈ total leído y las alícuotas
+   * elegidas añadirían IVA: los precios parecen incluirlo (se avisa y se ofrece elegir).
+   */
+  suggested: boolean;
+  /** Se carga la base precio ÷ (1 + alícuota): la elección del usuario o, sin ella, la sugerencia. */
+  included: boolean;
+};
+
+function sumAmounts(lines: InvoiceReviewLine[], amount: (line: InvoiceReviewLine) => number): number {
+  return roundMoney(lines.reduce((sum, line) => sum + (Number.isFinite(amount(line)) ? amount(line) : 0), 0));
+}
+
+/**
+ * SCN-UI-Q1 (ALTO-1, regla ux-mejoras 10: las líneas de compra van sin IVA). La
+ * detección mira TODAS las líneas (también las descartadas) para que descartar una no
+ * cambie la sugerencia. Es reversible: `setPricesIncludeTax` la fija.
+ */
+export function getTaxInclusion(state: InvoiceReviewState): InvoiceTaxInclusion {
+  const { total, subtotal, tax } = state.extraction;
+  const min = minTolerance(state);
+  const read = isPositive(total) ? total : undefined;
+  const breakdown =
+    isPositive(tax) ||
+    (read !== undefined && subtotal !== undefined && Number.isFinite(subtotal) && !withinTolerance(read, subtotal, min));
+  let suggested = false;
+  if (read !== undefined && !breakdown) {
+    const plain = sumAmounts(state.lines, getLineAmount);
+    const withTax = sumAmounts(state.lines, (line) => roundMoney(getLineAmount(line) * (1 + linePct(state, line) / 100)));
+    suggested = withinTolerance(read, plain, min) && !withinTolerance(read, withTax, min);
+  }
+  return { suggested, included: state.pricesIncludeTax ?? suggested };
+}
+
 export type InvoiceReviewTotals = {
   /** `extraction.total` leído. */
   read?: number;
-  /** Σ cantidad × precio de las líneas no descartadas (sin IVA). */
+  /** Σ cantidad × precio de las líneas no descartadas, tal como se leyeron o editaron. */
   computed: number;
-  /** `computed` más el IVA de la alícuota de cada línea. */
-  computedWithTax: number;
+  /** Σ base sin IVA que se registra (cantidad × `getLineBasePrice`, redondeada por línea). */
+  base: number;
+  /** IVA de las alícuotas elegidas sobre la base, redondeado por línea. */
+  tax: number;
   /**
-   * Descuadre, con la regla del emparejamiento: contra el subtotal leído (y
-   * subtotal + IVA contra total); si no, total − IVA; si solo hay total, vale
-   * sin IVA o con IVA. Tolerancia máx(1 %, 1 Bs) (0,01 en USD).
+   * Total que se va a registrar: base + IVA, con el mismo redondeo que el formulario
+   * de compra (`getDraftLineTotals`). Es lo que muestra el pie.
+   */
+  registered: number;
+  /**
+   * `registered` no cuadra con el total leído (sin total leído: la base contra el
+   * subtotal leído). Tolerancia máx(1 %, 1 Bs) (0,01 en USD).
    */
   mismatch: boolean;
   /** Índices de las líneas no descartadas con `isLineMismatch`. */
@@ -736,34 +925,28 @@ export type InvoiceReviewTotals = {
 
 export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReviewTotals {
   const active = state.lines.filter((line) => !line.discarded);
-  const amounts = active.map((line) => (Number.isFinite(getLineAmount(line)) ? getLineAmount(line) : 0));
-  const computed = roundMoney(amounts.reduce((sum, amount) => sum + amount, 0));
-  const computedWithTax = roundMoney(
-    active.reduce((sum, line, position) => {
-      const pct = state.taxRates[line.taxRateCode] ?? 0;
-      return sum + roundMoney(amounts[position] * (1 + pct / 100));
-    }, 0),
-  );
-  const { total, subtotal, tax } = state.extraction;
+  const computed = sumAmounts(active, getLineAmount);
+  const lineBase = (line: InvoiceReviewLine) => roundMoney(line.quantity * getLineBasePrice(state, line));
+  const base = sumAmounts(active, lineBase);
+  const tax = sumAmounts(active, (line) => roundMoney(lineBase(line) * (linePct(state, line) / 100)));
+  const registered = roundMoney(base + tax);
+  const { total, subtotal } = state.extraction;
   const read = Number.isFinite(total) ? total : undefined;
   const min = minTolerance(state);
 
   let mismatch = false;
-  if (subtotal !== undefined && Number.isFinite(subtotal)) {
-    mismatch = !withinTolerance(subtotal, computed, min);
-    if (!mismatch && tax !== undefined && Number.isFinite(tax) && read !== undefined) {
-      mismatch = !withinTolerance(read, subtotal + tax, min);
-    }
-  } else if (read !== undefined && tax !== undefined && Number.isFinite(tax)) {
-    mismatch = !withinTolerance(read - tax, computed, min);
-  } else if (read !== undefined) {
-    mismatch = !withinTolerance(read, computed, min) && !withinTolerance(read, computedWithTax, min);
+  if (read !== undefined) {
+    mismatch = !withinTolerance(read, registered, min);
+  } else if (subtotal !== undefined && Number.isFinite(subtotal)) {
+    mismatch = !withinTolerance(subtotal, base, min);
   }
 
   return {
     ...(read !== undefined ? { read } : {}),
     computed,
-    computedWithTax,
+    base,
+    tax,
+    registered,
     mismatch,
     lineMismatches: active.filter((line) => isLineMismatch(state, line)).map((line) => line.index),
   };

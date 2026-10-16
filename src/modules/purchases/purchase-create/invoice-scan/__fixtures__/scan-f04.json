@@ -1,0 +1,178 @@
+{
+  "cached": true,
+  "extraction": {
+    "supplier": {
+      "name": "PROVEEDOR DOS",
+      "taxId": "J-000000002"
+    },
+    "number": "07194842",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "printedRate": 86.75,
+    "lines": [
+      {
+        "rawText": "001 MAYONESA MAVESA 445GR 0.50 X40,675.41 (E) #46.50 20337.71",
+        "description": "MAYONESA MAVESA 445GR",
+        "quantity": 0.5,
+        "unitPrice": 40675.41,
+        "lineTotal": 20337.71,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "002 PAMPERO KETCHUP 397GR 0.50 X1,474.74 T16.00% #55.00 20737.3",
+        "description": "PAMPERO KETCHUP 397GR",
+        "quantity": 0.5,
+        "unitPrice": 1474.74,
+        "lineTotal": 20737.3,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "003 DE TODITO RESUELTO 110GR 1.00 X9,049.03 T16.00% #12.00 9049.03",
+        "description": "DE TODITO RESUELTO 110GR",
+        "quantity": 1,
+        "unitPrice": 9049.03,
+        "lineTotal": 9049.03,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "004 DORITOS FLAMIN HOT 140GR 1.00 X11,688.34 T16.00% #15.50 11688.3",
+        "description": "DORITOS FLAMIN HOT 140GR",
+        "quantity": 1,
+        "unitPrice": 11688.34,
+        "lineTotal": 11688.3,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "005 CHEESE TRIS 12X50GR. TIRA 1.00 X6,409.73 T16.00% #8.50 6409.73",
+        "description": "CHEESE TRIS 12X50GR. TIRA",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 6409.73,
+        "lineTotal": 6409.73,
+        "taxHint": "general",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 68222.18,
+    "tax": 7661.52,
+    "total": 75883.7,
+    "confidence": 0.9,
+    "warnings": [
+      "La factura está marcada como 'CANCELADO'.",
+      "La línea 'PAMPERO KETCHUP 397GR' tiene una inconsistencia matemática entre cantidad, precio unitario y total de línea."
+    ]
+  },
+  "limits": {
+    "limit": 50,
+    "remaining": 48,
+    "used": 2
+  },
+  "matched": {
+    "rate": {
+      "system": 880.1159,
+      "printed": 86.75,
+      "warning": "La factura trae tasa 86,75; hoy es 880,12."
+    },
+    "lines": [
+      {
+        "index": 0,
+        "issues": [
+          "Cantidad con decimales en la factura: la compra solo admite enteros, revísala."
+        ],
+        "status": "doubtful",
+        "entryMode": "unit",
+        "candidates": [
+          {
+            "name": "Mayonesa Mavesa 445 gr",
+            "score": 0.7619,
+            "reason": "nombre parecido 0,76",
+            "productId": "00000000-0000-4000-8000-900000000001"
+          }
+        ],
+        "taxRateCode": "exento",
+        "unitCostRef": 46.22,
+        "unitCostVes": 40675.42
+      },
+      {
+        "index": 1,
+        "issues": [
+          "Cantidad con decimales en la factura: la compra solo admite enteros, revísala.",
+          "El precio unitario no cuadra con el total de la línea: revísalo."
+        ],
+        "status": "unmatched",
+        "entryMode": "unit",
+        "taxRateCode": "general",
+        "unitCostRef": 47.12,
+        "unitCostVes": 41474.6
+      },
+      {
+        "index": 2,
+        "issues": [],
+        "status": "unmatched",
+        "entryMode": "unit",
+        "taxRateCode": "general",
+        "unitCostRef": 10.28,
+        "unitCostVes": 9049.03
+      },
+      {
+        "index": 3,
+        "issues": [],
+        "status": "doubtful",
+        "entryMode": "unit",
+        "candidates": [
+          {
+            "name": "Doritos Flamin Hot 140g",
+            "score": 0.8846,
+            "reason": "nombre parecido 0,88",
+            "productId": "00000000-0000-4000-8000-900000000002"
+          }
+        ],
+        "taxRateCode": "general",
+        "unitCostRef": 13.28,
+        "unitCostVes": 11688.3
+      },
+      {
+        "index": 4,
+        "issues": [
+          "No hay empaque registrado de 12 unidades para este proveedor: confirma las unidades por empaque."
+        ],
+        "status": "doubtful",
+        "entryMode": "pack",
+        "candidates": [
+          {
+            "name": "Cheese Tris 150g",
+            "score": 0.619,
+            "reason": "nombre parecido 0,62",
+            "productId": "00000000-0000-4000-8000-900000000003"
+          }
+        ],
+        "taxRateCode": "general",
+        "unitCostRef": 7.28,
+        "unitCostVes": 6409.73,
+        "unitsPerPack": 12
+      }
+    ],
+    "totals": {
+      "read": 75883.7,
+      "computed": 68222.07,
+      "mismatch": false
+    },
+    "supplier": {
+      "contactId": "00000000-0000-4000-8000-900000000004",
+      "candidates": [
+        {
+          "name": "Proveedor eval",
+          "score": 1,
+          "reason": "RIF igual",
+          "contactId": "00000000-0000-4000-8000-900000000004"
+        }
+      ]
+    }
+  },
+  "scanId": "00000000-0000-4000-8000-900000000005"
+}

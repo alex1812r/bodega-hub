@@ -3,8 +3,10 @@
  * de nueva compra y el bloque del escaneo para el body de `POST /api/purchases`
  * (`invoiceScanBodyFields` en `confirmScan.server.ts`; formato D10).
  *
- * Costos: el precio de la factura es la BASE SIN IVA por unidad de entrada, igual
- * que el costo de línea del formulario (`getDraftLineTotals` suma el IVA encima).
+ * Costos: el costo de la línea es la BASE SIN IVA por unidad de entrada, igual que el
+ * costo de línea del formulario (`getDraftLineTotals` suma el IVA encima). Es el precio
+ * de la factura, o precio ÷ (1 + alícuota) si los precios incluyen IVA (SCN-UI-Q1,
+ * `getLineBasePrice`).
  *
  * Moneda de captura (SCN-UI-C1, decisión del supervisor):
  * - `ves` siempre, con los Bs exactos de la factura. La tasa elegida en la revisión (la
@@ -23,12 +25,13 @@ import type {
   InvoiceExtraction,
   InvoiceExtractionLine,
 } from "@/modules/invoice-scan/contracts";
-import { roundMoney } from "@/shared/utils/currency";
 
 import {
   DEFAULT_PACK_LABEL,
   canLoad,
   getEffectiveRate,
+  getLineBasePrice,
+  getTaxInclusion,
   isUsdAccepted,
   type InvoiceReviewLine,
   type InvoiceReviewState,
@@ -82,6 +85,11 @@ export type InvoiceReviewDraft = {
    * precios ya son REF y la compra va a la tasa del día.
    */
   invoiceRateVes?: number;
+  /**
+   * SCN-UI-Q1: los precios de la factura incluyen IVA; los costos de `lines` ya son la
+   * base. Al enviar, la extracción (D10) vuelve a llevar el precio leído con IVA.
+   */
+  pricesIncludeTax?: true;
   lines: InvoiceReviewDraftLine[];
   body: InvoiceReviewScanBody;
 };
@@ -126,7 +134,7 @@ function buildItem(
   line: InvoiceReviewLine & { productId: string },
   input: { costCurrency: PurchaseCostCurrency; id: string; mirrorRate: number },
 ): PurchaseDraftItem {
-  const price = roundMoney(line.unitPrice);
+  const price = getLineBasePrice(state, line);
   // Bs de la factura, o el precio en dólares de una factura USD aceptada (USD = REF).
   const cost = input.costCurrency === "ves" ? { ves: price } : { ref: price };
   const base = {
@@ -159,6 +167,11 @@ function buildItem(
  * unidades por empaque y alícuota → `taxHint`. Conserva TODAS las líneas (también
  * las descartadas) para que `lineIndex` siga apuntando a la misma; el total de
  * línea y el proveedor quedan como se leyeron (lo impreso es la verdad del documento).
+ *
+ * Precios con IVA incluido (SCN-UI-Q1): `unitPrice` es el precio LEÍDO (con IVA), no la
+ * base convertida que va a la compra; `taxHint` dice la alícuota con la que se separó.
+ * "Cargar como N unidades" sí es una corrección del usuario: queda la cantidad en
+ * unidades y el precio por unidad, sin `unitsPerPack`.
  */
 export function buildCorrectedExtraction(state: InvoiceReviewState): InvoiceExtraction {
   const { extraction, header } = state;
@@ -245,6 +258,7 @@ export function buildInvoiceReviewDraft(
     costCurrency,
     ...(mirrorRate !== undefined ? { rateVes: mirrorRate } : {}),
     ...(chosenRate !== undefined && !isUsdAccepted(state) ? { invoiceRateVes: chosenRate } : {}),
+    ...(getTaxInclusion(state).included ? { pricesIncludeTax: true as const } : {}),
     lines,
     body: {
       invoiceScanId: state.scanId,

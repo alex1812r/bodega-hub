@@ -34,6 +34,7 @@ import { InvoiceReviewFooter } from "./InvoiceReviewFooter";
 import { InvoiceReviewHeader } from "./InvoiceReviewHeader";
 import { InvoiceReviewLineRow } from "./InvoiceReviewLineRow";
 import { InvoiceReviewRateNotice } from "./InvoiceReviewRateNotice";
+import { InvoiceReviewTaxNotice } from "./InvoiceReviewTaxNotice";
 import {
   buildNewProductInitialValues,
   buildReviewTaxRates,
@@ -321,6 +322,7 @@ export function InvoiceReviewPanel({
             supplierFetcher={supplierFetcher}
           />
           <InvoiceReviewRateNotice onAction={dispatch} state={state} />
+          <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
 
           <section
             aria-label="Líneas de la factura"
