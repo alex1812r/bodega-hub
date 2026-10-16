@@ -1,0 +1,49 @@
+{
+  "id": "f20",
+  "synthetic": false,
+  "pages": [
+    "samples/f20.jpg"
+  ],
+  "supplierKey": "mercaseu-2030",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C.A.",
+      "taxId": "J-506040310",
+      "address": "CALLE 500 EDIF LIRIO PB LOCAL 1 Y 2 URB QTA CRESPO CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00002986",
+    "date": "2026-09-02",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "DIABLITO UNDERWOOD LATA 54GR |[CAJA X 24.0]|",
+        "description": "Diablito Underwood lata 54g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 22405.28,
+        "lineTotal": 22405.28,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 22405.28,
+    "tax": 3584.84,
+    "total": 25990.12,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "diablito-underwood-54g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "1 × 22.405,28 = 22.405,28 = SUBTTL = BI G OK; 22.405,28 × 16% = 3.584,84 = IVA G OK; 22.405,28 + 3.584,84 = 25.990,12 = TOTAL = BIOPAGO OK; \"TOTAL: 1\" (ítems) en la cabecera"
+  }
+}

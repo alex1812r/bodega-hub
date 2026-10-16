@@ -1,0 +1,142 @@
+{
+  "id": "s03",
+  "synthetic": true,
+  "pages": [
+    "samples/s03.jpg"
+  ],
+  "supplierKey": "sint-mayorista-los-andes",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6",
+      "phone": "0212-472.10.33",
+      "address": "AV. PRINCIPAL DE LA YAGUARA, GALPON 3, CARACAS"
+    },
+    "number": "0004512",
+    "date": "2026-09-04",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2 LTS (G) [BULTO X 6]",
+        "description": "Glup cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5754,
+        "lineTotal": 11508,
+        "taxHint": "general",
+        "barcode": "7593102001011",
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA-COLA 2 LTS (G) [BULTO X 6]",
+        "description": "Coca-Cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7620,
+        "lineTotal": 7620,
+        "taxHint": "general",
+        "barcode": "7592711002044",
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 LTS (G) [BULTO X 12]",
+        "description": "Justy 1.5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9540,
+        "lineTotal": 9540,
+        "taxHint": "general",
+        "barcode": "7593102004159",
+        "confidence": 1
+      },
+      {
+        "rawText": "HARINA P.A.N. 1 KG (E) [BULTO X 20]",
+        "description": "Harina PAN 1kg",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18380,
+        "lineTotal": 36760,
+        "taxHint": "exento",
+        "barcode": "7591002100018",
+        "confidence": 1
+      },
+      {
+        "rawText": "ARROZ PRIMOR 1 KG (E) [BULTO X 24]",
+        "description": "Arroz Primor 1kg",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23460,
+        "lineTotal": 23460,
+        "taxHint": "exento",
+        "barcode": "7591002300104",
+        "confidence": 1
+      },
+      {
+        "rawText": "ATUN MARGARITA 140 GR (G) CAJA X24",
+        "description": "Atún Margarita 140g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 30120,
+        "lineTotal": 30120,
+        "taxHint": "general",
+        "barcode": "7596220014086",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 119008,
+    "tax": 9406.08,
+    "total": 128414.08,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "justy-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "arroz-primor-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "atun-margarita-140g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s03: ticket térmico rotado ~8° sobre una mesa de madera; código de barras por línea. cantidad × precio × (1 − desc. línea) = lineTotal en las 6 líneas OK; sum(lineTotal)=119.008,00; = SUB-TOTAL/SUBTTL OK; EXENTO 60.220,00; BI G 58.788,00 × 16% = IVA 9.406,08; 60.220,00 + 58.788,00 + 9.406,08 = TOTAL 128.414,08 OK"
+  }
+}

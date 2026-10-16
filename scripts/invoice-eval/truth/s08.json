@@ -1,0 +1,26 @@
+{
+  "id": "s08",
+  "synthetic": true,
+  "pages": [
+    "samples/s08.jpg"
+  ],
+  "supplierKey": null,
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": ""
+    },
+    "currency": "unknown",
+    "lines": [],
+    "confidence": 1,
+    "warnings": [
+      "La imagen no parece una factura: es un afiche de oferta de Harina PAN."
+    ]
+  },
+  "lines": [],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s08 (§6.2): afiche de oferta, no es factura; sin proveedor, sin líneas ni totales. Sin aritmética: no hay importes de factura."
+  }
+}

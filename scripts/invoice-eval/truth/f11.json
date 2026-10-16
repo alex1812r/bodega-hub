@@ -1,0 +1,75 @@
+{
+  "id": "f11",
+  "synthetic": false,
+  "pages": [
+    "samples/f11.jpg"
+  ],
+  "supplierKey": "cocktail-express-247",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA Y FESTEJO COCKTAIL EXPRESS 247. C,A.",
+      "taxId": "J-413106159"
+    },
+    "number": "00002887",
+    "date": "2026-08-14",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "TOBO 14 PROMO (G)",
+        "description": "Tobo 14 promo",
+        "quantity": 2,
+        "unitPrice": 9306.02,
+        "lineTotal": 18612.04,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "CERVEZA SOLERA AZUL LIGHT EN 222ML (P)",
+        "description": "Cerveza Solera Azul Light 222ml",
+        "quantity": 8,
+        "unitPrice": 1542.14,
+        "lineTotal": 12337.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "CERVEZA POLAR PILSEN 222ML..",
+        "description": "Cerveza Polar Pilsen 222ml",
+        "quantity": 2,
+        "unitPrice": 1542.14,
+        "lineTotal": 3084.28,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 34033.44,
+    "tax": 2977.93,
+    "total": 37011.37,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "tobo-14-promo",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Renglón \"2x Bs 9.306,02\" encima del nombre = cantidad y precio unitario"
+    },
+    {
+      "productKey": "solera-azul-light-222ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Nombre partido en dos renglones (una línea). (P)=IVA percibido: no mapea a exento/general/reducida, taxHint omitido"
+    },
+    {
+      "productKey": "polar-pilsen-222ml",
+      "occluded": true,
+      "uncertainFields": [],
+      "note": "El dedo tapa la cantidad y \"CERVEZA P\"; visible \"?542,14\" y \"OLAR PILSEN 222ML..\". Cantidad 2 y precio 1542.14 por aritmética (3084.28/1542.14); \"CERVEZA P\" por alineación con la línea anterior. Sin marca de alícuota visible; el pie la cuenta como percibido, taxHint omitido"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "2×9306.02=18612.04; 8×1542.14=12337.12; 2×1542.14=3084.28; suma=34033.44 = subtotal impreso (etiqueta tapada por el dedo) OK; BI G 16% 18612.04 = línea (G); IVA G 2977.93 = 16%×18612.04 OK; PERCIBIDO 15421.40 = 12337.12+3084.28 OK; 18612.04+2977.93+15421.40=37011.37 = TOTAL y T. Debito OK. Mismo Nº que f14 (Chevere): no es duplicado"
+  }
+}

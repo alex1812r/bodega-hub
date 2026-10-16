@@ -1,0 +1,173 @@
+{
+  "id": "f09",
+  "synthetic": false,
+  "pages": [
+    "samples/f09.jpg"
+  ],
+  "supplierKey": "chevere-depot",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00006225",
+    "date": "2026-10-05",
+    "currency": "VES",
+    "printedRate": 871.37,
+    "lines": [
+      {
+        "rawText": "AGUA HELEAL 1.5L [CAJA X 12,00]",
+        "description": "Agua Heleal 1.5L",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 5899.17,
+        "lineTotal": 5899.17,
+        "confidence": 1
+      },
+      {
+        "rawText": "MALTA 1.5 [BULTO X 6,00]",
+        "description": "Malta 1.5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 9855.19,
+        "lineTotal": 9855.19,
+        "confidence": 1
+      },
+      {
+        "rawText": "GATORADE",
+        "description": "Gatorade",
+        "quantity": 1,
+        "unitPrice": 1516.18,
+        "lineTotal": 1516.18,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 [BULTO X 12,00]",
+        "description": "Justy 1.5L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9349.8,
+        "lineTotal": 9349.8,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 400ML [BULTO X 15,00]",
+        "description": "Justy 400ml",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4243.57,
+        "lineTotal": 8487.14,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2L [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5507.06,
+        "lineTotal": 11014.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 1L [BULTO X 6,00]",
+        "description": "Coca-Cola 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4827.39,
+        "lineTotal": 4827.39,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L [BULTO X 6,00]",
+        "description": "Coca-Cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7668.06,
+        "lineTotal": 15336.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4470.13,
+        "lineTotal": 8940.26,
+        "confidence": 1
+      }
+    ],
+    "total": 75225.37,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "agua-heleal-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "malta-polar-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Impreso solo \"MALTA 1.5\" (sin marca); clave malta-polar-1.5l por la del formato del banco"
+    },
+    {
+      "productKey": "gatorade",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Línea sin empaque ni presentación impresa: unit y unitsPerPack omitidos"
+    },
+    {
+      "productKey": "justy-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "justy-400ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "qty×unitPrice=lineTotal en las 9 líneas; sum(lineTotal)=75225.37 = Total impreso OK; Total Items impreso 13 = suma de cantidades OK; pie: Debito Bs 75.225,37, Tasa 871,37, Ref 86,33 (75225.37/871.37=86.33 OK). Recibo Banesco (Bs 75.226,00) a la izquierda excluido de la verdad"
+  }
+}

@@ -1,0 +1,660 @@
+{
+  "id": "f12",
+  "synthetic": false,
+  "pages": [
+    "samples/f12.jpg"
+  ],
+  "supplierKey": "market-catia",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "INVERSIONES MARKET CATIA, C.A.",
+      "taxId": "J-500244150",
+      "address": "Calle Argentina Entre 3era Y 4ta Avenida Local PB Nro 78 Perez Bonalde Catia Caracas D.C. Z.P. 1030"
+    },
+    "number": "00001028",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "[MAYOR] DETERGENTE ALIVE FLORAL 500G #[1x3] #",
+        "description": "Detergente Alive floral 500g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] DETERGENTE ALIVE SUAVIZANTE ROSADO 500G #[1x3] #",
+        "description": "Detergente Alive suavizante rosado 500g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] DESINFECTANTE OSO BLANCO 1LITRO #[1x3] #",
+        "description": "Desinfectante Oso Blanco 1L",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 3166.59,
+        "lineTotal": 3166.59,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR BSS] CLORO OSO BLANCO 1L #[1x3] #",
+        "description": "Cloro Oso Blanco 1L",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 2893.53,
+        "lineTotal": 2893.53,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] LAVAPLATO AXION EN CREMA 235GR #[1x3] #",
+        "description": "Lavaplatos Axion en crema 235g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 3726.75,
+        "lineTotal": 3726.75,
+        "confidence": 1
+      },
+      {
+        "rawText": "BOLSA MARACAY 5KG",
+        "description": "Bolsa Maracay 5kg",
+        "quantity": 1,
+        "unitPrice": 1056.03,
+        "lineTotal": 1056.03,
+        "confidence": 1
+      },
+      {
+        "rawText": "BOLSA MARACAY 10KG",
+        "description": "Bolsa Maracay 10kg",
+        "quantity": 1,
+        "unitPrice": 1410.56,
+        "lineTotal": 1410.56,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] FLIPS BOLSA CHOCOLATE 120G #[1x3] #",
+        "description": "Flips bolsa chocolate 120g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 4013.84,
+        "lineTotal": 4013.84,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] FLIPS BOLSA DULCE LECHE 120G #[1x3] #",
+        "description": "Flips bolsa dulce de leche 120g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 4053.66,
+        "lineTotal": 4053.66,
+        "confidence": 1
+      },
+      {
+        "rawText": "FLIPS LONCHERA CHOCOLATE 6UND*28GRS",
+        "description": "Flips lonchera chocolate 6 x 28g",
+        "quantity": 1,
+        "unitsPerPack": 6,
+        "unitPrice": 2545.65,
+        "lineTotal": 2545.65,
+        "confidence": 1
+      },
+      {
+        "rawText": "FLIPS LONCHERA DULCE LECHE 6UND*28GRS",
+        "description": "Flips lonchera dulce de leche 6 x 28g",
+        "quantity": 1,
+        "unitsPerPack": 6,
+        "unitPrice": 2534.48,
+        "lineTotal": 2534.48,
+        "confidence": 1
+      },
+      {
+        "rawText": "PALITOS CHOCO DISPLAY*18UND",
+        "description": "Palitos Choco display x18",
+        "quantity": 1,
+        "unit": "display",
+        "unitsPerPack": 18,
+        "unitPrice": 5566.81,
+        "lineTotal": 5566.81,
+        "confidence": 1
+      },
+      {
+        "rawText": "CARAMELOS MENTA HELADA SUPER 380GRS 100U",
+        "description": "Caramelos menta helada Super 380g (100 u)",
+        "quantity": 1,
+        "unitsPerPack": 100,
+        "unitPrice": 2029.85,
+        "lineTotal": 2029.85,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] CHEESE TRIS 150G #[1x3] #",
+        "description": "Cheese Tris 150g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 3794.18,
+        "lineTotal": 7588.36,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] PAPAS RIZADAS YUPI POLLO130GR #[1x3] #",
+        "description": "Papas rizadas Yupi pollo 130g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 5159.48,
+        "lineTotal": 5159.48,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] RUFFLES CREMA CEBOLLA 122G #[1x3] #",
+        "description": "Ruffles crema cebolla 122g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 7331.9,
+        "lineTotal": 7331.9,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] RUFFLES QUESO 125G #[1x3] #",
+        "description": "Ruffles queso 125g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 7316.81,
+        "lineTotal": 7316.81,
+        "confidence": 1
+      },
+      {
+        "rawText": "TOSTON TOM TIRA 80G*8UND",
+        "description": "Tostón Tom tira 80g x8",
+        "quantity": 2,
+        "unitsPerPack": 8,
+        "unitPrice": 5431.03,
+        "lineTotal": 10862.07,
+        "confidence": 1
+      },
+      {
+        "rawText": "DORITOS DINAMITA FLAMIN TIRA 40G*12",
+        "description": "Doritos Dinamita Flamin tira 40g x12",
+        "quantity": 1,
+        "unitsPerPack": 12,
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "confidence": 1
+      },
+      {
+        "rawText": "DORITO COOL RANCH 42G*12U",
+        "description": "Doritos Cool Ranch 42g x12",
+        "quantity": 1,
+        "unitsPerPack": 12,
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] PAPA RAYADA BBQ 105G #[1x3] #",
+        "description": "Papa Rayada BBQ 105g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] PAPA RAYADA POLLO 105G #[1x3] #",
+        "description": "Papa Rayada pollo 105g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] DORITOS 150GR #[1x3] #",
+        "description": "Doritos 150g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 5883.62,
+        "lineTotal": 11767.24,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] GALLETA MAXCOCO 460GR #[1x3] #",
+        "description": "Galleta Maxcoco 460g",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 8768.86,
+        "lineTotal": 8768.86,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MANGA] MUNCHY RINGOS 62GRS #[1x5] #",
+        "description": "Munchy Ringos 62g",
+        "quantity": 1,
+        "unitsPerPack": 5,
+        "unitPrice": 4457.97,
+        "lineTotal": 4457.97,
+        "confidence": 1
+      },
+      {
+        "rawText": "SAMY 264G*24UND",
+        "description": "Samy 264g x24",
+        "quantity": 1,
+        "unitsPerPack": 24,
+        "unitPrice": 3771.55,
+        "lineTotal": 3771.55,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] LECHE CONDENSADA CREMOR 395GR(E) #[1x3] #",
+        "description": "Leche condensada Cremor 395g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 3918.25,
+        "lineTotal": 7836.5,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] GALLETAS CRAKENAS 192G*8UND #[1x3] #",
+        "description": "Galletas Crakenas 192g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 2462.07,
+        "lineTotal": 4924.14,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] MANTEQUILLA MAVESA 500GR(E) #[1x3] #",
+        "description": "Mantequilla Mavesa 500g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 8478.75,
+        "lineTotal": 16957.5,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] ACEITE SOYA LA PAMPA 500ML(E) #[1x3] #",
+        "description": "Aceite de soya La Pampa 500ml",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 4211.38,
+        "lineTotal": 4211.38,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] ACEITE SOYA LA PAMPA 700ML(E) #[1x3] #",
+        "description": "Aceite de soya La Pampa 700ml",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 5892.25,
+        "lineTotal": 5892.25,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] ATUN WILLINGER EN ACEITE 170GR #[1x3] #",
+        "description": "Atún Willinger en aceite 170g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 3771.55,
+        "lineTotal": 7543.1,
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] MANTEQUILLA MAVESA 250GR(E) #[1x3] #",
+        "description": "Mantequilla Mavesa 250g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 4725,
+        "lineTotal": 9450,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] SARDINA WILLINGER 155GR(E) #[1x3] #",
+        "description": "Sardina Willinger 155g",
+        "quantity": 2,
+        "unitsPerPack": 3,
+        "unitPrice": 2338.88,
+        "lineTotal": 4677.76,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] HARINA PAN 1KG(E) #[1x3] #",
+        "description": "Harina PAN 1kg",
+        "quantity": 4,
+        "unitsPerPack": 3,
+        "unitPrice": 3031.88,
+        "lineTotal": 12127.52,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] ARROZ MARY PREMIUN 900GR(E) #[1x6] #",
+        "description": "Arroz Mary Premium 900g",
+        "quantity": 2,
+        "unitsPerPack": 6,
+        "unitPrice": 6918.63,
+        "lineTotal": 13837.26,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] LECHE DOBON 200GR(E) #[1x3] #",
+        "description": "Leche Dobon 200g",
+        "quantity": 4,
+        "unitsPerPack": 3,
+        "unitPrice": 6428.63,
+        "lineTotal": 25714.52,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "[MAYOR] CHIMO TIGRITO AMARILLO *6UND #[1x3] #",
+        "description": "Chimó Tigrito amarillo",
+        "quantity": 1,
+        "unitsPerPack": 3,
+        "unitPrice": 7494.83,
+        "lineTotal": 7494.83,
+        "confidence": 1
+      },
+      {
+        "rawText": "MINI SAMBA FRESA BOLSA 16G*35UND",
+        "description": "Mini Samba fresa bolsa 16g x35",
+        "quantity": 1,
+        "unitsPerPack": 35,
+        "unitPrice": 13954.74,
+        "lineTotal": 13954.74,
+        "confidence": 1
+      },
+      {
+        "rawText": "MINI SAVOY LECHE BOLSA 150GRS",
+        "description": "Mini Savoy leche bolsa 150g",
+        "quantity": 1,
+        "unitPrice": 4827.59,
+        "lineTotal": 4827.59,
+        "confidence": 1
+      },
+      {
+        "rawText": "CAJA SAMBA FRESA 32G*20UND",
+        "description": "Caja Samba fresa 32g x20",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 20,
+        "unitPrice": 13441.81,
+        "lineTotal": 13441.81,
+        "confidence": 1
+      }
+    ],
+    "tax": 29655.74,
+    "total": 315708.83,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "detergente-alive-floral-500g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "detergente-alive-suavizante-rosado-500g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "desinfectante-oso-blanco-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "cloro-oso-blanco-1l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "prefijo impreso [MAYOR BSS], no [MAYOR]; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "lavaplatos-axion-crema-235g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "insumo-bolsa-maracay-5kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "sin prefijo ni empaque; bolsa plástica (insumo); sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "insumo-bolsa-maracay-10kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "sin prefijo ni empaque; bolsa plástica (insumo); sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "flips-chocolate-120g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "renglón sobre el pliegue del papel, legible al ampliar; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "flips-dulce-leche-120g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "flips-chocolate-28g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: 6UND*28GRS; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "flips-dulce-leche-28g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: 6UND*28GRS; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "palitos-choco",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: DISPLAY*18UND; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "caramelo-menta-helada-super",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "bolsa de 380g con 100 caramelos (100U); sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "cheese-tris-150g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "papas-rizadas-yupi-pollo-130g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "impreso POLLO130GR sin espacio; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "ruffles-crema-cebolla-122g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "ruffles-queso-125g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "toston-tom-80g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "2 x 5.431,03 = 10.862,06 pero el impreso es 10.862,07 (redondeo del impresor); manda lo impreso; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "doritos-dinamita-flamin-40g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: TIRA 40G*12; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "doritos-cool-ranch-42g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: 42G*12U; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "papa-rayada-bbq-105g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "papa-rayada-pollo-105g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "doritos-150g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "galleta-maxcoco-460g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "munchy-ringos-62g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "prefijo [MANGA] y empaque #[1x5] #; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "samy-11g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: 264G*24UND (24 unidades de 11g); sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "leche-condensada-cremor-395g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "galletas-crakenas-192g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "8UND son los tacos internos del paquete de 192g; el empaque comprado es #[1x3] #; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "mantequilla-mavesa-500g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "aceite-soya-pampa-500ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "aceite-soya-pampa-700ml",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "atun-willinger-aceite-170g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "sin (E) impreso; EXENTO cuadra exacto sin esta línea; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "mantequilla-mavesa-250g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "sardina-willinger-155g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "arroz-mary-premium-900g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque #[1x6] #; impreso PREMIUN"
+    },
+    {
+      "productKey": "leche-dobon-200g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "chimo-tigrito-amarillo",
+      "occluded": false,
+      "uncertainFields": [
+        "unitsPerPack"
+      ],
+      "note": "trae *6UND en el nombre y #[1x3] # como empaque; no se puede fijar si son 3 o 18 unidades sueltas; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "samba-fresa-16g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: BOLSA 16G*35UND; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "mini-savoy-leche-150g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "sin empaque; sin marca de IVA en la línea (cae en BI G)"
+    },
+    {
+      "productKey": "samba-fresa-32g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "empaque en el nombre: CAJA ... 32G*20UND; sin marca de IVA en la línea (cae en BI G)"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [
+      "Son 41 líneas de producto, no 57: \"Cantidad:57\" del pie es la suma de cantidades (29 líneas ×1 + 10 ×2 + 2 ×4 = 57), no el número de renglones",
+      "La fecha impresa es 08-10-2026, el manifiesto decía 09-10-2026"
+    ],
+    "arithmetic": "41 líneas, todas quantity×unitPrice=lineTotal salvo Tostón (2×5.431,03=10.862,06, impreso 10.862,07); sum(quantity)=57 = \"Cantidad:57\" OK; líneas (E) suman 100.704,69 = EXENTO OK; el resto suma 185.348,38 vs BI G impreso 185.348,40 (dif 0,02, redondeo del impresor); 185.348,40×16% = 29.655,74 = IVA G OK; 100.704,69+185.348,40+29.655,74 = 315.708,83 = TOTAL OK. No hay SUBTOTAL impreso (se omite). Pagos impresos Mercantil 126.297,50 + Cashea 189.437,50 (no entran al schema)"
+  }
+}

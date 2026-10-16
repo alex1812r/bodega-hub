@@ -1,0 +1,124 @@
+{
+  "id": "f04",
+  "synthetic": false,
+  "pages": [
+    "samples/f04.jpg"
+  ],
+  "supplierKey": "hiperconfi-66",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "COMERCIAL HIPERCONFI 66, C.A.",
+      "taxId": "J-505295519",
+      "address": "CALLE ARGENTINA CASA PB LOCAL 2 NRO 54 URB NUEVA CARACAS D.C. ZP 1030"
+    },
+    "number": "07194842",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "MAYONESA MAVESA 445GR",
+        "description": "Mayonesa Mavesa 445g",
+        "quantity": 0.5,
+        "unitPrice": 40675.41,
+        "lineTotal": 20337.71,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "PAMPERO KETCHUP 397GR",
+        "description": "Ketchup Pampero 397g",
+        "quantity": 0.5,
+        "unitPrice": 41474.74,
+        "lineTotal": 20737.37,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "DE TODITO RESUELTO 110GR",
+        "description": "De Todito Resuelto 110g",
+        "quantity": 1,
+        "unitPrice": 9049.03,
+        "lineTotal": 9049.03,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "DORITOS FLAMIN HOT 140GR",
+        "description": "Doritos Flamin Hot 140g",
+        "quantity": 1,
+        "unitPrice": 11688.34,
+        "lineTotal": 11688.34,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "CHEESE TRIS 12X50GR. TIRA",
+        "description": "Cheese Tris 50g (tira x12)",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 6409.73,
+        "lineTotal": 6409.73,
+        "taxHint": "general",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 68222.18,
+    "tax": 7661.52,
+    "total": 75883.7,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "mayonesa-mavesa-445g",
+      "occluded": false,
+      "uncertainFields": [
+        "supplierSku"
+      ],
+      "note": "El '#46.50' impreso es el precio de referencia en USD con IVA incluido (tasa implícita 874,74), no unidades por caja (40.675,41/46,50). Primer dígito de 445 bajo el trazo de bolígrafo. El prefijo de 3 dígitos (001..005) es correlativo de línea, no SKU del proveedor: supplierSku omitido"
+    },
+    {
+      "productKey": "pampero-ketchup-397g",
+      "occluded": false,
+      "uncertainFields": [
+        "supplierSku"
+      ],
+      "note": "El '#55.00' impreso es el precio de referencia en USD con IVA incluido (tasa implícita 874,74), no unidades por caja. El '4' inicial del precio está tapado por el bolígrafo; 41.474,74 confirmado por 0,50×p = 20.737,37 (total partido en dos renglones '20737.3' + '7'). El prefijo de 3 dígitos (001..005) es correlativo de línea, no SKU del proveedor: supplierSku omitido"
+    },
+    {
+      "productKey": "de-todito-resuelto-110g",
+      "occluded": false,
+      "uncertainFields": [
+        "supplierSku"
+      ],
+      "note": "El '#12.00' impreso es el precio de referencia en USD con IVA incluido (tasa implícita 874,74), no unidades por caja. El prefijo de 3 dígitos (001..005) es correlativo de línea, no SKU del proveedor: supplierSku omitido"
+    },
+    {
+      "productKey": "doritos-flamin-hot-140g",
+      "occluded": false,
+      "uncertainFields": [
+        "supplierSku"
+      ],
+      "note": "El '#15.50' impreso es el precio de referencia en USD con IVA incluido (tasa implícita 874,74), no unidades por caja. Total partido en dos renglones '11688.3' + '4'. El prefijo de 3 dígitos (001..005) es correlativo de línea, no SKU del proveedor: supplierSku omitido"
+    },
+    {
+      "productKey": "cheese-tris-50g",
+      "occluded": false,
+      "uncertainFields": [
+        "supplierSku"
+      ],
+      "note": "TIRA de 12 bolsas de 50g (empaque en el nombre). El '#8.50' impreso es el precio de referencia en USD con IVA incluido (tasa implícita 874,74), no unidades por caja. El prefijo de 3 dígitos (001..005) es correlativo de línea, no SKU del proveedor: supplierSku omitido"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [
+      "'#46.50' (y #55.00, #12.00, #15.50, #8.50) NO son unidades por caja: son el precio unitario en REF/USD con IVA incluido. Prueba: 40.675,41/46,50 = 874,74 (línea exenta) y 9.049,03×1,16/12 = 874,74, igual en las 5 líneas; REF:86.75 al pie = 75.883,70/874,74. unitsPerPack no se imprime (salvo Cheese Tris 12X50GR)",
+      "El código de 3 dígitos (001..005) es el correlativo de línea, no un SKU del proveedor; el manifiesto lo cuenta como SKU impreso",
+      "Las cantidades se imprimen con punto ('0.50', '1.00'), no '0,50'; el manifiesto no menciona 'REF:86.75' al pie ni la tasa implícita 874,74 (no impresa: printedRate omitido)"
+    ],
+    "arithmetic": "q×p=total en las 5 líneas; sum(lineTotal)=68.222,18 = SUBTTL OK; Exentos 20.337,71 = línea 1; BI G16% 47.884,47 = líneas 2-5; IVA 47.884,47×16% = 7.661,52 OK; 68.222,18+7.661,52 = 75.883,70 = TOTAL OK"
+  }
+}

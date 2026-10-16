@@ -1,0 +1,124 @@
+{
+  "id": "s05",
+  "synthetic": true,
+  "pages": [
+    "samples/s05.jpg"
+  ],
+  "supplierKey": "sint-mayorista-los-andes",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6",
+      "phone": "0212-472.10.33",
+      "address": "AV. PRINCIPAL DE LA YAGUARA, GALPON 3, CARACAS"
+    },
+    "number": "0004587",
+    "date": "2026-09-11",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "AGUA HELEAL 1.5 LTS (G) [BULTO X 12]",
+        "description": "Agua Heleal 1.5L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 5904,
+        "lineTotal": 11808,
+        "taxHint": "general",
+        "barcode": "7598456001502",
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2 LTS (G) [BULTO X 6]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5754,
+        "lineTotal": 5754,
+        "taxHint": "general",
+        "barcode": "7593102001011",
+        "confidence": 1
+      },
+      {
+        "rawText": "AZUCAR MIMASA 900 GR (E) [BULTO X 20]",
+        "description": "Azúcar Mimasa 900g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19480,
+        "lineTotal": 19480,
+        "taxHint": "exento",
+        "barcode": "7594127009006",
+        "confidence": 1
+      },
+      {
+        "rawText": "SARDINAS LA GAVIOTA 170 GR (G) CAJA X24",
+        "description": "Sardinas La Gaviota 170g",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 16488,
+        "lineTotal": 32976,
+        "taxHint": "general",
+        "barcode": "7596803017053",
+        "confidence": 1
+      },
+      {
+        "rawText": "JABON AZUL LAS LLAVES 300 GR (G) [BULTO X 25]",
+        "description": "Jabón azul Las Llaves 300g",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 25,
+        "unitPrice": 15125,
+        "lineTotal": 15125,
+        "taxHint": "general",
+        "barcode": "7591025030026",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 85143,
+    "tax": 10506.08,
+    "total": 95649.08,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "agua-heleal-1.5l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "azucar-mimasa-900g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "sardinas-la-gaviota-170g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "jabon-azul-las-llaves-300g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s05: térmica desteñida y borrosa (blur + bajo contraste), legible para un humano. cantidad × precio × (1 − desc. línea) = lineTotal en las 5 líneas OK; sum(lineTotal)=85.143,00; = SUB-TOTAL/SUBTTL OK; EXENTO 19.480,00; BI G 65.663,00 × 16% = IVA 10.506,08; 19.480,00 + 65.663,00 + 10.506,08 = TOTAL 95.649,08 OK"
+  }
+}

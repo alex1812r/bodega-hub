@@ -10,7 +10,9 @@
  *    (`tax_rates_for_store` + `app_settings.default_tax_rate_id`), tasa vigente,
  *    escaneos previos con el mismo número y productos por código de barras.
  * 2. Catálogo del proveedor elegido por la RPC: `supplier_products` activos con
- *    sus `supplier_product_pack_units` activos y `supplier_product_aliases`.
+ *    sus `supplier_product_pack_units` activos y `supplier_product_aliases`; en
+ *    paralelo, la misma RPC con textos limpios (`searchTextVariants`) para las
+ *    líneas que no trajeron ningún candidato difuso.
  * 3. Detalle de los productos referenciados (candidatos + catálogo + alias +
  *    barcode): alícuota de la categoría, receta activa, tamaños de las recetas
  *    de las que es componente y último costo recibido.
@@ -35,6 +37,7 @@ import type {
   MatchTaxRate,
   MatchTaxRateKind,
 } from "./match.types";
+import { searchTextVariants } from "./match/searchText";
 import { normalizeInvoiceNumber } from "./match/text";
 
 /** Mismo cliente que usan los `*.server.ts` (sesión del usuario: `auth.uid()` para la RPC). */
@@ -44,6 +47,8 @@ export type MatchContextSupabaseClient = Awaited<ReturnType<typeof createRouteSu
 export const MATCH_CANDIDATES_RPC = "invoice_match_candidates";
 /** Candidatos difusos por línea pedidos a la RPC (la RPC acota a 5). */
 export const MATCH_CANDIDATES_PER_LINE = 5;
+/** Textos máximos por llamada a la RPC (por encima responde PT400). */
+export const MATCH_CANDIDATES_MAX_TEXTS = 500;
 /** Escaneos previos con el mismo número normalizado que se pasan a `matchInvoice`. */
 export const PREVIOUS_SCANS_LIMIT = 50;
 /** Candidatos que se piden a la base antes de filtrar por número normalizado. */
@@ -426,6 +431,65 @@ function toSupplierCandidates(result: CandidatesRpcResult): MatchSupplierCandida
   }));
 }
 
+/**
+ * Segunda pasada difusa SOLO para las líneas sin ningún candidato: el empaque,
+ * los prefijos y la unidad pegada al número ("JUSTY 400ML [BULTO X 15,00]")
+ * dejan el trigram bajo 0,6 aunque el producto exista. Pide candidatos con los
+ * textos de `searchTextVariants` al mismo proveedor elegido y se queda, por
+ * línea, con el mejor score de cada producto. Lo que salga es dudosa.
+ */
+async function loadVariantFuzzy(
+  supabase: MatchContextSupabaseClient,
+  extraction: InvoiceExtraction,
+  fuzzy: Record<number, MatchFuzzyCandidate[]>,
+  supplierId: string | undefined,
+): Promise<Record<number, MatchFuzzyCandidate[]>> {
+  const owners: number[] = [];
+  const texts: string[] = [];
+  extraction.lines.forEach((line, index) => {
+    if ((fuzzy[index]?.length ?? 0) > 0) {
+      return;
+    }
+    for (const text of searchTextVariants(line)) {
+      if (texts.length < MATCH_CANDIDATES_MAX_TEXTS) {
+        owners.push(index);
+        texts.push(text);
+      }
+    }
+  });
+  if (texts.length === 0) {
+    return {};
+  }
+
+  const { data, error } = await supabase.rpc(MATCH_CANDIDATES_RPC, {
+    p_supplier_name: normalizeAlias(extraction.supplier.name ?? ""),
+    p_supplier_tax_id: extraction.supplier.taxId ?? null,
+    p_texts: texts,
+    p_descriptions: texts,
+    ...(supplierId ? { p_supplier_id: supplierId } : {}),
+    p_limit: MATCH_CANDIDATES_PER_LINE,
+  });
+  throwIfSupabaseError(error);
+
+  const best = new Map<number, Map<string, MatchFuzzyCandidate>>();
+  for (const [variantIndex, list] of Object.entries(toFuzzy((data ?? {}) as CandidatesRpcResult, texts.length))) {
+    const line = owners[Number(variantIndex)];
+    const byProduct = best.get(line) ?? new Map<string, MatchFuzzyCandidate>();
+    for (const candidate of list) {
+      const previous = byProduct.get(candidate.productId);
+      if (!previous || candidate.score > previous.score) {
+        byProduct.set(candidate.productId, candidate);
+      }
+    }
+    best.set(line, byProduct);
+  }
+  const result: Record<number, MatchFuzzyCandidate[]> = {};
+  for (const [line, byProduct] of best) {
+    result[line] = [...byProduct.values()].sort((a, b) => b.score - a.score).slice(0, MATCH_CANDIDATES_PER_LINE);
+  }
+  return result;
+}
+
 function toFuzzy(result: CandidatesRpcResult, lineCount: number): Record<number, MatchFuzzyCandidate[]> {
   const fuzzy: Record<number, MatchFuzzyCandidate[]> = {};
   for (const row of result.lines ?? []) {
@@ -471,9 +535,13 @@ export async function loadMatchContext(
   ]);
 
   const supplierCandidates = toSupplierCandidates(candidates);
-  const fuzzy = toFuzzy(candidates, extraction.lines.length);
   const supplierId = candidates.supplier_id ?? undefined;
-  const catalog = supplierId ? await loadCatalog(supabase, storeId, supplierId) : undefined;
+  const firstFuzzy = toFuzzy(candidates, extraction.lines.length);
+  const [catalog, variantFuzzy] = await Promise.all([
+    supplierId ? loadCatalog(supabase, storeId, supplierId) : Promise.resolve(undefined),
+    loadVariantFuzzy(supabase, extraction, firstFuzzy, supplierId),
+  ]);
+  const fuzzy = { ...firstFuzzy, ...variantFuzzy };
 
   const loaded = new Map(barcodeRows.map((row) => [row.id, row]));
   const referenced = new Set<string>([

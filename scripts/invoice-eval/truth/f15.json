@@ -1,0 +1,103 @@
+{
+  "id": "f15",
+  "synthetic": false,
+  "pages": [
+    "samples/f15.jpg"
+  ],
+  "supplierKey": "las-acacias",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "ABASTOS Y FRUTERIA LAS ACACIAS, S.R.L",
+      "taxId": "J-002658118"
+    },
+    "number": "00016223",
+    "date": "2026-08-15",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "ANIS CARTUJ 12U",
+        "description": "Anís Cartujo (12 u)",
+        "quantity": 1,
+        "unitsPerPack": 12,
+        "unitPrice": 54077.8,
+        "lineTotal": 54077.8,
+        "confidence": 1
+      },
+      {
+        "rawText": "MALPORT T 6X1.75",
+        "description": "Malport T 6x1.75L",
+        "quantity": 2,
+        "unitsPerPack": 6,
+        "unitPrice": 16995.88,
+        "lineTotal": 33991.76,
+        "confidence": 1
+      },
+      {
+        "rawText": "GRAN RESERVA 6x0,70L",
+        "description": "Gran Reserva 6x0.70L",
+        "quantity": 1,
+        "unitsPerPack": 6,
+        "unitPrice": 36695.65,
+        "lineTotal": 36695.65,
+        "confidence": 1
+      },
+      {
+        "rawText": "CHAR DULA DEMI",
+        "description": "Char dula demi",
+        "quantity": 1,
+        "unitPrice": 6566.59,
+        "lineTotal": 6566.59,
+        "confidence": 1
+      },
+      {
+        "rawText": "ENVIO",
+        "description": "Envío",
+        "quantity": 1,
+        "unitPrice": 1545.08,
+        "lineTotal": 1545.08,
+        "confidence": 1
+      }
+    ],
+    "total": 132876.88,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "anis-cartujo",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Empaque dentro del nombre (12U); tamaño de botella no impreso"
+    },
+    {
+      "productKey": "malport-t-1.75l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Empaque 6X1.75 dentro del nombre; solo total impreso (33991.76), unitPrice = 33991.76/2"
+    },
+    {
+      "productKey": "gran-reserva-0.70l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Empaque 6x0,70L impreso en columna aparte; marca no impresa"
+    },
+    {
+      "productKey": "char-dula-demi",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Nombre abreviado, sin empaque"
+    },
+    {
+      "productKey": null,
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Cargo de envío cobrado, no es mercancía"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Solo cantidad y total por línea; unitPrice = lineTotal/cantidad. 54077.80+33991.76+36695.65+6566.59+1545.08=132876.88 = TOTAL y Tarj. Debito OK. \"172.00\" suelto al pie es la referencia en USD (132876.88/172=772.54 Bs/USD), no es línea ni tasa impresa: printedRate omitido"
+  }
+}

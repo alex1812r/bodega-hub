@@ -1,0 +1,157 @@
+{
+  "id": "s01",
+  "synthetic": true,
+  "pages": [
+    "samples/s01.jpg"
+  ],
+  "supplierKey": "sint-dist-el-saman",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA EL SAMAN 2024, C.A.",
+      "taxId": "J-41258736-0",
+      "phone": "0212-871.44.90",
+      "address": "AV. SUCRE, GALPON 12, ZONA INDUSTRIAL LOS FRAILES, CATIA, CARACAS"
+    },
+    "number": "00002318",
+    "date": "2026-09-02",
+    "currency": "VES",
+    "printedRate": 881.34,
+    "lines": [
+      {
+        "rawText": "REFRESCO GLUP COLA 2LT [BULTO X 6]",
+        "description": "Glup cola 2L",
+        "quantity": 3,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5780.4,
+        "lineTotal": 17341.2,
+        "supplierSku": "SM-01045",
+        "confidence": 1
+      },
+      {
+        "rawText": "REFRESCO GLUP SABORES 2LT [BULTO X 6]",
+        "description": "Glup sabores 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4590,
+        "lineTotal": 8721,
+        "supplierSku": "SM-01046",
+        "confidence": 1
+      },
+      {
+        "rawText": "REFRESCO COCA COLA 2LT [BULTO X 6]",
+        "description": "Coca-Cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7590.6,
+        "lineTotal": 15181.2,
+        "supplierSku": "SM-01120",
+        "confidence": 1
+      },
+      {
+        "rawText": "HARINA PAN 1KG (E) [BULTO X 20]",
+        "description": "Harina PAN 1kg",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18450,
+        "lineTotal": 35793,
+        "taxHint": "exento",
+        "supplierSku": "SM-02001",
+        "confidence": 1
+      },
+      {
+        "rawText": "ARROZ PRIMOR 1KG (E) [BULTO X 24]",
+        "description": "Arroz Primor 1kg",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23520,
+        "lineTotal": 23520,
+        "taxHint": "exento",
+        "supplierSku": "SM-02210",
+        "confidence": 1
+      },
+      {
+        "rawText": "PASTA HORIZONTE CORTA 1KG (E) CAJA X12",
+        "description": "Pasta Horizonte corta 1kg",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 15360,
+        "lineTotal": 27648,
+        "taxHint": "exento",
+        "supplierSku": "SM-02305",
+        "confidence": 1
+      },
+      {
+        "rawText": "ATUN MARGARITA EN ACEITE 140GR CAJA X24",
+        "description": "Atún Margarita 140g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 30240,
+        "lineTotal": 30240,
+        "supplierSku": "SM-03410",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 158444.4,
+    "tax": 11208.6,
+    "total": 166484.11,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "glup-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "glup-sabores-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Descuento por línea 5% impreso en DESC. %; lineTotal es el neto impreso (cantidad × precio × 0.95)."
+    },
+    {
+      "productKey": "coca-cola-2l",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "harina-pan-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Descuento por línea 3% impreso en DESC. %; lineTotal es el neto impreso (cantidad × precio × 0.97)."
+    },
+    {
+      "productKey": "arroz-primor-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    },
+    {
+      "productKey": "pasta-horizonte-corta-1kg",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Descuento por línea 10% impreso en DESC. %; lineTotal es el neto impreso (cantidad × precio × 0.9)."
+    },
+    {
+      "productKey": "atun-margarita-140g",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": ""
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [],
+    "arithmetic": "Caso s01: descuento por línea (DESC. %) y descuento global 2% al pie antes del IVA; subtotal = SUB-TOTAL impreso (antes del descuento global). cantidad × precio × (1 − desc. línea) = lineTotal en las 7 líneas OK; sum(lineTotal)=158.444,40; = SUB-TOTAL/SUBTTL OK; descuento global 2% = 3.168,89 (G 1.429,67 + E 1.739,22); EXENTO 85.221,78; BI G 70.053,73 × 16% = IVA 11.208,60; 85.221,78 + 70.053,73 + 11.208,60 = TOTAL 166.484,11 OK"
+  }
+}

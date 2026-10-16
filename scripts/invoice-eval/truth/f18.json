@@ -1,0 +1,48 @@
+{
+  "id": "f18",
+  "synthetic": false,
+  "pages": [
+    "samples/f18.jpg"
+  ],
+  "supplierKey": "cosas-principales",
+  "duplicateOf": null,
+  "extraction": {
+    "supplier": {
+      "name": "COMERCIAL COSAS PRINCIPALES, C.A.",
+      "taxId": "J-502495312",
+      "address": "Av Principal Del Cementerio General Del Sur Edif La Corteza Piso PB Local 1 Urb Las Luces Caracas Distrito Capital Zona Postal 1050"
+    },
+    "date": "2026-09-03",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "CINTA TIRRO CORAL MATE 48MMX180M",
+        "description": "Cinta tirro Coral mate 48mm x 180m",
+        "quantity": 1,
+        "unitPrice": 2412.02,
+        "lineTotal": 2412.02,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 2079.33,
+    "tax": 332.69,
+    "total": 2412.02,
+    "confidence": 1,
+    "warnings": []
+  },
+  "lines": [
+    {
+      "productKey": "insumo-cinta-embalar",
+      "occluded": false,
+      "uncertainFields": [],
+      "note": "Insumo, no mercancía. Precio de línea impreso con IVA incluido (2.412,02 = TOTAL); sin marca de IVA en la línea. Factura sin número impreso (se omite number)"
+    }
+  ],
+  "verification": {
+    "checkedAgainstImage": true,
+    "manifestDiffs": [
+      "El manifiesto dice que f18 trae nombre y cédula de un cliente de farmacia; la factura dice RAZON SOCIAL:CLIENTE GENERICO y CI/RIF:NO CI NO RIF (los datos de un tercero están en f19)"
+    ],
+    "arithmetic": "1 × 2.412,02 = 2.412,02 = TOTAL OK; SUB-TOTAL 2.079,33 × 16% = 332,69 = I.V.A OK; 2.079,33 + 332,69 = 2.412,02 OK; Cantidad:1"
+  }
+}
