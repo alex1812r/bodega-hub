@@ -25,7 +25,7 @@ import {
   type ConfirmedInvoiceScan,
 } from "@/modules/invoice-scan/server/confirmScan.server";
 import { parseConfirmedScan } from "@/modules/invoice-scan/server/scans.types";
-import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
+import { createdMockPurchases, findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { POST } from "./route";
@@ -115,8 +115,6 @@ const scanLines = [
   { lineIndex: 1, productId: PRODUCT_B },
   // "***" normaliza a "": no se aprende.
   { lineIndex: 2, productId: PRODUCT_B },
-  // Fuera de rango: se omite.
-  { lineIndex: 9, productId: PRODUCT_A },
 ];
 
 function post(body: unknown, headers: Record<string, string> = {}) {
@@ -434,7 +432,8 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
         clientRequestId: PURCHASE_KEY,
         invoiceScanExtraction: corrected,
         invoiceScanId: SCAN_ID,
-        invoiceScanLines: [...scanLines, { lineIndex: 1, packLabel: null, productId: PRODUCT_B, unitsPerPack: null }],
+        // Línea en modo unidad con las claves de empaque en null: se omiten al guardar.
+        invoiceScanLines: [scanLines[0], { lineIndex: 1, packLabel: null, productId: PRODUCT_B, unitsPerPack: null }, scanLines[2]],
       });
 
       const confirmed = fake.rpc.mock.calls.find(([name]) => name === "confirm_invoice_scan")![1].p_confirmed;
@@ -446,7 +445,6 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
         { lineIndex: 0, packLabel: "Caja", productId: PRODUCT_A, unitsPerPack: 6 },
         { lineIndex: 1, productId: PRODUCT_B },
         { lineIndex: 2, productId: PRODUCT_B },
-        { lineIndex: 1, productId: PRODUCT_B },
       ]);
     });
 
@@ -658,7 +656,7 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(state.scans[0]).toMatchObject({ claim_request_id: null, purchase_id: null, status: "extracted" });
     });
 
-    it("línea con un producto que no está en los items: no se aprende y se registra (SCN-06-F2 · M3)", async () => {
+    it("línea con un producto que no está en los items: 400 sin reclamar ni crear (SCN-06-F2 · M3, SCN-UI-C2)", async () => {
       const response = await post({
         ...purchase,
         clientRequestId: PURCHASE_KEY,
@@ -668,18 +666,10 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
           { lineIndex: 1, productId: PRODUCT_B },
         ],
       });
-      const learnArgs = fake.rpc.mock.calls.find(([name]) => name === "learn_invoice_aliases")?.[1];
 
-      expect(response.status).toBe(201);
-      expect((await response.json()).data.invoiceScan).toEqual({ confirmed: true, learned: 1 });
-      expect(learnArgs).toEqual({
-        p_lines: [{ alias_norm: "azucar montalban", pack_label: null, product_id: PRODUCT_B, units_per_pack: null }],
-        p_scan_id: SCAN_ID,
-      });
-      expect(console.error).toHaveBeenCalledWith(
-        "[invoice-scan] líneas del escaneo fuera de la compra; no se aprenden",
-        expect.objectContaining({ count: 1, scanId: SCAN_ID }),
-      );
+      expect(response.status).toBe(400);
+      expect(fake.rpcNames()).toEqual([]);
+      expect(state.scans[0]).toMatchObject({ purchase_id: null, status: "extracted" });
     });
 
     it("empaque que no coincide con el item: no se aprende el empaque (sin claves) (SCN-06-F2 · M3)", async () => {
@@ -898,6 +888,79 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
 
       expect(response.status).toBe(400);
       expect(getMockInvoiceScan(SCAN_ID)?.status).toBe("extracted");
+    });
+  });
+});
+
+describe("/api/purchases · invoiceScanLines inválidas (SCN-UI-C2 · caos 6.14)", () => {
+  const originalDataSource = process.env.API_DATA_SOURCE;
+  const validLine = { lineIndex: 1, productId: PRODUCT_B };
+  const invalidCases: [string, Record<string, unknown>][] = [
+    ["lineIndex fuera de la extracción guardada", { invoiceScanLines: [validLine, { lineIndex: 99, productId: PRODUCT_A }] }],
+    ["lineIndex repetido", { invoiceScanLines: [validLine, { lineIndex: 1, productId: PRODUCT_A }] }],
+    ["productId que no está en los items", { invoiceScanLines: [validLine, { lineIndex: 0, productId: OUTSIDE_PRODUCT }] }],
+    [
+      "lineIndex fuera de la extracción corregida",
+      {
+        invoiceScanExtraction: { ...corrected, lines: corrected.lines.slice(0, 1) },
+        invoiceScanLines: [validLine],
+      },
+    ],
+  ];
+
+  afterAll(() => {
+    process.env.API_DATA_SOURCE = originalDataSource;
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  describe("supabase", () => {
+    let state: FakeState;
+    let fake: ReturnType<typeof createFake>;
+
+    beforeEach(() => {
+      process.env.API_DATA_SOURCE = "supabase";
+      state = {
+        purchases: [],
+        scans: [{ extracted, id: SCAN_ID, purchase_id: null, status: "extracted", store_id: DEFAULT_STORE_ID }],
+      };
+      fake = createFake(state);
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue(fake.client);
+    });
+
+    it.each(invalidCases)("%s: 400 en español sin reclamar ni crear la compra", async (_caso, extra) => {
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, ...extra });
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(payload.error)).toMatch(/línea/i);
+      expect(fake.rpcNames()).toEqual([]);
+      expect(state.purchases).toEqual([]);
+      expect(state.scans[0]).toMatchObject({ purchase_id: null, status: "extracted" });
+      expect(state.scans[0].claim_request_id ?? null).toBeNull();
+    });
+  });
+
+  describe("mock", () => {
+    let createdBefore = 0;
+
+    beforeEach(() => {
+      process.env.API_DATA_SOURCE = "mock";
+      resetMockInvoiceScans();
+      registerMockInvoiceScan({ extracted, id: SCAN_ID });
+      createdBefore = createdMockPurchases().size;
+    });
+
+    it.each(invalidCases)("%s: 400 en español sin reclamar ni crear la compra", async (_caso, extra) => {
+      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, ...extra });
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(payload.error)).toMatch(/línea/i);
+      expect(getMockInvoiceScan(SCAN_ID)).toMatchObject({ claimRequestId: null, purchaseId: null, status: "extracted" });
+      expect(createdMockPurchases().size).toBe(createdBefore);
     });
   });
 });
