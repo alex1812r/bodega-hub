@@ -80,6 +80,10 @@ export type MockInvoiceScan = {
 export type MockLearnedAlias = {
   aliasNorm: string;
   hits: number;
+  /** Id estable del registro (`supplier_product_aliases.id`): se conserva al reasignar. */
+  id: string;
+  /** `last_seen_at` (ISO): se renueva en cada aprendizaje. */
+  lastSeenAt: string;
   packLabel: string | null;
   productId: string;
   storeId: string;
@@ -189,6 +193,45 @@ export function listMockLearnedAliases(storeId: string, supplierId?: string): Mo
   );
 }
 
+/**
+ * SOLO TESTS (SCN-09b): siembra un alias aprendido sin pasar por una compra
+ * escaneada. En la app los alias solo nacen de `finalizeInvoiceScan`.
+ */
+export function registerMockLearnedAlias(
+  alias: Pick<MockLearnedAlias, "aliasNorm" | "productId" | "supplierId"> & Partial<MockLearnedAlias>,
+): MockLearnedAlias {
+  const row: MockLearnedAlias = {
+    hits: 1,
+    id: crypto.randomUUID(),
+    lastSeenAt: new Date().toISOString(),
+    packLabel: null,
+    storeId: DEFAULT_STORE_ID,
+    unitsPerPack: null,
+    ...alias,
+  };
+
+  aliases().set(aliasKey(row.storeId, row.supplierId, row.aliasNorm), row);
+
+  return row;
+}
+
+/**
+ * SCN-09b · Espejo de `remove_supplier_product_alias`: borra el alias si es de la
+ * tienda; `false` si es ajeno o no existe (el BFF responde 404).
+ */
+export function removeMockLearnedAlias(storeId: string, aliasId: string): boolean {
+  const store = aliases();
+
+  for (const [key, alias] of store) {
+    if (alias.id === aliasId && alias.storeId === storeId) {
+      store.delete(key);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /** Solo tests: vacía el almacén compartido de escaneos (filas y reclamos) y los alias. */
 export function resetMockInvoiceScans() {
   resetMockScanStore();
@@ -276,6 +319,8 @@ function learnMockAliases(
     store.set(key, {
       aliasNorm: line.alias_norm,
       hits: previous && sameProduct ? previous.hits + 1 : 1,
+      id: previous?.id ?? crypto.randomUUID(),
+      lastSeenAt: new Date().toISOString(),
       packLabel: keep("pack_label" in line, line.pack_label, previous?.packLabel),
       productId: line.product_id,
       storeId,
