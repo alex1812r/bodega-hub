@@ -128,6 +128,9 @@ export function confirmedToggleLabel(count: number, expanded: boolean): string {
 /** Qué le falta a la línea para quedar resuelta, en español (sin contar el producto). */
 export function lineNeedMessages(line: InvoiceReviewLine): string[] {
   return getLineNeeds(line).flatMap((need) => {
+    if (need === "unitsPerPack" && line.unitsPerPack !== undefined) {
+      return ["Debe ser un entero mayor que 0."];
+    }
     if (need === "unitsPerPack") {
       return [`Indica cuántas unidades trae cada ${line.packLabel.trim().toLowerCase() || "empaque"}.`];
     }

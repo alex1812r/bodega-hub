@@ -256,12 +256,14 @@ export function InvoiceReviewLineRow({
                 ))}
               </div>
               {line.entryMode === "pack" ? (
+                // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
+                // corrige solo; la línea queda sin resolver y lo dice.
                 <NumberInput
+                  allowNegative
                   className="max-w-40"
                   data-need="unitsPerPack"
                   decimals={0}
                   label={`Unidades por ${line.packLabel.toLowerCase()}`}
-                  min={1}
                   onValueChange={(value) =>
                     onAction({ type: "editUnitsPerPack", index, unitsPerPack: value ?? undefined })
                   }

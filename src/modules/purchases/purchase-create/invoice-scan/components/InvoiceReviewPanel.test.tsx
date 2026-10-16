@@ -259,6 +259,31 @@ describe("InvoiceReviewPanel", () => {
     expect(within(row(0)).getByText("Resuelta")).toBeInTheDocument();
   });
 
+  it.each(["0", "-3"])("SCN-UI-C1 (6.19): %s en Unidades por bulto no se corrige ni resuelve la línea", async (typed) => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [
+          doubtfulLine(1, 0.8, { read: { unit: "bulto" }, match: { entryMode: "pack", unitsPerPack: undefined } }),
+          doubtfulLine(2),
+        ],
+      }),
+    );
+
+    // Enter en la fila acepta el producto marcado y lleva el foco a las unidades.
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.keyboard("{Enter}");
+    const units = within(row(0)).getByLabelText("Unidades por bulto");
+    await waitFor(() => expect(units).toHaveFocus());
+    await user.keyboard(typed);
+    await user.tab();
+
+    expect(units).toHaveValue(typed);
+    expect(row(0)).not.toHaveAttribute("data-status", "resolved");
+    expect(within(row(0)).getByText("Debe ser un entero mayor que 0.")).toBeInTheDocument();
+    expect(loadButton()).toBeDisabled();
+  });
+
   it("aviso de tasa impresa: se elige entre la de hoy y la de la factura", async () => {
     const user = userEvent.setup();
     const props = renderPanel(makeReviewResponse({ lines: [{}], extraction: { printedRate: 875.65 } }));
