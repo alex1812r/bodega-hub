@@ -43,12 +43,22 @@ describe("createInvoiceScanModel", () => {
     });
   });
 
-  it("defaults to Google gemini-2.5-flash", () => {
+  it("defaults to Google gemini-3.5-flash-lite without INVOICE_SCAN_MODEL", () => {
     process.env.GOOGLE_GENERATIVE_AI_API_KEY = "g-key";
     process.env.ANTHROPIC_API_KEY = "a-key";
 
     expect(createInvoiceScanModel()).toMatchObject({
-      modelId: "gemini-2.5-flash",
+      modelId: "gemini-3.5-flash-lite",
+      provider: "google",
+    });
+  });
+
+  it("uses INVOICE_SCAN_MODEL over the Google default", () => {
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = "g-key";
+    process.env.INVOICE_SCAN_MODEL = " gemini-3.6-flash ";
+
+    expect(createInvoiceScanModel()).toMatchObject({
+      modelId: "gemini-3.6-flash",
       provider: "google",
     });
   });
@@ -58,7 +68,7 @@ describe("createInvoiceScanModel", () => {
     process.env.ANTHROPIC_API_KEY = "a-key";
 
     expect(createInvoiceScanModel()).toMatchObject({
-      modelId: "claude-haiku-4-5",
+      modelId: "claude-haiku-5-5",
       provider: "anthropic",
     });
 
@@ -79,16 +89,28 @@ describe("createInvoiceScanModel", () => {
     });
   });
 
-  it("falls back to the other provider without the requested key", () => {
+  it("falls back to Anthropic with the scan Haiku default without the Google key", () => {
     process.env.INVOICE_SCAN_PROVIDER = "google";
     process.env.INVOICE_SCAN_MODEL = "gemini-otro";
     process.env.ANTHROPIC_API_KEY = "a-key";
 
     expect(createInvoiceScanModel()).toMatchObject({
-      modelId: "claude-haiku-4-5",
+      modelId: "claude-haiku-5-5",
       provider: "anthropic",
     });
     expect(consoleWarn).toHaveBeenCalledWith('[invoice-scan] Sin key para "google"; se usa Anthropic.');
+  });
+
+  it("falls back to Google with the scan lite default without the Anthropic key", () => {
+    process.env.INVOICE_SCAN_PROVIDER = "anthropic";
+    process.env.INVOICE_SCAN_MODEL = "claude-otro";
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = "g-key";
+
+    expect(createInvoiceScanModel()).toMatchObject({
+      modelId: "gemini-3.5-flash-lite",
+      provider: "google",
+    });
+    expect(consoleWarn).toHaveBeenCalledWith('[invoice-scan] Sin key para "anthropic"; se usa Google.');
   });
 
   it("falls back to mock without any key, also for an invalid provider", () => {
@@ -106,10 +128,24 @@ describe("createInvoiceScanModel", () => {
     process.env.GOOGLE_GENERATIVE_AI_API_KEY = "g-key";
 
     expect(createInvoiceScanModel()).toMatchObject({
-      modelId: "gemini-2.5-flash",
+      modelId: "gemini-3.5-flash-lite",
       provider: "google",
     });
     expect(createAssistantModel()).toMatchObject({ modelId: "assistant-mock", provider: "mock" });
+  });
+
+  it("keeps the assistant defaults (gemini-2.5-flash / claude-haiku-4-5)", () => {
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = "g-key";
+    process.env.ANTHROPIC_API_KEY = "a-key";
+
+    expect(createAssistantModel()).toMatchObject({ modelId: "gemini-2.5-flash", provider: "google" });
+
+    process.env.ASSISTANT_PROVIDER = "anthropic";
+    expect(createAssistantModel()).toMatchObject({ modelId: "claude-haiku-4-5", provider: "anthropic" });
+
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    process.env.ASSISTANT_PROVIDER = "google";
+    expect(createAssistantModel()).toMatchObject({ modelId: "claude-haiku-4-5", provider: "anthropic" });
   });
 
   it("keeps the assistant factory behaviour", () => {

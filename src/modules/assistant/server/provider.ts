@@ -37,7 +37,15 @@ export type ModelFromEnvConfig = {
   noKeyMessage: string;
   mockModelId: string;
   createMock: () => LanguageModel;
+  /**
+   * Modelo por defecto de cada proveedor real cuando no hay override. Aplica
+   * tambien al caer al otro proveedor por falta de key. Sin esto se usan los
+   * defaults del asistente.
+   */
+  defaultModels?: Partial<Record<RealModelProvider, string>>;
 };
+
+type RealModelProvider = Exclude<ModelProvider, "mock">;
 
 /** Un aviso por prefijo: el asistente y el escaneo avisan cada uno una vez. */
 const warnedPrefixes = new Set<string>();
@@ -90,6 +98,8 @@ function readKey(name: string) {
  */
 export function createModelFromEnv(config: ModelFromEnvConfig): ResolvedModelInfo {
   const provider = readProvider(config);
+  const defaultGoogleModel = config.defaultModels?.google ?? DEFAULT_GOOGLE_MODEL;
+  const defaultAnthropicModel = config.defaultModels?.anthropic ?? DEFAULT_ANTHROPIC_MODEL;
   const modelOverride = process.env[config.modelEnv]?.trim() || null;
   const mock = (): ResolvedModelInfo => ({
     model: config.createMock(),
@@ -105,7 +115,7 @@ export function createModelFromEnv(config: ModelFromEnvConfig): ResolvedModelInf
   const anthropicKey = readKey("ANTHROPIC_API_KEY");
 
   if (provider === "google" && googleKey) {
-    const modelId = modelOverride ?? DEFAULT_GOOGLE_MODEL;
+    const modelId = modelOverride ?? defaultGoogleModel;
     return {
       model: createGoogleGenerativeAI({ apiKey: googleKey })(modelId),
       modelId,
@@ -114,7 +124,7 @@ export function createModelFromEnv(config: ModelFromEnvConfig): ResolvedModelInf
   }
 
   if (provider === "anthropic" && anthropicKey) {
-    const modelId = modelOverride ?? DEFAULT_ANTHROPIC_MODEL;
+    const modelId = modelOverride ?? defaultAnthropicModel;
     return {
       model: createAnthropic({ apiKey: anthropicKey })(modelId),
       modelId,
@@ -125,7 +135,7 @@ export function createModelFromEnv(config: ModelFromEnvConfig): ResolvedModelInf
   // Proveedor pedido sin key: intentamos el otro antes de degradar a mock.
   if (googleKey) {
     warnOnce(config.logPrefix, `Sin key para "${provider}"; se usa Google.`);
-    const modelId = DEFAULT_GOOGLE_MODEL;
+    const modelId = defaultGoogleModel;
     return {
       model: createGoogleGenerativeAI({ apiKey: googleKey })(modelId),
       modelId,
@@ -135,7 +145,7 @@ export function createModelFromEnv(config: ModelFromEnvConfig): ResolvedModelInf
 
   if (anthropicKey) {
     warnOnce(config.logPrefix, `Sin key para "${provider}"; se usa Anthropic.`);
-    const modelId = DEFAULT_ANTHROPIC_MODEL;
+    const modelId = defaultAnthropicModel;
     return {
       model: createAnthropic({ apiKey: anthropicKey })(modelId),
       modelId,
