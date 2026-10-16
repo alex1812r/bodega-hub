@@ -1,24 +1,86 @@
 # Escaneo de facturas de compra
 
-Documento del plan [`agent-prompts/factura-escaneo-gtm.md`](agent-prompts/factura-escaneo-gtm.md) (§9). Cada módulo escribe sus propias secciones.
+Documento del plan [`agent-prompts/factura-escaneo-gtm.md`](agent-prompts/factura-escaneo-gtm.md) (§9). Endpoints y tablas en [`modules-catalog.md`](modules-catalog.md#compras) §Compras; contrato en [`public/openapi.yml`](../public/openapi.yml).
 
 ## Índice
 
-1. Cómo funciona (la completa el módulo Extracción / UI)
-2. Las tres capas de aprendizaje (la completa el módulo Emparejamiento)
-3. [Banco de evaluación](#banco-de-evaluación) (módulo Evaluación)
-4. [Resultados por proveedor de IA](#resultados-por-proveedor-de-ia) (módulo Evaluación)
-5. [Dataset para fine-tuning (opcional)](#dataset-para-fine-tuning-opcional) (módulo Evaluación)
+1. [Cómo funciona](#cómo-funciona)
+2. [Las tres capas de aprendizaje](#las-tres-capas-de-aprendizaje)
+3. [Banco de evaluación](#banco-de-evaluación)
+4. [Resultados por proveedor de IA](#resultados-por-proveedor-de-ia)
+5. [Dataset para fine-tuning (opcional)](#dataset-para-fine-tuning-opcional)
+6. [Despliegue](#despliegue)
 
 ---
 
 ## Cómo funciona
 
-(la completa el módulo Extracción / UI)
+El modelo de IA **propone**; no escribe nada en productos, vínculos ni compras. Nada se guarda hasta que el usuario confirma la compra por el flujo de siempre (`POST /api/purchases` → `create_purchase` con `clientRequestId`). Código en `src/modules/invoice-scan/` (cliente, servidor y contrato `contracts.ts`) y en `src/modules/purchases/purchase-create/invoice-scan/` (revisión).
+
+### 1. Cliente
+
+- Botón **"Escanear factura"** en la cabecera de `/purchases/create` y en el vacío de `/purchases` (abre `/purchases/create?scan=1`). Solo con `purchases.create`.
+- `InvoiceScanModal`: arrastrar, elegir archivo o tomar foto. Acepta JPG, PNG, WebP y PDF (cada página del PDF se rasteriza con `pdfjs-dist`).
+- Preparación (`prepareInvoiceFile.ts`, `prepareInvoice.core.ts`): rotación EXIF, lado mayor ≤ 1600 px y ≤ 1 MB por página, como mucho 10 páginas, todas del mismo formato. Avisos de calidad (foto borrosa o muy oscura) con "Repetir foto" o "Escanear igual".
+- El sha256 se calcula sobre los bytes ya procesados. Muestra la cuota del día (`GET /api/purchases/invoice-scan/limits`).
+- Envío: si el total cabe en 4 MB, `POST /api/purchases/invoice-scan` en multipart. Si no, pide URLs firmadas (`GET …/upload-url`), sube cada página al bucket privado `invoice-scans` y manda las rutas por JSON al mismo POST.
+
+### 2. BFF (`scanService.ts`)
+
+1. Sesión real con `purchases.create`; la tienda sale siempre de la sesión. Recalcula el hash, comprueba por los bytes que cada página es la imagen declarada y valida que las rutas sean `<store_id>/<sha256>/p<n>.<ext>` de esa tienda.
+2. Reserva atómica (`reserve_invoice_scan`, lock por tienda):
+   - misma foto ya leída → devuelve ese escaneo con `cached: true`, sin modelo y sin cuota;
+   - otra petición la está leyendo → 409;
+   - las páginas no caben en la cuota de hoy → 429 `INVOICE_SCAN_LIMIT_REACHED`;
+   - si no, fila `processing` y páginas cobradas. Cada intento cobra, también un reintento fallido.
+3. Few-shot (capa 2) si el cliente mandó `supplierId`.
+
+### 3. Modelo (`extract.ts`, `prompt.ts`)
+
+- `generateObject` contra `invoiceExtractionSchema`, una llamada por página, `temperature: 0` y timeout de 45 s por página.
+- El prompt explica la factura venezolana (empaques "x6", "EXE" = exento, Bs frente a $) y declara el contenido de la imagen como datos, no instrucciones.
+- Proveedor y modelo por entorno (ver [Despliegue](#despliegue)). Un fallo deja la fila `failed` con solo el código y responde 502 `INVOICE_SCAN_PROVIDER_ERROR` (`details.reason`: `PROVIDER_ERROR`, `TIMEOUT`, `INVALID_OUTPUT` o `QUOTA`). La compra manual sigue disponible.
+- Nunca se registran imágenes, claves ni el texto de la factura.
+
+### 4. Emparejamiento (`match.ts`, `loadMatchContext.ts`)
+
+Determinista, sin IA.
+
+- **Proveedor**: por RIF (la letra tiene que coincidir si las dos partes la traen); si no, por nombre difuso (RPC `invoice_match_candidates`); si no, lo elige el usuario.
+- **Líneas**, en cascada:
+  1. SKU del proveedor;
+  2. alias exacto (capa 1);
+  3. código de barras;
+  4. alias o nombre difuso (trigram) → **dudosa** con ≤ 3 candidatos;
+  5. nada → **sin emparejar**.
+
+  Un SKU o un código de barras exacto confirma si la línea es por unidad o su empaque está registrado; un empaque declarado sin registrar la deja dudosa (D17).
+- **Empaques y recetas**: salen de `supplier_product_pack_units` y `product_pack_conversions`. Si el precio se aleja más de un 40 % del último costo, la línea queda dudosa ("¿precio por caja o por unidad?").
+- **Tasa** (CIE-02): es la misma tasa del día que usa el formulario de compra (`getCurrentExchangeRate`, la de `GET /api/exchange-rates/current`), no la última guardada.
+  - Impresa que difiere más de 2 % → aviso.
+  - Más de 25 % → se ignora con aviso.
+  - Sin tasa del día → se usa la impresa con aviso; sin ninguna, no hay costos REF y la revisión pide la tasa.
+- **Duplicados**: mismo proveedor y número normalizado, o posible duplicado por proveedor + total + fecha.
+
+### 5. Revisión y compra
+
+- `InvoiceReviewPanel` reemplaza al formulario mientras se revisa. Cada línea sale confirmada, dudosa (con candidatos) o sin emparejar, y se maneja con teclado.
+- Avisos de tasa (tasa de hoy, de la factura o manual; la elegida es la tasa de la compra y la compra se abre en los Bs exactos de la factura), de "¿precios incluyen IVA?", de factura en USD y de duplicado.
+- Al aplicar, las líneas precargan el formulario normal (modo unidad o empaque, "Desarmar al recibir"). Confirmar envía a `POST /api/purchases` `invoiceScanId`, `invoiceScanLines` y `invoiceScanExtraction`, que es la lectura corregida (D10).
+- Tras `create_purchase` el escaneo pasa a `confirmed` con `confirmed = { extraction, lines, … }` y se aprenden los alias. Si el aprendizaje falla, la compra ya existe; el resultado viaja en `invoiceScan: { confirmed, learned }`.
+- El detalle de la compra muestra la factura (`GET /api/purchases/{id}/invoice-scan`). Los escaneos sin confirmar se pueden descartar (`POST …/{id}/discard`). A los 90 días el cron borra imágenes y filas.
 
 ## Las tres capas de aprendizaje
 
-(la completa el módulo Emparejamiento)
+El modelo no se entrena. Mejoran con el uso tres capas propias:
+
+| Capa | Qué aprende | Dónde vive |
+|------|-------------|------------|
+| 1. Alias por proveedor | `(tienda, proveedor, texto normalizado) → producto (+ pack_label, units_per_pack)`. La clave es la descripción normalizada (`invoiceAliasKey`). Al confirmar la compra, `learn_invoice_aliases` hace upsert y suma `hits`; un alias reasignado a otro producto se reemplaza. La siguiente factura del proveedor empareja por alias exacto antes que por nombre difuso. Se ven y se quitan en el detalle del proveedor (`/api/contacts/{id}/product-aliases`, RPC `remove_supplier_product_alias`). | `supplier_product_aliases` (19b, 20a) |
+| 2. Ejemplos few-shot | Cómo se lee el formato de ese proveedor. Si el usuario eligió proveedor antes de escanear, el prompt incluye hasta 3 escaneos confirmados suyos (imagen + `confirmed.extraction`, ya saneado). Son las correcciones del usuario convertidas en ejemplos. | `invoice_scans.confirmed` y `supplier_id` (19a) |
+| 3. Banco de evaluación | Nada: mide si un cambio de prompt, modelo o reglas mejora o empeora. | `scripts/invoice-eval/` (ver abajo) |
+
+El fine-tuning es opcional y no se ejecuta: el exportador deja el dataset listo (ver [Dataset para fine-tuning](#dataset-para-fine-tuning-opcional)).
 
 ---
 
@@ -494,3 +556,69 @@ Otros límites de Vertex: archivo de entrenamiento de 1 GB como máximo y datase
 3. Exportar con `--download-dir`, subir las imágenes con `gsutil -m cp -r <dir>/* gs://mi-bucket/invoice-scans/` y subir también los JSONL al bucket. Vertex exige que el dataset esté en GCS.
 4. Reunir al menos 100–500 ejemplos confirmados. El banco actual (32) no alcanza.
 5. Lanzar el ajuste SFT sobre un modelo ajustable y **reevaluar el modelo ajustado con este banco** antes de usarlo. Solo se adopta si mejora las métricas del §10, sobre todo `confirmedWrongRate`, sin subir el costo por encima de la meta.
+
+---
+
+## Despliegue
+
+Nada de esto está en producción. Producción y la tienda Las Luces no se tocan desde el plan: el despliegue lo hace el dueño.
+
+### 1. Parches SQL
+
+Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con `notify pgrst, 'reload schema';`. `build-deploy-sql.test` ignora `20261019*`, así que **no** están en `supabase/patches/deploy/` y se aplican uno a uno. No hay 19f, 19h ni 19j.
+
+| # | Parche | Qué hace |
+|---|--------|----------|
+| 1 | `20261019a-invoice-scans.sql` | Tabla `invoice_scans`, RLS de solo lectura (`purchases.view`) y bucket privado `invoice-scans` |
+| 2 | `20261019b-supplier-product-aliases.sql` | `pg_trgm`, tabla `supplier_product_aliases`, `claim_` / `release_invoice_scan_claim`, `confirm_invoice_scan` y `learn_invoice_aliases` |
+| 3 | `20261019c-invoice-scan-orphans.sql` | `list_expired_invoice_scan_objects`: imágenes subidas sin fila, para la purga |
+| 4 | `20261019d-invoice-match-candidates.sql` | `invoice_match_norm` e `invoice_match_candidates`: proveedores y candidatos por trigram |
+| 5 | `20261019e-invoice-scan-reserve.sql` | Estado `processing`, `usage_pages` y `reserve_invoice_scan`: reserva y cuota atómicas |
+| 6 | `20261019g-invoice-scan-writes-lockdown.sql` | Quita las escrituras directas, añade checks de ruta y cuota y crea `complete` / `fail` / `discard_invoice_scan`; redefine `reserve_invoice_scan` |
+| 7 | `20261019i-invoice-scan-service-only.sql` | RPCs de escritura solo para `service_role`, `attempt_id` y tope de 512 KB; redefine reserve, complete, fail y discard |
+| 8 | `20261019k-invoice-scan-claim-guard.sql` | El descarte respeta el reclamo de la compra en curso y la reserva exige usuario de la tienda; redefine reserve y discard |
+| 9 | `20261020a-supplier-alias-remove.sql` | `remove_supplier_product_alias` (quitar un alias desde el proveedor) |
+
+**Cadena de reaplicación.** Varias funciones se redefinen en parches posteriores; la versión vigente es la del último:
+
+| Función | Se define en | Vigente |
+|---------|--------------|---------|
+| `reserve_invoice_scan` | 19e → 19g → 19i → 19k | 19k |
+| `discard_invoice_scan` | 19g → 19i → 19k | 19k |
+| `complete_invoice_scan`, `fail_invoice_scan` | 19g → 19i | 19i |
+
+- Reaplicar 19a (devuelve grants y políticas de escritura) obliga a reaplicar después 19g, 19i y 19k.
+- Reaplicar 19e o 19g (vuelven las firmas viejas concedidas a `authenticated`) obliga a reaplicar después 19i y 19k.
+- Reaplicar 19i obliga a reaplicar después 19k.
+- 19b crea `invoice_scans` como respaldo solo si no existe (sin políticas); con 19a aplicado antes no hace nada. 19k funciona con y sin 19b, pero en despliegue 19b va antes.
+
+### 2. Storage
+
+El bucket **privado** `invoice-scans` lo crea 19a. No hay URLs públicas: subida y lectura con URL firmada (lectura de 5 minutos), y rutas siempre bajo `<store_id>/<sha256>/p<n>.<ext>`.
+
+### 3. Variables de entorno
+
+`.env.local.example` no está versionado (`.gitignore` excluye `.env*`; solo se versiona `.env.stock-lab.example`), por eso las variables se documentan aquí. En Vercel van en Settings → Environment Variables.
+
+| Variable | Valores | Por defecto | Notas |
+|----------|---------|-------------|-------|
+| `INVOICE_SCAN_PROVIDER` | `google` \| `anthropic` \| `mock` | `google` | Si falta la key del proveedor pedido se usa el otro (con su modelo por defecto) y, sin ninguna key, `mock`. |
+| `INVOICE_SCAN_MODEL` | id del modelo | `gemini-3.5-flash-lite` (google) · `claude-haiku-5-5` (anthropic) | D22 / CIE-01. No cambia el modelo del asistente (`ASSISTANT_MODEL`, que conserva su propio default). |
+| `INVOICE_SCAN_DAILY_LIMIT` | entero | `50` | Páginas por tienda y día operativo de Caracas; máximo 10000. Un valor no numérico vuelve a 50. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | key | — | Ya existe por el asistente. Debe estar en plan de pago: en free tier Google puede usar los datos y la cuota diaria corta el escaneo (D18). |
+| `ANTHROPIC_API_KEY` | key | — | Ya existe por el asistente; opcional. |
+| `CRON_SECRET` | secreto | — | Ya existe; lo valida la purga igual que el auto-close de caja. |
+| `SUPABASE_SERVICE_ROLE_KEY` | key | — | Ya existe; el BFF escribe `invoice_scans` y firma Storage con service role. |
+
+### 4. Purga a 90 días
+
+`.github/workflows/cash-auto-close.yml` tiene el job `invoice-scans-purge`. Corre a diario a las 08:30 UTC (04:30 Caracas) y también con `workflow_dispatch`. Llama a `POST /api/cron/invoice-scans/purge` con `Authorization: Bearer ${{ secrets.CRON_SECRET }}`. Primero borra las imágenes de Storage y después las filas, incluidas las imágenes huérfanas.
+
+- **Hay que crear el secret `CRON_SECRET`** en GitHub (Settings → Secrets and variables → Actions) con el mismo valor que tiene Vercel. Sin él, la purga responde 401 y el job falla.
+- **Aviso:** el job `auto-close` de `main` sigue con el valor de `CRON_SECRET` escrito en claro en el workflow (anterior a este plan, fuera de alcance, D14). Al rotar el secreto hay que cambiarlo en Vercel y en el secret de GitHub, y pasar ese job a `${{ secrets.CRON_SECRET }}`. Si no, el auto-close de caja empieza a fallar con 401.
+
+### 5. Comprobación tras desplegar
+
+1. `GET /api/purchases/invoice-scan/limits` con un usuario almacén → `{ used, limit, remaining }`.
+2. Escanear una factura de prueba en una tienda que no sea Las Luces, confirmar la compra y comprobar `invoiceScan.confirmed: true`.
+3. Lanzar a mano el workflow (Run workflow) y comprobar que la purga responde 200 con `{ deleted, objects }`.

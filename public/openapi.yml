@@ -2879,6 +2879,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: El almacenamiento de facturas no esta disponible (subida o descarga de las paginas); no se llama al modelo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/invoice-scan/limits:
     get:
       tags: [Purchases]
@@ -2960,6 +2966,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "503":
+          description: El almacenamiento de facturas no esta disponible; no se pudo firmar la subida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/invoice-scan/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3034,8 +3046,10 @@ paths:
         "409":
           description: >-
             El escaneo no esta en `extracted`: se esta leyendo, ya esta
-            confirmado, ya estaba descartado o su lectura fallo. El mensaje en
-            espanol explica cual.
+            confirmado, ya estaba descartado o su lectura fallo. Tambien si esta
+            reclamado por una compra en curso ("Esta factura se está confirmando
+            en una compra; espera a que termine.", parche 20261019k). El mensaje
+            en espanol explica cual.
           content:
             application/json:
               schema:
@@ -7526,7 +7540,8 @@ components:
           type: boolean
     InvoiceScanStatus:
       type: string
-      enum: [extracted, confirmed, discarded, failed]
+      description: "`processing` mientras el modelo lee (reserva de 20261019e)."
+      enum: [processing, extracted, confirmed, discarded, failed]
     InvoiceScanStoredInput:
       type: object
       description: Escaneo de paginas ya subidas con las URLs de `upload-url`.
@@ -7726,6 +7741,13 @@ components:
               type: boolean
         rate:
           type: object
+          description: >-
+            Tasa Bs/USD del emparejamiento. `system` es la tasa del dia, la misma
+            que usa el formulario de compra (`GET /api/exchange-rates/current`,
+            CIE-02). Si la impresa difiere mas de 2 % hay `warning`; si difiere
+            mas de 25 % se ignora (sin `printed`) con aviso. Sin tasa del dia se
+            usa la impresa con aviso y, sin ninguna, no hay costos REF y el aviso
+            pide la tasa.
           properties:
             system:
               type: number

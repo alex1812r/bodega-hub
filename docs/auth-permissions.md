@@ -124,6 +124,7 @@ Notas de pagos:
 
 Notas de compras:
 - **Proveedor de una compra** (COM-F9): `GET /api/purchases/suppliers` se autoriza con `purchases.create` (admin y almacén), no con `contacts.view`, para que almacén pueda elegir proveedor sin leer contactos. Solo entrega `id`, `name`, `taxId` e `isActive` de contactos `proveedor` / `ambos` de la tienda; `/api/contacts` sigue exigiendo `contacts.view`.
+- **Escaneo de facturas** ([`factura-escaneo.md`](factura-escaneo.md)): el botón «Escanear factura» y escanear, subir, descartar y consultar la cuota (`/api/purchases/invoice-scan`, `…/upload-url`, `…/limits`, `…/[id]/discard`) exigen `purchases.create`. Lo ven **admin y almacén**; vendedor y contador no. Con datos reales, esas rutas y `GET /api/purchases/[id]/invoice-scan` exigen además una sesión real (cookie o Bearer): la demo no sirve. Ver un escaneo (`GET /api/purchases/invoice-scan/[id]`, `GET /api/purchases/[id]/invoice-scan`) y los alias de un proveedor pide `purchases.view`, así que también lo puede el contador. Quitar un alias pide `purchases.create`. La RLS de `invoice_scans` y `supplier_product_aliases` es de solo lectura con `purchases.view`; las escrituras van por RPC.
 - Lee `contacts` con la sesión del usuario: la política «Authenticated users read contacts» (`20260716-multi-store.sql`) solo filtra por tienda, no por rol; quien acota los campos y el tipo es el BFF.
 
 Notas de nomina:
