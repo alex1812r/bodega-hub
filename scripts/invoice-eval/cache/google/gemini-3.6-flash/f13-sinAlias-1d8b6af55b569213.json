@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "key": "1d8b6af55b569213aa3c7b7c4128a939dfb5548ee3605023ffca2e78fb2c857e",
+  "provider": "google",
+  "modelId": "gemini-3.6-flash",
+  "invoiceId": "f13",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "J-508357612"
+    },
+    "number": "00002076",
+    "date": "2026-08-20",
+    "currency": "VES",
+    "printedRate": 777.42,
+    "lines": [
+      {
+        "rawText": "GLUP SABORES 1L 1,00 x 6.188,26 [BULTO X 12,00]",
+        "description": "GLUP SABORES 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6188.26,
+        "lineTotal": 6188.26,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 2L 4,00 x 4.034,81 [BULTO X 6,00]",
+        "description": "GLUP SABORES 2L",
+        "quantity": 4,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4034.81,
+        "lineTotal": 16139.24,
+        "confidence": 0.95
+      }
+    ],
+    "total": 22327.5,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2427,
+  "outputTokens": 1169,
+  "durationMs": 12609,
+  "pages": 1,
+  "savedAt": "2026-10-16T14:02:36.374Z"
+}
