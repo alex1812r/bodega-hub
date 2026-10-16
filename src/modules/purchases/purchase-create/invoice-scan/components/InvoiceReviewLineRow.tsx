@@ -14,6 +14,8 @@ import { cn } from "@/shared/utils/cn";
 import {
   enterTargetProductId,
   getLineAmount,
+  getTaxInclusion,
+  getUnitConversion,
   isPendingStatus,
   MAX_REVIEW_QUANTITY,
   type InvoiceReviewAction,
@@ -80,7 +82,12 @@ export function InvoiceReviewLineRow({
   const index = line.index;
   const title = line.productName || (line.productId ? "Producto elegido" : "Sin producto");
   const readUnit = state.extraction.lines[index]?.unit;
-  const showPack = line.entryMode === "pack" || (readUnit !== undefined && PACK_UNITS.has(readUnit));
+  // Una cantidad fraccionaria (0,50) también ofrece "Por bulto": así se puede cargar como unidades.
+  const fractional = Number.isFinite(line.quantity) && line.quantity > 0 && !Number.isInteger(line.quantity);
+  const showPack =
+    line.entryMode === "pack" || fractional || (readUnit !== undefined && PACK_UNITS.has(readUnit));
+  const conversion = fractional ? getUnitConversion(line) : undefined;
+  const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
   const marked = pending ? enterTargetProductId(line) : undefined;
   const chips = pending ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
@@ -217,7 +224,7 @@ export function InvoiceReviewLineRow({
             <NumberInput
               data-need="unitPrice"
               decimals={2}
-              label={`Costo (${currencyLabel}, sin IVA)`}
+              label={`Costo (${currencyLabel}, ${taxLabel})`}
               min={0}
               onValueChange={(value) =>
                 onAction({ type: "editUnitPrice", index, unitPrice: value ?? Number.NaN })
@@ -274,6 +281,21 @@ export function InvoiceReviewLineRow({
                   value={line.unitsPerPack ?? null}
                 />
               ) : null}
+            </div>
+          ) : null}
+
+          {conversion?.ok && !line.discarded ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
+              <Button
+                onClick={() => onAction({ type: "convertPackToUnits", index })}
+                size="sm"
+                variant="outline"
+              >
+                {`Cargar como ${conversion.units} unidades`}
+              </Button>
+              <span>
+                {`La compra solo admite cantidades enteras: ${conversion.units} unidades a ${formatInvoiceMoney(state, conversion.unitPrice)} cada una.`}
+              </span>
             </div>
           ) : null}
 

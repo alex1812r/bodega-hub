@@ -22,7 +22,7 @@ export type InvoiceReviewRateNoticeProps = {
 const noticeClassName =
   "flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
 
-function ChoiceButton({
+export function ChoiceButton({
   checked,
   children,
   onClick,
@@ -53,10 +53,17 @@ function ChoiceButton({
  * Tasa y moneda de la revisión. D8 / 6.20: la impresa difiere > 2 % de la del día,
  * se elige "Tasa de hoy" o "Tasa de la factura". 6.7: sin tasa del día se usa la
  * impresa con aviso o se pide con `NumberInput`. 6.21: factura en dólares, banner
- * que exige aceptar explícitamente.
+ * que exige aceptar explícitamente. SCN-UI-Q1: una impresa inverosímil no se ofrece
+ * (`rate.ignoredWarning`) y una sin referencia con qué comprobarla se avisa en rojo.
  */
 export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNoticeProps) {
   const { rate, usd } = state;
+  const ignored = rate.ignoredWarning ? (
+    <p className="flex items-start gap-2" data-testid="invoice-review-rate-ignored">
+      <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+      {rate.ignoredWarning}
+    </p>
+  ) : null;
 
   if (usd.anomaly) {
     return usd.accepted ? (
@@ -87,10 +94,15 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
 
   if (rate.system !== undefined) {
     if (!rate.warning || rate.printed === undefined) {
-      return null;
+      return ignored ? (
+        <div className={noticeClassName} role="status">
+          {ignored}
+        </div>
+      ) : null;
     }
     return (
       <div className={noticeClassName} role="status">
+        {ignored}
         <p className="flex items-start gap-2">
           <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
           {rate.warning}
@@ -109,7 +121,16 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
 
   // 6.7: no hay tasa del día.
   return (
-    <div className={noticeClassName} role="status">
+    <div
+      className={cn(
+        noticeClassName,
+        rate.unverified && rate.choice === "printed"
+          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+          : null,
+      )}
+      role={rate.unverified && rate.choice === "printed" ? "alert" : "status"}
+    >
+      {ignored}
       {rate.notice ? (
         <p className="flex items-start gap-2">
           <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />

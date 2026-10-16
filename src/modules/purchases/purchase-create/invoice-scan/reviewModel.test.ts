@@ -251,8 +251,8 @@ describe("totales y lineMismatch", () => {
     let state = stateOf([{ read: { quantity: 1, unitPrice: 100, lineTotal: 100 } }, { read: { quantity: 1, unitPrice: 50, lineTotal: 50 } }], {
       extraction: { total: 174 },
     });
-    // 150 neto, 174 con 16 %.
-    expect(getInvoiceReviewTotals(state)).toMatchObject({ computed: 150, computedWithTax: 174, mismatch: false });
+    // 150 neto, 174 con 16 %: el pie compara lo que se registra (base + IVA) con el leído.
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ computed: 150, registered: 174, mismatch: false });
 
     state = reviewReducer(state, { type: "discardLine", index: 1 });
     expect(getInvoiceReviewTotals(state)).toMatchObject({ computed: 100, mismatch: true });

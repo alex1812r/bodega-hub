@@ -16,6 +16,8 @@ import {
   REVIEW_TAX_RATES,
   unmatchedLine,
 } from "../reviewFixtures";
+import f01 from "../__fixtures__/scan-f01.json";
+import f04 from "../__fixtures__/scan-f04.json";
 import { InvoiceReviewPanel, type InvoiceReviewPanelProps } from "./InvoiceReviewPanel";
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
@@ -377,7 +379,7 @@ describe("InvoiceReviewPanel", () => {
     expect(difference).toHaveTextContent("Diferencia Bs. 768,00");
     expect(difference).toHaveClass("text-red-700");
     expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
-      /Total leído Bs\. 1\.000,00\s*·\s*Total calculado Bs\. 232,00/,
+      /Total a registrar Bs\. 232,00\s*·\s*Leído Bs\. 1\.000,00/,
     );
     // La confirmada que no cuadra sigue colapsada, pero el botón lo avisa.
     const toggle = screen.getByRole("button", { name: /1 línea confirmada · ver/ });
@@ -391,7 +393,50 @@ describe("InvoiceReviewPanel", () => {
     renderPanel(makeReviewResponse({ lines: [{}], extraction: { total: 232 } }));
 
     expect(screen.queryByTestId("invoice-review-difference")).not.toBeInTheDocument();
-    expect(screen.getByText("Los totales cuadran")).toBeInTheDocument();
+    expect(screen.getByText("Cuadra con el total leído")).toBeInTheDocument();
+  });
+
+  it("SCN-UI-Q1 (f01 real): precios con IVA incluido, elección visible y reversible; el pie da lo que se registra", async () => {
+    const user = userEvent.setup();
+    renderPanel(f01 as unknown as InvoiceScanResponse, {
+      context: { systemRateVes: 880.1159, taxRates: REVIEW_TAX_RATES },
+    });
+
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "Los precios de esta factura parecen incluir IVA",
+    );
+    const included = screen.getByRole("radio", { name: "Los precios incluyen IVA (cargar sin IVA)" });
+    const excluded = screen.getByRole("radio", { name: "Los precios no incluyen IVA" });
+    expect(included).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(/Total a registrar Bs\. 40\.516,3\d/);
+    expect(screen.queryByTestId("invoice-review-difference")).not.toBeInTheDocument();
+    expect(within(row(0)).getByLabelText("Costo (Bs, con IVA)")).toBeInTheDocument();
+
+    await user.click(excluded);
+    expect(excluded).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent("Total a registrar Bs. 46.998,93");
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -6.482,61");
+  });
+
+  it("SCN-UI-Q1 (f04 real): la tasa 86,75 no se ofrece y la media caja se carga como unidades", async () => {
+    const user = userEvent.setup();
+    renderPanel(f04 as unknown as InvoiceScanResponse, {
+      context: { systemRateVes: 880.1159, taxRates: REVIEW_TAX_RATES },
+    });
+
+    expect(screen.getByTestId("invoice-review-rate-ignored")).toHaveTextContent(
+      "La tasa leída (86,75) no parece una tasa Bs/USD; se ignora.",
+    );
+    expect(screen.queryByRole("radio", { name: /Tasa de la factura/ })).not.toBeInTheDocument();
+
+    const mayonesa = row(0);
+    expect(within(mayonesa).getByText(/elige «Por bulto» e indica las unidades/)).toBeInTheDocument();
+    await user.click(within(mayonesa).getByRole("radio", { name: "Por bulto" }));
+    await user.type(within(mayonesa).getByLabelText("Unidades por bulto"), "12");
+    await user.click(within(mayonesa).getByRole("button", { name: "Cargar como 6 unidades" }));
+
+    expect(within(mayonesa).getByLabelText("Cantidad")).toHaveValue("6");
+    expect(within(mayonesa).queryByText(/solo admite cantidades enteras/)).not.toBeInTheDocument();
   });
 
   it("Nuevo producto se abre precargado con nombre y costo leídos y elige el creado", async () => {

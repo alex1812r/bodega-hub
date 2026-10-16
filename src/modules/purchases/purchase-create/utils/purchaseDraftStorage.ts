@@ -126,6 +126,7 @@ const storedInvoiceScanSchema = z.object({
   extraction: invoiceExtractionSchema,
   invoiceRateVes: z.number().positive().max(PURCHASE_DRAFT_MAX_NUMBER).optional(),
   lineIndexByItemId: z.record(z.string(), z.number().int().min(0)),
+  pricesIncludeTax: z.literal(true).optional(),
   scanId: z.string().min(1),
   version: z.literal(STORED_INVOICE_SCAN_VERSION),
 });
@@ -142,6 +143,7 @@ function fromStoredInvoiceScan(stored: StoredInvoiceScan): LoadedInvoiceScan {
     extraction: stored.extraction,
     ...(stored.invoiceRateVes !== undefined ? { invoiceRateVes: stored.invoiceRateVes } : {}),
     lineIndexByItemId: stored.lineIndexByItemId,
+    ...(stored.pricesIncludeTax ? { pricesIncludeTax: true as const } : {}),
     scanId: stored.scanId,
   };
 }
