@@ -24,6 +24,11 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { SUPPLIER_PRODUCT_SELECT } from "./contacts.server";
 import { applySupplierProductSort } from "./supplierProductSort";
 import {
+  assertPackSizeMatchesRecipe,
+  resolvePackRecipeRule,
+  type PackRecipeRule,
+} from "./supplierProductPackRecipe";
+import {
   buildIlikeOrFilter,
   buildProductSearchOrFilter,
   escapeIlike,
@@ -580,6 +585,54 @@ async function unsetDefaultPackUnits(supplierProductId: string, excludeId?: stri
   throwIfSupabaseError(error);
 }
 
+function toPositiveNumber(value: number | string | null | undefined) {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Receta del producto del vínculo (`product_pack_conversions` +
+ * `product_pack_components`, parches 20261009d/20261011c): las mismas lecturas
+ * con las que `create_purchase` valida el modo empaque (20261010d).
+ */
+async function loadPackRecipeRule(productId: string, storeId: string): Promise<PackRecipeRule> {
+  const supabase = await createRouteSupabaseClient();
+  const [components, packs] = await Promise.all([
+    supabase
+      .from("product_pack_components")
+      .select("units_per_pack, conversion:product_pack_conversions!inner(total_units, is_active)")
+      .eq("store_id", storeId)
+      .eq("conversion.is_active", true)
+      .eq("unit_product_id", productId),
+    supabase
+      .from("product_pack_conversions")
+      .select("total_units")
+      .eq("store_id", storeId)
+      .eq("is_active", true)
+      .eq("pack_product_id", productId),
+  ]);
+
+  throwIfSupabaseError(components.error);
+  throwIfSupabaseError(packs.error);
+
+  const componentRows = (components.data ?? []) as unknown as Array<{
+    units_per_pack: number | string | null;
+    conversion: { total_units: number | string | null; is_active: boolean } | null;
+  }>;
+  const componentSizes = componentRows.flatMap((row) => {
+    const size = toPositiveNumber(row.units_per_pack);
+    return row.conversion?.is_active && size !== undefined && size === toPositiveNumber(row.conversion.total_units)
+      ? [size]
+      : [];
+  });
+  const packRows = (packs.data ?? []) as Array<{ total_units: number | string | null }>;
+
+  return resolvePackRecipeRule({
+    componentSizes,
+    packTotalUnits: toPositiveNumber(packRows[0]?.total_units),
+  });
+}
+
 export async function listSupplierProductPackUnits(supplierProductId: string, storeId: string) {
   await getSupplierProductById(supplierProductId, storeId);
 
@@ -602,7 +655,8 @@ export async function listSupplierProductPackUnits(supplierProductId: string, st
 
 export async function createSupplierProductPackUnit(supplierProductId: string,
   input: SupplierProductPackUnitInput, storeId: string) {
-  await getSupplierProductById(supplierProductId, storeId);
+  const link = await getSupplierProductById(supplierProductId, storeId);
+  assertPackSizeMatchesRecipe(await loadPackRecipeRule(link.productId, storeId), input.unitsPerPack);
 
   const supabase = await createRouteSupabaseClient();
   const isDefault = input.isDefault ?? false;
@@ -631,7 +685,7 @@ export async function createSupplierProductPackUnit(supplierProductId: string,
 export async function updateSupplierProductPackUnit(supplierProductId: string,
   packUnitId: string,
   input: SupplierProductPackUnitUpdateInput, storeId: string) {
-  await getSupplierProductById(supplierProductId, storeId);
+  const link = await getSupplierProductById(supplierProductId, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { data: existing, error: existingError } = await supabase
@@ -645,6 +699,12 @@ export async function updateSupplierProductPackUnit(supplierProductId: string,
 
   if (!existing) {
     throw new ApiError(404, "NOT_FOUND", "Empaque no encontrado.");
+  }
+
+  // Cambiar el tamaño o reactivar exige que case con la receta; renombrar o desactivar un empaque viejo, no.
+  if (input.unitsPerPack !== undefined || input.isActive === true) {
+    const unitsPerPack = input.unitsPerPack ?? Number((existing as DbSupplierProductPackUnitRow).units_per_pack);
+    assertPackSizeMatchesRecipe(await loadPackRecipeRule(link.productId, storeId), unitsPerPack);
   }
 
   if (input.isDefault === true) {
