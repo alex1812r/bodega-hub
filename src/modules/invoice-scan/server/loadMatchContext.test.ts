@@ -647,3 +647,25 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
     expect(queriesOf(stub.queries, "invoice_scans")).toHaveLength(0);
   });
 });
+
+describe("loadMatchContext · duplicado prefiere el escaneo confirmado (SCN-UI-C2)", () => {
+  it("trae purchase_id y el aviso apunta al confirmado con compra, no al abandonado más reciente", async () => {
+    const rows = [
+      { id: "scan-abandonado", supplier_id: SUPPLIER_ID, number: "0123", supplier_tax_id: null, matched_contact_id: null, purchase_id: null },
+      { id: "scan-confirmado", supplier_id: SUPPLIER_ID, number: "0123", supplier_tax_id: null, matched_contact_id: null, purchase_id: "purchase-1" },
+    ];
+    const tables = fullTables();
+    tables.invoice_scans = (query) => ({ data: argsOf(query, "ilike").length > 0 ? rows : [], error: null });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    const [scans] = queriesOf(stub.queries, "invoice_scans");
+    expect(String(argsOf(scans, "select")[0]?.[0])).toContain("purchase_id");
+    expect(ctx.previousScans.map((scan) => [scan.scanId, scan.purchaseId])).toEqual([
+      ["scan-abandonado", undefined],
+      ["scan-confirmado", "purchase-1"],
+    ]);
+    expect(matchInvoice(extraction, ctx).duplicateOfScanId).toBe("scan-confirmado");
+  });
+});
