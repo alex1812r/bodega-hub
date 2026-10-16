@@ -6,6 +6,17 @@ import { formatDecimal, isPositive } from "./text";
 
 /** Diferencia relativa tasa impresa vs tasa del sistema por encima de la cual se avisa (6.20; D8: 2 %, no 3 %). */
 export const PRINTED_RATE_WARNING_DELTA = 0.02;
+/**
+ * Desvío relativo máximo de la tasa impresa frente a la del sistema para
+ * tomarla como tasa Bs/USD (SCN-UI-Q2; la revisión usa el mismo valor). Más
+ * allá es otra cifra leída como tasa (el total REF: 86,75 frente a 880,12).
+ */
+export const PRINTED_RATE_MAX_DEVIATION = 0.25;
+
+/** Aviso de una tasa impresa fuera de `PRINTED_RATE_MAX_DEVIATION`: se ignora. */
+export function implausiblePrintedRateWarning(printed: number): string {
+  return `La tasa leída (${formatDecimal(printed)}) no parece una tasa Bs/USD; se ignora.`;
+}
 /** Desvío relativo del costo unitario vs el último conocido que hace dudar del empaque (6.18). */
 export const PRICE_DEVIATION_LIMIT = 0.4;
 /** Tolerancia de totales: 1 % del total leído, mínimo 1 Bs. */
@@ -64,13 +75,18 @@ export type RateResolution = {
 /**
  * Tasa para pasar Bs -> REF (6.7, 6.20): la del sistema; sin ella, la impresa
  * con aviso; sin ninguna, no hay REF y se avisa. Impresa vs sistema > 2 % (D8) ->
- * aviso (no bloquea).
+ * aviso (no bloquea). Con tasa del sistema, una impresa a más de ±25 %
+ * (`PRINTED_RATE_MAX_DEVIATION`) no es una tasa Bs/USD (p. ej. el total REF del
+ * pie): se ignora, sin `printed`, con `implausiblePrintedRateWarning` (SCN-UI-Q2).
  */
 export function resolveRate(systemRate: number | undefined, printedRate: number | undefined): RateResolution {
   const system = isPositive(systemRate) ? systemRate : undefined;
   const printed = isPositive(printedRate) ? printedRate : undefined;
 
   if (system !== undefined) {
+    if (printed !== undefined && Math.abs(printed - system) / system > PRINTED_RATE_MAX_DEVIATION + DEVIATION_EPSILON) {
+      return { used: system, info: { system, warning: implausiblePrintedRateWarning(printed) } };
+    }
     const warning =
       printed !== undefined && Math.abs(printed - system) / system > PRINTED_RATE_WARNING_DELTA
         ? `La factura trae tasa ${formatDecimal(printed)}; hoy es ${formatDecimal(system)}.`
