@@ -2858,6 +2858,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/purchases/invoice-scan/limits:
+    get:
+      tags: [Purchases]
+      summary: Cuota diaria de escaneo de facturas
+      description: >-
+        Paginas escaneadas hoy (dia operativo de Caracas) por la tienda de la
+        sesion frente a `INVOICE_SCAN_DAILY_LIMIT`. Lo pinta el modal de escaneo
+        antes de subir nada ("Escaneos hoy: X de Y") y lo vuelve a pedir tras un
+        escaneo fallido, porque el intento pudo contar.
+      x-permission: purchases.create
+      responses:
+        "200":
+          description: Uso y cuota del dia.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InvoiceScanLimits"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/purchases/invoice-scan/upload-url:
     get:
       tags: [Purchases]
