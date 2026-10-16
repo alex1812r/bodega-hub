@@ -35,6 +35,19 @@ describe("mapSupabaseError", () => {
     expect(error.message).toBe("Los datos enviados no son válidos.");
   });
 
+  // INT-01: 22023 (invalid_parameter_value) de las RPC del escaneo ("Datos de escaneo no válidos.") o de
+  // Postgres (texto en inglés) → 400 en español, no un 500.
+  it.each([
+    "Datos de escaneo no válidos.",
+    "cannot get array length of a scalar",
+  ])("maps invalid_parameter_value (22023: %s) to 400 without the database text", (message) => {
+    const error = mapSupabaseError({ code: "22023", message });
+
+    expect(error.status).toBe(400);
+    expect(error.code).toBe("BAD_REQUEST");
+    expect(error.message).toBe("Los datos enviados no son válidos.");
+  });
+
   it("maps invalid login to 401", () => {
     const error = mapSupabaseError({ message: "Invalid login credentials" });
 

@@ -4,8 +4,8 @@ import type { InvoiceExtraction, InvoiceExtractionLine, InvoiceMatch } from "../
 
 import { formatDecimal, isPositive } from "./text";
 
-/** Diferencia relativa tasa impresa vs tasa del sistema a partir de la cual se avisa (6.20). */
-export const PRINTED_RATE_WARNING_DELTA = 0.03;
+/** Diferencia relativa tasa impresa vs tasa del sistema por encima de la cual se avisa (6.20; D8: 2 %, no 3 %). */
+export const PRINTED_RATE_WARNING_DELTA = 0.02;
 /** Desvío relativo del costo unitario vs el último conocido que hace dudar del empaque (6.18). */
 export const PRICE_DEVIATION_LIMIT = 0.4;
 /** Tolerancia de totales: 1 % del total leído, mínimo 1 Bs. */
@@ -63,7 +63,7 @@ export type RateResolution = {
 
 /**
  * Tasa para pasar Bs -> REF (6.7, 6.20): la del sistema; sin ella, la impresa
- * con aviso; sin ninguna, no hay REF y se avisa. Impresa vs sistema > 3 % ->
+ * con aviso; sin ninguna, no hay REF y se avisa. Impresa vs sistema > 2 % (D8) ->
  * aviso (no bloquea).
  */
 export function resolveRate(systemRate: number | undefined, printedRate: number | undefined): RateResolution {

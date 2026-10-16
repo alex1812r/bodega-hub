@@ -380,6 +380,44 @@ paths:
           $ref: "#/components/responses/CronUnauthorized"
         "503":
           $ref: "#/components/responses/CronSecretMissing"
+  /api/cron/invoice-scans/purge:
+    get:
+      tags: [Purchases]
+      summary: Purgar escaneos de factura vencidos (90 días)
+      description: >-
+        Tarea programada, sin sesión de usuario. Se autentica con el secreto `CRON_SECRET` en
+        `Authorization: Bearer <secreto>` o en la cabecera `x-cron-secret`. Borra los escaneos
+        de factura de más de 90 días de todas las tiendas: primero las imágenes de todas sus
+        páginas en el bucket `invoice-scans` y solo después las filas. Si Storage falla responde
+        503 y las filas se conservan para la próxima corrida.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/InvoiceScanPurgeResponse"
+        "401":
+          $ref: "#/components/responses/CronUnauthorized"
+        "503":
+          description: "`CRON_SECRET` no está configurado o Storage no está disponible; no se borra ninguna fila"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Purchases]
+      summary: Purgar escaneos de factura vencidos (90 días)
+      description: Igual que el GET, con la misma autenticación por `CRON_SECRET`. No lee cuerpo.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/InvoiceScanPurgeResponse"
+        "401":
+          $ref: "#/components/responses/CronUnauthorized"
+        "503":
+          description: "`CRON_SECRET` no está configurado o Storage no está disponible; no se borra ninguna fila"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/vault:
     get:
       tags: [Vault]
@@ -2707,6 +2745,255 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/purchases/invoice-scan:
+    post:
+      tags: [Purchases]
+      summary: Escanear una factura de compra
+      description: >-
+        Lee la factura con IA y empareja sus lineas (plan factura-escaneo). Dos
+        formas: multipart/form-data con `page` (1 a 10 imagenes JPG/PNG/WebP de
+        hasta 1 MB cada una y 4 MB en total, todas del mismo formato), o JSON con las rutas que
+        devolvio `GET /api/purchases/invoice-scan/upload-url` tras subir las
+        paginas. El servidor recalcula el sha256 sobre los bytes (si el cliente
+        manda otro, 400), comprueba por sus bytes que cada pagina es una imagen
+        del tipo declarado (si no, 400 sin subirla ni cobrar) y valida cada ruta
+        contra la tienda de la sesion. Mismo hash en la tienda con lectura
+        vigente = mismo escaneo, con `cached: true`, sin llamar al modelo ni
+        consumir cuota; si otra peticion esta leyendo esa misma imagen, 409. Una
+        lectura guardada que no cumple el contrato no se sirve: se vuelve a leer
+        y cobra. Un escaneo descartado o fallido se vuelve a leer. La cuota es de
+        `INVOICE_SCAN_DAILY_LIMIT` paginas por tienda y dia operativo de Caracas
+        (50 por defecto, 10000 como maximo) y se reserva de forma atomica antes de llamar al
+        modelo; cada intento cuenta sus paginas, tambien un reintento fallido o
+        un reescaneo tras descartar, salvo si falla la subida a Storage antes de
+        llamar al modelo (se devuelven). Si el cliente corta durante la lectura,
+        el escaneo queda en `failed` con el codigo `CLIENT_ABORTED`. Con `supplierId` se
+        usan hasta 3 escaneos confirmados de ese proveedor como ejemplos. Un
+        fallo del proveedor de IA deja el escaneo en `failed` (solo con el codigo
+        del fallo) y el reintento con la misma imagen reutiliza esa fila. Una
+        imagen que no es factura responde 200 con `lines: []` y el aviso del
+        modelo en `warnings`.
+      x-permission: purchases.create
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [page]
+              properties:
+                page:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  description: Paginas en orden (image/jpeg, image/png o image/webp; maximo 1 MB cada una).
+                  items:
+                    type: string
+                    format: binary
+                sha256:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                  description: Hash de las paginas concatenadas, opcional; si no coincide responde 400.
+                supplierId:
+                  type: string
+                  description: Proveedor ya elegido, para los ejemplos few-shot.
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvoiceScanStoredInput"
+      responses:
+        "200":
+          description: Lectura y emparejamiento de la factura, con la cuota del dia.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InvoiceScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Una pagina indicada en `storagePaths` no esta en Storage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Otra peticion esta leyendo esta misma factura (`CONFLICT`); se
+            reintenta en unos segundos. Tambien si otra reserva tomo la fila
+            mientras se leia ("Esta lectura ya no esta vigente.").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: >-
+            Una pagina pesa mas de 1 MB o el multipart supera 4 MB en total
+            (`PAYLOAD_TOO_LARGE`); por encima de 4 MB hay que subir con upload-url.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            Cuota diaria agotada (`INVOICE_SCAN_LIMIT_REACHED`): las paginas de
+            esta factura no caben en lo que queda del dia. `error.details` trae
+            `limit` y `used`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: >-
+            Fallo del proveedor de IA (`INVOICE_SCAN_PROVIDER_ERROR`), con mensaje
+            en espanol. `error.details.reason` es `PROVIDER_ERROR`, `TIMEOUT`,
+            `INVALID_OUTPUT` o `QUOTA`. La compra manual sigue disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/purchases/invoice-scan/upload-url:
+    get:
+      tags: [Purchases]
+      summary: URLs firmadas para subir las paginas de una factura
+      description: >-
+        Una URL de subida por pagina al bucket privado `invoice-scans`, siempre
+        bajo `<storeId>/<sha256>/p<n>.<ext>` de la tienda de la sesion. Las rutas
+        devueltas se mandan despues a `POST /api/purchases/invoice-scan`. En modo
+        mock devuelve URLs falsas deterministas.
+      x-permission: purchases.create
+      parameters:
+        - name: sha256
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: pages
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+        - name: types
+          in: query
+          required: true
+          description: >-
+            Un MIME por pagina separados por comas, o uno solo para todas
+            (image/jpeg, image/webp o image/png). Todas las paginas deben tener
+            el mismo formato; tipos mezclados responden 400.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: URLs de subida, una por pagina.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [uploads]
+                    properties:
+                      uploads:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/InvoiceUploadUrl"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/purchases/invoice-scan/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Purchases]
+      summary: Obtener un escaneo de factura
+      description: >-
+        Escaneo de la tienda de la sesion con URLs firmadas de lectura de cada
+        pagina, validas 5 minutos (falsas en modo mock). Un id de otra tienda o
+        que no es uuid responde 404. Si una pagina ya no esta en el bucket (por
+        ejemplo, un escaneo `failed` por `UPLOAD_ERROR`) tambien responde 404,
+        con "La imagen de esta factura ya no está disponible."; 503 queda solo
+        para Storage caido.
+      x-permission: purchases.view
+      responses:
+        "200":
+          description: Escaneo de factura.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InvoiceScanDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: El almacenamiento de facturas no esta disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/purchases/invoice-scan/{id}/discard:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Purchases]
+      summary: Descartar un escaneo de factura
+      description: >-
+        Marca como `discarded` un escaneo que sigue en `extracted`. No borra la
+        imagen (la purga a 90 dias lo hace).
+      x-permission: purchases.create
+      responses:
+        "200":
+          description: Escaneo descartado.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [scanId, status]
+                    properties:
+                      scanId:
+                        type: string
+                        format: uuid
+                      status:
+                        $ref: "#/components/schemas/InvoiceScanStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            El escaneo no esta en `extracted`: se esta leyendo, ya esta
+            confirmado, ya estaba descartado o su lectura fallo. El mensaje en
+            espanol explica cual.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -5150,6 +5437,24 @@ components:
                   sessionIds:
                     type: array
                     items: { type: string }
+    InvoiceScanPurgeResponse:
+      description: Escaneos y objetos de Storage borrados en esta ejecución
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [deleted, objects]
+                properties:
+                  deleted:
+                    type: integer
+                    description: Filas de `invoice_scans` borradas
+                  objects:
+                    type: integer
+                    description: Imágenes borradas del bucket `invoice-scans` (todas las páginas)
     StoreVaultResponse:
       description: Baúl de la tienda con sus saldos actualizados
       content:
@@ -6058,7 +6363,10 @@ components:
                 - FORBIDDEN
                 - INSUFFICIENT_VAULT_BALANCE
                 - INTERNAL_ERROR
+                - INVOICE_SCAN_LIMIT_REACHED
+                - INVOICE_SCAN_PROVIDER_ERROR
                 - NOT_FOUND
+                - PAYLOAD_TOO_LARGE
                 - UNAUTHORIZED
             message:
               type: string
@@ -7027,6 +7335,270 @@ components:
           description: RIF; cadena vacia si el contacto no lo tiene.
         isActive:
           type: boolean
+    InvoiceScanStatus:
+      type: string
+      enum: [extracted, confirmed, discarded, failed]
+    InvoiceScanStoredInput:
+      type: object
+      description: Escaneo de paginas ya subidas con las URLs de `upload-url`.
+      additionalProperties: false
+      required: [sha256, storagePaths]
+      properties:
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        storagePaths:
+          type: array
+          minItems: 1
+          maxItems: 10
+          description: >-
+            Rutas `<storeId>/<sha256>/p<n>.<ext>` de la tienda de la sesion, en
+            orden p1..pN y con el mismo formato. Otra tienda u otra forma: 400.
+          items:
+            type: string
+        supplierId:
+          type: string
+    InvoiceUploadUrl:
+      type: object
+      required: [page, path, signedUrl, token]
+      properties:
+        page:
+          type: integer
+        path:
+          type: string
+        signedUrl:
+          type: string
+        token:
+          type: string
+    InvoiceExtractionLine:
+      type: object
+      required: [rawText, description, quantity, unitPrice, lineTotal, confidence]
+      properties:
+        rawText:
+          type: string
+          description: Texto literal de la linea en la factura.
+        description:
+          type: string
+        quantity:
+          type: number
+        unit:
+          type: string
+          enum: [unidad, caja, bulto, paquete, display, otro]
+        unitsPerPack:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: number
+        lineTotal:
+          type: number
+        taxHint:
+          type: string
+          enum: [exento, reducida, general, unknown]
+        barcode:
+          type: string
+        supplierSku:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    InvoiceExtraction:
+      type: object
+      description: Lectura del modelo (propuesta; nada se guarda en productos ni compras).
+      required: [supplier, currency, lines, confidence, warnings]
+      properties:
+        supplier:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+            taxId:
+              type: string
+            phone:
+              type: string
+            address:
+              type: string
+        number:
+          type: string
+        date:
+          type: string
+          format: date
+        currency:
+          type: string
+          enum: [VES, USD, unknown]
+        printedRate:
+          type: number
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceExtractionLine"
+        subtotal:
+          type: number
+        tax:
+          type: number
+        total:
+          type: number
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        warnings:
+          type: array
+          description: Avisos en espanol para el usuario.
+          items:
+            type: string
+    InvoiceMatchCandidate:
+      type: object
+      required: [productId, name, score, reason]
+      properties:
+        productId:
+          type: string
+        name:
+          type: string
+        score:
+          type: number
+        reason:
+          type: string
+    InvoiceLineMatch:
+      type: object
+      required: [index, status, entryMode, taxRateCode, issues]
+      properties:
+        index:
+          type: integer
+          description: Indice de la linea en `extraction.lines`.
+        status:
+          type: string
+          enum: [confirmed, doubtful, unmatched]
+        productId:
+          type: string
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceMatchCandidate"
+        entryMode:
+          type: string
+          enum: [unit, pack]
+        packUnitId:
+          type: string
+        unitsPerPack:
+          type: integer
+        disassembleOnReceive:
+          type: boolean
+        taxRateCode:
+          type: string
+        unitCostVes:
+          type: number
+        unitCostRef:
+          type: number
+        issues:
+          type: array
+          items:
+            type: string
+    InvoiceMatch:
+      type: object
+      required: [supplier, lines, totals]
+      properties:
+        supplier:
+          type: object
+          properties:
+            contactId:
+              type: string
+            candidates:
+              type: array
+              items:
+                type: object
+                required: [contactId, name, score, reason]
+                properties:
+                  contactId:
+                    type: string
+                  name:
+                    type: string
+                  score:
+                    type: number
+                  reason:
+                    type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceLineMatch"
+        totals:
+          type: object
+          required: [computed, mismatch]
+          properties:
+            read:
+              type: number
+            computed:
+              type: number
+            mismatch:
+              type: boolean
+        rate:
+          type: object
+          properties:
+            system:
+              type: number
+            printed:
+              type: number
+            warning:
+              type: string
+        duplicateOfScanId:
+          type: string
+    InvoiceScanLimits:
+      type: object
+      required: [used, limit, remaining]
+      properties:
+        used:
+          type: integer
+          description: Paginas escaneadas hoy por la tienda (dia operativo de Caracas).
+        limit:
+          type: integer
+        remaining:
+          type: integer
+    InvoiceScanResponse:
+      type: object
+      required: [scanId, extraction, matched, limits, cached]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        extraction:
+          $ref: "#/components/schemas/InvoiceExtraction"
+        matched:
+          $ref: "#/components/schemas/InvoiceMatch"
+        limits:
+          $ref: "#/components/schemas/InvoiceScanLimits"
+        cached:
+          type: boolean
+          description: true si vino del cache por hash (0 llamadas al modelo).
+    InvoiceScanDetail:
+      type: object
+      required: [scanId, status, extraction, matched, pages, createdAt, imageUrls]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/InvoiceScanStatus"
+        extraction:
+          description: null si el escaneo fallo.
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/InvoiceExtraction"
+        matched:
+          description: null si el escaneo fallo.
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/InvoiceMatch"
+        pages:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        imageUrls:
+          type: array
+          description: URL firmada de lectura de cada pagina, valida 5 minutos.
+          items:
+            type: string
     PurchaseLastCost:
       type: object
       description: Ultima linea de compra recibida de un producto.

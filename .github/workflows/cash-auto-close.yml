@@ -3,10 +3,13 @@ name: Auto close cash sessions
 on:
   schedule:
     - cron: "*/15 * * * *"
+    # Diario 08:30 UTC (04:30 Caracas): purga de escaneos de factura de más de 90 días.
+    - cron: "30 8 * * *"
   workflow_dispatch:
 
 jobs:
   auto-close:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -16,6 +19,31 @@ jobs:
           CRON_SECRET: 1f8b3c9a7d4e42a0b6c1f0d8c4a1e3f9b7a6d2c5e4f3a9b1c8d7e6f5a4b3c2d1
         run: |
           URL="${APP_BASE_URL%/}/api/cron/cash-sessions/auto-close"
+          echo "Calling $URL"
+
+          http_code=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$URL")
+
+          cat response.json
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "Cron call failed with status $http_code" >&2
+            exit 1
+          fi
+
+  invoice-scans-purge:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 8 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Invoke invoice scans purge endpoint
+        env:
+          APP_BASE_URL: https://bodega-hub.vercel.app
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          URL="${APP_BASE_URL%/}/api/cron/invoice-scans/purge"
           echo "Calling $URL"
 
           http_code=$(curl -sS -o response.json -w "%{http_code}" \

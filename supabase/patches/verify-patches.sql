@@ -2498,14 +2498,45 @@ select
   ), false)
 union all
 select
-  'confirm_invoice_scan rechaza una compra creada antes del reclamo y claim conserva claimed_at del mismo intento (20261019b, SCN-06-F3)',
-  coalesce((
-    select p.prosrc ilike '%v_purchase_created_at < v_scan.claimed_at - interval%'
+  'confirm_invoice_scan rechaza una compra creada antes del primer reclamo (claim_started_at) y claim conserva claim_started_at del mismo intento (20261019b, SCN-06-F3 / INT-01)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'claim_started_at' and data_type = 'timestamp with time zone'
+  )
+  and coalesce((
+    select p.prosrc ilike '%v_purchase_created_at < v_scan.claim_started_at - interval%'
     from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
   ), false)
   and coalesce((
-    select p.prosrc ilike '%when s.claim_request_id = p_client_request_id and s.claimed_at is not null then s.claimed_at%'
+    select p.prosrc ilike '%when s.claim_request_id = p_client_request_id and s.claim_started_at is not null then s.claim_started_at%'
     from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'claim_invoice_scan renueva claimed_at en cada reclamo, tambien el de la misma clave; release y confirm limpian claim_started_at (20261019b, INT-01 caos-5 B4)',
+  coalesce((
+    select p.prosrc ilike '%set claim_request_id = p_client_request_id,%claimed_at = now(),%claim_started_at = case%'
+      and p.prosrc not ilike '%then s.claimed_at%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%claim_started_at = null%'
+    from pg_proc p where p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%claim_started_at = null%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+union all
+select
+  'confirm_invoice_scan exige la forma D10 { extraction: objeto con lines, lines: array } y ya no acepta un array suelto (20261019b, INT-01 D10)',
+  coalesce((
+    select p.prosrc ilike '%jsonb_typeof(p_confirmed -> ''extraction'') is distinct from ''object''%'
+      and p.prosrc ilike '%jsonb_typeof(p_confirmed -> ''extraction'' -> ''lines'') is distinct from ''array''%'
+      and p.prosrc ilike '%jsonb_typeof(p_confirmed -> ''lines'') is distinct from ''array''%'
+      and p.prosrc not ilike '%when ''array'' then p_confirmed%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
   ), false)
 union all
 select
@@ -2550,4 +2581,297 @@ select
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_match_norm(text)')
   ), false)
+union all
+select
+  'invoice_scans: columnas clave (store_id, image_sha256, pages, status, extracted/matched jsonb not null, supplier_id) y unique (store_id, image_sha256) (20261019a)',
+  (
+    select count(*) = 7
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'invoice_scans'
+      and (col.column_name::text, col.data_type::text, col.is_nullable::text) in (
+        ('store_id', 'uuid', 'NO'),
+        ('image_sha256', 'text', 'NO'),
+        ('pages', 'integer', 'NO'),
+        ('status', 'text', 'NO'),
+        ('extracted', 'jsonb', 'NO'),
+        ('matched', 'jsonb', 'NO'),
+        ('supplier_id', 'uuid', 'YES')
+      )
+  )
+  and exists (
+    select 1 from pg_constraint con
+    where con.conrelid = to_regclass('public.invoice_scans') and con.contype = 'u'
+      and pg_get_constraintdef(con.oid) = 'UNIQUE (store_id, image_sha256)'
+  )
+union all
+select
+  'invoice_scans: indices (store_id, created_at desc) y parcial few-shot por proveedor (20261019a)',
+  exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'invoice_scans_store_created_idx')
+  and exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'invoice_scans_few_shot_idx'
+      and indexdef ilike '%where ((confirmed is not null) and (supplier_id is not null))%'
+  )
+union all
+select
+  'invoice_scans: RLS activa, authenticated solo select (sin insert, update ni delete), anon sin privilegios (20261019a, SCN-03o)',
+  exists (select 1 from pg_class c where c.oid = to_regclass('public.invoice_scans') and c.relrowsecurity)
+  and coalesce(has_table_privilege('authenticated', 'public.invoice_scans', 'select'), false)
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'insert')
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'update')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'insert')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'update')
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'delete')
+  and not has_table_privilege('anon', 'public.invoice_scans', 'select, insert, update, delete')
+union all
+select
+  'invoice_scans: solo la politica de lectura por tienda (purchases.view), sin insert, update ni delete (20261019a, SCN-03p)',
+  exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.policyname = 'Purchase viewers read invoice scans'
+      and pol.cmd = 'SELECT'
+      and pol.qual ilike '%current_user_store_id()%'
+  )
+  and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+  )
+union all
+select
+  'bucket invoice-scans privado, 1 MB, jpeg/png/webp (20261019a)',
+  exists (
+    select 1 from storage.buckets
+    where id = 'invoice-scans' and public = false and file_size_limit = 1048576
+      and allowed_mime_types @> array['image/jpeg', 'image/png', 'image/webp']
+      and cardinality(allowed_mime_types) = 3
+  )
+union all
+select
+  'storage invoice-scans: lectura e insercion por carpeta de tienda, sin update/delete (20261019a)',
+  (
+    select count(*) = 2 from pg_policies pol
+    where pol.schemaname = 'storage' and pol.tablename = 'objects'
+      and pol.policyname in (
+        'Purchase viewers read invoice scan images',
+        'Purchase creators upload invoice scan images'
+      )
+      and coalesce(pol.qual, pol.with_check) ilike '%foldername%'
+  )
+  and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'storage' and pol.tablename = 'objects'
+      and coalesce(pol.qual, pol.with_check) ilike '%invoice-scans%'
+      and pol.cmd in ('UPDATE', 'DELETE', 'ALL')
+  )
+union all
+select
+  'list_expired_invoice_scan_objects existe, security definer y search_path vacio (20261019c)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'list_expired_invoice_scan_objects'
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']
+      and p.prosrc ilike '%invoice_scans%'
+  )
+union all
+select
+  'list_expired_invoice_scan_objects solo la ejecuta service_role: sin execute para anon ni authenticated (20261019c)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'list_expired_invoice_scan_objects'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
+union all
+select
+  'reserve_invoice_scan existe, security definer y search_path vacio (20261019e; firma con p_store_id/p_user_id de 20261019i)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']
+      and pg_get_function_identity_arguments(p.oid)
+        = 'p_store_id uuid, p_user_id uuid, p_sha256 text, p_storage_path text, p_pages integer, p_limit integer, p_provider text, p_model text'
+  )
+union all
+select
+  'reserve_invoice_scan: execute para service_role, no para anon (20261019e; authenticated lo pierde en 20261019i)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
+union all
+select
+  'invoice_scans.usage_pages integer not null (20261019e)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'usage_pages' and data_type = 'integer' and is_nullable = 'NO'
+  )
+union all
+select
+  'invoice_scans_status_check incluye processing (20261019e)',
+  exists (
+    select 1 from pg_constraint c
+    where c.conrelid = 'public.invoice_scans'::regclass
+      and c.conname = 'invoice_scans_status_check'
+      and pg_get_constraintdef(c.oid) ilike '%processing%'
+  )
+union all
+select
+  'invoice_scans: authenticated sin insert, update ni delete directos y con select (20261019g)',
+  not has_table_privilege('authenticated', 'public.invoice_scans', 'INSERT')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'INSERT')
+  and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'UPDATE')
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'DELETE')
+  and has_table_privilege('authenticated', 'public.invoice_scans', 'SELECT')
+union all
+select
+  'invoice_scans: sin politicas de insert ni update, con la de lectura (20261019g)',
+  not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+  )
+  and exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'invoice_scans'
+      and pol.policyname = 'Purchase viewers read invoice scans'
+  )
+union all
+select
+  'invoice_scans_storage_path_scope y invoice_scans_usage_pages_nonnegative existen y estan validados (20261019g)',
+  (
+    select count(*) = 2 from pg_constraint c
+    where c.conrelid = 'public.invoice_scans'::regclass
+      and c.convalidated
+      and (
+        (c.conname = 'invoice_scans_storage_path_scope'
+          and pg_get_constraintdef(c.oid) ilike '%image_sha256%/p1.webp%')
+        or (c.conname = 'invoice_scans_usage_pages_nonnegative'
+          and pg_get_constraintdef(c.oid) ilike '%usage_pages >= 0%')
+      )
+  )
+union all
+select
+  'reserve_invoice_scan valida la ruta y usa la ventana de 50 s por pagina + 60 s (20261019g)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosrc ilike '%p_storage_path not in%'
+      and p.prosrc ilike '%interval ''50 seconds'' * v_row.pages + interval ''60 seconds''%'
+      and p.prosrc not ilike '%interval ''2 minutes''%'
+  )
+union all
+select
+  'complete/fail/discard_invoice_scan: security definer y search_path vacio (20261019g; firmas y execute de 20261019i)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']
+      and (p.proname, pg_get_function_identity_arguments(p.oid)) in (
+        ('complete_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_extracted jsonb, p_matched jsonb, p_input_tokens integer, p_output_tokens integer, p_duration_ms integer'),
+        ('fail_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_error text, p_refund_pages boolean'),
+        ('discard_invoice_scan', 'p_store_id uuid, p_id uuid')
+      )
+  )
+union all
+select
+  'reserve/complete/fail/discard_invoice_scan: execute solo service_role, sin public, anon ni authenticated (20261019i)',
+  (
+    select count(*) = 4 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and not has_function_privilege('public', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and (p.proname, pg_get_function_identity_arguments(p.oid)) in (
+        ('reserve_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_sha256 text, p_storage_path text, p_pages integer, p_limit integer, p_provider text, p_model text'),
+        ('complete_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_extracted jsonb, p_matched jsonb, p_input_tokens integer, p_output_tokens integer, p_duration_ms integer'),
+        ('fail_invoice_scan', 'p_store_id uuid, p_user_id uuid, p_id uuid, p_attempt_id uuid, p_error text, p_refund_pages boolean'),
+        ('discard_invoice_scan', 'p_store_id uuid, p_id uuid')
+      )
+  )
+union all
+select
+  'reserve/complete/fail/discard_invoice_scan: no quedan firmas viejas ni otras sobrecargas (20261019i)',
+  (
+    select count(*) = 4 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('reserve_invoice_scan', 'complete_invoice_scan', 'fail_invoice_scan', 'discard_invoice_scan')
+  )
+union all
+select
+  'reserve/complete/fail/discard_invoice_scan sin auth.uid() ni current_user_store_id(); reserve acota paginas 1..10 y limite 0..10000; complete/fail exigen el intento (20261019i)',
+  (
+    select count(*) = 4 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('reserve_invoice_scan', 'complete_invoice_scan', 'fail_invoice_scan', 'discard_invoice_scan')
+      and p.prosrc not ilike '%auth.uid()%'
+      and p.prosrc not ilike '%current_user_store_id()%'
+      and (
+        (p.proname = 'reserve_invoice_scan'
+          and p.prosrc ilike '%p_pages > 10%' and p.prosrc ilike '%p_limit > 10000%'
+          and p.prosrc ilike '%attempt_id = v_attempt_id%')
+        or (p.proname in ('complete_invoice_scan', 'fail_invoice_scan')
+          and p.prosrc ilike '%attempt_id is distinct from p_attempt_id%')
+        or p.proname = 'discard_invoice_scan'
+      )
+  )
+union all
+select
+  'invoice_scans.attempt_id uuid (20261019i)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'attempt_id' and data_type = 'uuid'
+  )
+union all
+select
+  'invoice_scans_payload_size (extracted y matched <= 512 KB) existe y esta validado (20261019i)',
+  exists (
+    select 1 from pg_constraint c
+    where c.conrelid = 'public.invoice_scans'::regclass
+      and c.conname = 'invoice_scans_payload_size'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%octet_length((extracted)::text) <= 524288%'
+      and pg_get_constraintdef(c.oid) ilike '%octet_length((matched)::text) <= 524288%'
+  )
+union all
+select
+  'reserve_invoice_scan: 42501 si p_user_id no es perfil activo de p_store_id y limpia el reclamo de Emparejamiento al reusar la fila (20261019k)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosrc ilike '%p.id = p_user_id and p.store_id = p_store_id and p.is_active%'
+      and p.prosrc ilike '%errcode = ''42501''%'
+      and p.prosrc ilike '%''claim_request_id'', ''claimed_at'', ''learned_at''%'
+      and p.prosrc ilike '%attempt_id = v_attempt_id%'
+  )
+union all
+select
+  'discard_invoice_scan: PT409 con reclamo activo (5 min), purchase_id o confirmed (20261019k)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'discard_invoice_scan'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid, p_id uuid'
+      and p.prosrc ilike '%v_row.purchase_id is not null%'
+      and p.prosrc ilike '%v_row.confirmed is not null%'
+      and p.prosrc ilike '%->>''claim_request_id'' is not null%'
+      and p.prosrc ilike '%interval ''5 minutes''%'
+      and p.prosrc ilike '%se está confirmando en una compra%'
+  )
 order by 1;

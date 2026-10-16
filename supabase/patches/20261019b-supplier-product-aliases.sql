@@ -91,11 +91,11 @@
 -- SCN-06-F3 (caos M1 residual): la clave de una compra VIEJA sin escaneo junto a
 -- un escaneo nuevo pasaba (create_purchase devuelve la compra vieja y su clave
 -- coincide). confirm_invoice_scan exige ademas purchases.created_at >=
--- invoice_scans.claimed_at - 1 s (ambos now() de este servidor: el reclamo se
--- confirma antes de que empiece create_purchase; el segundo es margen). Para que
--- un doble clic del MISMO intento no mueva claimed_at por delante de su propia
--- compra, claim_invoice_scan conserva claimed_at cuando el reclamo ya es de esa
--- clave (la caducidad de 5 min cuenta desde el primer reclamo).
+-- invoice_scans.claim_started_at - 1 s (ambos now() de este servidor: el reclamo
+-- se confirma antes de que empiece create_purchase; el segundo es margen). Para
+-- que un doble clic del MISMO intento no mueva ese momento por delante de su
+-- propia compra, claim_invoice_scan conserva claim_started_at cuando el reclamo
+-- ya es de esa clave (INT-01: claimed_at, la caducidad, si se renueva).
 --
 -- SCN-06-F4 (caos ronda 2, M-n2): con learned_at null (el BFF aprendio 0) la RPC
 -- por PostgREST aceptaba cualquier alias, hacia cualquier producto de la tienda y
@@ -123,6 +123,17 @@
 --   * OJO: el contenido de invoice_scans.confirmed sigue siendo TEXTO DEL
 --     USUARIO (rawText de la factura, etiquetas de empaque). Los few-shot de
 --     SCN-01 deben tratarlo como datos, nunca como instrucciones.
+--
+-- INT-01 (integracion Extraccion + Emparejamiento):
+--   * caos-5 B4: claim_invoice_scan renueva claimed_at en CADA reclamo, tambien
+--     el de la misma clave (antes lo conservaba y un reintento pasados 5 min
+--     quedaba sin proteccion frente a discard_invoice_scan de 19k y a otra
+--     clave). El momento del primer reclamo de la clave pasa a la columna
+--     claim_started_at, que es contra la que confirm compara la compra
+--     (SCN-06-F3: un doble clic o un reintento del mismo intento no mueve ese
+--     momento por delante de su propia compra). release y confirm la limpian.
+--   * D10: p_confirmed debe ser { extraction: objeto con lines array, lines:
+--     array }; la forma vieja (array suelto) es PT400 'Confirmación inválida'.
 --
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
@@ -165,6 +176,9 @@ alter table public.invoice_scans enable row level security;
 alter table public.invoice_scans
   add column if not exists claim_request_id uuid,
   add column if not exists claimed_at timestamptz,
+  -- INT-01: primer reclamo de la clave vigente (SCN-06-F3 compara la compra contra
+  -- este momento; claimed_at se renueva en cada reclamo y solo mide la caducidad).
+  add column if not exists claim_started_at timestamptz,
   -- SCN-06-F2 M2: momento del (unico) aprendizaje de alias del escaneo.
   add column if not exists learned_at timestamptz;
 
@@ -261,9 +275,14 @@ begin
 
   update public.invoice_scans s
   set claim_request_id = p_client_request_id,
-      -- SCN-06-F3: el mismo intento conserva su reclamo original.
-      claimed_at = case
-        when s.claim_request_id = p_client_request_id and s.claimed_at is not null then s.claimed_at
+      -- INT-01 (caos-5 B4): cada reclamo, también el re-reclamo de la misma clave,
+      -- renueva la caducidad de 5 min; un reintento pasado ese plazo vuelve a
+      -- quedar protegido frente al descarte (19k) y a otra clave.
+      claimed_at = now(),
+      -- SCN-06-F3: el mismo intento conserva el momento de su primer reclamo, que es
+      -- contra el que confirm compara la compra.
+      claim_started_at = case
+        when s.claim_request_id = p_client_request_id and s.claim_started_at is not null then s.claim_started_at
         else now()
       end
   where s.id = p_scan_id
@@ -338,7 +357,8 @@ begin
 
   update public.invoice_scans s
   set claim_request_id = null,
-      claimed_at = null
+      claimed_at = null,
+      claim_started_at = null
   where s.id = p_scan_id
     and s.store_id = v_store_id
     and s.status = 'extracted'
@@ -386,7 +406,6 @@ begin
     end if;
 
     v_lines := case jsonb_typeof(p_confirmed)
-      when 'array' then p_confirmed
       when 'object' then p_confirmed -> 'lines'
     end;
 
@@ -432,7 +451,13 @@ begin
     raise exception using errcode = 'PT409', message = 'El escaneo se está confirmando en otra compra';
   end if;
 
-  if p_confirmed is null or jsonb_typeof(p_confirmed) not in ('object', 'array') then
+  -- D10 (INT-01): { extraction: InvoiceExtraction corregida, lines: [...] }. Ya no
+  -- se admite la forma vieja (array de lineas): la lee parseConfirmedScan y el few-shot.
+  if p_confirmed is null
+     or jsonb_typeof(p_confirmed) <> 'object'
+     or jsonb_typeof(p_confirmed -> 'extraction') is distinct from 'object'
+     or jsonb_typeof(p_confirmed -> 'extraction' -> 'lines') is distinct from 'array'
+     or jsonb_typeof(p_confirmed -> 'lines') is distinct from 'array' then
     raise exception using errcode = 'PT400', message = 'Confirmación inválida';
   end if;
 
@@ -444,8 +469,8 @@ begin
   -- SCN-06-F3: y creada DESPUES del reclamo de este escaneo; una compra anterior es
   -- una compra vieja de la misma clave devuelta por idempotencia.
   if v_purchase_key is distinct from p_client_request_id
-     or v_scan.claimed_at is null
-     or v_purchase_created_at < v_scan.claimed_at - interval '1 second' then
+     or v_scan.claim_started_at is null
+     or v_purchase_created_at < v_scan.claim_started_at - interval '1 second' then
     raise exception using errcode = 'PT409', message = 'La compra no corresponde a este intento';
   end if;
 
@@ -464,7 +489,8 @@ begin
       purchase_id = p_purchase_id,
       confirmed_at = now(),
       claim_request_id = null,
-      claimed_at = null
+      claimed_at = null,
+      claim_started_at = null
   where s.id = p_scan_id
     and s.status = 'extracted';
 
