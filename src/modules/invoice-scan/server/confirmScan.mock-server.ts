@@ -27,6 +27,10 @@
  * acaba de leer. Las columnas del reclamo viven al lado (`mockScanClaim`).
  * `registerMockInvoiceScan` solo siembra filas para tests.
  */
+import {
+  createSupplierProductPackUnit,
+  listSupplierProducts,
+} from "@/modules/contacts/services/supplierProducts.mock-server";
 import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
@@ -37,10 +41,12 @@ import {
   assertScanUsable,
   buildConfirmedPayload,
   buildLearnLines,
+  buildScanPackUnits,
   INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS,
   INVOICE_SCAN_CLAIM_TTL_MS,
   INVOICE_SCAN_CLAIMED_MESSAGE,
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
+  logInvoiceScanFailure,
   readExtractedRawTexts,
   readStoredExtraction,
   type ConfirmedInvoiceScan,
@@ -49,6 +55,7 @@ import {
   type InvoiceScanOutcome,
   type InvoiceScanStatus,
   type PrecheckedInvoiceScan,
+  type ScanPackUnit,
 } from "./confirmScan.server";
 import {
   findMockScanRow,
@@ -332,6 +339,32 @@ function learnMockAliases(
   return lastByAlias.size;
 }
 
+/**
+ * Paridad de `ensureScanPackUnits` (SCN-08-F2 · 6.8): crea con el servicio mock
+ * de pack units (valida la receta) el empaque del proveedor que falte; con uno
+ * activo del mismo tamaño no hace nada. Un rechazo se registra y no rompe.
+ */
+function ensureMockScanPackUnits(scanId: string, supplierId: string, packs: readonly ScanPackUnit[], storeId: string) {
+  for (const pack of packs) {
+    try {
+      const params = new URLSearchParams({ isActive: "true", productId: pack.productId, supplierId });
+      const [link] = listSupplierProducts(params, storeId).items;
+
+      if (!link || link.packUnits.some((existing) => existing.unitsPerPack === pack.unitsPerPack)) {
+        continue;
+      }
+
+      createSupplierProductPackUnit(
+        link.id,
+        { isDefault: !link.packUnits.some((existing) => existing.isDefault), label: pack.label, unitsPerPack: pack.unitsPerPack },
+        storeId,
+      );
+    } catch (error) {
+      logInvoiceScanFailure("pack", scanId, error);
+    }
+  }
+}
+
 export async function finalizeInvoiceScan(
   scan: PrecheckedInvoiceScan,
   input: FinalizeInvoiceScanInput,
@@ -396,6 +429,7 @@ export async function finalizeInvoiceScan(
   });
   clearClaim(stored.id);
   claim.confirmedClientRequestId = input.clientRequestId;
+  ensureMockScanPackUnits(scan.id, input.supplierId, buildScanPackUnits(confirmed.lines, input.items), storeId);
 
   return { confirmed: true, learned: learnMockAliases(storeId, input.supplierId, confirmed, input.items) };
 }

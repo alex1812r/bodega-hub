@@ -27,9 +27,9 @@ import {
   mockExchangeRates,
   mockProductPackConversions,
   mockProducts,
-  mockSupplierProductPackUnits,
   mockSupplierProducts,
 } from "@/shared/mocks/erp-data";
+import { listActiveMockPackUnitsOfLink } from "@/modules/contacts/services/supplierProducts.mock-server";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
@@ -91,10 +91,9 @@ function catalogOf(storeId: string, supplierId: string): MatchSupplierCatalog {
       supplierSku: link.supplierSku ?? null,
       isPreferred: link.isPreferred === true,
     })),
+    // Estado vivo del mock: incluye los empaques que crean compras y escaneos (SCN-08-F2 · 6.8).
     packUnits: links.flatMap((link) =>
-      mockSupplierProductPackUnits
-        .filter((pack) => pack.supplierProductId === link.id && pack.isActive !== false)
-        .map((pack) => ({
+      listActiveMockPackUnitsOfLink(link.id).map((pack) => ({
           id: pack.id,
           productId: link.productId,
           label: pack.label,
