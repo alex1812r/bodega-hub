@@ -124,6 +124,11 @@ const INVOICE_REVIEW_LEAVE_DESCRIPTION = "Si sales ahora, se pierde lo que revis
 
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
 
+/** Respaldo de la tasa en una compra manual mientras no hay tasa del día. */
+const FALLBACK_RATE_VES = 510;
+const INVOICE_RATE_MISSING_MESSAGE =
+  "No hay tasa del día ni tasa de la factura: registra la tasa del día para confirmar la compra.";
+
 const PURCHASE_CHANGED_MESSAGE =
   "La compra cambió mientras la confirmabas: revisa las líneas y el resumen, y vuelve a confirmar.";
 
@@ -253,7 +258,11 @@ export function PurchaseCreatePage() {
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
   const catalog = productSearchResult.catalog;
   const currentRateVes = exchangeRate.data?.rateVes;
-  const activeRateVes = currentRateVes ?? 510;
+  // Con una factura cargada y sin tasa del día manda la elegida en la revisión (6.7): el
+  // respaldo fijo solo sirve a la compra manual. `undefined` = factura sin ninguna tasa.
+  const formRateVes = currentRateVes ?? (loadedScan ? loadedScan.invoiceRateVes : FALLBACK_RATE_VES);
+  const invoiceRateMissing = formRateVes === undefined;
+  const activeRateVes = formRateVes ?? FALLBACK_RATE_VES;
   // Código → % del catálogo: todo para la pista de la extracción, solo activas para la revisión.
   const taxPctByCode = useMemo(
     () => Object.fromEntries(taxRates.rates.map((rate) => [rate.code, rate.pct])),
@@ -932,6 +941,11 @@ export function PurchaseCreatePage() {
       return null;
     }
 
+    if (invoiceRateMissing) {
+      setFormError(INVOICE_RATE_MISSING_MESSAGE);
+      return null;
+    }
+
     if (validLines.length === 0) {
       setFormError("Agrega al menos un producto con cantidad y costo válidos.");
       return null;
@@ -1019,7 +1033,8 @@ export function PurchaseCreatePage() {
         lockExisting: lockOnAdd,
         nextId: nextPurchaseLineId,
         products,
-        rateVes: activeRateVes,
+        // Aún no es la del formulario: sin tasa del día, la de esta factura.
+        rateVes: currentRateVes ?? reviewDraft.invoiceRateVes ?? reviewDraft.rateVes ?? FALLBACK_RATE_VES,
         replace,
       });
       const keptNotes = replace ? "" : notes;
