@@ -31,6 +31,24 @@ jest.mock("../../../../invoice-scan/client/useInvoiceScanImages", () => ({
   useInvoiceScanImages: () => ({ error: null, isLoading: false, refetch: jest.fn(), urls: ["https://s/1.jpg"] }),
 }));
 
+let mockDuplicatePurchaseId: string | null = null;
+const mockUseInvoiceScanPurchase = jest.fn((scanId?: string | null) => ({
+  purchaseId: scanId ? mockDuplicatePurchaseId : null,
+}));
+
+jest.mock("../../../../invoice-scan/client/useInvoiceScanPurchase", () => ({
+  useInvoiceScanPurchase: (scanId?: string | null) => mockUseInvoiceScanPurchase(scanId),
+}));
+
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ children, href, ...rest }: { children?: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 type FakeModalProps = {
   initialValues?: { name?: string; currentCostRef?: number };
   onCreated: (product: { id: string; name: string }) => void;
@@ -465,5 +483,37 @@ describe("InvoiceReviewPanel", () => {
     await waitFor(() => expect(row(0)).toHaveFocus());
     await user.keyboard("{Escape}");
     expect(within(row(0)).getByText("Sin emparejar")).toBeInTheDocument();
+  });
+
+  it("SCN-08-F1: factura duplicada ya registrada en una compra enlaza «Ver» a esa compra, sin bloquear", async () => {
+    mockDuplicatePurchaseId = "00000000-0000-4000-8000-0000000000aa";
+    try {
+      renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
+
+      expect(mockUseInvoiceScanPurchase).toHaveBeenCalledWith("scan-anterior");
+      expect(screen.getByText(/ya se registró en una compra/)).toBeInTheDocument();
+      expect(screen.queryByText(/ya se escaneó antes/)).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Ver" })).toHaveAttribute(
+        "href",
+        "/purchases/00000000-0000-4000-8000-0000000000aa",
+      );
+      expect(loadButton()).toBeEnabled();
+    } finally {
+      mockDuplicatePurchaseId = null;
+    }
+  });
+
+  it("SCN-08-F1: factura duplicada sin compra registrada solo dice que ya se escaneó", () => {
+    renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
+
+    expect(screen.getByText(/ya se escaneó antes/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Ver" })).not.toBeInTheDocument();
+  });
+
+  it("sin duplicado no consulta ninguna compra", () => {
+    mockUseInvoiceScanPurchase.mockClear();
+    renderPanel(makeReviewResponse({ lines: [{}] }));
+
+    expect(mockUseInvoiceScanPurchase).not.toHaveBeenCalledWith(expect.any(String));
   });
 });

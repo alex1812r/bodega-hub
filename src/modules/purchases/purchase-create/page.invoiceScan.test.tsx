@@ -743,7 +743,9 @@ describe("PurchaseCreatePage · factura cargada sin tasa del día (SCN-08-F1, 6.
 
   it("factura en dólares sin ninguna tasa: no deja confirmar y lo dice en español", async () => {
     const api = installApi();
-    const { invoiceRateVes: _chosen, rateVes: _mirror, ...usdDraft } = makeLoadedReviewDraft();
+    const usdDraft = makeLoadedReviewDraft();
+    delete usdDraft.invoiceRateVes;
+    delete usdDraft.rateVes;
     mockReviewDraft = usdDraft;
     renderPage();
 

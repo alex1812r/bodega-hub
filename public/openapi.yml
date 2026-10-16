@@ -7740,7 +7740,7 @@ components:
           description: true si vino del cache por hash (0 llamadas al modelo).
     InvoiceScanDetail:
       type: object
-      required: [scanId, status, extraction, matched, pages, createdAt, imageUrls]
+      required: [scanId, status, extraction, matched, pages, createdAt, imageUrls, purchaseId]
       properties:
         scanId:
           type: string
@@ -7767,6 +7767,11 @@ components:
           description: URL firmada de lectura de cada pagina, valida 5 minutos.
           items:
             type: string
+        purchaseId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Compra registrada con este escaneo; null si aun no se confirmo en ninguna.
     PurchaseInvoiceScan:
       type: object
       description: Escaneo confirmado de una compra y las lineas que se aprendieron de el.

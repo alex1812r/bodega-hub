@@ -485,6 +485,7 @@ describe("getInvoiceScanDetail y discardInvoiceScan", () => {
     expect(detail).toMatchObject({
       extraction: singlePageExtraction,
       pages: 3,
+      purchaseId: null,
       scanId,
       status: "extracted",
     });
@@ -492,6 +493,17 @@ describe("getInvoiceScanDetail y discardInvoiceScan", () => {
       [1, 2, 3].map((n) => `https://signed.local/${ctx.storeId}/${sha}/p${n}.jpg?ttl=${INVOICE_READ_URL_TTL_SECONDS}`),
     );
     expect(storage.signedReadUrl).toHaveBeenCalledTimes(3);
+  });
+
+  it("lleva la compra registrada con el escaneo (SCN-08-F1)", async () => {
+    const ctx = newContext();
+    const { built } = deps();
+    const { scanId } = await scanInvoice(built, ctx, { pages: [page("con compra")], source: "upload" });
+    const row = (await mockRepo.getScan(ctx, scanId)) as InvoiceScanRow;
+    const purchaseId = "00000000-0000-4000-8000-0000000000aa";
+    mockRepo.putMockScanRow({ ...row, purchaseId, status: "confirmed" });
+
+    await expect(getInvoiceScanDetail(built, ctx, scanId)).resolves.toMatchObject({ purchaseId, status: "confirmed" });
   });
 
   it("404 para otra tienda o un id inválido", async () => {
