@@ -30,19 +30,68 @@ export function normalizeTaxId(taxId: string | null | undefined): string {
     .replace(/^[JVEGPC]/, "");
 }
 
+/** Letra de tipo (J, V, E, G, P, C) con la que empieza el RIF/cédula, o "". */
+function taxIdLetter(taxId: string | null | undefined): string {
+  return /^[JVEGPC]/.exec((taxId ?? "").toUpperCase().replace(/[^A-Z0-9]/g, ""))?.[0] ?? "";
+}
+
 /**
- * Número de factura comparable: alfanumérico en mayúsculas y sin ceros a la
- * izquierda. "00-012345" y "12345" son el mismo número.
+ * Mismo RIF/cédula: mismos dígitos (`normalizeTaxId`) y, si ambos traen letra
+ * de tipo, la misma letra. "V-508357612" no es "J-508357612" (caos 5.4); sin
+ * letra en un lado se comparan solo los dígitos.
+ */
+export function sameTaxId(a: string | null | undefined, b: string | null | undefined): boolean {
+  const digits = normalizeTaxId(a);
+  if (!digits || digits !== normalizeTaxId(b)) {
+    return false;
+  }
+  const letterA = taxIdLetter(a);
+  const letterB = taxIdLetter(b);
+  return !letterA || !letterB || letterA === letterB;
+}
+
+/**
+ * Rótulo delante del número ("FACTURA", "FACT", "N°", "Nº", "No.", "NRO",
+ * "NUM"), solo si no le sigue otra letra ("NOV-12" queda igual).
+ */
+const INVOICE_NUMBER_PREFIX = /^(?:FACTURA|FACT|NRO|NUM|N[°ºO])(?![A-Z])[^A-Z0-9]*/;
+
+/**
+ * Número de factura comparable: sin rótulos delante, alfanumérico en
+ * mayúsculas y sin ceros a la izquierda. "00-012345", "N° 12345" y "12345" son
+ * el mismo número. Sin ningún dígito distinto de cero ("S/N", "0", "000") es
+ * "sin número": "".
  */
 export function normalizeInvoiceNumber(value: string | null | undefined): string {
   if (!value) {
     return "";
   }
 
-  return value
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .replace(/^0+(?=.)/, "");
+  let text = value.toUpperCase().trim();
+  let stripped = text.replace(INVOICE_NUMBER_PREFIX, "");
+  while (stripped !== text) {
+    text = stripped;
+    stripped = text.replace(INVOICE_NUMBER_PREFIX, "");
+  }
+  const number = text.replace(/[^A-Z0-9]/g, "").replace(/^0+(?=.)/, "");
+  return /[1-9]/.test(number) ? number : "";
+}
+
+/** Distancia de edición <= 1 (una sustitución, omisión o carácter de más). */
+export function withinOneEdit(a: string, b: string): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (Math.abs(a.length - b.length) > 1) {
+    return false;
+  }
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  let index = 0;
+  while (index < short.length && short[index] === long[index]) {
+    index += 1;
+  }
+  const rest = short.length === long.length ? index + 1 : index;
+  return short.slice(rest) === long.slice(index + 1);
 }
 
 /** Código (SKU del proveedor, barcode) comparable: `normalizeAlias` sin espacios. */

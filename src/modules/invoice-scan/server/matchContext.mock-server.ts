@@ -232,25 +232,38 @@ function systemRate(storeId: string): number | undefined {
 
 function previousScans(storeId: string, extraction: InvoiceExtraction, excludeScanId?: string): MatchPreviousScan[] {
   const number = normalizeInvoiceNumber(extraction.number);
-  if (!number) {
-    return [];
-  }
+  // Paridad con `loadPreviousScansByDateTotal`: mismo total (±0,01, al céntimo) y fecha si se leyó.
+  const total = extraction.total;
+  const date = extraction.date?.trim();
+  const cents = typeof total === "number" && Number.isFinite(total) && total > 0 && (date || !number) ? Math.round(total * 100) : undefined;
+  const live = listMockScansOfStore(storeId).filter(
+    (scan) => scan.id !== excludeScanId && scan.status !== "discarded" && scan.status !== "failed",
+  );
+  const byNumber = number
+    ? live.filter((scan) => normalizeInvoiceNumber(scan.extracted?.number) === number).slice(0, PREVIOUS_SCANS_LIMIT)
+    : [];
+  const byDateTotal =
+    cents === undefined
+      ? []
+      : live
+          .filter((scan) => {
+            const scanTotal = scan.extracted?.total;
+            return (
+              typeof scanTotal === "number" &&
+              Math.abs(Math.round(scanTotal * 100) - cents) <= 1 &&
+              (!date || scan.extracted?.date === date)
+            );
+          })
+          .slice(0, PREVIOUS_SCANS_LIMIT);
 
-  return listMockScansOfStore(storeId)
-    .filter(
-      (scan) =>
-        scan.id !== excludeScanId &&
-        scan.status !== "discarded" &&
-        scan.status !== "failed" &&
-        normalizeInvoiceNumber(scan.extracted?.number) === number,
-    )
-    .slice(0, PREVIOUS_SCANS_LIMIT)
-    .map((scan) => ({
-      scanId: scan.id,
-      supplierId: scan.supplierId ?? scan.matched?.supplier.contactId ?? null,
-      supplierTaxId: scan.extracted?.supplier.taxId ?? null,
-      number: scan.extracted?.number ?? null,
-    }));
+  return [...byNumber, ...byDateTotal.filter((scan) => !byNumber.includes(scan))].map((scan) => ({
+    scanId: scan.id,
+    supplierId: scan.supplierId ?? scan.matched?.supplier.contactId ?? null,
+    supplierTaxId: scan.extracted?.supplier.taxId ?? null,
+    number: scan.extracted?.number ?? null,
+    date: scan.extracted?.date,
+    total: scan.extracted?.total,
+  }));
 }
 
 /** Contexto de `matchInvoice` para la tienda `storeId` en modo mock. Ver la cabecera. */

@@ -191,6 +191,8 @@ export function matchInvoice(extraction: InvoiceExtraction, ctx: MatchContext): 
 
   const duplicateOfScanId = findDuplicateScan({
     number: extraction.number,
+    date: extraction.date,
+    total: extraction.total,
     contactId: supplier.contactId,
     taxId: extraction.supplier.taxId,
     previousScans: ctx.previousScans,
