@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "key": "3f9f64d5df89a299690d31957c21ea33f86fff807f45fed4dc324aca0d40ca0e",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f06",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "f01",
+    "f02",
+    "f03"
+  ],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "J-508357612"
+    },
+    "number": "00003854",
+    "date": "2026-09-11",
+    "currency": "VES",
+    "printedRate": 832.49,
+    "lines": [
+      {
+        "rawText": "JUSTY 1.5 1,00 x 8.699,52 [BULTO X 12,00]",
+        "description": "Justy 1,5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8699.52,
+        "lineTotal": 8699.52,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 1L 1,00 x 6.460,12 [BULTO X 12,00]",
+        "description": "Glup sabores 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6460.12,
+        "lineTotal": 6460.12,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP COLA 1L 1,00 x 7.142,76 [BULTO X 12,00]",
+        "description": "Glup cola 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 7142.76,
+        "lineTotal": 7142.76,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP COLA 2L 2,00 x 5.286,31 [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5286.31,
+        "lineTotal": 10572.62,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 2L 1,00 x 4.254,02 [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4254.02,
+        "lineTotal": 4254.02,
+        "confidence": 0.95
+      }
+    ],
+    "total": 37129.04,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 7445,
+  "outputTokens": 787,
+  "durationMs": 3001,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:01:19.629Z"
+}

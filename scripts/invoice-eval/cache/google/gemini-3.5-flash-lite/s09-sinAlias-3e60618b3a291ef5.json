@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "key": "3e60618b3a291ef567388dff9f957652d331ad9a953046fbc14ae41edcf429be",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "s09",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "a297383355b0fa7ce656b3596451d51e03ec7a35446305911443e67c3c6911a9",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": ""
+    },
+    "currency": "unknown",
+    "lines": [],
+    "confidence": 0.1,
+    "warnings": [
+      "La imagen es demasiado oscura y borrosa para leer los datos con certeza.",
+      "No parece una factura legible."
+    ]
+  },
+  "inputTokens": 2639,
+  "outputTokens": 53,
+  "durationMs": 1082,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:55:26.513Z"
+}

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "key": "73240483234c9be637b4926b6169b113539ed59b908b599af89578ea3ce3e711",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f03",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "f01"
+  ],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00003570",
+    "currency": "VES",
+    "printedRate": 814.7,
+    "lines": [
+      {
+        "rawText": "POWER MAX 400ML 1,00 x 4.358,64 [CAJA X 15,00]",
+        "description": "POWER MAX 400ML",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 15,
+        "unitPrice": 4358.64,
+        "lineTotal": 4358.64,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP COLA 2L 1,00 x 5.173,34 [BULTO X 6,00]",
+        "description": "GLUP COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5173.34,
+        "lineTotal": 5173.34,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "COCA COLA 2L 1,00 x 7.226,39 [BULTO X 6,00]",
+        "description": "COCA COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7226.39,
+        "lineTotal": 7226.39,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 2L 2,00 x 4.163,12 [BULTO X 6,00]",
+        "description": "GLUP SABORES 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4163.12,
+        "lineTotal": 8326.24,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "JUSTY 400ML 2,00 x 4.032,77 [BULTO X 15,00]",
+        "description": "JUSTY 400ML",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4032.77,
+        "lineTotal": 8065.54,
+        "confidence": 0.95
+      }
+    ],
+    "total": 33150.15,
+    "confidence": 0.9,
+    "warnings": [
+      "La fecha de la factura está parcialmente oculta por el dedo."
+    ]
+  },
+  "inputTokens": 4443,
+  "outputTokens": 777,
+  "durationMs": 2914,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:09:33.264Z"
+}

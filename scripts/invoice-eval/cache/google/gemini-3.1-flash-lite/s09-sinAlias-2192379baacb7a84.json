@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "key": "2192379baacb7a84053a0632c1350454f376a65e390e68e2971010ccb8f98556",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s09",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DEPOSITO LOS AROS, C.A.",
+      "taxId": "J-3087554-9"
+    },
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "COCA COLA 2 LTS [BULTO X 6] 2 X 7.650,00 15.300,00",
+        "description": "COCA COLA 2 LTS",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7650,
+        "lineTotal": 15300,
+        "confidence": 0.4
+      },
+      {
+        "rawText": "ARROZ P.A.N. 1 KG [BULTO X 20] 2 X 10.500,00 21.000,00",
+        "description": "ARROZ P.A.N. 1 KG",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 10500,
+        "lineTotal": 21000,
+        "confidence": 0.4
+      },
+      {
+        "rawText": "HARINA P.A.N. 1 KG [BULTO X 20] 2 X 11.000,00 22.000,00",
+        "description": "HARINA P.A.N. 1 KG",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 11000,
+        "lineTotal": 22000,
+        "confidence": 0.4
+      },
+      {
+        "rawText": "JABON AZUL LAS LLAVES 200 GR [BULTO X 24] 2 X 15.575,00 31.150,00",
+        "description": "JABON AZUL LAS LLAVES 200 GR",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 15575,
+        "lineTotal": 31150,
+        "confidence": 0.4
+      }
+    ],
+    "total": 89450,
+    "confidence": 0.4,
+    "warnings": [
+      "La imagen es de muy baja calidad y está borrosa, lo que dificulta la lectura precisa de los datos.",
+      "La fecha y el número de factura no son legibles con certeza."
+    ]
+  },
+  "inputTokens": 2739,
+  "outputTokens": 684,
+  "durationMs": 8190,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:09:20.819Z"
+}

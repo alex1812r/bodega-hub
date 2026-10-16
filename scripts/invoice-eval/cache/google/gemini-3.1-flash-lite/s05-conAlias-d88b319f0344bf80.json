@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "key": "d88b319f0344bf80956f7b056d57532a62341bbbc69dc25d428e2983c13412aa",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s05",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "s03"
+  ],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6"
+    },
+    "number": "0004587",
+    "date": "2026-09-11",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "AGUA HELEAL 1.5 LTS (G) [BULTO X 12]",
+        "description": "AGUA HELEAL 1.5 LTS",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 5904,
+        "lineTotal": 11808,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2 LTS (G) [BULTO X 6]",
+        "description": "GLUP COLA 2 LTS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5754,
+        "lineTotal": 5754,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "AZUCAR MIMASA 900 GR (E) [BULTO X 20]",
+        "description": "AZUCAR MIMASA 900 GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19480,
+        "lineTotal": 19480,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "SARDINAS LA GAVIOTA 170 GR (G) CAJA X24",
+        "description": "SARDINAS LA GAVIOTA 170 GR",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 16488,
+        "lineTotal": 32976,
+        "taxHint": "general",
+        "confidence": 1
+      },
+      {
+        "rawText": "JABON AZUL LAS LLAVES 300 GR (G) [BULTO X 25]",
+        "description": "JABON AZUL LAS LLAVES 300 GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 25,
+        "unitPrice": 15125,
+        "lineTotal": 15125,
+        "taxHint": "general",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 85143,
+    "tax": 10506.08,
+    "total": 95649.08,
+    "confidence": 1,
+    "warnings": []
+  },
+  "inputTokens": 4383,
+  "outputTokens": 762,
+  "durationMs": 3218,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:11:34.872Z"
+}

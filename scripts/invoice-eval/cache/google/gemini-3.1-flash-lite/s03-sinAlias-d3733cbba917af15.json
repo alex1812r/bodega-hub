@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "key": "d3733cbba917af157f149ce55117b67336f610d7ee63d9e36c8f932c358b2130",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s03",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6",
+      "phone": "0212-472.10.33",
+      "address": "AV. PRINCIPAL DE LA YAGUARA, GALPON 3, CARACAS"
+    },
+    "number": "0004512",
+    "date": "2026-09-04",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "7593102001011 GLUP COLA 2 LTS (G) [BULTO X 6] 2 x 5.754,00 11.508,00",
+        "description": "GLUP COLA 2 LTS",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5754,
+        "lineTotal": 11508,
+        "taxHint": "general",
+        "barcode": "7593102001011",
+        "confidence": 1
+      },
+      {
+        "rawText": "7592711002044 COCA-COLA 2 LTS (G) [BULTO X 6] 1 x 7.620,00 7.620,00",
+        "description": "COCA-COLA 2 LTS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7620,
+        "lineTotal": 7620,
+        "taxHint": "general",
+        "barcode": "7592711002044",
+        "confidence": 1
+      },
+      {
+        "rawText": "7593102004159 JUSTY 1.5 LTS (G) [BULTO X 12] 1 x 9.540,00 9.540,00",
+        "description": "JUSTY 1.5 LTS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9540,
+        "lineTotal": 9540,
+        "taxHint": "general",
+        "barcode": "7593102004159",
+        "confidence": 1
+      },
+      {
+        "rawText": "7591002100018 HARINA P.A.N. 1 KG (E) [BULTO X 20] 2 x 18.380,00 36.760,00",
+        "description": "HARINA P.A.N. 1 KG",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18380,
+        "lineTotal": 36760,
+        "taxHint": "exento",
+        "barcode": "7591002100018",
+        "confidence": 1
+      },
+      {
+        "rawText": "7591002300104 ARROZ PRIMOR 1 KG (E) [BULTO X 24] 1 x 23.460,00 23.460,00",
+        "description": "ARROZ PRIMOR 1 KG",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23460,
+        "lineTotal": 23460,
+        "taxHint": "exento",
+        "barcode": "7591002300104",
+        "confidence": 1
+      },
+      {
+        "rawText": "7596220014086 ATUN MARGARITA 140 GR (G) CAJA X24 1 x 30.120,00 30.120,00",
+        "description": "ATUN MARGARITA 140 GR",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 30120,
+        "lineTotal": 30120,
+        "taxHint": "general",
+        "barcode": "7596220014086",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 119008,
+    "tax": 9406.08,
+    "total": 128414.08,
+    "confidence": 1,
+    "warnings": []
+  },
+  "inputTokens": 2756,
+  "outputTokens": 1267,
+  "durationMs": 3896,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:07:42.911Z"
+}
