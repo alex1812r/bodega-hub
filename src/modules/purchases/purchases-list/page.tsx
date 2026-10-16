@@ -274,6 +274,7 @@ function PurchasesList() {
 
   // "Volver" de la compra nueva regresa a esta lista con sus filtros.
   const createHref = withReturnTo("/purchases/create", listHref);
+  const scanHref = withReturnTo("/purchases/create?scan=1", listHref);
 
   return (
     <div className="mx-auto w-full max-w-7xl">
@@ -393,9 +394,15 @@ function PurchasesList() {
                 <EmptyState
                   action={
                     <Can permission="purchases.create">
-                      <Button asChild size="sm">
-                        <Link href={createHref}>Nueva compra</Link>
-                      </Button>
+                      <div className="flex flex-col items-center gap-2 sm:flex-row">
+                        <Button asChild size="sm">
+                          <Link href={createHref}>Nueva compra</Link>
+                        </Button>
+                        {/* SCN-07: la compra nueva abre el escaneo al entrar (`scan=1`). */}
+                        <Button asChild size="sm" variant="outline">
+                          <Link href={scanHref}>Escanear factura</Link>
+                        </Button>
+                      </div>
                     </Can>
                   }
                   description="Registra una compra para verla aquí."
