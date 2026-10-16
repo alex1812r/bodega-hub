@@ -624,6 +624,28 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(state.scans[0].claim_request_id ?? null).toBeNull();
     });
 
+    it.each([
+      ["U+0000", "caja\u0000"],
+      ["carácter de control C1", "caja\u0085"],
+      ["surrogate suelto", "caja\ud800"],
+    ])("CIE-09 (R1): invoiceScanLines[].packLabel con %s → 400 en español, sin reclamar ni crear la compra", async (_caso, packLabel) => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [{ ...scanLines[0], packLabel }, scanLines[1], scanLines[2]],
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(payload.error.issues[0].message).toBe(INVOICE_TEXT_INVALID_MESSAGE);
+      expect(payload.error.issues[0].path).toEqual(["invoiceScanLines", 0, "packLabel"]);
+      expect(fake.rpc).not.toHaveBeenCalled();
+      expect(state.purchases).toEqual([]);
+      expect(state.scans[0]).toMatchObject({ status: "extracted" });
+      expect(state.scans[0].claim_request_id ?? null).toBeNull();
+    });
+
     it("CIE-06 (M1): si confirm falla, el mismo intento reintenta y confirma la MISMA compra", async () => {
       const body = { ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines };
       state.failConfirm = true;

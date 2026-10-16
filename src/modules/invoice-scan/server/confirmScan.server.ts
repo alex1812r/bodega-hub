@@ -46,7 +46,12 @@ import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { createSupplierProductPackUnit } from "@/modules/contacts/services/supplierProducts.server";
 
-import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import {
+  hasForbiddenInvoiceChar,
+  INVOICE_TEXT_INVALID_MESSAGE,
+  invoiceExtractionSchema,
+  type InvoiceExtraction,
+} from "../contracts";
 
 /** Máximo de líneas confirmadas por escaneo (mismo tope que `learn_invoice_aliases`). */
 export const MAX_INVOICE_SCAN_LINES = 500;
@@ -70,7 +75,15 @@ export const invoiceScanLineInputSchema = z.object({
   /** Índice de la línea en `extraction.lines` del escaneo guardado. */
   lineIndex: z.number().int().min(0),
   productId: z.string().uuid(),
-  packLabel: z.string().trim().max(100).nullable().optional(),
+  // CIE-09 (R1): mismo veto de caracteres que la extracción (CIE-06); un U+0000
+  // fallaba en confirm_invoice_scan (22P05) DESPUÉS de crear la compra.
+  packLabel: z
+    .string()
+    .trim()
+    .max(100)
+    .refine((value) => !hasForbiddenInvoiceChar(value), INVOICE_TEXT_INVALID_MESSAGE)
+    .nullable()
+    .optional(),
   unitsPerPack: z.number().int().positive().max(100000).nullable().optional(),
 });
 
