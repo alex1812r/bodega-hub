@@ -644,7 +644,7 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 
 ### 2. Storage
 
-El bucket **privado** `invoice-scans` lo crea 19a. No hay URLs públicas: subida y lectura con URL firmada (lectura de 5 minutos), y rutas siempre bajo `<store_id>/<sha256>/p<n>.<ext>`.
+El bucket **privado** `invoice-scans` lo crea 19a. No hay URLs públicas: subida y lectura con URL firmada (lectura de 5 minutos), y rutas siempre bajo `<store_id>/<sha256>/p<n>.<ext>`. No hay política de insert para `authenticated` (CIE-08): la subida firmada no pasa por RLS, así que un usuario no puede subir directo por la API de Storage.
 
 ### 3. Variables de entorno
 
@@ -652,7 +652,7 @@ El bucket **privado** `invoice-scans` lo crea 19a. No hay URLs públicas: subida
 
 | Variable | Valores | Por defecto | Notas |
 |----------|---------|-------------|-------|
-| `INVOICE_SCAN_PROVIDER` | `google` \| `anthropic` \| `mock` | `google` | Si falta la key del proveedor pedido se usa el otro (con su modelo por defecto) y, sin ninguna key, `mock`. |
+| `INVOICE_SCAN_PROVIDER` | `google` \| `anthropic` \| `mock` | `google` | Si falta la key del proveedor pedido se usa el otro (con su modelo por defecto). Sin ninguna key, con datos en Supabase el escaneo responde 503 sin reservar ni cobrar (CIE-08); `mock` solo si se pide explícito o con datos mock. |
 | `INVOICE_SCAN_MODEL` | id del modelo | `gemini-3.5-flash-lite` (google) · `claude-haiku-5-5` (anthropic) | D22 / CIE-01. No cambia el modelo del asistente (`ASSISTANT_MODEL`, que conserva su propio default). |
 | `INVOICE_SCAN_DAILY_LIMIT` | entero | `50` | Páginas por tienda y día operativo de Caracas; máximo 10000. Un valor no numérico vuelve a 50. |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | key | — | Ya existe por el asistente. Debe estar en plan de pago: en free tier Google puede usar los datos y la cuota diaria corta el escaneo (D18). |
