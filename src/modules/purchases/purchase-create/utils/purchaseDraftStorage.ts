@@ -169,6 +169,11 @@ const storedPurchaseDraftSchema = z.object({
     }),
   }),
   notes: z.string(),
+  /**
+   * Factura leída cuya revisión estaba abierta, antes de «Cargar» (SCN-UI-C1): al volver se
+   * ofrece retomarla. Ausente sin revisión abierta y en borradores viejos; corrupta, se ignora.
+   */
+  pendingInvoiceReview: z.object({ scanId: z.string().min(1) }).optional().catch(undefined),
   /** Tasa con la que se calcularon los costos guardados; al restaurar manda la vigente. */
   rateVes: z.number().positive().max(PURCHASE_DRAFT_MAX_NUMBER),
   /** ISO 8601. */
@@ -194,9 +199,23 @@ export type PurchaseDraftContent = Omit<
  * Hay "algo que perder": al menos una línea o un proveedor elegido. Es la misma
  * condición que activa el guardia de salida (CNF-15): lo que el guardia promete guardar,
  * se guarda. Notas, estado y descuento viajan con el borrador, pero solos no lo crean.
+ * Una revisión de factura abierta también (SCN-UI-C1): recargar no la pierde.
  */
 export function isPurchaseDraftWorthSaving(content: PurchaseDraftContent) {
-  return content.lines.items.length > 0 || content.supplierId !== "";
+  return (
+    content.lines.items.length > 0 ||
+    content.supplierId !== "" ||
+    content.pendingInvoiceReview !== undefined
+  );
+}
+
+/** El borrador solo guarda una revisión de factura a medias: no hay compra que restaurar. */
+export function isInvoiceReviewOnlyDraft(draft: StoredPurchaseDraft) {
+  return (
+    draft.pendingInvoiceReview !== undefined &&
+    draft.lines.items.length === 0 &&
+    draft.supplierId === ""
+  );
 }
 
 export function serializePurchaseDraft(

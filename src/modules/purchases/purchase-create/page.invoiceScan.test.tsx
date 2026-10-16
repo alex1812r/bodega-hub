@@ -282,12 +282,14 @@ const RECIPES = [
 ];
 
 type ApiReply = { payload: unknown; status: number };
-type ApiOptions = { discard?: ApiReply; purchase?: ApiReply };
+type ApiOptions = { discard?: ApiReply; purchase?: ApiReply; scanDetail?: ApiReply };
+const SCAN_URL = `/api/purchases/invoice-scan/${REVIEW_SCAN_ID}`;
 
 /** `fetch` de prueba: fichas, proveedores, recetas, el alta de la compra y el descarte. */
 function installApi({
   discard = { payload: { data: { id: REVIEW_SCAN_ID, status: "discarded" } }, status: 200 },
   purchase = { payload: { data: { id: "purchase-nueva" } }, status: 201 },
+  scanDetail,
 }: ApiOptions = {}) {
   const posts: Array<{ body: Record<string, unknown> | null; url: string }> = [];
 
@@ -302,6 +304,10 @@ function installApi({
       const reply = url === DISCARD_URL ? discard : purchase;
 
       return jsonResponse(reply.payload, reply.status);
+    }
+
+    if (url === SCAN_URL && scanDetail) {
+      return jsonResponse(scanDetail.payload, scanDetail.status);
     }
 
     if (url.startsWith("/api/inventory/pack-conversions")) {
@@ -834,5 +840,91 @@ describe("PurchaseCreatePage · tasa de la factura distinta de la del día (SCN-
 
     expect(body.refRateVes).toBe(900);
     expect((body.items as Array<Record<string, unknown>>)[0]).toMatchObject({ unitCostVes: 700.52 });
+  });
+});
+
+describe("PurchaseCreatePage · recargar a mitad de la revisión (SCN-UI-C1)", () => {
+  const scanned = makeReviewResponse({ lines: [{}] });
+
+  function detail(status: string) {
+    return {
+      payload: {
+        data: {
+          createdAt: "2026-10-16T10:00:00.000Z",
+          extraction: scanned.extraction,
+          imageUrls: [],
+          matched: scanned.matched,
+          pages: 1,
+          purchaseId: null,
+          scanId: REVIEW_SCAN_ID,
+          status,
+        },
+      },
+      status: 200,
+    };
+  }
+
+  /** Abre la revisión, espera a que el borrador la recuerde y «recarga». */
+  async function reviewAndReload() {
+    const first = renderPage();
+
+    scanInvoice();
+    await waitFor(() => expect(storedDraft()?.pendingInvoiceReview).toEqual({ scanId: REVIEW_SCAN_ID }));
+    first.view.unmount();
+    return renderPage();
+  }
+
+  it("ofrece retomar la revisión y la vuelve a abrir con el escaneo guardado", async () => {
+    installApi({ scanDetail: detail("extracted") });
+    await reviewAndReload();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar la revisión de la factura" }));
+
+    await waitFor(() => expect(reviewPanel()).toHaveTextContent(`escaneo ${REVIEW_SCAN_ID}`));
+    // Solo había la revisión: no se ofrece además restaurar una compra vacía.
+    expect(screen.queryByRole("button", { name: "Restaurar" })).not.toBeInTheDocument();
+  });
+
+  it("con una compra debajo, retomar la restaura y vuelve a abrir la revisión", async () => {
+    installApi({ scanDetail: detail("extracted") });
+    const first = renderPage();
+
+    click("elegir proveedor");
+    click("agregar cable");
+    scanInvoice();
+    await waitFor(() => expect(storedDraft()?.pendingInvoiceReview).toEqual({ scanId: REVIEW_SCAN_ID }));
+    first.view.unmount();
+    renderPage();
+
+    expect(screen.getByRole("button", { name: "Restaurar" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar la revisión de la factura" }));
+
+    await waitFor(() => expect(reviewPanel()).toHaveTextContent(`escaneo ${REVIEW_SCAN_ID}`));
+    // «Cargar» o descartar la revisión devuelve al formulario con la compra restaurada.
+    click("Descartar escaneo");
+    await waitFor(() => expect(lineTexts()).toHaveLength(1));
+    expect(lineTexts()[0]).toContain("Cable HDMI");
+  });
+
+  it("si el escaneo ya no está por revisar no lo ofrece y olvida el borrador", async () => {
+    installApi({ scanDetail: detail("confirmed") });
+    await reviewAndReload();
+
+    await waitFor(() => expect(storedDraft()).toBeNull());
+    expect(screen.queryByRole("button", { name: "Retomar la revisión de la factura" })).not.toBeInTheDocument();
+    expect(reviewPanel()).not.toBeInTheDocument();
+  });
+
+  it("«Descartar» descarta el escaneo en el servidor y el borrador", async () => {
+    const api = installApi({ scanDetail: detail("extracted") });
+    await reviewAndReload();
+
+    const banner = await screen.findByRole("region", { name: "Revisión de factura sin terminar" });
+    fireEvent.click(within(banner).getByRole("button", { name: "Descartar" }));
+
+    await waitFor(() => expect(api.posts.map((post) => post.url)).toEqual([DISCARD_URL]));
+    await waitFor(() => expect(storedDraft()).toBeNull());
+    expect(screen.queryByRole("button", { name: "Retomar la revisión de la factura" })).not.toBeInTheDocument();
+    expect(reviewPanel()).not.toBeInTheDocument();
   });
 });
