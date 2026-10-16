@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "key": "bb1b5b455bbc75d2cbaf5e3fecc53ab88dfb60d66ae5f1359b4702c98abb93e1",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f11",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA Y FESTEJO COCKTAIL EXPRESS 247, C.A.",
+      "taxId": "J-413106159",
+      "address": "CALLE IMBOCA CC BOLEITA CENTER NIVEL FERIA LOCAL N3 38 Y N3 39 BOLEITA SUCURSAL:CC EL RECREO"
+    },
+    "number": "00002887",
+    "date": "2026-08-14",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "2x Bs 9.306,02 TOBO 14 PROMO (G) Bs 18.612,04",
+        "description": "TOBO 14 PROMO",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 9306.02,
+        "lineTotal": 18612.04,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "8x Bs 1.542,14 CERVEZA SOLERA AZUL LIGHT EN 222ML (P) Bs 12.337,12",
+        "description": "CERVEZA SOLERA AZUL LIGHT EN 222ML",
+        "quantity": 8,
+        "unit": "unidad",
+        "unitPrice": 1542.14,
+        "lineTotal": 12337.12,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "542,14 OLAR PILSEN 222ML.. Bs 3.084,28",
+        "description": "OLAR PILSEN 222ML..",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 1542.14,
+        "lineTotal": 3084.28,
+        "taxHint": "unknown",
+        "confidence": 0.6
+      }
+    ],
+    "subtotal": 34033.44,
+    "tax": 2977.93,
+    "total": 37011.37,
+    "confidence": 0.8,
+    "warnings": [
+      "La primera parte de la tercera línea está parcialmente obstruida por un dedo, la cantidad se infirió por el precio unitario y total."
+    ]
+  },
+  "inputTokens": 2427,
+  "outputTokens": 641,
+  "durationMs": 2479,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:15:55.675Z"
+}

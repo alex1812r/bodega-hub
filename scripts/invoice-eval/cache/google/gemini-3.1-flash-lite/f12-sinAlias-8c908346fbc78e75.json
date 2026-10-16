@@ -1,0 +1,402 @@
+{
+  "version": 1,
+  "key": "8c908346fbc78e75b200067ff40367c139c2be4b52dea25a3b8bf00ba7147d9a",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f12",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "INVERSIONES MARKET CATIA, C.A.",
+      "taxId": "J-500244150",
+      "address": "Calle Argentina Entre 3era Y 4ta Avenida Local PB Nro 78 Perez Bonalde Catia Caracas D.C. Z.P. 1030"
+    },
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 x B 3.128,28 DETERGENTE ALIVE FLORAL 500G B 3.128,28",
+        "description": "DETERGENTE ALIVE FLORAL 500G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.128,28 DETERGENTE ALIVE SUAVIZANTE ROSADO 500G B 3.128,28",
+        "description": "DETERGENTE ALIVE SUAVIZANTE ROSADO 500G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.166,59 DESINFECTANTE OSO BLANCO 1LITRO B 3.166,59",
+        "description": "DESINFECTANTE OSO BLANCO 1LITRO",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 3166.59,
+        "lineTotal": 3166.59,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.893,53 CLORO OSO BLANCO 1L B 2.893,53",
+        "description": "CLORO OSO BLANCO 1L",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 2893.53,
+        "lineTotal": 2893.53,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.726,75 LAVAPLATO AXION EN CREMA 235GR B 3.726,75",
+        "description": "LAVAPLATO AXION EN CREMA 235GR",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 3726.75,
+        "lineTotal": 3726.75,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 1.056,03 BOLSA MARACAY 5KG B 1.056,03",
+        "description": "BOLSA MARACAY 5KG",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 1056.03,
+        "lineTotal": 1056.03,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 1.410,56 BOLSA MARACAY 10KG B 1.410,56",
+        "description": "BOLSA MARACAY 10KG",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 1410.56,
+        "lineTotal": 1410.56,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.013,84 FLIPS BOLSA CHOCOLATE 120G B 4.013,84",
+        "description": "FLIPS BOLSA CHOCOLATE 120G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4013.84,
+        "lineTotal": 4013.84,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.053,66 FLIPS BOLSA DULCE LECHE 120G B 4.053,66",
+        "description": "FLIPS BOLSA DULCE LECHE 120G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4053.66,
+        "lineTotal": 4053.66,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.545,65 FLIPS LONCHERA CHOCOLATE 6UND*28GRS B 2.545,65",
+        "description": "FLIPS LONCHERA CHOCOLATE 6UND*28GRS",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 2545.65,
+        "lineTotal": 2545.65,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.534,48 FLIPS LONCHERA DULCE LECHE 6UND*28GRS B 2.534,48",
+        "description": "FLIPS LONCHERA DULCE LECHE 6UND*28GRS",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 2534.48,
+        "lineTotal": 2534.48,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 5.566,81 CARAMELOS MENTA HELADA SUPER 380GRS 100U B 5.566,81",
+        "description": "CARAMELOS MENTA HELADA SUPER 380GRS 100U",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 5566.81,
+        "lineTotal": 5566.81,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.029,85 CHEESE TRIS 150G B 2.029,85",
+        "description": "CHEESE TRIS 150G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 2029.85,
+        "lineTotal": 2029.85,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 5.159,48 PAPAS RIZADAS YUPI POLLO130GR B 5.159,48",
+        "description": "PAPAS RIZADAS YUPI POLLO130GR",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 5159.48,
+        "lineTotal": 5159.48,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.331,90 RUFFLES CREMA CEBOLLA 122G B 7.331,90",
+        "description": "RUFFLES CREMA CEBOLLA 122G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 7331.9,
+        "lineTotal": 7331.9,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.316,81 RUFFLES QUESO 126G B 7.316,81",
+        "description": "RUFFLES QUESO 126G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 7316.81,
+        "lineTotal": 7316.81,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 5.431,03 TOSTON TOM TIRA 80G*8UND B 10.862,07",
+        "description": "TOSTON TOM TIRA 80G*8UND",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 5431.03,
+        "lineTotal": 10862.07,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 8.961,21 DORITOS DINAMITA FLAMIN TIRA 40G*12 B 8.961,21",
+        "description": "DORITOS DINAMITA FLAMIN TIRA 40G*12",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.480,60 DORITO COOL RANCH 42G*12U B 4.480,60",
+        "description": "DORITO COOL RANCH 42G*12U",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.480,60 PAPA RAYADA BBQ 105G B 4.480,60",
+        "description": "PAPA RAYADA BBQ 105G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.480,60 PAPA RAYADA POLLO 105G B 4.480,60",
+        "description": "PAPA RAYADA POLLO 105G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 5.883,62 DORITOS 150GR B 11.767,24",
+        "description": "DORITOS 150GR",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 5883.62,
+        "lineTotal": 11767.24,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 8.768,86 GALLETA MAXCOCO 460GR B 8.768,86",
+        "description": "GALLETA MAXCOCO 460GR",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 8768.86,
+        "lineTotal": 8768.86,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.457,97 MUNCHY RINGOS 62GRS B 4.457,97",
+        "description": "MUNCHY RINGOS 62GRS",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4457.97,
+        "lineTotal": 4457.97,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.771,55 SAMY 26G*24UND B 3.771,55",
+        "description": "SAMY 26G*24UND",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 3771.55,
+        "lineTotal": 3771.55,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 3.918,25 LECHE CONDENSADA CREMUR 395GR(E) B 7.836,50",
+        "description": "LECHE CONDENSADA CREMUR 395GR(E)",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 3918.25,
+        "lineTotal": 7836.5,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 2.462,07 GALLETAS CRAKENAS 192G*8UND B 4.924,14",
+        "description": "GALLETAS CRAKENAS 192G*8UND",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 2462.07,
+        "lineTotal": 4924.14,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 8.478,75 MANTEQUILLA MAVESA 500GR(E) B 16.957,50",
+        "description": "MANTEQUILLA MAVESA 500GR(E)",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 8478.75,
+        "lineTotal": 16957.5,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.211,38 ACEITE SOYA LA PAMPA 500ML(E) B 4.211,38",
+        "description": "ACEITE SOYA LA PAMPA 500ML(E)",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4211.38,
+        "lineTotal": 4211.38,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 5.892,25 ACEITE SOYA LA PAMPA 700ML(E) B 5.892,25",
+        "description": "ACEITE SOYA LA PAMPA 700ML(E)",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 5892.25,
+        "lineTotal": 5892.25,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 3.771,55 ATUN WILLINGER EN ACEITE 170GR B 7.543,10",
+        "description": "ATUN WILLINGER EN ACEITE 170GR",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 3771.55,
+        "lineTotal": 7543.1,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 4.725,00 MANTEQUILLA MAVESA 250GR(E) B 9.450,00",
+        "description": "MANTEQUILLA MAVESA 250GR(E)",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 4725,
+        "lineTotal": 9450,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 2.338,88 SARDINA WILLINGER 155GR(E) B 4.677,76",
+        "description": "SARDINA WILLINGER 155GR(E)",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 2338.88,
+        "lineTotal": 4677.76,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "4 x B 3.031,88 HARINA PAN 1KG(E) B 12.127,52",
+        "description": "HARINA PAN 1KG(E)",
+        "quantity": 4,
+        "unit": "unidad",
+        "unitPrice": 3031.88,
+        "lineTotal": 12127.52,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 6.918,63 ARROZ MARY PREMIUM 900GR(E) B 13.837,26",
+        "description": "ARROZ MARY PREMIUM 900GR(E)",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 6918.63,
+        "lineTotal": 13837.26,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "4 x B 6.428,63 LECHE DOBON 200GR(E) B 25.714,52",
+        "description": "LECHE DOBON 200GR(E)",
+        "quantity": 4,
+        "unit": "unidad",
+        "unitPrice": 6428.63,
+        "lineTotal": 25714.52,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.494,83 CHIMO TIGRITO AMARILLO 6UND B 7.494,83",
+        "description": "CHIMO TIGRITO AMARILLO 6UND",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 7494.83,
+        "lineTotal": 7494.83,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 13.954,74 MINI SAMBA FRESA BOLSA 16G*35UND B 13.954,74",
+        "description": "MINI SAMBA FRESA BOLSA 16G*35UND",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 13954.74,
+        "lineTotal": 13954.74,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.827,59 MINI SAVOY LECHE BOLSA 150GRS B 4.827,59",
+        "description": "MINI SAVOY LECHE BOLSA 150GRS",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 4827.59,
+        "lineTotal": 4827.59,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 13.441,81 CAJA SAMBA FRESA 32G*20UND B 13.441,81",
+        "description": "CAJA SAMBA FRESA 32G*20UND",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 20,
+        "unitPrice": 13441.81,
+        "lineTotal": 13441.81,
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 100704.69,
+    "tax": 29655.74,
+    "total": 315708.83,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2747,
+  "outputTokens": 5324,
+  "durationMs": 21240,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:05:32.539Z"
+}

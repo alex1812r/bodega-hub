@@ -1,7 +1,7 @@
 import type { InvoiceExtraction, InvoiceMatch } from "../../contracts";
 import type { MatchSupplierCandidate } from "../match.types";
 
-import { formatDecimal, normalizeTaxId, textSimilarity } from "./text";
+import { formatDecimal, normalizeTaxId, sameTaxId, textSimilarity } from "./text";
 
 /** Score mínimo del nombre para resolver el proveedor sin RIF. */
 export const SUPPLIER_NAME_MIN_SCORE = 0.8;
@@ -34,7 +34,8 @@ function toCandidate(entry: ScoredSupplier, reason: string) {
 
 /**
  * Proveedor del documento:
- * 1. RIF normalizado igual al de UN solo contacto -> ese contacto.
+ * 1. RIF igual (`sameTaxId`: dígitos, y letra si ambos la traen) al de UN
+ *    solo contacto -> ese contacto. La RPC compara sin letra; aquí se descarta.
  * 2. Si no, por nombre: el mejor con score >= 0,8 y al menos 0,1 sobre el
  *    segundo -> ese contacto. No se resuelve por nombre un contacto cuyo RIF
  *    guardado contradice el RIF leído.
@@ -47,7 +48,7 @@ export function resolveSupplier(
   const readTaxId = normalizeTaxId(supplier.taxId);
 
   if (readTaxId) {
-    const byTaxId = candidates.filter((candidate) => normalizeTaxId(candidate.taxId) === readTaxId);
+    const byTaxId = candidates.filter((candidate) => sameTaxId(supplier.taxId, candidate.taxId));
     if (byTaxId.length === 1) {
       return {
         contactId: byTaxId[0].contactId,
@@ -62,7 +63,7 @@ export function resolveSupplier(
     .map((entry) => toCandidate(entry, `nombre parecido ${formatDecimal(entry.score)}`));
   const [first, second] = scored;
   const firstTaxId = first ? normalizeTaxId(first.candidate.taxId) : "";
-  const taxIdCompatible = !readTaxId || !firstTaxId || firstTaxId === readTaxId;
+  const taxIdCompatible = !readTaxId || !firstTaxId || sameTaxId(supplier.taxId, first?.candidate.taxId);
 
   if (
     first &&

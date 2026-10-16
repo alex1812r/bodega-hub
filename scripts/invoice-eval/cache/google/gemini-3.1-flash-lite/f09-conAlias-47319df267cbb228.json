@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "key": "47319df267cbb2281c2823c3f8b45e44fa6a0c0d8a7f8fe5fce1631de16ca372",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f09",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "f06",
+    "f07",
+    "f08"
+  ],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00006225",
+    "date": "2026-10-05",
+    "currency": "VES",
+    "printedRate": 871.37,
+    "lines": [
+      {
+        "rawText": "AGUA HELEAL 1.5L 1,00 x 5.899,17 [CAJA X 12,00]",
+        "description": "Agua Heleal 1.5L",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 5899.17,
+        "lineTotal": 5899.17,
+        "confidence": 1
+      },
+      {
+        "rawText": "MALTA 1.5 1,00 x 9.855,19 [BULTO X 6,00]",
+        "description": "Malta 1.5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 9855.19,
+        "lineTotal": 9855.19,
+        "confidence": 1
+      },
+      {
+        "rawText": "GATORADE 1,00 x 1.516,18",
+        "description": "Gatorade",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 1516.18,
+        "lineTotal": 1516.18,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 1,00 x 9.349,80 [BULTO X 12,00]",
+        "description": "Justy 1.5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9349.8,
+        "lineTotal": 9349.8,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 400ML 2,00 x 4.243,57 [BULTO X 15,00]",
+        "description": "Justy 400ml",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4243.57,
+        "lineTotal": 8487.14,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2L 2,00 x 5.507,06 [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5507.06,
+        "lineTotal": 11014.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 1L 1,00 x 4.827,39 [BULTO X 6,00]",
+        "description": "Coca cola 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4827.39,
+        "lineTotal": 4827.39,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L 2,00 x 7.668,06 [BULTO X 6,00]",
+        "description": "Coca cola 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7668.06,
+        "lineTotal": 15336.12,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L 2,00 x 4.470,13 [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4470.13,
+        "lineTotal": 8940.26,
+        "confidence": 1
+      }
+    ],
+    "total": 75225.37,
+    "confidence": 1,
+    "warnings": [
+      "Se ignoró el comprobante de pago bancario adjunto a la izquierda."
+    ]
+  },
+  "inputTokens": 7095,
+  "outputTokens": 1246,
+  "durationMs": 6056,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:11:21.401Z"
+}

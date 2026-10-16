@@ -170,6 +170,10 @@ export type MatchPreviousScan = {
   supplierTaxId?: string | null;
   /** Número de factura leído en ese escaneo (`extracted->number`). */
   number: string | null;
+  /** Fecha leída en ese escaneo (`extracted->date`, ISO), para el posible duplicado. */
+  date?: string | null;
+  /** Total leído en ese escaneo (`extracted->total`), para el posible duplicado. */
+  total?: number | null;
 };
 
 export type MatchContext = {

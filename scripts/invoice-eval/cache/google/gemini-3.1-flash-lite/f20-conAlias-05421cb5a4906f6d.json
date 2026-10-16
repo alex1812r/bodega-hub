@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "key": "05421cb5a4906f6d172f08f17c4f0f5a5a996efb895d250df5c12407a4b68705",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f20",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "f05"
+  ],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C.A.",
+      "taxId": "J-506040310"
+    },
+    "number": "00002986",
+    "date": "2026-09-02",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "DIABLITO UNDERWOOD LATA 54GR |[CAJA X 24.0]|",
+        "description": "Diablito Underwood lata 54gr",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 22405.28,
+        "lineTotal": 22405.28,
+        "taxHint": "general",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 22405.28,
+    "tax": 3584.84,
+    "total": 25990.12,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 4157,
+  "outputTokens": 291,
+  "durationMs": 7925,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:12:30.216Z"
+}

@@ -148,7 +148,23 @@ export type HeaderMetrics = {
 export type HeaderOptions = {
   expectedContactId?: string | null;
   matchedContactId?: string | null;
+  /** Campos que la foto no deja leer (`truth.occludedHeaderFields`): omitirlos es acierto. */
+  occluded?: readonly HeaderField[];
 };
+
+/** La predicción no trae el campo (un escaneo fallido no cuenta como omitir). */
+function headerFieldOmitted(predicted: InvoiceExtraction, field: HeaderField): boolean {
+  switch (field) {
+    case "supplier":
+      return predicted.supplier.name.trim().length === 0 && (predicted.supplier.taxId ?? "").trim().length === 0;
+    case "date":
+      return (predicted.date ?? "").trim().length === 0;
+    case "number":
+      return (predicted.number ?? "").trim().length === 0;
+    case "total":
+      return predicted.total === undefined;
+  }
+}
 
 export function evaluateHeader(
   truth: InvoiceExtraction,
@@ -214,7 +230,14 @@ export function evaluateHeader(
           predicted: predicted?.total,
         };
 
-  const fields = { supplier, date, number, total };
+  const fields: Record<HeaderField, HeaderFieldResult> = { supplier, date, number, total };
+  // Ocluido: omitirlo es acierto; igual a la verdad ya es acierto; distinto sigue siendo fallo.
+  for (const field of options.occluded ?? []) {
+    const result = fields[field];
+    if (result.evaluated && !result.ok && predicted && headerFieldOmitted(predicted, field)) {
+      fields[field] = { ...result, ok: true };
+    }
+  }
   const results = Object.values(fields).filter((field) => field.evaluated);
   const okCount = results.filter((field) => field.ok).length;
   const evaluatedCount = results.length;
@@ -333,6 +356,16 @@ export type InvoiceEvalInput = {
   modelId?: string;
   /** Fecha de la corrida para elegir la fila de precio; default: ahora. */
   at?: Date;
+  /** Extracciones confirmadas usadas como few-shot en esta extracción (conAlias). */
+  fewShot?: readonly InvoiceExtraction[];
+};
+
+export type FewShotLeak = {
+  /** true si la extracción se hizo con few-shot. */
+  evaluated: boolean;
+  leaked: boolean;
+  /** Campos de cabecera iguales a los de un ejemplo y distintos de la verdad. */
+  fields: HeaderField[];
 };
 
 export type InvoiceMetrics = {
@@ -363,6 +396,7 @@ export type InvoiceMetrics = {
     confirmedWrongRate: number;
   };
   duplicate: { expected: boolean; detected: boolean; correct: boolean; falsePositive: boolean };
+  fewShotLeak: FewShotLeak;
   usage: { durationMs?: number; inputTokens?: number; outputTokens?: number; costUsd: number | null };
 };
 
@@ -397,6 +431,49 @@ function outcomeFor(match: InvoiceLineMatch | undefined, expectedProductId: stri
     return hit ? "doubtful_correct" : "doubtful_wrong";
   }
   return "unmatched";
+}
+
+function sameSupplierAs(predicted: InvoiceExtraction, reference: InvoiceExtraction): boolean {
+  const predTax = predicted.supplier.taxId?.trim() ?? "";
+  const refTax = reference.supplier.taxId?.trim() ?? "";
+  if (predTax && refTax && taxIdsEqual(predTax, refTax)) return true;
+  const predName = normalizeSupplierName(predicted.supplier.name);
+  return predName.length > 0 && predName === normalizeSupplierName(reference.supplier.name);
+}
+
+/**
+ * Fuga del few-shot (caos 6.1): un campo de cabecera predicho (RIF o nombre,
+ * número, total) igual al de alguno de los ejemplos y distinto de la verdad.
+ * "Distinto de la verdad" = el campo no acierta contra la verdad sin ocluir ni
+ * contacto emparejado (comparación cruda de lo leído).
+ */
+export function fewShotHeaderLeak(
+  truth: InvoiceExtraction,
+  predicted: InvoiceExtraction | null,
+  examples: readonly InvoiceExtraction[] | undefined,
+): FewShotLeak {
+  if (!examples || examples.length === 0) return { evaluated: false, leaked: false, fields: [] };
+  if (!predicted) return { evaluated: true, leaked: false, fields: [] };
+  const vsTruth = evaluateHeader(truth, predicted).fields;
+  const fields: HeaderField[] = [];
+  if (!vsTruth.supplier.ok && examples.some((example) => sameSupplierAs(predicted, example))) fields.push("supplier");
+  const number = predicted.number === undefined ? "" : normalizeInvoiceNumber(predicted.number);
+  if (
+    !vsTruth.number.ok &&
+    number.length > 0 &&
+    examples.some((example) => example.number !== undefined && normalizeInvoiceNumber(example.number) === number)
+  ) {
+    fields.push("number");
+  }
+  const total = predicted.total;
+  if (
+    !vsTruth.total.ok &&
+    total !== undefined &&
+    examples.some((example) => example.total !== undefined && moneyEquals(total, example.total))
+  ) {
+    fields.push("total");
+  }
+  return { evaluated: true, leaked: fields.length > 0, fields };
 }
 
 function exactFailures(
@@ -527,6 +604,7 @@ export function evaluateInvoice(input: InvoiceEvalInput): InvoiceMetrics {
   const header = evaluateHeader(truth.extraction, predicted, {
     expectedContactId: input.expectedContactId,
     matchedContactId: matched?.supplier.contactId,
+    ...(truth.occludedHeaderFields ? { occluded: truth.occludedHeaderFields } : {}),
   });
 
   const costUsd =
@@ -557,6 +635,7 @@ export function evaluateInvoice(input: InvoiceEvalInput): InvoiceMetrics {
       correct: duplicateExpected === duplicateDetected,
       falsePositive: duplicateDetected && !duplicateExpected,
     },
+    fewShotLeak: fewShotHeaderLeak(truth.extraction, predicted, input.fewShot),
     usage: {
       durationMs: input.durationMs,
       inputTokens: input.inputTokens,
@@ -679,6 +758,9 @@ export type AggregateMetrics = {
   matchOkRate: number | null;
   confirmedWrongRate: number | null;
   duplicates: { expected: number; detected: number; truePositive: number; falsePositive: number; missed: number };
+  /** Facturas con fuga de cabecera desde el few-shot (meta: 0) y facturas extraídas con few-shot. */
+  fewShotLeaks: number;
+  fewShotEvaluated: number;
   /** p95 (rango más cercano) de duración en facturas de 1 página; null sin datos. */
   p95DurationMs1Page: number | null;
   /** Media de costo sobre facturas con costo conocido; null sin datos. */
@@ -754,6 +836,8 @@ export function aggregateMetrics(list: readonly InvoiceMetrics[]): AggregateMetr
       falsePositive: list.filter((m) => m.duplicate.falsePositive).length,
       missed: list.filter((m) => m.duplicate.expected && !m.duplicate.detected).length,
     },
+    fewShotLeaks: list.filter((m) => m.fewShotLeak.leaked).length,
+    fewShotEvaluated: list.filter((m) => m.fewShotLeak.evaluated).length,
     p95DurationMs1Page: percentile(durations, 95),
     avgCostUsd: costs.length === 0 ? null : costs.reduce((a, b) => a + b, 0) / costs.length,
     costedInvoices: costs.length,
@@ -862,8 +946,10 @@ export type PairConsistency = {
  * Dos escaneos de la misma factura (f02/f03, f07/f16): misma cabecera y mismas
  * líneas alineadas (todas emparejadas 1 a 1 con iguales cantidad, precio y
  * total; y, si se pasa `matched`, mismo estado y producto).
+ * `occluded`: campos de cabecera ocluidos en la verdad de cualquiera de los dos
+ * lados; si un lado los omite no cuentan (si ambos los traen y difieren, sí).
  */
-export function pairConsistency(a: PairSide, b: PairSide): PairConsistency {
+export function pairConsistency(a: PairSide, b: PairSide, occluded: readonly HeaderField[] = []): PairConsistency {
   const ea = a.extraction;
   const eb = b.extraction;
   if (!ea || !eb) {
@@ -898,6 +984,13 @@ export function pairConsistency(a: PairSide, b: PairSide): PairConsistency {
       ? ea.total === eb.total
       : moneyEquals(ea.total, eb.total);
   if (!totalSame) headerDiffs.push("total");
+  // Campo ocluido en la verdad y omitido por un lado: no cuenta.
+  const omitted = (e: InvoiceExtraction, field: HeaderField): boolean =>
+    field === "supplier" ? !e.supplier.taxId && !e.supplier.name : (e[field] ?? "") === "";
+  const excused = headerDiffs.filter(
+    (field) => occluded.includes(field) && (omitted(ea, field) || omitted(eb, field)),
+  );
+  excused.forEach((field) => headerDiffs.splice(headerDiffs.indexOf(field), 1));
 
   // alignLines(predicted=B, truth=A): truthIndex es el índice en A.
   const pairs = alignLines(eb.lines, ea.lines);

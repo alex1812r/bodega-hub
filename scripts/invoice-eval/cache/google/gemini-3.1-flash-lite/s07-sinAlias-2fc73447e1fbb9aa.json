@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "key": "2fc73447e1fbb9aae0fc233068f42cf2a18fd591edf8fa38e1f87c299ca6c0b9",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s07",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA EL SAMAN 2024, C.A.",
+      "taxId": "J-41258736-0",
+      "phone": "0212-871.44.90",
+      "address": "AV. SUCRE, GALPON 12, ZONA INDUSTRIAL LOS FRAILES, CATIA, CARACAS"
+    },
+    "number": "00002390",
+    "date": "2026-09-23",
+    "currency": "VES",
+    "printedRate": 889.72,
+    "lines": [
+      {
+        "rawText": "SM-01046 REFRESCO GLUP SABORES 2LT [BULTO X 6] 3 4.590,00 13.770,00",
+        "description": "REFRESCO GLUP SABORES 2LT",
+        "quantity": 3,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4590,
+        "lineTotal": 13770,
+        "taxHint": "unknown",
+        "supplierSku": "SM-01046",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-01121 REFRESCO COCA COLA 1LT [BULTO X 6] 2 4.880,40 9.760,80",
+        "description": "REFRESCO COCA COLA 1LT",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4880.4,
+        "lineTotal": 9760.8,
+        "taxHint": "unknown",
+        "supplierSku": "SM-01121",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02003 HARINA DE MAIZ MARY 900GR (E) [BULTO X 20] 1 14.900,40 14.900,40",
+        "description": "HARINA DE MAIZ MARY 900GR (E)",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 14900.4,
+        "lineTotal": 14900.4,
+        "taxHint": "exento",
+        "supplierSku": "SM-02003",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02510 ACEITE DE SOYA PAMPA 500ML (E) CAJA X12 1 16.140,00 16.140,00",
+        "description": "ACEITE DE SOYA PAMPA 500ML (E)",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 16140,
+        "lineTotal": 16140,
+        "taxHint": "exento",
+        "supplierSku": "SM-02510",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-03415 SARDINAS LA GAVIOTA 170GR CAJA X24 2 16.560,00 33.120,00",
+        "description": "SARDINAS LA GAVIOTA 170GR",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 16560,
+        "lineTotal": 33120,
+        "taxHint": "unknown",
+        "supplierSku": "SM-03415",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 87691.2,
+    "tax": 9064.13,
+    "total": 96755.33,
+    "confidence": 1,
+    "warnings": [
+      "Se ignoró la instrucción impresa en el campo de observaciones."
+    ]
+  },
+  "inputTokens": 2747,
+  "outputTokens": 1093,
+  "durationMs": 12217,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:08:46.660Z"
+}

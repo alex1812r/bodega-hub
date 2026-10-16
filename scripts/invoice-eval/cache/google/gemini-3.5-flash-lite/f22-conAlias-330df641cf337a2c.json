@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "key": "330df641cf337a2cb00fc283974709ae912cb5e013e1dbeb28d48404e18783bc",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f22",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "f05",
+    "f20"
+  ],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C.A.",
+      "taxId": "J-506040310",
+      "address": "CALLE 500 EDIF LIRIO PISO PB LOCAL 1 Y 2 URB QTA CRESPO CARACAS DISTRITO CAPITAL SUCURSAL CALLES SUR 2 Y SUR 4 EDIF DECA CENTRO PB SECTOR QUINTA CRESPO PARROQUIA SANTA TERESA CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00002988",
+    "date": "2026-09-07",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "CAFE SAN DOMINGO 200G (E) |[DOC X 12.0]|",
+        "description": "Café San Domingo 200g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 23460.01,
+        "lineTotal": 23460.01,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "SARDINA MARBONITA 170G |[DOC X 12.0]|",
+        "description": "Sardina Marbonita 170g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 5022.72,
+        "lineTotal": 5022.72,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "SALSA ESPAGUETTIS GUT 34G |[CRISTRA X 18.0]|",
+        "description": "Salsa espaguettis Gut 34g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 18,
+        "unitPrice": 8509.16,
+        "lineTotal": 8509.16,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "COLORANTE AMPARITO GUT 20G |[CBLISTER X 18.0]|",
+        "description": "Colorante Amparito Gut 20g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 18,
+        "unitPrice": 4166.89,
+        "lineTotal": 4166.89,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "ADOBO COMPLETO GUT 24G |[CBLISTER X 18.0]|",
+        "description": "Adobo completo Gut 24g",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 18,
+        "unitPrice": 5247.2,
+        "lineTotal": 5247.2,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "AVENA EN HOJUELA EL MAIZALITO 400GR (E) |[DOC X 12.0]|",
+        "description": "Avena en hojuela El Maizalito 400gr",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 9772.97,
+        "lineTotal": 9772.97,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "AROMAX LAVANDA 100G |[CAJT X 24.0]|",
+        "description": "Aromax lavanda 100g",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 3283,
+        "lineTotal": 3283,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "TOALLA HUMEDA BABY FINGER 50UND |[DOC X 12.0]|",
+        "description": "Toalla húmeda Baby Finger 50und",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 8474.08,
+        "lineTotal": 8474.08,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "SUAVIZATEL ALIVE LAVANDA 200ML |[DOC X 12.0]|",
+        "description": "Suavizatel Alive lavanda 200ml",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 4293.16,
+        "lineTotal": 4293.16,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "CREMA D. COLGATE TRIPLE ACCION 60 CC |[DOC X 12.0]|",
+        "description": "Crema dental Colgate Triple Acción 60 cc",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 11722.01,
+        "lineTotal": 11722.01,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "PROTECTOR DIARIO ALIVE 20PC |[DOC X 12.0]|",
+        "description": "Protector diario Alive 20pc",
+        "quantity": 1,
+        "unit": "otro",
+        "unitsPerPack": 12,
+        "unitPrice": 6032.87,
+        "lineTotal": 6032.87,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 89984.07,
+    "tax": 9080.17,
+    "total": 99064.24,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 5711,
+  "outputTokens": 1684,
+  "durationMs": 5700,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:03:02.347Z"
+}

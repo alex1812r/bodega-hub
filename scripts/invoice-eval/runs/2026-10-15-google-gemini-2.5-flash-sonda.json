@@ -1,0 +1,938 @@
+{
+  "run": {
+    "mode": "model",
+    "label": "sonda",
+    "requested": {
+      "provider": "google",
+      "model": "gemini-2.5-flash"
+    },
+    "fewShot": false,
+    "only": [
+      "f01"
+    ],
+    "quotaCut": false,
+    "quotaSkipped": 0,
+    "resume": true,
+    "cache": {
+      "enabled": true,
+      "hits": 0,
+      "calls": 1,
+      "errors": 0,
+      "invalid": 0,
+      "dir": "scripts/invoice-eval/cache"
+    },
+    "pending": []
+  },
+  "meta": {
+    "provider": "google",
+    "modelId": "gemini-2.5-flash",
+    "date": "2026-10-16T03:03:18.976Z",
+    "fewShot": false,
+    "invoices": {
+      "real": 1,
+      "synthetic": 0
+    }
+  },
+  "perInvoice": [
+    {
+      "id": "f01",
+      "synthetic": false,
+      "bucket": "sinAlias",
+      "metrics": {
+        "id": "f01",
+        "bucket": "sinAlias",
+        "synthetic": false,
+        "pageCount": 1,
+        "header": {
+          "fields": {
+            "supplier": {
+              "evaluated": true,
+              "ok": true,
+              "expected": "508357612",
+              "predicted": "CHEVERE DEPOT, C.A"
+            },
+            "date": {
+              "evaluated": true,
+              "ok": true,
+              "expected": "2026-10-12",
+              "predicted": "2026-10-12"
+            },
+            "number": {
+              "evaluated": true,
+              "ok": true,
+              "expected": "00006894",
+              "predicted": "00006894"
+            },
+            "total": {
+              "evaluated": true,
+              "ok": true,
+              "expected": 40516.32,
+              "predicted": 40516.32
+            }
+          },
+          "okCount": 4,
+          "evaluatedCount": 4,
+          "headerScore": 1,
+          "headerAllOk": true
+        },
+        "pairs": [
+          {
+            "predictedIndex": 0,
+            "truthIndex": 0,
+            "score": 1
+          },
+          {
+            "predictedIndex": 1,
+            "truthIndex": 1,
+            "score": 1
+          },
+          {
+            "predictedIndex": 2,
+            "truthIndex": 2,
+            "score": 1
+          },
+          {
+            "predictedIndex": 3,
+            "truthIndex": 3,
+            "score": 0.9647058823529411
+          },
+          {
+            "predictedIndex": 4,
+            "truthIndex": 4,
+            "score": 1
+          },
+          {
+            "predictedIndex": 5,
+            "truthIndex": 5,
+            "score": 1
+          }
+        ],
+        "lines": {
+          "tp": 6,
+          "fp": 0,
+          "fn": 0,
+          "rate": 1,
+          "invented": [],
+          "lost": []
+        },
+        "exact": {
+          "ok": 6,
+          "total": 6,
+          "rate": 1,
+          "failures": []
+        },
+        "matching": {
+          "perLine": [
+            {
+              "truthIndex": 0,
+              "predictedIndex": 0,
+              "productKey": "glup-cola-2l",
+              "expectedProductId": "8ab45439-3016-426c-82df-1a66473e2996",
+              "outcome": "doubtful_correct"
+            },
+            {
+              "truthIndex": 1,
+              "predictedIndex": 1,
+              "productKey": "glup-sabores-2l",
+              "expectedProductId": "1c8f15c3-82a1-4dd8-a9bd-8a5e32a4efb4",
+              "outcome": "doubtful_correct"
+            },
+            {
+              "truthIndex": 2,
+              "predictedIndex": 2,
+              "productKey": "glup-sabores-1l",
+              "expectedProductId": "df456002-ebe3-44f6-94ff-78740aa8bc56",
+              "outcome": "doubtful_correct"
+            },
+            {
+              "truthIndex": 3,
+              "predictedIndex": 3,
+              "productKey": "justy-1.5l",
+              "expectedProductId": "c4cd2b2d-f982-4441-8f38-105efb5b7e93",
+              "outcome": "doubtful_correct"
+            },
+            {
+              "truthIndex": 4,
+              "predictedIndex": 4,
+              "productKey": "justy-400ml",
+              "expectedProductId": "dcefaf10-784e-4b9a-bf00-e54ad940005b",
+              "outcome": "doubtful_correct"
+            },
+            {
+              "truthIndex": 5,
+              "predictedIndex": 5,
+              "productKey": "coca-cola-1l",
+              "expectedProductId": "7b2a24c9-9b0c-44cf-81f7-7c708fbc65eb",
+              "outcome": "doubtful_correct"
+            }
+          ],
+          "counts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 6,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "inCatalog": 6,
+          "evaluated": 6,
+          "okRate": 1,
+          "confirmedWrongRate": 0
+        },
+        "duplicate": {
+          "expected": false,
+          "detected": false,
+          "correct": true,
+          "falsePositive": false
+        },
+        "usage": {
+          "durationMs": 14928,
+          "inputTokens": 1585,
+          "outputTokens": 3195,
+          "costUsd": 0.008463
+        }
+      },
+      "durationMs": 14928,
+      "tokens": {
+        "input": 1585,
+        "output": 3195
+      },
+      "costUsd": 0.008463,
+      "reusedExtraction": false,
+      "fewShotIds": [],
+      "fromCache": false,
+      "predicted": {
+        "supplier": {
+          "name": "CHEVERE DEPOT, C.A"
+        },
+        "number": "00006894",
+        "date": "2026-10-12",
+        "currency": "VES",
+        "printedRate": 875.65,
+        "lines": [
+          {
+            "rawText": "GLUP COLA 2L 1,00 x 5.726,75 [BULTO X 6,00]",
+            "description": "GLUP COLA 2L",
+            "quantity": 1,
+            "unit": "bulto",
+            "unitsPerPack": 6,
+            "unitPrice": 5726.75,
+            "lineTotal": 5726.75,
+            "taxHint": "unknown",
+            "confidence": 1
+          },
+          {
+            "rawText": "GLUP SABORES 2L 2,00 x 4.562,14 [BULTO X 6,00]",
+            "description": "GLUP SABORES 2L",
+            "quantity": 2,
+            "unit": "bulto",
+            "unitsPerPack": 6,
+            "unitPrice": 4562.14,
+            "lineTotal": 9124.28,
+            "taxHint": "unknown",
+            "confidence": 1
+          },
+          {
+            "rawText": "GLUP SABORES 1L 1,00 x 6.943,90 [BULTO X 12,00]",
+            "description": "GLUP SABORES 1L",
+            "quantity": 1,
+            "unit": "bulto",
+            "unitsPerPack": 12,
+            "unitPrice": 6943.9,
+            "lineTotal": 6943.9,
+            "taxHint": "unknown",
+            "confidence": 1
+          },
+          {
+            "rawText": "JUSTY 1.5 1,00 x 9.570,85 [BULTO X 12,00]",
+            "description": "JUSTY 1.5",
+            "quantity": 1,
+            "unit": "bulto",
+            "unitsPerPack": 12,
+            "unitPrice": 9570.85,
+            "lineTotal": 9570.85,
+            "taxHint": "unknown",
+            "confidence": 1
+          },
+          {
+            "rawText": "JUSTY 400ML 1,00 x 4.299,44 [BULTO X 15,00]",
+            "description": "JUSTY 400ML",
+            "quantity": 1,
+            "unit": "bulto",
+            "unitsPerPack": 15,
+            "unitPrice": 4299.44,
+            "lineTotal": 4299.44,
+            "taxHint": "unknown",
+            "confidence": 1
+          },
+          {
+            "rawText": "COCA COLA 1L 1,00 x 4.851,10 [BULTO X 6,00]",
+            "description": "COCA COLA 1L",
+            "quantity": 1,
+            "unit": "bulto",
+            "unitsPerPack": 6,
+            "unitPrice": 4851.1,
+            "lineTotal": 4851.1,
+            "taxHint": "unknown",
+            "confidence": 1
+          }
+        ],
+        "subtotal": 40516.32,
+        "tax": 0,
+        "total": 40516.32,
+        "confidence": 1,
+        "warnings": [
+          "Supplier address not found.",
+          "Supplier phone not found.",
+          "Supplier tax ID (RIF) not found in the expected format.",
+          "No explicit tax breakdown found; tax is assumed to be 0."
+        ]
+      },
+      "matched": {
+        "supplier": {
+          "contactId": "00ffca42-10aa-4e53-96a3-c03c147fa39c",
+          "candidates": [
+            {
+              "contactId": "00ffca42-10aa-4e53-96a3-c03c147fa39c",
+              "name": "Chevere Depot",
+              "score": 0.8235,
+              "reason": "nombre parecido 0,82"
+            }
+          ]
+        },
+        "lines": [
+          {
+            "index": 0,
+            "status": "doubtful",
+            "candidates": [
+              {
+                "productId": "8ab45439-3016-426c-82df-1a66473e2996",
+                "name": "Glup Cola 2 Lt",
+                "score": 0.6471,
+                "reason": "nombre parecido 0,65 · vinculado al proveedor"
+              }
+            ],
+            "entryMode": "pack",
+            "unitsPerPack": 6,
+            "taxRateCode": "general",
+            "unitCostVes": 5726.75,
+            "unitCostRef": 6.54,
+            "issues": [
+              "No hay empaque registrado de 6 unidades para este proveedor: confirma las unidades por empaque."
+            ]
+          },
+          {
+            "index": 1,
+            "status": "doubtful",
+            "candidates": [
+              {
+                "productId": "1c8f15c3-82a1-4dd8-a9bd-8a5e32a4efb4",
+                "name": "Glup Sabores 2 Lt",
+                "score": 0.7,
+                "reason": "nombre parecido 0,70 · vinculado al proveedor"
+              },
+              {
+                "productId": "df456002-ebe3-44f6-94ff-78740aa8bc56",
+                "name": "Glup Sabores 1 Lt",
+                "score": 0.619,
+                "reason": "nombre parecido 0,62 · vinculado al proveedor"
+              }
+            ],
+            "entryMode": "pack",
+            "unitsPerPack": 6,
+            "taxRateCode": "general",
+            "unitCostVes": 4562.14,
+            "unitCostRef": 5.21,
+            "issues": [
+              "No hay empaque registrado de 6 unidades para este proveedor: confirma las unidades por empaque."
+            ]
+          },
+          {
+            "index": 2,
+            "status": "doubtful",
+            "candidates": [
+              {
+                "productId": "df456002-ebe3-44f6-94ff-78740aa8bc56",
+                "name": "Glup Sabores 1 Lt",
+                "score": 0.7,
+                "reason": "nombre parecido 0,70 · vinculado al proveedor"
+              },
+              {
+                "productId": "1c8f15c3-82a1-4dd8-a9bd-8a5e32a4efb4",
+                "name": "Glup Sabores 2 Lt",
+                "score": 0.619,
+                "reason": "nombre parecido 0,62 · vinculado al proveedor"
+              }
+            ],
+            "entryMode": "pack",
+            "unitsPerPack": 12,
+            "taxRateCode": "general",
+            "unitCostVes": 6943.9,
+            "unitCostRef": 7.93,
+            "issues": [
+              "No hay empaque registrado de 12 unidades para este proveedor: confirma las unidades por empaque."
+            ]
+          },
+          {
+            "index": 3,
+            "status": "doubtful",
+            "candidates": [
+              {
+                "productId": "c4cd2b2d-f982-4441-8f38-105efb5b7e93",
+                "name": "Justy 1,5 Lt",
+                "score": 0.7692,
+                "reason": "nombre parecido 0,77 · vinculado al proveedor"
+              }
+            ],
+            "entryMode": "pack",
+            "unitsPerPack": 12,
+            "taxRateCode": "general",
+            "unitCostVes": 9570.85,
+            "unitCostRef": 10.93,
+            "issues": [
+              "No hay empaque registrado de 12 unidades para este proveedor: confirma las unidades por empaque."
+            ]
+          },
+          {
+            "index": 4,
+            "status": "doubtful",
+            "candidates": [
+              {
+                "productId": "dcefaf10-784e-4b9a-bf00-e54ad940005b",
+                "name": "Justy pequeño 400 ml",
+                "score": 0.619,
+                "reason": "nombre parecido 0,62 · vinculado al proveedor"
+              }
+            ],
+            "entryMode": "pack",
+            "unitsPerPack": 15,
+            "taxRateCode": "general",
+            "unitCostVes": 4299.44,
+            "unitCostRef": 4.91,
+            "issues": [
+              "No hay empaque registrado de 15 unidades para este proveedor: confirma las unidades por empaque."
+            ]
+          },
+          {
+            "index": 5,
+            "status": "doubtful",
+            "candidates": [
+              {
+                "productId": "7b2a24c9-9b0c-44cf-81f7-7c708fbc65eb",
+                "name": "Coca Cola 1L",
+                "score": 1,
+                "reason": "nombre parecido 1,00 · vinculado al proveedor"
+              }
+            ],
+            "entryMode": "pack",
+            "unitsPerPack": 6,
+            "taxRateCode": "general",
+            "unitCostVes": 4851.1,
+            "unitCostRef": 5.54,
+            "issues": [
+              "No hay empaque registrado de 6 unidades para este proveedor: confirma las unidades por empaque."
+            ]
+          }
+        ],
+        "totals": {
+          "read": 40516.32,
+          "computed": 40516.32,
+          "mismatch": false
+        },
+        "rate": {
+          "system": 875.65,
+          "printed": 875.65
+        }
+      }
+    }
+  ],
+  "global": {
+    "all": {
+      "total": {
+        "invoices": 1,
+        "headerFieldsOk": 4,
+        "headerFieldsEvaluated": 4,
+        "headerFieldRate": 1,
+        "headerAllOkCount": 1,
+        "headerAllOkRate": 1,
+        "linesTp": 6,
+        "linesFp": 0,
+        "linesFn": 0,
+        "linesDetectedRate": 1,
+        "exactOk": 6,
+        "exactTotal": 6,
+        "exactRate": 1,
+        "matchCounts": {
+          "confirmed_correct": 0,
+          "doubtful_correct": 6,
+          "confirmed_wrong": 0,
+          "doubtful_wrong": 0,
+          "unmatched": 0,
+          "lost": 0,
+          "ok_none": 0
+        },
+        "matchInCatalog": 6,
+        "matchEvaluated": 6,
+        "matchOkRate": 1,
+        "confirmedWrongRate": 0,
+        "duplicates": {
+          "expected": 0,
+          "detected": 0,
+          "truePositive": 0,
+          "falsePositive": 0,
+          "missed": 0
+        },
+        "p95DurationMs1Page": 14928,
+        "avgCostUsd": 0.008463,
+        "costedInvoices": 1,
+        "inputTokens": 1585,
+        "outputTokens": 3195
+      },
+      "byBucket": {
+        "sinAlias": {
+          "invoices": 1,
+          "headerFieldsOk": 4,
+          "headerFieldsEvaluated": 4,
+          "headerFieldRate": 1,
+          "headerAllOkCount": 1,
+          "headerAllOkRate": 1,
+          "linesTp": 6,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": 1,
+          "exactOk": 6,
+          "exactTotal": 6,
+          "exactRate": 1,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 6,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 6,
+          "matchEvaluated": 6,
+          "matchOkRate": 1,
+          "confirmedWrongRate": 0,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": 14928,
+          "avgCostUsd": 0.008463,
+          "costedInvoices": 1,
+          "inputTokens": 1585,
+          "outputTokens": 3195
+        },
+        "conAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        }
+      }
+    },
+    "real": {
+      "total": {
+        "invoices": 1,
+        "headerFieldsOk": 4,
+        "headerFieldsEvaluated": 4,
+        "headerFieldRate": 1,
+        "headerAllOkCount": 1,
+        "headerAllOkRate": 1,
+        "linesTp": 6,
+        "linesFp": 0,
+        "linesFn": 0,
+        "linesDetectedRate": 1,
+        "exactOk": 6,
+        "exactTotal": 6,
+        "exactRate": 1,
+        "matchCounts": {
+          "confirmed_correct": 0,
+          "doubtful_correct": 6,
+          "confirmed_wrong": 0,
+          "doubtful_wrong": 0,
+          "unmatched": 0,
+          "lost": 0,
+          "ok_none": 0
+        },
+        "matchInCatalog": 6,
+        "matchEvaluated": 6,
+        "matchOkRate": 1,
+        "confirmedWrongRate": 0,
+        "duplicates": {
+          "expected": 0,
+          "detected": 0,
+          "truePositive": 0,
+          "falsePositive": 0,
+          "missed": 0
+        },
+        "p95DurationMs1Page": 14928,
+        "avgCostUsd": 0.008463,
+        "costedInvoices": 1,
+        "inputTokens": 1585,
+        "outputTokens": 3195
+      },
+      "byBucket": {
+        "sinAlias": {
+          "invoices": 1,
+          "headerFieldsOk": 4,
+          "headerFieldsEvaluated": 4,
+          "headerFieldRate": 1,
+          "headerAllOkCount": 1,
+          "headerAllOkRate": 1,
+          "linesTp": 6,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": 1,
+          "exactOk": 6,
+          "exactTotal": 6,
+          "exactRate": 1,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 6,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 6,
+          "matchEvaluated": 6,
+          "matchOkRate": 1,
+          "confirmedWrongRate": 0,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": 14928,
+          "avgCostUsd": 0.008463,
+          "costedInvoices": 1,
+          "inputTokens": 1585,
+          "outputTokens": 3195
+        },
+        "conAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        }
+      }
+    },
+    "synthetic": {
+      "total": {
+        "invoices": 0,
+        "headerFieldsOk": 0,
+        "headerFieldsEvaluated": 0,
+        "headerFieldRate": null,
+        "headerAllOkCount": 0,
+        "headerAllOkRate": null,
+        "linesTp": 0,
+        "linesFp": 0,
+        "linesFn": 0,
+        "linesDetectedRate": null,
+        "exactOk": 0,
+        "exactTotal": 0,
+        "exactRate": null,
+        "matchCounts": {
+          "confirmed_correct": 0,
+          "doubtful_correct": 0,
+          "confirmed_wrong": 0,
+          "doubtful_wrong": 0,
+          "unmatched": 0,
+          "lost": 0,
+          "ok_none": 0
+        },
+        "matchInCatalog": 0,
+        "matchEvaluated": 0,
+        "matchOkRate": null,
+        "confirmedWrongRate": null,
+        "duplicates": {
+          "expected": 0,
+          "detected": 0,
+          "truePositive": 0,
+          "falsePositive": 0,
+          "missed": 0
+        },
+        "p95DurationMs1Page": null,
+        "avgCostUsd": null,
+        "costedInvoices": 0,
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "byBucket": {
+        "sinAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "conAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        }
+      }
+    }
+  },
+  "pairs": [],
+  "targets": {
+    "ok": true,
+    "checks": [
+      {
+        "scope": "sinAlias",
+        "metric": "headerFieldRate",
+        "value": 1,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "linesDetectedRate",
+        "value": 1,
+        "target": 0.95,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "exactRate",
+        "value": 1,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "matchOkRate",
+        "value": 1,
+        "target": 0.7,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "confirmedWrongRate",
+        "value": 0,
+        "target": 0.02,
+        "comparator": "<=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "headerFieldRate",
+        "value": null,
+        "target": 0.95,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "linesDetectedRate",
+        "value": null,
+        "target": 0.95,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "exactRate",
+        "value": null,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "matchOkRate",
+        "value": null,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "confirmedWrongRate",
+        "value": null,
+        "target": 0.02,
+        "comparator": "<=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "total",
+        "metric": "p95DurationMs1Page",
+        "value": 14928,
+        "target": 15000,
+        "comparator": "<=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "total",
+        "metric": "avgCostUsd",
+        "value": 0.008463,
+        "target": 0.01,
+        "comparator": "<=",
+        "skipped": false,
+        "ok": true
+      }
+    ]
+  }
+}

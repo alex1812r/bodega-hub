@@ -8,6 +8,8 @@
  *   empaques activos y los alias aprendidos en `confirmScan.mock-server.ts`;
  * - difusos por línea: productos activos con nombre parecido (≥ 0,6) a la
  *   descripción y alias del proveedor más probable parecidos al `rawText`;
+ *   a las líneas sin ninguno, segunda pasada con los textos limpios de
+ *   `searchTextVariants` (como `loadVariantFuzzy`, SCN-11-it1);
  * - alícuotas activas de la tienda, tasa vigente y escaneos previos con el
  *   mismo número normalizado.
  *
@@ -33,7 +35,12 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import type { InvoiceExtraction } from "../contracts";
 
 import { listMockLearnedAliases } from "./confirmScan.mock-server";
-import { MATCH_CANDIDATES_PER_LINE, PREVIOUS_SCANS_LIMIT, taxRateKind } from "./loadMatchContext";
+import {
+  MATCH_CANDIDATES_MAX_TEXTS,
+  MATCH_CANDIDATES_PER_LINE,
+  PREVIOUS_SCANS_LIMIT,
+  taxRateKind,
+} from "./loadMatchContext";
 import type {
   MatchContext,
   MatchFuzzyCandidate,
@@ -42,6 +49,7 @@ import type {
   MatchSupplierCandidate,
   MatchSupplierCatalog,
 } from "./match.types";
+import { searchTextVariants } from "./match/searchText";
 import { normalizeInvoiceNumber, normalizeTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
 
@@ -138,6 +146,38 @@ function products(storeId: string): MatchProduct[] {
     });
 }
 
+/** Candidatos de UN texto (alias contra `text`, nombres contra `description`), como una fila de la RPC. */
+function candidatesFor(
+  text: string,
+  description: string,
+  catalog: MatchSupplierCatalog | undefined,
+  storeProducts: MatchProduct[],
+): MatchFuzzyCandidate[] {
+  const best = new Map<string, MatchFuzzyCandidate>();
+  const offer = (candidate: MatchFuzzyCandidate) => {
+    const previous = best.get(candidate.productId);
+    // Uno por producto: el mejor; empate -> alias (como la RPC).
+    if (!previous || candidate.score > previous.score || (candidate.score === previous.score && candidate.via === "alias")) {
+      best.set(candidate.productId, candidate);
+    }
+  };
+
+  for (const alias of catalog?.aliases ?? []) {
+    const score = textSimilarity(alias.aliasNorm, text);
+    if (score >= FUZZY_MIN_SCORE) {
+      offer({ productId: alias.productId, score, via: "alias" });
+    }
+  }
+  for (const product of storeProducts) {
+    const score = product.active ? textSimilarity(product.name, description) : 0;
+    if (score >= FUZZY_MIN_SCORE) {
+      offer({ productId: product.id, score, via: "name" });
+    }
+  }
+
+  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, MATCH_CANDIDATES_PER_LINE);
+}
+
 function fuzzyCandidates(
   extraction: InvoiceExtraction,
   catalog: MatchSupplierCatalog | undefined,
@@ -148,29 +188,32 @@ function fuzzyCandidates(
   extraction.lines.forEach((line, index) => {
     const text = normalizeAlias(line.rawText);
     const description = normalizeAlias(line.description || line.rawText);
-    const best = new Map<string, MatchFuzzyCandidate>();
-    const offer = (candidate: MatchFuzzyCandidate) => {
-      const previous = best.get(candidate.productId);
-      // Uno por producto: el mejor; empate -> alias (como la RPC).
-      if (!previous || candidate.score > previous.score || (candidate.score === previous.score && candidate.via === "alias")) {
-        best.set(candidate.productId, candidate);
-      }
-    };
+    const list = candidatesFor(text, description, catalog, storeProducts);
+    if (list.length > 0) {
+      fuzzy[index] = list;
+    }
+  });
 
-    for (const alias of catalog?.aliases ?? []) {
-      const score = textSimilarity(alias.aliasNorm, text);
-      if (score >= FUZZY_MIN_SCORE) {
-        offer({ productId: alias.productId, score, via: "alias" });
+  // Segunda pasada (paridad con `loadVariantFuzzy`): solo líneas sin candidatos, mejor score por producto.
+  let budget = MATCH_CANDIDATES_MAX_TEXTS;
+  extraction.lines.forEach((line, index) => {
+    if (fuzzy[index]) {
+      return;
+    }
+    const byProduct = new Map<string, MatchFuzzyCandidate>();
+    for (const text of searchTextVariants(line)) {
+      if (budget <= 0) {
+        break;
+      }
+      budget -= 1;
+      for (const candidate of candidatesFor(text, text, catalog, storeProducts)) {
+        const previous = byProduct.get(candidate.productId);
+        if (!previous || candidate.score > previous.score) {
+          byProduct.set(candidate.productId, candidate);
+        }
       }
     }
-    for (const product of storeProducts) {
-      const score = product.active ? textSimilarity(product.name, description) : 0;
-      if (score >= FUZZY_MIN_SCORE) {
-        offer({ productId: product.id, score, via: "name" });
-      }
-    }
-
-    const list = [...best.values()].sort((a, b) => b.score - a.score).slice(0, MATCH_CANDIDATES_PER_LINE);
+    const list = [...byProduct.values()].sort((a, b) => b.score - a.score).slice(0, MATCH_CANDIDATES_PER_LINE);
     if (list.length > 0) {
       fuzzy[index] = list;
     }
@@ -189,25 +232,38 @@ function systemRate(storeId: string): number | undefined {
 
 function previousScans(storeId: string, extraction: InvoiceExtraction, excludeScanId?: string): MatchPreviousScan[] {
   const number = normalizeInvoiceNumber(extraction.number);
-  if (!number) {
-    return [];
-  }
+  // Paridad con `loadPreviousScansByDateTotal`: mismo total (±0,01, al céntimo) y fecha si se leyó.
+  const total = extraction.total;
+  const date = extraction.date?.trim();
+  const cents = typeof total === "number" && Number.isFinite(total) && total > 0 && (date || !number) ? Math.round(total * 100) : undefined;
+  const live = listMockScansOfStore(storeId).filter(
+    (scan) => scan.id !== excludeScanId && scan.status !== "discarded" && scan.status !== "failed",
+  );
+  const byNumber = number
+    ? live.filter((scan) => normalizeInvoiceNumber(scan.extracted?.number) === number).slice(0, PREVIOUS_SCANS_LIMIT)
+    : [];
+  const byDateTotal =
+    cents === undefined
+      ? []
+      : live
+          .filter((scan) => {
+            const scanTotal = scan.extracted?.total;
+            return (
+              typeof scanTotal === "number" &&
+              Math.abs(Math.round(scanTotal * 100) - cents) <= 1 &&
+              (!date || scan.extracted?.date === date)
+            );
+          })
+          .slice(0, PREVIOUS_SCANS_LIMIT);
 
-  return listMockScansOfStore(storeId)
-    .filter(
-      (scan) =>
-        scan.id !== excludeScanId &&
-        scan.status !== "discarded" &&
-        scan.status !== "failed" &&
-        normalizeInvoiceNumber(scan.extracted?.number) === number,
-    )
-    .slice(0, PREVIOUS_SCANS_LIMIT)
-    .map((scan) => ({
-      scanId: scan.id,
-      supplierId: scan.supplierId ?? scan.matched?.supplier.contactId ?? null,
-      supplierTaxId: scan.extracted?.supplier.taxId ?? null,
-      number: scan.extracted?.number ?? null,
-    }));
+  return [...byNumber, ...byDateTotal.filter((scan) => !byNumber.includes(scan))].map((scan) => ({
+    scanId: scan.id,
+    supplierId: scan.supplierId ?? scan.matched?.supplier.contactId ?? null,
+    supplierTaxId: scan.extracted?.supplier.taxId ?? null,
+    number: scan.extracted?.number ?? null,
+    date: scan.extracted?.date,
+    total: scan.extracted?.total,
+  }));
 }
 
 /** Contexto de `matchInvoice` para la tienda `storeId` en modo mock. Ver la cabecera. */

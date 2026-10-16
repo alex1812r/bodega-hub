@@ -3,7 +3,9 @@
  *
  * SCN-10f · catálogo del escenario contra las verdades del banco (puro, sin base).
  */
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { normalizeTaxId } from "../../src/modules/invoice-scan/server/match/text";
 
@@ -16,7 +18,7 @@ import {
   scenarioSku,
 } from "./scenario/catalog";
 import { interpolateRate, plannedExchangeRates, plannedPurchases, productCostSources } from "./scenario/plan";
-import { assertScenarioEnv } from "./seed-lab";
+import { assertScenarioEnv, withSeedLabLock } from "./seed-lab";
 import { loadTruth } from "./truth";
 
 const truths = loadTruth(resolve(__dirname, "truth"));
@@ -243,5 +245,90 @@ describe("assertScenarioEnv", () => {
       assertScenarioEnv({ ...GOOD_ENV, STOCK_LAB_DB_URL: "postgresql://u:p@db.example.supabase.co:5432/postgres" }),
     ).toThrow();
     expect(() => assertScenarioEnv({ ...GOOD_ENV, NEXT_PUBLIC_SUPABASE_URL: "https://abc.supabase.co" })).toThrow();
+  });
+});
+
+describe("SCN-10-F6: seed toma y respeta lab.lock", () => {
+  const MIN = 60_000;
+  let dir: string;
+  let lock: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "seed-lock-"));
+    lock = join(dir, "lab.lock");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** Reloj falso: `sleep` lo avanza; `onSleep` deja simular que el otro dueño suelta el cerrojo. */
+  function clock(start: Date, onSleep?: (elapsedMs: number) => void) {
+    let t = start.getTime();
+    const sleeps: number[] = [];
+    const logs: string[] = [];
+    return {
+      sleeps,
+      logs,
+      deps: {
+        now: () => new Date(t),
+        sleep: async (ms: number) => {
+          sleeps.push(ms);
+          t += ms;
+          onSleep?.(t - start.getTime());
+        },
+        log: (message: string) => logs.push(message),
+      },
+    };
+  }
+  function foreignLock(holder: string, ageMs: number, now: Date): void {
+    writeFileSync(lock, `${holder}\n`);
+    const mtime = new Date(now.getTime() - ageMs);
+    utimesSync(lock, mtime, mtime);
+  }
+
+  it("libre: lo toma con 'evaluacion-seed <ISO>' y lo libera al terminar (también si falla)", async () => {
+    const now = new Date("2026-10-16T05:00:00.000Z");
+    const c = clock(now);
+    let seen = "";
+    await withSeedLabLock(lock, async () => {
+      seen = readFileSync(lock, "utf8").trim();
+    }, c.deps);
+    expect(seen).toBe("evaluacion-seed 2026-10-16T05:00:00.000Z");
+    expect(existsSync(lock)).toBe(false);
+
+    await expect(withSeedLabLock(lock, async () => { throw new Error("boom"); }, c.deps)).rejects.toThrow("boom");
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("dueño ajeno reciente: espera reintentando cada 30 s y escribe cuando se libera", async () => {
+    const now = new Date("2026-10-16T05:00:00.000Z");
+    foreignLock("ui-qa SCN-08 04:55Z", 5 * MIN, now);
+    const c = clock(now, (elapsed) => {
+      if (elapsed >= 2 * MIN) rmSync(lock, { force: true });
+    });
+    const run = jest.fn(async () => readFileSync(lock, "utf8").trim());
+    const holder = await withSeedLabLock(lock, run, c.deps);
+    expect(c.sleeps).toEqual([30_000, 30_000, 30_000, 30_000]);
+    expect(holder).toMatch(/^evaluacion-seed /);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("dueño ajeno reciente que no suelta: aborta a los 15 min sin escribir ni tocar su cerrojo", async () => {
+    const now = new Date("2026-10-16T05:00:00.000Z");
+    foreignLock("ui-qa SCN-08 04:55Z", 1 * MIN, now);
+    const c = clock(now);
+    const run = jest.fn(async () => undefined);
+    await expect(withSeedLabLock(lock, run, c.deps)).rejects.toThrow(/ui-qa SCN-08 04:55Z/);
+    expect(run).not.toHaveBeenCalled();
+    expect(c.sleeps.reduce((a, b) => a + b, 0)).toBe(15 * MIN);
+    expect(readFileSync(lock, "utf8").trim()).toBe("ui-qa SCN-08 04:55Z");
+  });
+
+  it("dueño ajeno de más de 30 min: avisa y lo toma sin esperar", async () => {
+    const now = new Date("2026-10-16T05:00:00.000Z");
+    foreignLock("ui-qa SCN-08 04:00Z", 31 * MIN, now);
+    const c = clock(now);
+    const holder = await withSeedLabLock(lock, async () => readFileSync(lock, "utf8").trim(), c.deps);
+    expect(holder).toBe("evaluacion-seed 2026-10-16T05:00:00.000Z");
+    expect(c.sleeps).toEqual([]);
+    expect(c.logs.join("\n")).toMatch(/ui-qa SCN-08 04:00Z/);
+    expect(existsSync(lock)).toBe(false);
   });
 });

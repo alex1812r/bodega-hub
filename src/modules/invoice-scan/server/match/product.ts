@@ -31,6 +31,8 @@ export type ProductMatch = {
    * unidad no gana a la palabra de empaque del texto.
    */
   aliasOfProduct?: boolean;
+  /** Paso exacto que identificó el producto (D17: SKU y barcode solo confirman con empaque registrado). */
+  via?: "sku" | "alias" | "barcode";
 };
 
 export type ProductLookup = {
@@ -165,9 +167,10 @@ function exactStep(candidates: InvoiceMatchCandidate[], alias?: MatchAlias): Pro
 /**
  * Cascada de producto de una línea (plan §3 "Emparejamiento"):
  * (1) SKU del proveedor resuelto; (2) alias exacto normalizado de ese
- * proveedor; (3) código de barras -> dudosa con candidato; (4) alias difuso
- * >= 0,6 o nombre en productos activos -> dudosa con <= 3 candidatos;
- * (5) nada -> sin emparejar. Solo (1) y (2) pueden confirmar.
+ * proveedor; (3) código de barras único (con proveedor resuelto); (4) alias
+ * difuso >= 0,6 o nombre en productos activos -> dudosa con <= 3 candidatos;
+ * (5) nada -> sin emparejar. Solo (1)-(3) pueden confirmar; (1) y (3) solo con
+ * la línea por unidad o un empaque registrado (D17, lo aplica `matchInvoice`).
  */
 export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLookup): ProductMatch {
   const skuCandidates = exactCandidates(bySupplierSku(line, lookup), lookup, "SKU del proveedor");
@@ -185,7 +188,7 @@ export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLoo
     if (aliasCandidates.length > 0) {
       return { status: "doubtful", candidates: [...skuCandidates, ...aliasCandidates].slice(0, MAX_LINE_CANDIDATES) };
     }
-    return { ...step, ...aliasForPack(line, lookup, step.productId) };
+    return { ...step, via: "sku", ...aliasForPack(line, lookup, step.productId) };
   }
 
   const aliases = byExactAlias(line, lookup);
@@ -204,17 +207,20 @@ export function matchLineProduct(line: InvoiceExtractionLine, lookup: ProductLoo
   for (const alias of aliases) {
     const aliasCandidates = exactCandidates([alias.productId], lookup, aliasReason(alias.hits));
     if (aliasCandidates.length > 0) {
-      return exactStep(aliasCandidates, alias);
+      return { ...exactStep(aliasCandidates, alias), via: "alias" };
     }
   }
 
   const barcodeIds = byBarcode(line, lookup);
   if (barcodeIds.length > 0) {
     const candidates = withFuzzyFill(exactCandidates(barcodeIds, lookup, "código de barras"), lookup);
+    const single = barcodeIds.length === 1;
+    // D17: barcode único con proveedor resuelto confirma; el empaque y el precio lo degradan después.
     return {
-      status: "doubtful",
-      productId: barcodeIds.length === 1 ? barcodeIds[0] : undefined,
+      status: single && lookup.catalog ? "confirmed" : "doubtful",
+      productId: single ? barcodeIds[0] : undefined,
       candidates,
+      ...(single ? { via: "barcode" as const } : {}),
     };
   }
 

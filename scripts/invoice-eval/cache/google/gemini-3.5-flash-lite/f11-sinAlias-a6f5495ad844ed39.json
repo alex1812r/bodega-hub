@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "key": "a6f5495ad844ed3926c099518a5de41e3329dca898f1b605438f5c7885f96ce4",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f11",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA Y FESTEJO COCKTAIL EXPRESS 247, C.A.",
+      "taxId": "J-413186159",
+      "address": "CALLE IMBOCA CC BOLEITA CENTER NIVEL FERIA LOCAL N3 38 Y N3 39 BOLEITA SUCURSAL:CC EL RECREO"
+    },
+    "number": "00002887",
+    "date": "2026-08-14",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "2x Bs 9.386,02\nTOBO 14 PROMO (G)\nBs 18.612,04",
+        "description": "TOBO 14 PROMO",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 9386.02,
+        "lineTotal": 18612.04,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "8x Bs 1.542,14\nCERVEZA SOLERA AZUL LIGHT EN\n222ML (P)\nBs 12.337,12",
+        "description": "CERVEZA SOLERA AZUL LIGHT EN 222ML",
+        "quantity": 8,
+        "unit": "unidad",
+        "unitPrice": 1542.14,
+        "lineTotal": 12337.12,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "542,14\nOLAR PILSEN 222ML..\nBs 3.084,28",
+        "description": "OLAR PILSEN 222ML",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 1542.14,
+        "lineTotal": 3084.28,
+        "taxHint": "general",
+        "confidence": 0.7
+      }
+    ],
+    "subtotal": 34033.44,
+    "tax": 2977.93,
+    "total": 37011.37,
+    "confidence": 0.85,
+    "warnings": [
+      "La primera línea de la tercera descripción está parcialmente oculta por el pulgar."
+    ]
+  },
+  "inputTokens": 2783,
+  "outputTokens": 639,
+  "durationMs": 3380,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:59:48.199Z"
+}

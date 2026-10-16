@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "key": "f3bd2b3acfb4d673b224f59e86555f8b2b010f40100215b9de75f29c08c8febf",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f15",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "ABASTOS Y FRUTERIA LAS ACACIAS, S.R.L",
+      "taxId": "J-002658118",
+      "address": "AV GRAN COLOMBIA CON CALLE AMERICA EDIF SALON PISO PB LOCAL A URB LAS ACACIAS CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00016223",
+    "date": "2026-08-15",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 ANIS CARTUJ 12U Bs 54077.80",
+        "description": "ANIS CARTUJ",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitsPerPack": 12,
+        "unitPrice": 54077.8,
+        "lineTotal": 54077.8,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 MALPORT T 6X1.75 Bs 33991.76",
+        "description": "MALPORT T",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitsPerPack": 6,
+        "unitPrice": 16995.88,
+        "lineTotal": 33991.76,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 GRAN RESERVA 6x0,70L Bs 36695.65",
+        "description": "GRAN RESERVA",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitsPerPack": 6,
+        "unitPrice": 36695.65,
+        "lineTotal": 36695.65,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 CHAR DULA DEMI Bs 6566.59",
+        "description": "CHAR DULA DEMI",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 6566.59,
+        "lineTotal": 6566.59,
+        "confidence": 0.95
+      }
+    ],
+    "total": 132876.88,
+    "confidence": 0.9,
+    "warnings": [
+      "El documento es una nota de entrega, no una factura fiscal.",
+      "Se detectó un cargo por 'ENVIO' que no es un producto.",
+      "No se pudo determinar el subtotal ni el impuesto por falta de desglose."
+    ]
+  },
+  "inputTokens": 2783,
+  "outputTokens": 667,
+  "durationMs": 3810,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:06:23.282Z"
+}

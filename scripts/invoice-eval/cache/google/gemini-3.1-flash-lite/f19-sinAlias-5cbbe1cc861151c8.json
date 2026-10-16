@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "key": "5cbbe1cc861151c86916fbbe1113667a02d61727f0caf4250fe3e0a70e4b80b2",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f19",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "FARMATODO",
+      "phone": "0800-FARMATODO",
+      "address": "Sabanagrande. Casanova/Recreo. Ed Rupi"
+    },
+    "number": "00362952",
+    "date": "2026-09-03",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "111103216 Azucar Montalban Refinada 1 (E) Bs 1.750,00",
+        "description": "Azucar Montalban Refinada 1",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 1750,
+        "lineTotal": 1750,
+        "taxHint": "exento",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 1750,
+    "total": 1750,
+    "confidence": 0.9,
+    "warnings": [
+      "El documento parece ser un ticket de compra o comprobante de pago, no una factura fiscal formal con RIF de emisor visible.",
+      "No se pudo identificar el RIF del proveedor."
+    ]
+  },
+  "inputTokens": 2761,
+  "outputTokens": 324,
+  "durationMs": 2137,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:07:17.570Z"
+}

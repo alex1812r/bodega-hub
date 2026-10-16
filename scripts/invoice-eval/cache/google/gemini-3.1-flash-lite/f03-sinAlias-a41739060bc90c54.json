@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "key": "a41739060bc90c54e6885229c3bed898f214e70b005997cfb760a3fd784ad5fa",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f03",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "J-508357612"
+    },
+    "currency": "VES",
+    "printedRate": 814.7,
+    "lines": [
+      {
+        "rawText": "POWER MAX 400ML 1,00 x 4.358,64 [CAJA X 15,00] Bs 4.358,64",
+        "description": "POWER MAX 400ML",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 15,
+        "unitPrice": 4358.64,
+        "lineTotal": 4358.64,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP COLA 2L 1,00 x 5.173,34 [BULTO X 6,00] Bs 5.173,34",
+        "description": "GLUP COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5173.34,
+        "lineTotal": 5173.34,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "COCA COLA 2L 1,00 x 7.226,39 [BULTO X 6,00] Bs 7.226,39",
+        "description": "COCA COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7226.39,
+        "lineTotal": 7226.39,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 2L 2,00 x 4.163,12 [BULTO X 6,00] Bs 8.326,24",
+        "description": "GLUP SABORES 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4163.12,
+        "lineTotal": 8326.24,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "JUSTY 400ML 2,00 x 4.032,77 [BULTO X 15,00] Bs 8.065,54",
+        "description": "JUSTY 400ML",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4032.77,
+        "lineTotal": 8065.54,
+        "confidence": 0.95
+      }
+    ],
+    "total": 33150.15,
+    "confidence": 0.9,
+    "warnings": [
+      "La fecha de la factura no es legible en la imagen.",
+      "El documento indica 'SIN DERECHO A CREDITO FISCAL'."
+    ]
+  },
+  "inputTokens": 2427,
+  "outputTokens": 834,
+  "durationMs": 2666,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:06:45.064Z"
+}

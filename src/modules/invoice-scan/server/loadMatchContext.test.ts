@@ -567,3 +567,83 @@ describe("taxRateKind", () => {
     expect(taxRateKind("lujo", 31)).toBe("otra");
   });
 });
+
+describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
+  const dupRow = {
+    id: "scan-f02",
+    supplier_id: SUPPLIER_ID,
+    number: "00003570",
+    supplier_tax_id: "J-12345678-9",
+    matched_contact_id: null,
+    date: "2026-09-08",
+    total: 1200,
+  };
+
+  function tablesWithScans(rows: Array<typeof dupRow>) {
+    const tables = fullTables();
+    // La base honra `in`/`eq` sobre los caminos JSON y `.neq('id', …)`.
+    tables.invoice_scans = (query) => {
+      const totals = argsOf(query, "in").find(([column]) => column === "extracted->>total")?.[1] as string[] | undefined;
+      const date = argsOf(query, "eq").find(([column]) => column === "extracted->>date")?.[1];
+      const excluded = argsOf(query, "neq").map(([, value]) => value);
+      if (!totals) return { data: [], error: null };
+      const data = rows.filter(
+        (row) => !excluded.includes(row.id) && totals.includes(String(row.total)) && (date === undefined || row.date === date),
+      );
+      return { data, error: null };
+    };
+    return tables;
+  }
+
+  it("sin número: segunda consulta por fecha y total (±0,01), acotada y sin imágenes; matchInvoice marca el posible duplicado", async () => {
+    const stub = createSupabaseStub({
+      candidates,
+      tables: tablesWithScans([dupRow, { ...dupRow, id: "scan-otro-dia", date: "2026-09-09" }]),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+    const scanned: InvoiceExtraction = { ...extraction, number: undefined, date: "2026-09-08", total: 1200.01 };
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, scanned, { excludeScanId: "scan-self" });
+
+    expect(ctx.previousScans).toEqual([
+      expect.objectContaining({ scanId: "scan-f02", supplierId: SUPPLIER_ID, date: "2026-09-08", total: 1200 }),
+    ]);
+    expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-f02");
+
+    const [scans] = queriesOf(stub.queries, "invoice_scans");
+    expect(hasEq(scans, "store_id", STORE_ID)).toBe(true);
+    expect(argsOf(scans, "in")).toEqual([["extracted->>total", ["1200", "1200.01", "1200.02"]]]);
+    expect(hasEq(scans, "extracted->>date", "2026-09-08")).toBe(true);
+    expect(argsOf(scans, "not")).toEqual([["status", "in", "(discarded,failed)"]]);
+    expect(argsOf(scans, "neq")).toEqual([["id", "scan-self"]]);
+    expect(argsOf(scans, "limit")).toHaveLength(1);
+    expect(String(argsOf(scans, "select")[0]?.[0])).not.toMatch(/image|storage/);
+  });
+
+  it("número con un carácter distinto: se une a la consulta por número y lo marca", async () => {
+    const stub = createSupabaseStub({
+      candidates,
+      tables: tablesWithScans([dupRow]),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+    const scanned: InvoiceExtraction = { ...extraction, number: "00003576", date: "2026-09-08", total: 1200 };
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, scanned);
+
+    expect(queriesOf(stub.queries, "invoice_scans")).toHaveLength(2);
+    expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-f02"]);
+    expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-f02");
+  });
+
+  it("sin total leído no hace la segunda consulta", async () => {
+    const stub = createSupabaseStub({
+      candidates,
+      tables: tablesWithScans([dupRow]),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+
+    await loadMatchContext(stub.client, STORE_ID, { ...extraction, number: undefined, date: "2026-09-08" });
+
+    expect(queriesOf(stub.queries, "invoice_scans")).toHaveLength(0);
+  });
+});

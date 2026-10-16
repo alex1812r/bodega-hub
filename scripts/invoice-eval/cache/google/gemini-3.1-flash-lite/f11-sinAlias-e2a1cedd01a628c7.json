@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "key": "e2a1cedd01a628c7dc2018246778e6ea88ce7c01278d65ef2e71acaa5c1499b9",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f11",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA Y FESTEJO COCKTAIL EXPRESS 247, C.A.",
+      "taxId": "J-413106159",
+      "address": "CALLE IMBOCA CC BOLEITA CENTER NIVEL FERIA LOCAL N3 38 Y N3 39 BOLEITA SUCURSAL:CC EL RECREO"
+    },
+    "number": "00002887",
+    "date": "2026-08-14",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "2x Bs 9.306,02 TOBO 14 PROMO (G) Bs 18.612,04",
+        "description": "TOBO 14 PROMO",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitPrice": 9306.02,
+        "lineTotal": 18612.04,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "8x Bs 1.542,14 CERVEZA SOLERA AZUL LIGHT EN 222ML (P) Bs 12.337,12",
+        "description": "CERVEZA SOLERA AZUL LIGHT EN 222ML",
+        "quantity": 8,
+        "unit": "unidad",
+        "unitPrice": 1542.14,
+        "lineTotal": 12337.12,
+        "taxHint": "unknown",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "542,14 POLAR PILSEN 222ML.. Bs 3.084,28",
+        "description": "POLAR PILSEN 222ML",
+        "quantity": 5.688,
+        "unit": "unidad",
+        "unitPrice": 542.14,
+        "lineTotal": 3084.28,
+        "taxHint": "unknown",
+        "confidence": 0.8
+      }
+    ],
+    "subtotal": 34033.44,
+    "tax": 2977.93,
+    "total": 37011.37,
+    "confidence": 0.85,
+    "warnings": [
+      "La cantidad de la tercera línea parece ser el resultado de una división implícita (3084.28 / 542.14 = 5.688).",
+      "El total de la factura no coincide con la suma de las líneas presentadas."
+    ]
+  },
+  "inputTokens": 2427,
+  "outputTokens": 677,
+  "durationMs": 3588,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:08:01.167Z"
+}

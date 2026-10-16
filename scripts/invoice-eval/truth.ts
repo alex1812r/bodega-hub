@@ -27,6 +27,9 @@ export const truthLineSchema = z.object({
 });
 export type TruthLine = z.infer<typeof truthLineSchema>;
 
+/** Campos de cabecera que la foto no deja leer (SCN-10-F3). */
+export const truthHeaderFieldSchema = z.enum(["supplier", "date", "number", "total"]);
+
 export const truthVerificationSchema = z.object({
   checkedAgainstImage: z.boolean(),
   manifestDiffs: z.array(z.string()),
@@ -44,6 +47,13 @@ export const invoiceTruthSchema = z
     /** Id de la factura original si esta es una segunda foto de la misma. */
     duplicateOf: z.string().min(1).nullable(),
     extraction: invoiceExtractionSchema,
+    /**
+     * Campos de cabecera que la foto NO permite leer (pulgar, imagen casi
+     * ilegible). Omitirlos es acierto; traerlos iguales a la verdad también;
+     * traerlos distintos es fallo (inventado). Es una propiedad de la imagen,
+     * igual para todos los modelos, no de una salida concreta.
+     */
+    occludedHeaderFields: z.array(truthHeaderFieldSchema).optional(),
     lines: z.array(truthLineSchema),
     verification: truthVerificationSchema,
   })

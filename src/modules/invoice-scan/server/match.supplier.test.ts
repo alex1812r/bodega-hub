@@ -104,3 +104,35 @@ describe("matchInvoice · duplicado", () => {
     expect(result.duplicateOfScanId).toBeUndefined();
   });
 });
+
+describe("matchInvoice · proveedor por RIF con letra (SCN-11-F5)", () => {
+  const ctx = () =>
+    buildContext({
+      supplierCandidates: [
+        { contactId: SUPPLIER_POLAR, name: "Inversiones Pérez C.A.", taxId: "J-508357612" },
+        { contactId: SUPPLIER_PEPSI, name: "Otra Empresa", taxId: "J-11111111-1" },
+      ],
+    });
+
+  it("una cédula V- no resuelve al contacto J- con los mismos dígitos", () => {
+    const result = matchInvoice(buildExtraction({ supplier: { name: "Persona", taxId: "V-508357612" } }), ctx());
+
+    expect(result.supplier.contactId).toBeUndefined();
+    expect(result.supplier.candidates?.some((c) => c.reason === "RIF igual")).toBe(false);
+  });
+
+  it("ni por nombre si el RIF guardado tiene otra letra", () => {
+    const result = matchInvoice(
+      buildExtraction({ supplier: { name: "Inversiones Pérez C.A.", taxId: "V-508357612" } }),
+      ctx(),
+    );
+
+    expect(result.supplier.contactId).toBeUndefined();
+  });
+
+  it("si el RIF leído no trae letra, bastan los dígitos", () => {
+    const result = matchInvoice(buildExtraction({ supplier: { name: "Persona", taxId: "508357612" } }), ctx());
+
+    expect(result.supplier.contactId).toBe(SUPPLIER_POLAR);
+  });
+});

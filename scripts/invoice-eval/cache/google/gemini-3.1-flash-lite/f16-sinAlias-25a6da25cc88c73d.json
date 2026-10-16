@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "key": "25a6da25cc88c73d9d3dd182dc5a2aa98b20eb95775069786882c0e877c9de59",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f16",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00002450",
+    "date": "2026-08-26",
+    "currency": "VES",
+    "printedRate": 787.52,
+    "lines": [
+      {
+        "rawText": "1,00 x 4.102,98 [BULTO X 15,00] JUSTY 400ML",
+        "description": "JUSTY 400ML",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4102.98,
+        "lineTotal": 4102.98,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1,00 x 6.930,18 [BULTO X 6,00] COCA COLA 2L",
+        "description": "COCA COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 6930.18,
+        "lineTotal": 6930.18,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1,00 x 9.040,73 [BULTO X 12,00] JUSTY 1.5",
+        "description": "JUSTY 1.5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9040.73,
+        "lineTotal": 9040.73,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1,00 x 6.079,65 [BULTO X 12,00] GLUP SABORES 1L",
+        "description": "GLUP SABORES 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6079.65,
+        "lineTotal": 6079.65,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1,00 x 4.016,35 [BULTO X 6,00] GLUP SABORES 2L",
+        "description": "GLUP SABORES 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4016.35,
+        "lineTotal": 4016.35,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1,00 x 5.048,00 [BULTO X 6,00] GLUP COLA 2L",
+        "description": "GLUP COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5048,
+        "lineTotal": 5048,
+        "confidence": 0.95
+      }
+    ],
+    "total": 35217.89,
+    "confidence": 0.95,
+    "warnings": [
+      "El documento es una orden de despacho, no una factura fiscal."
+    ]
+  },
+  "inputTokens": 2427,
+  "outputTokens": 917,
+  "durationMs": 3648,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:09:06.779Z"
+}

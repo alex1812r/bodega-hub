@@ -27,7 +27,7 @@ import {
   type InvoiceExtractionLine,
 } from "../../../src/modules/invoice-scan/contracts";
 import { parseTruth, type InvoiceTruth } from "../truth";
-import { INVOICES, NEW_PRODUCTS, SUPPLIERS } from "./data";
+import { INVOICES, NEW_PRODUCTS, OCCLUSIONS, SUPPLIERS } from "./data";
 import { computeTotals, formatBs, fromCents, printedTaxHint, type InvoiceSpec } from "./model";
 import { renderInvoice } from "./templates";
 
@@ -107,6 +107,7 @@ function describeArithmetic(spec: InvoiceSpec): string {
 
 function buildTruth(spec: InvoiceSpec, pageCount: number): InvoiceTruth {
   const extraction = invoiceExtractionSchema.parse(buildExtraction(spec));
+  const occlusion = OCCLUSIONS[spec.id];
   const raw = {
     id: spec.id,
     synthetic: true,
@@ -114,15 +115,16 @@ function buildTruth(spec: InvoiceSpec, pageCount: number): InvoiceTruth {
     supplierKey: spec.supplierKey,
     duplicateOf: null,
     extraction,
-    lines: spec.lines.map((line) => ({
+    ...(occlusion ? { occludedHeaderFields: occlusion.headerFields } : {}),
+    lines: spec.lines.map((line, i) => ({
       productKey: line.productKey,
-      occluded: false,
+      occluded: occlusion ? occlusion.lines === "all" || occlusion.lines.includes(i) : false,
       uncertainFields: [],
       note: line.note ?? "",
     })),
     verification: {
       checkedAgainstImage: true,
-      manifestDiffs: [],
+      manifestDiffs: occlusion?.manifestDiffs ?? [],
       arithmetic: describeArithmetic(spec),
     },
   };

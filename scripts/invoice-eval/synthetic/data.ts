@@ -3,6 +3,7 @@
  * cada uno sus productos y las 10 facturas s01..s10. Todo es fijo: misma
  * entrada, mismas imágenes y misma verdad en cada corrida.
  */
+import type { InvoiceTruth } from "../truth";
 import { ean13, type InvoiceSpec, type LineSpec, type SyntheticSupplier, type TaxCode } from "./model";
 
 export const CLIENT = {
@@ -161,6 +162,33 @@ const lineDiscount = (pct: number) => ({
   discountPct: pct,
   note: `Descuento por línea ${pct}% impreso en DESC. %; lineTotal es el neto impreso (cantidad × precio × ${(100 - pct) / 100}).`,
 });
+
+/**
+ * s09 (SCN-10-F3): la foto no deja leer nada. generate.ts toma de OCCLUSIONS
+ * `occludedHeaderFields`, las líneas `occluded: true` y el manifestDiff; la
+ * nota de línea sale de aquí (no se imprime).
+ */
+const S09_OCCLUDED: Extra = {
+  note: "Ocluida por ilegibilidad (§6.1, SCN-10-F3): la foto no deja leerla; perderla no cuenta, inventarla con confianza > 0,5 sí.",
+};
+
+/** Lo que la foto no deja leer, por id de factura (propiedad de la imagen, no del modelo). */
+export type Occlusion = {
+  headerFields: NonNullable<InvoiceTruth["occludedHeaderFields"]>;
+  /** Índices de las líneas tapadas, o "all". */
+  lines: "all" | number[];
+  manifestDiffs: string[];
+};
+
+export const OCCLUSIONS: Record<string, Occlusion> = {
+  s09: {
+    headerFields: ["supplier", "date", "number", "total"],
+    lines: "all",
+    manifestDiffs: [
+      "occludedHeaderFields [supplier, date, number, total] y todas las líneas occluded (SCN-10-F3, definición del banco): la foto oscura y borrosa no deja leer cabecera ni líneas; los valores de extraction son los generados (impresos) y solo sirven para detectar lo inventado. Omitir es acierto; traer valores distintos es fallo.",
+    ],
+  },
+};
 
 export const INVOICES: InvoiceSpec[] = [
   {
@@ -327,10 +355,10 @@ export const INVOICES: InvoiceSpec[] = [
     date: "2026-09-18",
     time: "19:51",
     lines: [
-      andes("coca-cola-2l", 2, 7620),
-      andes("harina-pan-1kg", 1, 18380),
-      andes("arroz-primor-1kg", 1, 23460),
-      andes("jabon-azul-las-llaves-300g", 1, 15125),
+      andes("coca-cola-2l", 2, 7620, S09_OCCLUDED),
+      andes("harina-pan-1kg", 1, 18380, S09_OCCLUDED),
+      andes("arroz-primor-1kg", 1, 23460, S09_OCCLUDED),
+      andes("jabon-azul-las-llaves-300g", 1, 15125, S09_OCCLUDED),
     ],
     caseNote: "Caso s09 (§6.1): foto oscura y muy borrosa, casi ilegible; la verdad son los valores generados (todos impresos), el banco mide que el modelo no invente.",
   },
