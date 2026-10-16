@@ -859,6 +859,17 @@ function packRecipeRule(productId: string, storeId: string) {
   });
 }
 
+/**
+ * Empaques activos de un vínculo en el estado VIVO del mock (los que crean
+ * compras y escaneos), sin comprobar la tienda: el llamador ya filtró el
+ * vínculo por tienda (contexto de emparejamiento del escaneo, SCN-08-F2).
+ */
+export function listActiveMockPackUnitsOfLink(supplierProductId: string) {
+  return packUnits
+    .filter((item) => item.supplierProductId === supplierProductId && (item.isActive ?? true))
+    .map(normalizePackUnit);
+}
+
 export function listSupplierProductPackUnits(supplierProductId: string, storeId: string) {
   getSupplierProductById(supplierProductId, storeId);
 
@@ -883,7 +894,8 @@ export function createSupplierProductPackUnit(supplierProductId: string,
   }
 
   const created: SupplierProductPackUnitMock = {
-    id: `sp-pack-mock-${Date.now()}`,
+    // Con sufijo: el escaneo crea varios empaques en el mismo milisegundo (SCN-08-F2).
+    id: `sp-pack-mock-${Date.now()}-${nextPurchaseLinkSequence()}`,
     isActive: true,
     isDefault,
     label: input.label.trim(),

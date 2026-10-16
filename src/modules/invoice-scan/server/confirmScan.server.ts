@@ -39,6 +39,7 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api/apiError";
 import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { createSupplierProductPackUnit } from "@/modules/contacts/services/supplierProducts.server";
 
 import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
 
@@ -356,6 +357,45 @@ function toLearnPackLabel(label: string | undefined): string | null {
   return Array.from(trimmed).slice(0, MAX_PACK_LABEL_LENGTH).join("").trim() || null;
 }
 
+/** Empaque del proveedor que usa una línea escaneada en modo empaque (SCN-08-F2 · 6.8). */
+export type ScanPackUnit = { label: string; productId: string; unitsPerPack: number };
+
+/**
+ * Empaques del proveedor que la compra escaneada debe dejar registrados
+ * (SCN-08-F2 · 6.8): las líneas con `unitsPerPack` que casan con un item en
+ * modo empaque del mismo producto y tamaño (la regla de `resolveLearnPack`),
+ * con la etiqueta del item; uno por producto y tamaño. `create_purchase` solo
+ * los crea cuando el vínculo es nuevo (20261010d).
+ */
+export function buildScanPackUnits(
+  confirmedLines: readonly ConfirmedInvoiceScanLine[],
+  items: readonly InvoiceScanPurchaseItem[],
+): ScanPackUnit[] {
+  const packs = new Map<string, ScanPackUnit>();
+
+  for (const line of confirmedLines) {
+    if (line.unitsPerPack == null) {
+      continue;
+    }
+
+    const unitsPerPack = line.unitsPerPack;
+    const item = items.find(
+      (candidate) =>
+        candidate.productId === line.productId &&
+        candidate.entryMode === "pack" &&
+        candidate.unitsPerPack === unitsPerPack,
+    );
+    const label = toLearnPackLabel(item?.packLabel);
+    const key = `${line.productId}:${unitsPerPack}`;
+
+    if (label && !packs.has(key)) {
+      packs.set(key, { label, productId: line.productId, unitsPerPack });
+    }
+  }
+
+  return [...packs.values()];
+}
+
 export function buildConfirmedPayload(
   scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts">,
   input: FinalizeInvoiceScanInput,
@@ -372,7 +412,7 @@ export function buildConfirmedPayload(
 
 /** Log sin datos de la factura: solo ids y el código/mensaje del rechazo. */
 export function logInvoiceScanFailure(
-  step: "confirm" | "learn" | "release",
+  step: "confirm" | "learn" | "pack" | "release",
   scanId: string,
   error: unknown,
 ) {
@@ -498,6 +538,66 @@ export async function releaseInvoiceScanClaim(
   }
 }
 
+type DbSupplierProductPacksRow = {
+  id: string;
+  supplier_product_pack_units:
+    | { is_active: boolean | null; is_default: boolean | null; units_per_pack: number | string }[]
+    | null;
+};
+
+/**
+ * Crea el empaque del proveedor que falte para las líneas escaneadas en modo
+ * empaque (SCN-08-F2 · 6.8) con el servicio de pack units, que valida la receta
+ * (SCN-13d). Con un empaque ACTIVO de ese tamaño no hace nada (idempotente).
+ * Nunca lanza: la compra ya existe; un rechazo (receta, red) se registra y sigue.
+ */
+async function ensureScanPackUnits(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  scanId: string,
+  supplierId: string,
+  packs: readonly ScanPackUnit[],
+  storeId: string,
+): Promise<void> {
+  for (const pack of packs) {
+    try {
+      const { data, error } = await supabase
+        .from("supplier_products")
+        .select("id, supplier_product_pack_units(units_per_pack, is_active, is_default)")
+        .eq("store_id", storeId)
+        .eq("supplier_id", supplierId)
+        .eq("product_id", pack.productId)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      throwIfSupabaseError(error);
+
+      const link = (data as DbSupplierProductPacksRow | null) ?? null;
+
+      if (!link) {
+        continue;
+      }
+
+      const existing = (link.supplier_product_pack_units ?? []).filter((row) => row.is_active !== false);
+
+      if (existing.some((row) => Number(row.units_per_pack) === pack.unitsPerPack)) {
+        continue;
+      }
+
+      await createSupplierProductPackUnit(
+        link.id,
+        {
+          isDefault: !existing.some((row) => row.is_default === true),
+          label: pack.label,
+          unitsPerPack: pack.unitsPerPack,
+        },
+        storeId,
+      );
+    } catch (error) {
+      logInvoiceScanFailure("pack", scanId, error);
+    }
+  }
+}
+
 export async function finalizeInvoiceScan(
   scan: PrecheckedInvoiceScan,
   input: FinalizeInvoiceScanInput,
@@ -562,6 +662,8 @@ export async function finalizeInvoiceScan(
       scanId: scan.id,
     });
   }
+
+  await ensureScanPackUnits(supabase, scan.id, input.supplierId, buildScanPackUnits(confirmed.lines, input.items), storeId);
 
   const learnLines = buildLearnLines(confirmed.lines, input.items);
 
