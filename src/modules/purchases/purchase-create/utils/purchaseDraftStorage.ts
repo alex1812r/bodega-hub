@@ -1,10 +1,12 @@
 import { z } from "zod";
 
+import { invoiceExtractionSchema } from "@/modules/invoice-scan/contracts";
 import { formatTaxRatePct } from "@/shared/components/TaxRateChips";
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import type { PurchaseLinesSnapshot } from "../hooks/usePurchaseLines";
+import { pruneLoadedInvoiceScan, type LoadedInvoiceScan } from "../invoice-scan/loadedInvoiceScan";
 import type { PurchaseProductResolutions } from "../services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseLineCatalogMeta } from "../types";
 import type { PurchaseLineSource } from "./duplicatePurchase";
@@ -113,9 +115,42 @@ const lineMetaSchema = z.object({
   taxRate: taxRateSchema,
 });
 
+/** Versión del bloque `invoiceScan`: cambiarlo de forma incompatible la sube. */
+export const STORED_INVOICE_SCAN_VERSION = 1;
+
+/**
+ * Escaneo de factura cargado en la compra (SCN-08c). Si no pasa el esquema (otra versión,
+ * corrupto) se descarta SOLO este bloque: la compra guardada sigue valiendo.
+ */
+const storedInvoiceScanSchema = z.object({
+  extraction: invoiceExtractionSchema,
+  invoiceRateVes: z.number().positive().max(PURCHASE_DRAFT_MAX_NUMBER).optional(),
+  lineIndexByItemId: z.record(z.string(), z.number().int().min(0)),
+  scanId: z.string().min(1),
+  version: z.literal(STORED_INVOICE_SCAN_VERSION),
+});
+
+export type StoredInvoiceScan = z.infer<typeof storedInvoiceScanSchema>;
+
+/** Lo que se guarda del escaneo cargado. */
+export function toStoredInvoiceScan(loaded: LoadedInvoiceScan): StoredInvoiceScan {
+  return { ...loaded, version: STORED_INVOICE_SCAN_VERSION };
+}
+
+function fromStoredInvoiceScan(stored: StoredInvoiceScan): LoadedInvoiceScan {
+  return {
+    extraction: stored.extraction,
+    ...(stored.invoiceRateVes !== undefined ? { invoiceRateVes: stored.invoiceRateVes } : {}),
+    lineIndexByItemId: stored.lineIndexByItemId,
+    scanId: stored.scanId,
+  };
+}
+
 const storedPurchaseDraftSchema = z.object({
   costCurrency: costCurrencySchema,
   discountRef: amountSchema,
+  /** Escaneo de factura cargado (SCN-08c); ausente en compras sin factura y en borradores viejos. */
+  invoiceScan: storedInvoiceScanSchema.optional().catch(undefined),
   /** Metadatos para repintar cada línea: `productId` -> nombre, SKU, empaques y % de categoría. */
   lineMeta: z.record(z.string(), lineMetaSchema),
   /** `PurchaseLinesState` sin `focus`. */
@@ -228,6 +263,8 @@ function pickKeys<TValue>(record: Record<string, TValue>, keys: Set<string>) {
 
 export type RestoredPurchaseDraft = {
   costCurrency: PurchaseCostCurrency;
+  /** Escaneo cargado, sin las líneas que no se restauraron. */
+  invoiceScan?: LoadedInvoiceScan;
   lineMeta: Map<string, PurchaseLineCatalogMeta>;
   lines: PurchaseLinesSnapshot;
   /**
@@ -326,6 +363,9 @@ export function restorePurchaseDraft(
 
   return {
     costCurrency: draft.costCurrency,
+    ...(draft.invoiceScan
+      ? { invoiceScan: pruneLoadedInvoiceScan(fromStoredInvoiceScan(draft.invoiceScan), keptIds) }
+      : {}),
     lineMeta,
     lines: {
       // La marca vuelve tal cual; si el producto ya no tiene receta, la fila no

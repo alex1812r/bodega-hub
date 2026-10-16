@@ -16,9 +16,12 @@ import {
   purchaseDraftStorageKey,
   restorePurchaseDraft,
   serializePurchaseDraft,
+  STORED_INVOICE_SCAN_VERSION,
   storedDraftSourceItems,
+  toStoredInvoiceScan,
   type PurchaseDraftContent,
 } from "./purchaseDraftStorage";
+import { makeLoadedReviewDraft } from "../invoice-scan/reviewFixtures";
 import { describePurchaseInProgress } from "./purchaseProcessLabel";
 
 const session = { storeId: "store-1", userId: "user-1" };
@@ -637,5 +640,59 @@ describe("borrador de compra · «Desarmar al recibir» (COM-14)", () => {
     raw.lines.disassemble = { "line-cable": "si" };
 
     expect(parseStoredPurchaseDraft(JSON.stringify(raw), session)).toBeNull();
+  });
+});
+
+describe("borrador con escaneo de factura cargado (SCN-08c)", () => {
+  const extraction = makeLoadedReviewDraft().body.invoiceScanExtraction;
+  const loaded = {
+    extraction,
+    invoiceRateVes: 500,
+    lineIndexByItemId: { "line-cable": 0, "line-refresco": 2 },
+    scanId: "5a0e1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+  };
+
+  function roundTrip(content: PurchaseDraftContent) {
+    return parseStoredPurchaseDraft(serializePurchaseDraft(content, session, savedAt), session);
+  }
+
+  it("guarda y lee el escaneo con su versión", () => {
+    const stored = roundTrip(buildContent({ invoiceScan: toStoredInvoiceScan(loaded) }));
+
+    expect(stored?.invoiceScan).toEqual({ ...loaded, version: STORED_INVOICE_SCAN_VERSION });
+  });
+
+  it("un borrador viejo, sin escaneo, sigue valiendo", () => {
+    const stored = roundTrip(buildContent());
+
+    expect(stored).not.toBeNull();
+    expect(stored?.invoiceScan).toBeUndefined();
+  });
+
+  it("un escaneo de otra versión o corrupto se descarta solo: la compra se conserva", () => {
+    const raw = JSON.parse(serializePurchaseDraft(buildContent(), session, savedAt)) as Record<string, unknown>;
+
+    for (const invoiceScan of [
+      { ...loaded, version: 2 },
+      { ...loaded, lineIndexByItemId: { "line-cable": -1 }, version: 1 },
+      { ...loaded, extraction: { lines: "no" }, version: 1 },
+    ]) {
+      const stored = parseStoredPurchaseDraft(JSON.stringify({ ...raw, invoiceScan }), session);
+
+      expect(stored).not.toBeNull();
+      expect(stored?.invoiceScan).toBeUndefined();
+      expect(stored?.lines.items).toHaveLength(2);
+    }
+  });
+
+  it("al restaurar vuelve el escaneo sin las líneas que no se restauraron", () => {
+    const stored = roundTrip(buildContent({ invoiceScan: toStoredInvoiceScan(loaded) }));
+    const products = allActive();
+    products.set("prod-refresco", { name: "Refresco", status: "unavailable" });
+
+    const restored = restorePurchaseDraft(stored!, { products, rateVes: 510 });
+
+    expect(restored.invoiceScan).toEqual({ ...loaded, lineIndexByItemId: { "line-cable": 0 } });
+    expect(restorePurchaseDraft(roundTrip(buildContent())!, { products, rateVes: 510 }).invoiceScan).toBeUndefined();
   });
 });

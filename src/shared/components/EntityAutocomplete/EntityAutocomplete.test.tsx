@@ -2178,3 +2178,38 @@ describe("EntityAutocomplete dentro de un Modal", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 });
+
+describe("EntityAutocomplete: texto inicial (initialQuery)", () => {
+  it("nace con el texto, seleccionado si está enfocado, y busca con él", async () => {
+    const fetcher = jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+      async () => [product(1)],
+    );
+    render(<Harness autoFocus entity="product" fetcher={fetcher} initialQuery="Harina PAN" />);
+
+    const input = getInput() as HTMLInputElement;
+
+    expect(input).toHaveValue("Harina PAN");
+    expect(input).toHaveFocus();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("Harina PAN".length);
+
+    await advance(300);
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledWith(expect.objectContaining({ query: "Harina PAN" }));
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  it("sin initialQuery nace vacío y no busca", async () => {
+    const fetcher = jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+      async () => [product(1)],
+    );
+    render(<Harness autoFocus entity="product" fetcher={fetcher} />);
+
+    expect(getInput()).toHaveValue("");
+
+    await advance(300);
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
