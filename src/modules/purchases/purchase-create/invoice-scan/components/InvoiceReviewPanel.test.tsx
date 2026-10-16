@@ -437,6 +437,8 @@ describe("InvoiceReviewPanel", () => {
 
     expect(within(mayonesa).getByLabelText("Cantidad")).toHaveValue("6");
     expect(within(mayonesa).queryByText(/solo admite cantidades enteras/)).not.toBeInTheDocument();
+    // BAJO-N2 (CIE-03a): el aviso del servidor de cantidad con decimales también se va.
+    expect(within(mayonesa).queryByText(/Cantidad con decimales en la factura/)).not.toBeInTheDocument();
   });
 
   it("Nuevo producto se abre precargado con nombre y costo leídos y elige el creado", async () => {
