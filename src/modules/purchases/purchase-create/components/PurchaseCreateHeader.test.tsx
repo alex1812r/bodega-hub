@@ -58,3 +58,20 @@ describe("PurchaseCreateHeader · Volver", () => {
     expect(screen.getByRole("link", { name: "Volver" })).not.toHaveAttribute("aria-keyshortcuts");
   });
 });
+
+describe("PurchaseCreateHeader · Escanear factura (SCN-07)", () => {
+  it("sin onScanInvoice no hay botón", () => {
+    render(<PurchaseCreateHeader />);
+
+    expect(screen.queryByRole("button", { name: "Escanear factura" })).not.toBeInTheDocument();
+  });
+
+  it("con onScanInvoice el botón lo llama", () => {
+    const onScanInvoice = jest.fn();
+    render(<PurchaseCreateHeader onScanInvoice={onScanInvoice} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Escanear factura" }));
+
+    expect(onScanInvoice).toHaveBeenCalledTimes(1);
+  });
+});

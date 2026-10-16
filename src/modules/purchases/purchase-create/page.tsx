@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import type { RestockDraft } from "@/modules/inventory/restock";
+import { InvoiceScanModal } from "@/modules/invoice-scan/client/components/InvoiceScanModal";
+import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -101,6 +103,11 @@ import {
   findExemptTaxRate,
 } from "./utils/purchaseLineTax";
 
+/** `/purchases/create?scan=1` abre el escaneo de factura al entrar (vacío de la lista). */
+const INVOICE_SCAN_QUERY_PARAM = "scan";
+const INVOICE_SCAN_PROCESS_LABEL = "Escaneo de factura en curso";
+const INVOICE_SCAN_LEAVE_DESCRIPTION = "Si sales ahora, la lectura de la factura se cancela.";
+
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
 
 const PURCHASE_CHANGED_MESSAGE =
@@ -130,7 +137,7 @@ export function PurchaseCreatePage() {
   // Clave del pago inicial: una por intento de compra, ligada a la clave de este.
   const [initialPaymentKey] = useState(() => new InitialPaymentKey());
   const { showToast } = useToast();
-  const { can } = usePermission();
+  const { can, isLoading: permissionsLoading } = usePermission();
   // Un pago de compra lo registra quien ve y gestiona pagos (regla de `POST /api/payments`).
   const canPayNow = can("payments.manage") && can("payments.view");
   // Sin ese permiso no hay sección "Pagar ahora" ni se piden sus métodos (responde 403).
@@ -204,10 +211,41 @@ export function PurchaseCreatePage() {
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
   // Compra ya creada: ni se vuelve a guardar el borrador ni se pregunta al salir.
   const [confirmed, setConfirmed] = useState(false);
+  // Escaneo de factura (SCN-07): solo quien puede crear compras lo ve.
+  const canScanInvoice = can("purchases.create");
+  const [invoiceScanOpen, setInvoiceScanOpen] = useState(false);
+  // Preparando, subiendo o leyendo: el guardia nombra el escaneo.
+  const [invoiceScanBusy, setInvoiceScanBusy] = useState(false);
+  // TODO(SCN-08c): abrir la revisión con la factura leída y cargarla en el formulario.
+  const [, setScannedInvoice] = useState<InvoiceScanResponse | null>(null);
+  const scanParamHandledRef = useRef(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
   const catalog = productSearchResult.catalog;
   const currentRateVes = exchangeRate.data?.rateVes;
   const activeRateVes = currentRateVes ?? 510;
+
+  // `/purchases/create?scan=1` (vacío de la lista): abre el escaneo una vez, cuando se
+  // conocen los permisos, y quita el parámetro para que recargar no lo vuelva a abrir.
+  useEffect(() => {
+    if (scanParamHandledRef.current || permissionsLoading) {
+      return;
+    }
+
+    scanParamHandledRef.current = true;
+    const url = new URL(window.location.href);
+
+    if (url.searchParams.get(INVOICE_SCAN_QUERY_PARAM) !== "1") {
+      return;
+    }
+
+    url.searchParams.delete(INVOICE_SCAN_QUERY_PARAM);
+    router.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false });
+
+    if (canScanInvoice) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- el parámetro de la URL solo se lee en el navegador y tras cargar los permisos; leerlo en render desajustaría la hidratación
+      setInvoiceScanOpen(true);
+    }
+  }, [canScanInvoice, permissionsLoading, router]);
 
   useEffect(() => {
     if (!supplierId) {
@@ -392,21 +430,31 @@ export function PurchaseCreatePage() {
   // Regla 14 (CNF-15): con una línea o un proveedor elegido, salir pregunta nombrando la
   // compra. «Salir» guarda el borrador en el acto, sin esperar al guardado automático. Si
   // esta compra no tiene dónde guardarse no se promete: el aviso es de pérdida.
+  // Un escaneo de factura en curso (SCN-07) también activa el guardia y le da nombre; si
+  // además hay compra, salir sigue guardando (o avisando de perder) su borrador.
+  const purchaseInProgress = (items.length > 0 || supplierId !== "") && !confirmed;
+  const purchaseSaveDescription =
+    saveBlock === "two-drafts"
+      ? "Ya hay dos compras sin terminar guardadas: esta no se guardará mientras no restaures o descartes aquellas."
+      : saveBlock === "storage"
+        ? "Este navegador no dejó guardar el borrador (almacenamiento lleno o bloqueado): si sales, esta compra se pierde."
+        : undefined;
   const guard = useProcessGuard({
-    active: (items.length > 0 || supplierId !== "") && !confirmed,
-    description:
-      saveBlock === "two-drafts"
-        ? "Ya hay dos compras sin terminar guardadas: esta no se guardará mientras no restaures o descartes aquellas."
-        : saveBlock === "storage"
-          ? "Este navegador no dejó guardar el borrador (almacenamiento lleno o bloqueado): si sales, esta compra se pierde."
-          : undefined,
-    label: describePurchaseInProgress({
-      lineCount: items.length,
-      supplierId,
-      supplierName,
-      totalRef: Math.max(0, roundMoney(totals.subtotalRef - discountRef + totals.taxRef)),
-    }),
-    onLeave: saveBlock ? "discard" : "draft",
+    active: purchaseInProgress || invoiceScanBusy,
+    description: invoiceScanBusy
+      ? [INVOICE_SCAN_LEAVE_DESCRIPTION, purchaseInProgress ? purchaseSaveDescription : undefined]
+          .filter(Boolean)
+          .join(" ")
+      : purchaseSaveDescription,
+    label: invoiceScanBusy
+      ? INVOICE_SCAN_PROCESS_LABEL
+      : describePurchaseInProgress({
+          lineCount: items.length,
+          supplierId,
+          supplierName,
+          totalRef: Math.max(0, roundMoney(totals.subtotalRef - discountRef + totals.taxRef)),
+        }),
+    onLeave: purchaseInProgress && !saveBlock ? "draft" : "discard",
     onSaveDraft: () => syncDraft(draftContent),
   });
 
@@ -863,6 +911,11 @@ export function PurchaseCreatePage() {
   // Lector con la confirmación abierta (CNF-F5): su Enter no llega al botón del modal. Como
   // cualquier línea que llega con el modal abierto, lo cierra: el código se resuelve en la
   // cola de escaneos y, si entra, hay que volver a confirmar.
+  /** La revisión de la factura leída llega en SCN-08c; por ahora solo se guarda. */
+  function onInvoiceScanned(response: InvoiceScanResponse) {
+    setScannedInvoice(response);
+  }
+
   function handleConfirmScan(candidates: string[] | null) {
     if (createPurchase.isPending || !candidates) {
       showToast({
@@ -984,7 +1037,7 @@ export function PurchaseCreatePage() {
 
   return (
     <div className="space-y-6 pb-8">
-      <PurchaseCreateHeader />
+      <PurchaseCreateHeader onScanInvoice={canScanInvoice ? () => setInvoiceScanOpen(true) : undefined} />
 
       {draft.pending ? (
         <PurchaseDraftBanner
@@ -1217,6 +1270,15 @@ export function PurchaseCreatePage() {
         title="Tienes una compra en curso"
         variant="danger"
       />
+      {canScanInvoice && invoiceScanOpen ? (
+        <InvoiceScanModal
+          onBusyChange={setInvoiceScanBusy}
+          onOpenChange={setInvoiceScanOpen}
+          onScanned={onInvoiceScanned}
+          open
+          supplierId={supplierId || undefined}
+        />
+      ) : null}
       <ProcessGuardModal guard={guard} />
     </div>
   );
