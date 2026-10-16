@@ -57,10 +57,18 @@ export type BenchPage = {
 
 export type BenchFewShotExample = { page?: BenchPage; confirmed: InvoiceExtraction };
 
+/**
+ * Qué factura y qué pasada se extrae. Lo usan los extractores sin modelo
+ * (oráculo y replay, SCN-10l); el de producción lo ignora y NUNCA se lo pasa
+ * al modelo (lleva la verdad).
+ */
+export type BenchInvoiceRef = { id: string; bucket: Bucket; truth: InvoiceTruth };
+
 export type BenchExtractInput = {
   pages: BenchPage[];
   fewShot?: BenchFewShotExample[];
   signal?: AbortSignal;
+  invoice?: BenchInvoiceRef;
 };
 
 export type BenchExtractResult = {
@@ -286,7 +294,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
   let provider: string | undefined;
   let modelId: string | undefined;
 
-  const extract = async (truth: InvoiceTruth, fewShotFrom: InvoiceTruth[]): Promise<Extracted> => {
+  const extract = async (truth: InvoiceTruth, bucket: Bucket, fewShotFrom: InvoiceTruth[]): Promise<Extracted> => {
     const fewShotIds = fewShotFrom.map((t) => t.id);
     try {
       const pages = await Promise.all(truth.pages.map((path) => opts.readPage(path)));
@@ -298,6 +306,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
         pages,
         ...(fewShot.length > 0 ? { fewShot } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
+        invoice: { id: truth.id, bucket, truth },
       });
       provider ??= result.provider;
       modelId ??= result.modelId;
@@ -382,7 +391,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
   // a) sinAlias
   let extractedCount = 0;
   const passA = await mapPool(truths, concurrency, async (truth) => {
-    const extracted = await extract(truth, []);
+    const extracted = await extract(truth, "sinAlias", []);
     extractedCount += 1;
     opts.onProgress?.({
       phase: "extract",
@@ -435,7 +444,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     const results = await mapPool(targetsB, concurrency, async ({ truth, previous }) => {
       const root = duplicateRoot(truth);
       const examples = previous.filter((p) => duplicateRoot(p) !== root).slice(-3);
-      const extracted = await extract(truth, examples);
+      const extracted = await extract(truth, "conAlias", examples);
       done += 1;
       opts.onProgress?.({
         phase: "extract",

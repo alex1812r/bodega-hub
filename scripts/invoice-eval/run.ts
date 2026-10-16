@@ -5,6 +5,17 @@
  *   npm run invoice-eval -- --provider google|anthropic|mock [--model <id>]
  *     [--only f01,f02] [--no-fewshot] [--concurrency 2]
  *     [--out scripts/invoice-eval/runs] [--label texto] [--keys-env <ruta>]
+ *   npm run invoice-eval -- --provider oracle [...]
+ *   npm run invoice-eval -- --replay <run.json> [--fill-missing --provider p --model m] [...]
+ *
+ * Modos sin modelo (SCN-10l):
+ * - `--provider oracle`: la extracción es la verdad (0 llamadas, tokens/costo
+ *   null, duración 0). Mide SOLO el emparejamiento; few-shot no aplica.
+ * - `--replay`: reutiliza las `predicted` guardadas de una corrida por (id,
+ *   pasada) y recalcula el emparejamiento con el código y el lab actuales. Las
+ *   que no tengan extracción quedan con error REPLAY_MISSING salvo
+ *   `--fill-missing`, que las extrae con el proveedor/modelo de la corrida
+ *   original (`--provider/--model` deben coincidir con su meta).
  *
  * Conecta `runBench` con `extractInvoice` (el mismo extractor de producción) y
  * `loadMatchContext` contra la base LAB con la sesión del admin del escenario
@@ -15,14 +26,16 @@
  * - Keys de IA: de `--keys-env` se leen ÚNICAMENTE GOOGLE_GENERATIVE_AI_API_KEY y
  *   ANTHROPIC_API_KEY (ese archivo apunta a producción: nada más entra en
  *   process.env), y solo la del proveedor pedido. Nunca se imprimen ni se escriben.
+ *   Oráculo y replay sin --fill-missing no leen el archivo.
  * - Cerrojo `.notes/factura-escaneo/lab.lock` mientras corre.
  * - 3 errores de cuota seguidos cortan la pasada (aviso en el informe).
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { createClient } from "@supabase/supabase-js";
 
+import type { InvoiceExtraction } from "../../src/modules/invoice-scan/contracts";
 import { extractInvoice, type InvoiceFewShotExample } from "../../src/modules/invoice-scan/server/extract";
 import { toFewShotFormat } from "../../src/modules/invoice-scan/server/fewShot";
 import {
@@ -33,7 +46,7 @@ import { createInvoiceScanModel } from "../../src/modules/invoice-scan/server/pr
 import { parseEnvFile } from "../stock-lab/env";
 
 import { TARGETS, type AggregateMetrics } from "./metrics";
-import { renderMarkdown, toJson } from "./report";
+import { FROM_ORIGINAL, ORACLE_BANNER, ORACLE_NA, modeTargetsOk, renderMarkdown, toJson, type ReportMode } from "./report";
 import { runBench, type BenchExtractor, type BenchPage, type BenchResult } from "./runner";
 import { SCENARIO_USER_EMAIL, SCENARIO_USER_PASSWORD } from "./scenario/catalog";
 import { loadScenarioIds } from "./seed-lab";
@@ -48,11 +61,14 @@ export const QUOTA_STREAK_LIMIT = 3;
 
 // ───────────────────────── flags ─────────────────────────
 
-export const CLI_PROVIDERS = ["google", "anthropic", "mock"] as const;
+export const CLI_PROVIDERS = ["google", "anthropic", "mock", "oracle"] as const;
 export type CliProvider = (typeof CLI_PROVIDERS)[number];
+/** Proveedores que pasan por la factory (`oracle` no llama a nada). */
+export type ModelProvider = Exclude<CliProvider, "oracle">;
 
 export type CliOptions = {
-  provider: CliProvider;
+  /** Obligatorio salvo con `--replay` (sin `--fill-missing`). */
+  provider?: CliProvider;
   model?: string;
   only?: string[];
   fewShot: boolean;
@@ -60,22 +76,33 @@ export type CliOptions = {
   out: string;
   label?: string;
   keysEnv: string;
+  /** Ruta absoluta del run.json de origen. */
+  replay?: string;
+  fillMissing: boolean;
 };
 
 const USAGE =
-  "Uso: npm run invoice-eval -- --provider google|anthropic|mock [--model <id>] [--only f01,f02] " +
-  "[--no-fewshot] [--concurrency n] [--out <dir>] [--label <texto>] [--keys-env <ruta>]";
+  "Uso: npm run invoice-eval -- --provider google|anthropic|mock|oracle [--model <id>] [--only f01,f02] " +
+  "[--no-fewshot] [--concurrency n] [--out <dir>] [--label <texto>] [--keys-env <ruta>] " +
+  "| --replay <run.json> [--fill-missing --provider <p> --model <m>]";
 
 export function parseArgs(argv: readonly string[], cwd: string = process.cwd()): CliOptions {
   const values = new Map<string, string>();
   let fewShot = true;
+  let noFewShotFlag = false;
+  let fillMissing = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--no-fewshot") {
       fewShot = false;
+      noFewShotFlag = true;
       continue;
     }
-    const known = ["--provider", "--model", "--only", "--concurrency", "--out", "--label", "--keys-env"];
+    if (arg === "--fill-missing") {
+      fillMissing = true;
+      continue;
+    }
+    const known = ["--provider", "--model", "--only", "--concurrency", "--out", "--label", "--keys-env", "--replay"];
     const [flag, inline] = arg.includes("=") ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)] : [arg, undefined];
     if (!known.includes(flag)) throw new Error(`Flag desconocido: ${arg}. ${USAGE}`);
     const value = inline ?? argv[index + 1];
@@ -87,10 +114,24 @@ export function parseArgs(argv: readonly string[], cwd: string = process.cwd()):
   }
 
   const provider = values.get("--provider");
-  if (!provider) throw new Error(`--provider es obligatorio. ${USAGE}`);
-  if (!(CLI_PROVIDERS as readonly string[]).includes(provider)) {
-    throw new Error(`--provider "${provider}" no es válido (google|anthropic|mock).`);
+  const replay = values.get("--replay");
+  if (provider && !(CLI_PROVIDERS as readonly string[]).includes(provider)) {
+    throw new Error(`--provider "${provider}" no es válido (google|anthropic|mock|oracle).`);
   }
+  if (fillMissing && !replay) throw new Error(`--fill-missing solo vale con --replay. ${USAGE}`);
+  if (replay) {
+    if (noFewShotFlag) throw new Error("Con --replay el few-shot sale de la corrida de origen: quita --no-fewshot.");
+    if (provider === "oracle") throw new Error("--replay y --provider oracle son modos distintos: usa uno.");
+    if (fillMissing && (!provider || !values.get("--model"))) {
+      throw new Error("--fill-missing exige --provider y --model iguales a los de la corrida de origen.");
+    }
+    if (!fillMissing && (provider || values.get("--model"))) {
+      throw new Error("--replay sin --fill-missing no llama a ningún modelo: quita --provider/--model.");
+    }
+  } else if (!provider) {
+    throw new Error(`--provider es obligatorio. ${USAGE}`);
+  }
+  if (provider === "oracle" && values.get("--model")) throw new Error("--provider oracle no usa --model.");
   const concurrencyRaw = values.get("--concurrency") ?? "2";
   const concurrency = Number(concurrencyRaw);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
@@ -107,15 +148,35 @@ export function parseArgs(argv: readonly string[], cwd: string = process.cwd()):
   const label = values.get("--label");
 
   return {
-    provider: provider as CliProvider,
+    ...(provider ? { provider: provider as CliProvider } : {}),
     ...(model ? { model } : {}),
     ...(only ? { only } : {}),
-    fewShot,
+    // Oráculo: few-shot no aplica (conAlias reutiliza la extracción = verdad).
+    fewShot: provider === "oracle" ? false : fewShot,
     concurrency,
     out: toAbsolute(values.get("--out") ?? join(EVAL_DIR, "runs")),
     ...(label ? { label } : {}),
     keysEnv: toAbsolute(values.get("--keys-env") ?? DEFAULT_KEYS_ENV),
+    ...(replay ? { replay: toAbsolute(replay) } : {}),
+    fillMissing,
   };
+}
+
+export type RunMode = "model" | "oracle" | "replay";
+
+export function runModeOf(options: Pick<CliOptions, "provider" | "replay">): RunMode {
+  if (options.replay) return "replay";
+  return options.provider === "oracle" ? "oracle" : "model";
+}
+
+/**
+ * Proveedor que hay que construir con la factory, o null si la corrida no hace
+ * llamadas (oráculo; replay sin --fill-missing).
+ */
+export function modelProviderFor(options: Pick<CliOptions, "provider" | "replay" | "fillMissing">): ModelProvider | null {
+  if (!options.provider || options.provider === "oracle") return null;
+  if (options.replay && !options.fillMissing) return null;
+  return options.provider;
 }
 
 // ───────────────────────── keys y entorno ─────────────────────────
@@ -155,7 +216,24 @@ export function keyNameFor(provider: CliProvider): AiKeyName | null {
  * Deja en `env` solo la key del proveedor pedido (la del otro se borra: así la
  * factory no puede caer a otro proveedor) y fija INVOICE_SCAN_PROVIDER/MODEL.
  */
-export function applyModelEnv(env: Record<string, string | undefined>, options: Pick<CliOptions, "provider" | "model">, keys: AiKeys): void {
+/**
+ * Lee el archivo de keys SOLO si la corrida llama a un modelo real (google o
+ * anthropic). Oráculo, replay sin --fill-missing y mock no lo abren.
+ */
+export function resolveAiKeys(
+  options: Pick<CliOptions, "provider" | "replay" | "fillMissing" | "keysEnv">,
+  readFile: (path: string) => string,
+): AiKeys {
+  const provider = modelProviderFor(options);
+  if (!provider || keyNameFor(provider) === null) return {};
+  return readAiKeys(readFile(options.keysEnv));
+}
+
+export function applyModelEnv(
+  env: Record<string, string | undefined>,
+  options: { provider: ModelProvider; model?: string },
+  keys: AiKeys,
+): void {
   for (const name of AI_KEY_NAMES) delete env[name];
   const keyName = keyNameFor(options.provider);
   if (keyName) {
@@ -169,7 +247,7 @@ export function applyModelEnv(env: Record<string, string | undefined>, options: 
 
 /** Aborta si la factory resolvió otro proveedor u otro modelo que el pedido. */
 export function assertResolvedModel(
-  requested: Pick<CliOptions, "provider" | "model">,
+  requested: { provider: ModelProvider; model?: string },
   resolved: { provider: string; modelId: string },
 ): void {
   if (resolved.provider !== requested.provider) {
@@ -262,6 +340,124 @@ export function toProductionExtractor(
   };
 }
 
+// ───────────────────────── oráculo y replay (SCN-10l) ─────────────────────────
+
+export const ORACLE_PROVIDER = "oracle";
+export const ORACLE_MODEL_ID = "verdad";
+
+/** Devuelve `truth.extraction` tal cual: 0 llamadas, tokens null, duración 0. */
+export function createOracleExtractor(): BenchExtractor {
+  return async (input) => {
+    if (!input.invoice) throw new Error("Oráculo: el runner no indicó la factura.");
+    return {
+      extraction: structuredClone(input.invoice.truth.extraction),
+      provider: ORACLE_PROVIDER,
+      modelId: ORACLE_MODEL_ID,
+      inputTokens: null,
+      outputTokens: null,
+      durationMs: 0,
+      pages: input.pages.length,
+    };
+  };
+}
+
+export const REPLAY_MISSING_CODE = "REPLAY_MISSING";
+export const REPLAY_MISSING_MESSAGE = "sin extracción en el replay";
+
+export type ReplayEntry = {
+  predicted: InvoiceExtraction;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  durationMs: number | null;
+};
+
+export type ReplaySource = {
+  path: string;
+  provider: string;
+  modelId: string;
+  fewShot: boolean;
+  /** Clave `<id>:<bucket>`; solo entradas con `predicted`. */
+  entries: Map<string, ReplayEntry>;
+};
+
+export function replayKey(id: string, bucket: string): string {
+  return `${id}:${bucket}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Lee un run.json de `writeRun`: meta (proveedor/modelo/few-shot) y `predicted` por (id, pasada). */
+export function parseReplaySource(raw: unknown, path: string): ReplaySource {
+  if (!isRecord(raw) || !isRecord(raw.meta) || !Array.isArray(raw.perInvoice)) {
+    throw new Error(`${path} no es un run.json del banco (falta meta o perInvoice).`);
+  }
+  const { meta } = raw;
+  if (typeof meta.provider !== "string" || typeof meta.modelId !== "string" || typeof meta.fewShot !== "boolean") {
+    throw new Error(`${path}: meta sin provider/modelId/fewShot.`);
+  }
+  const entries = new Map<string, ReplayEntry>();
+  for (const item of raw.perInvoice) {
+    if (!isRecord(item) || typeof item.id !== "string" || typeof item.bucket !== "string") continue;
+    const predicted = item.predicted;
+    if (!isRecord(predicted) || !Array.isArray(predicted.lines)) continue;
+    const tokens = isRecord(item.tokens) ? item.tokens : {};
+    entries.set(replayKey(item.id, item.bucket), {
+      predicted: predicted as unknown as InvoiceExtraction,
+      inputTokens: numberOrNull(tokens.input),
+      outputTokens: numberOrNull(tokens.output),
+      durationMs: numberOrNull(item.durationMs),
+    });
+  }
+  return { path, provider: meta.provider, modelId: meta.modelId, fewShot: meta.fewShot, entries };
+}
+
+/** --fill-missing solo con el mismo proveedor/modelo de la corrida de origen. */
+export function assertFillMissingMatches(options: Pick<CliOptions, "provider" | "model">, source: ReplaySource): void {
+  if (options.provider !== source.provider || options.model !== source.modelId) {
+    throw new Error(
+      `--fill-missing exige --provider ${source.provider} --model ${source.modelId} (los de la corrida de origen); ` +
+        `se pidió --provider ${options.provider ?? "–"} --model ${options.model ?? "–"}.`,
+    );
+  }
+}
+
+/**
+ * Devuelve la extracción guardada de (id, pasada) con tokens/tiempo de la
+ * corrida original. Sin extracción: `fallback` (--fill-missing) o error
+ * REPLAY_MISSING.
+ */
+export function createReplayExtractor(source: ReplaySource, fallback?: BenchExtractor) {
+  const state = { replayed: 0, missing: 0, filled: 0 };
+  const extractor: BenchExtractor = async (input) => {
+    if (!input.invoice) throw new Error("Replay: el runner no indicó la factura.");
+    const entry = source.entries.get(replayKey(input.invoice.id, input.invoice.bucket));
+    if (entry) {
+      state.replayed += 1;
+      return {
+        extraction: structuredClone(entry.predicted),
+        provider: source.provider,
+        modelId: source.modelId,
+        inputTokens: entry.inputTokens,
+        outputTokens: entry.outputTokens,
+        durationMs: entry.durationMs ?? 0,
+        pages: input.pages.length,
+      };
+    }
+    state.missing += 1;
+    if (!fallback) throw Object.assign(new Error(REPLAY_MISSING_MESSAGE), { code: REPLAY_MISSING_CODE });
+    const result = await fallback(input);
+    state.filled += 1;
+    return result;
+  };
+  return { extractor, state };
+}
+
 function isQuotaError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const record = error as Record<string, unknown>;
@@ -317,20 +513,54 @@ export function slugPart(value: string): string {
   );
 }
 
-export function runBaseName(input: { date: Date; provider: string; model: string; label?: string }): string {
-  const parts = [caracasDate(input.date), slugPart(input.provider), slugPart(input.model)];
+export function runBaseName(input: { date: Date; provider: string; model: string; label?: string; mode?: RunMode }): string {
+  const parts =
+    input.mode === "oracle"
+      ? [caracasDate(input.date), "oraculo-solo-emparejamiento"]
+      : input.mode === "replay"
+        ? [caracasDate(input.date), "replay", slugPart(input.provider), slugPart(input.model)]
+        : [caracasDate(input.date), slugPart(input.provider), slugPart(input.model)];
   if (input.label) parts.push(slugPart(input.label));
   return parts.join("-");
 }
 
 export type RunMeta = {
+  /** Ausente = "model" (corridas anteriores a SCN-10l). */
+  mode?: RunMode;
+  /** Solo en oráculo: aviso explícito también en el JSON. */
+  notice?: string;
   label?: string;
-  requested: { provider: CliProvider; model?: string };
+  requested: { provider?: CliProvider; model?: string };
   fewShot: boolean;
   only?: string[];
   quotaCut: boolean;
   quotaSkipped: number;
+  replay?: {
+    /** Corrida de origen (relativa al worktree si cae dentro). */
+    source: string;
+    sourceProvider: string;
+    sourceModel: string;
+    fillMissing: boolean;
+    replayed: number;
+    missing: number;
+    filled: number;
+    usage: typeof FROM_ORIGINAL;
+  };
 };
+
+export function reportModeOf(meta: RunMeta): ReportMode {
+  if (meta.mode === "oracle") return { kind: "oracle" };
+  if (meta.mode === "replay" && meta.replay) {
+    const { source, fillMissing, replayed, missing, filled } = meta.replay;
+    return { kind: "replay", source, fillMissing, replayed, missing, filled };
+  }
+  return { kind: "model" };
+}
+
+export function displayPath(path: string, root: string = WORKTREE_ROOT): string {
+  const rel = relative(root, path);
+  return (rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path).replace(/\\/g, "/");
+}
 
 /**
  * Si ninguna extracción respondió, el runner no sabe el modelo ("desconocido"):
@@ -343,22 +573,35 @@ export function withResolvedModel(result: BenchResult, resolved: { provider: str
 }
 
 export function renderRunMarkdown(result: BenchResult, meta: RunMeta): string {
+  const requested = [
+    meta.mode === "replay" && meta.replay ? `--replay ${meta.replay.source}${meta.replay.fillMissing ? " --fill-missing" : ""}` : "",
+    meta.requested.provider ? `--provider ${meta.requested.provider}` : "",
+    meta.requested.model ? `--model ${meta.requested.model}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const lines = [
     `> Corrida: ${result.meta.provider} / ${result.meta.modelId}${meta.label ? ` — ${meta.label}` : ""}`,
-    `> Pedido: --provider ${meta.requested.provider}${meta.requested.model ? ` --model ${meta.requested.model}` : ""}; few-shot ${meta.fewShot ? "sí" : "no"}${meta.only ? `; solo ${meta.only.join(", ")}` : ""}`,
+    `> Pedido: ${requested}; few-shot ${meta.fewShot ? "sí" : "no"}${meta.mode === "oracle" ? " (no aplica en oráculo)" : ""}${meta.only ? `; solo ${meta.only.join(", ")}` : ""}`,
   ];
   if (meta.quotaCut) {
     lines.push(
       `> **AVISO: pasada cortada por cuota** (${QUOTA_STREAK_LIMIT} errores QUOTA seguidos; ${meta.quotaSkipped} extracciones no se intentaron). Las métricas de esta corrida están incompletas.`,
     );
   }
-  return `${lines.join("\n")}\n\n${renderMarkdown(result)}`;
+  return `${lines.join("\n")}\n\n${renderMarkdown(result, reportModeOf(meta))}`;
 }
 
 /** `<dir>/<fecha>-<provider>-<model>[-label][-n].md|.json`; nunca sobrescribe. */
 export function writeRun(result: BenchResult, meta: RunMeta, dir: string, now: Date): { markdownPath: string; jsonPath: string } {
   mkdirSync(dir, { recursive: true });
-  const base = runBaseName({ date: now, provider: result.meta.provider, model: result.meta.modelId, ...(meta.label ? { label: meta.label } : {}) });
+  const base = runBaseName({
+    date: now,
+    provider: result.meta.provider,
+    model: result.meta.modelId,
+    ...(meta.label ? { label: meta.label } : {}),
+    ...(meta.mode ? { mode: meta.mode } : {}),
+  });
   for (let n = 1; ; n += 1) {
     const name = n === 1 ? base : `${base}-${n}`;
     const markdownPath = join(dir, `${name}.md`);
@@ -382,24 +625,39 @@ function mark(value: number | null, target: number, comparator: ">=" | "<="): st
 
 /** Resumen de 10 líneas: métricas globales por bucket contra las metas §10. */
 export function summaryLines(result: BenchResult, meta: RunMeta, files: { markdownPath: string }): string[] {
+  const mode = reportModeOf(meta);
+  const oracle = mode.kind === "oracle";
+  const fromOriginal = mode.kind === "replay" ? ` (${FROM_ORIGINAL})` : "";
   const sin: AggregateMetrics = result.global.all.byBucket.sinAlias;
   const con: AggregateMetrics = result.global.all.byBucket.conAlias;
   const total = result.global.all.total;
   const row = (name: string, key: keyof (typeof TARGETS)["sinAlias"], pick: (m: AggregateMetrics) => number | null, comparator: ">=" | "<=") =>
-    `${name.padEnd(22)} sin ${pct(pick(sin)).padStart(6)} (${mark(pick(sin), TARGETS.sinAlias[key], comparator)} ${comparator}${pct(TARGETS.sinAlias[key])}) | con ${pct(pick(con)).padStart(6)} (${mark(pick(con), TARGETS.conAlias[key], comparator)} ${comparator}${pct(TARGETS.conAlias[key])})`;
+    oracle && key !== "matchOkRate" && key !== "confirmedWrongRateMax"
+      ? `${name.padEnd(22)} ${ORACLE_NA}`
+      : `${name.padEnd(22)} sin ${pct(pick(sin)).padStart(6)} (${mark(pick(sin), TARGETS.sinAlias[key], comparator)} ${comparator}${pct(TARGETS.sinAlias[key])}) | con ${pct(pick(con)).padStart(6)} (${mark(pick(con), TARGETS.conAlias[key], comparator)} ${comparator}${pct(TARGETS.conAlias[key])})`;
   const errors = result.perInvoice.filter((entry) => entry.error);
   const codes = new Map<string, number>();
   errors.forEach((entry) => codes.set(entry.error?.code ?? "?", (codes.get(entry.error?.code ?? "?") ?? 0) + 1));
+  const head = oracle
+    ? `** ${ORACLE_BANNER} **`
+    : mode.kind === "replay"
+      ? `REPLAY de ${mode.source}: reutilizadas ${mode.replayed}, sin extracción ${mode.missing}${mode.fillMissing ? `, rellenadas ${mode.filled}` : ""}`
+      : null;
   return [
+    ...(head ? [head] : []),
     `${result.meta.provider}/${result.meta.modelId}${meta.label ? ` [${meta.label}]` : ""} few-shot=${meta.fewShot ? "sí" : "no"} facturas real=${result.meta.invoices.real} sint=${result.meta.invoices.synthetic}${meta.quotaCut ? " ** CORTADA POR CUOTA **" : ""}`,
     row("Cabecera", "headerFieldRate", (m) => m.headerFieldRate, ">="),
     row("Líneas detectadas", "linesDetectedRate", (m) => m.linesDetectedRate, ">="),
     row("Exactitud", "exactRate", (m) => m.exactRate, ">="),
     row("Emparejadas OK", "matchOkRate", (m) => m.matchOkRate, ">="),
     row("Confirmadas mal", "confirmedWrongRateMax", (m) => m.confirmedWrongRate, "<="),
-    `p95 1 página           ${total.p95DurationMs1Page === null ? "–" : `${total.p95DurationMs1Page} ms`} (${mark(total.p95DurationMs1Page, TARGETS.p95DurationMs1PageMax, "<=")} <=${TARGETS.p95DurationMs1PageMax} ms)`,
-    `$/factura              ${total.avgCostUsd === null ? "–" : `$${total.avgCostUsd.toFixed(5)}`} (${mark(total.avgCostUsd, TARGETS.avgCostUsdMax, "<=")} <=$${TARGETS.avgCostUsdMax}) tokens in=${total.inputTokens} out=${total.outputTokens}`,
-    `Errores                ${errors.length}${codes.size > 0 ? ` (${[...codes].map(([code, n]) => `${code}×${n}`).join(", ")})` : ""}; metas ${result.targets.ok ? "CUMPLIDAS" : "NO cumplidas"}`,
+    oracle
+      ? `p95 1 página           ${ORACLE_NA}`
+      : `p95 1 página           ${total.p95DurationMs1Page === null ? "–" : `${total.p95DurationMs1Page} ms`} (${mark(total.p95DurationMs1Page, TARGETS.p95DurationMs1PageMax, "<=")} <=${TARGETS.p95DurationMs1PageMax} ms)${fromOriginal}`,
+    oracle
+      ? `$/factura              ${ORACLE_NA}`
+      : `$/factura              ${total.avgCostUsd === null ? "–" : `$${total.avgCostUsd.toFixed(5)}`} (${mark(total.avgCostUsd, TARGETS.avgCostUsdMax, "<=")} <=$${TARGETS.avgCostUsdMax}) tokens in=${total.inputTokens} out=${total.outputTokens}${fromOriginal}`,
+    `Errores                ${errors.length}${codes.size > 0 ? ` (${[...codes].map(([code, n]) => `${code}×${n}`).join(", ")})` : ""}; metas${oracle ? " de emparejamiento" : ""} ${modeTargetsOk(result, mode) ? "CUMPLIDAS" : "NO cumplidas"}`,
     `Informe                ${files.markdownPath}`,
   ];
 }
@@ -423,11 +681,31 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const lab = loadLabSupabase();
 
-  // Keys: solo las dos de IA, y solo la del proveedor pedido. Mock no lee el archivo.
-  const keys = options.provider === "mock" ? {} : readAiKeys(readFileSync(options.keysEnv, "utf8"));
-  applyModelEnv(process.env, options, keys);
-  const model = createInvoiceScanModel();
-  assertResolvedModel(options, model);
+  const mode = runModeOf(options);
+  const source = options.replay
+    ? parseReplaySource(JSON.parse(readFileSync(options.replay, "utf8")) as unknown, displayPath(options.replay))
+    : null;
+  if (source && options.fillMissing) assertFillMissingMatches(options, source);
+
+  // Keys: solo las dos de IA, solo la del proveedor pedido y solo si hay llamadas
+  // reales (oráculo, replay sin --fill-missing y mock no leen el archivo).
+  const modelProvider = modelProviderFor(options);
+  let model: ReturnType<typeof createInvoiceScanModel> | null = null;
+  if (modelProvider) {
+    const keys = resolveAiKeys(options, (path) => readFileSync(path, "utf8"));
+    const requested = { provider: modelProvider, ...(options.model ? { model: options.model } : {}) };
+    applyModelEnv(process.env, requested, keys);
+    model = createInvoiceScanModel();
+    assertResolvedModel(requested, model);
+  }
+  const resolved =
+    mode === "oracle"
+      ? { provider: ORACLE_PROVIDER, modelId: ORACLE_MODEL_ID }
+      : source
+        ? { provider: source.provider, modelId: source.modelId }
+        : (model as NonNullable<typeof model>);
+  // Replay: el few-shot de la corrida de origen (sus extracciones conAlias son con o sin él).
+  const fewShot = source ? source.fewShot : options.fewShot;
 
   let truths = loadTruth(join(EVAL_DIR, "truth"));
   if (options.only) {
@@ -454,17 +732,21 @@ async function main(): Promise<void> {
       throw new Error("El usuario del escenario no pertenece a la tienda eval-facturas: re-sembrar con seed-lab.ts.");
     }
     const matchClient = client as unknown as MatchContextSupabaseClient;
-    const guard = withQuotaCut(toProductionExtractor(extractInvoice, model));
-    console.log(`[invoice-eval] ${model.provider}/${model.modelId}: ${truths.length} facturas, few-shot ${options.fewShot ? "sí" : "no"}`);
+    // Extractor según el modo; la cuota solo vigila llamadas reales.
+    const guard = model ? withQuotaCut(toProductionExtractor(extractInvoice, model)) : null;
+    const replay = source ? createReplayExtractor(source, options.fillMissing ? guard?.extractor : undefined) : null;
+    const extractor = mode === "oracle" ? createOracleExtractor() : replay ? replay.extractor : (guard as NonNullable<typeof guard>).extractor;
+    const modeTag = mode === "oracle" ? " [ORÁCULO: solo emparejamiento]" : source ? ` [REPLAY de ${source.path}]` : "";
+    console.log(`[invoice-eval] ${resolved.provider}/${resolved.modelId}${modeTag}: ${truths.length} facturas, few-shot ${fewShot ? "sí" : "no"}`);
 
     const now = new Date();
     const raw = await runBench({
       truths,
-      extractor: guard.extractor,
+      extractor,
       loadContext: (_truth, extraction) => loadMatchContext(matchClient, ids.storeId, extraction),
       scenario: { products: ids.products, suppliers: ids.suppliers },
       readPage: (path) => readBenchPage(path),
-      fewShot: options.fewShot,
+      fewShot,
       concurrency: options.concurrency,
       now: () => now,
       onProgress: (event) => {
@@ -475,14 +757,31 @@ async function main(): Promise<void> {
     });
 
     const meta: RunMeta = {
+      mode,
+      ...(mode === "oracle" ? { notice: ORACLE_BANNER } : {}),
       ...(options.label ? { label: options.label } : {}),
-      requested: { provider: options.provider, ...(options.model ? { model: options.model } : {}) },
-      fewShot: options.fewShot,
+      requested: {
+        ...(options.provider ? { provider: options.provider } : {}),
+        ...(options.model ? { model: options.model } : {}),
+      },
+      fewShot,
       ...(options.only ? { only: options.only } : {}),
-      quotaCut: guard.state.cut,
-      quotaSkipped: guard.state.skipped,
+      quotaCut: guard?.state.cut ?? false,
+      quotaSkipped: guard?.state.skipped ?? 0,
+      ...(source && replay
+        ? {
+            replay: {
+              source: source.path,
+              sourceProvider: source.provider,
+              sourceModel: source.modelId,
+              fillMissing: options.fillMissing,
+              ...replay.state,
+              usage: FROM_ORIGINAL,
+            },
+          }
+        : {}),
     };
-    const result = withResolvedModel(raw, model);
+    const result = withResolvedModel(raw, resolved);
     const files = writeRun(result, meta, options.out, now);
     console.log(summaryLines(result, meta, files).join("\n"));
     await client.auth.signOut();

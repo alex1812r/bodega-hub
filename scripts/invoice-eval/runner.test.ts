@@ -17,7 +17,17 @@ import type {
 } from "../../src/modules/invoice-scan/server/match.types";
 
 import { alignLines } from "./metrics";
-import { renderMarkdown, toJson, writeRunFiles } from "./report";
+import { ORACLE_BANNER, renderMarkdown, toJson, writeRunFiles } from "./report";
+import {
+  createOracleExtractor,
+  createReplayExtractor,
+  parseReplaySource,
+  REPLAY_MISSING_CODE,
+  REPLAY_MISSING_MESSAGE,
+  renderRunMarkdown,
+  writeRun,
+  type RunMeta,
+} from "./run";
 import {
   learnAliases,
   runBench,
@@ -347,6 +357,138 @@ describe("report", () => {
       expect(first.markdownPath).toBe(join(dir, "2026-10-15-fake.md"));
       expect(second.jsonPath).toBe(join(dir, "2026-10-15-fake-2.json"));
       expect(existsSync(first.jsonPath) && existsSync(second.markdownPath)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("modos sin modelo (SCN-10l)", () => {
+  it("oráculo: la extracción es la verdad; cabecera/exactitud al 100 %, emparejamiento calculado, 0 tokens", async () => {
+    const result = await runBench(options({ extractor: createOracleExtractor(), concurrency: 3 }));
+    const sin = result.global.all.byBucket.sinAlias;
+    expect(sin.headerFieldRate).toBe(1);
+    expect(sin.linesDetectedRate).toBe(1);
+    expect(sin.exactRate).toBe(1);
+    expect(sin.matchOkRate).toBe(1);
+    expect(sin.matchCounts.doubtful_correct).toBeGreaterThan(0);
+    expect(result.global.all.byBucket.conAlias.matchCounts.confirmed_correct).toBeGreaterThan(0);
+    expect(result.meta).toMatchObject({ provider: "oracle", modelId: "verdad" });
+    const f01 = entry(result, "f01", "sinAlias");
+    expect(f01.predicted).toEqual(TRUTHS[0].extraction);
+    expect(f01.predicted).not.toBe(TRUTHS[0].extraction);
+    expect(f01.tokens).toEqual({ input: null, output: null });
+    expect(f01.costUsd).toBeNull();
+    expect(f01.durationMs).toBe(0);
+  });
+
+  it("el runner indica factura y pasada al extractor", async () => {
+    const calls: BenchExtractInput[] = [];
+    await runBench(options({ fewShot: true, extractor: fakeExtractor({ calls }) }));
+    const refs = calls.map((call) => `${call.invoice?.id}:${call.invoice?.bucket}`);
+    expect(refs).toContain("f01:sinAlias");
+    expect(refs).toContain("f02:conAlias");
+    expect(calls.every((call) => call.invoice?.truth.id === truthOfPage(call.pages[0]).id)).toBe(true);
+  });
+
+  /** run.json mínimo: f01/f02 sinAlias con extracción; f02 conAlias con otra (few-shot); f03 sin nada (error). */
+  function replaySourceJson() {
+    const tweak = (truth: InvoiceTruth, total: number) => ({ ...structuredClone(truth.extraction), total });
+    return {
+      run: { requested: { provider: "google", model: "gemini-2.5-flash" }, fewShot: true },
+      meta: { provider: "google", modelId: "gemini-2.5-flash", fewShot: true },
+      perInvoice: [
+        { id: "f01", bucket: "sinAlias", predicted: tweak(TRUTHS[0], 111), tokens: { input: 1000, output: 200 }, durationMs: 4000 },
+        { id: "f02", bucket: "sinAlias", predicted: tweak(TRUTHS[1], 222), tokens: { input: 900, output: 100 }, durationMs: 3000 },
+        { id: "f02", bucket: "conAlias", predicted: tweak(TRUTHS[1], 333), tokens: { input: 2000, output: 150 }, durationMs: 5000 },
+        { id: "f03", bucket: "sinAlias", predicted: null, error: { message: "cuota", code: "QUOTA" }, tokens: { input: null, output: null }, durationMs: null },
+      ],
+    };
+  }
+
+  it("replay: toma la extracción guardada de cada (factura, pasada) con tokens/tiempo de la original", async () => {
+    const source = parseReplaySource(replaySourceJson(), "runs/origen.json");
+    const replay = createReplayExtractor(source);
+    const truths = TRUTHS.filter((t) => ["f01", "f02"].includes(t.id));
+    const result = await runBench(options({ truths, extractor: replay.extractor, fewShot: source.fewShot }));
+    expect(entry(result, "f01", "sinAlias").predicted?.total).toBe(111);
+    expect(entry(result, "f02", "sinAlias").predicted?.total).toBe(222);
+    const f02b = entry(result, "f02", "conAlias");
+    expect(f02b.predicted?.total).toBe(333);
+    expect(f02b.tokens).toEqual({ input: 2000, output: 150 });
+    expect(f02b.durationMs).toBe(5000);
+    expect(f02b.matched).not.toBeNull();
+    expect(result.meta).toMatchObject({ provider: "google", modelId: "gemini-2.5-flash", fewShot: true });
+    expect(replay.state).toEqual({ replayed: 3, missing: 0, filled: 0 });
+  });
+
+  it("replay sin --fill-missing: la factura sin extracción queda con error REPLAY_MISSING y la corrida sigue", async () => {
+    const source = parseReplaySource(replaySourceJson(), "runs/origen.json");
+    const replay = createReplayExtractor(source);
+    const truths = TRUTHS.filter((t) => ["f01", "f02", "f03"].includes(t.id));
+    const result = await runBench(options({ truths, extractor: replay.extractor, fewShot: source.fewShot }));
+    const f03 = entry(result, "f03", "sinAlias");
+    expect(f03.error).toEqual({ message: REPLAY_MISSING_MESSAGE, code: REPLAY_MISSING_CODE });
+    expect(f03.predicted).toBeNull();
+    expect(entry(result, "f03", "conAlias").error?.code).toBe(REPLAY_MISSING_CODE);
+    expect(entry(result, "f01", "sinAlias").error).toBeUndefined();
+    expect(replay.state.missing).toBe(2);
+    expect(renderMarkdown(result)).toContain("f03 (sin alias) [REPLAY_MISSING]: sin extracción en el replay");
+  });
+
+  it("replay con --fill-missing: solo las faltantes van al extractor real", async () => {
+    const source = parseReplaySource(replaySourceJson(), "runs/origen.json");
+    const calls: BenchExtractInput[] = [];
+    const replay = createReplayExtractor(source, fakeExtractor({ calls }));
+    const truths = TRUTHS.filter((t) => ["f01", "f02", "f03"].includes(t.id));
+    const result = await runBench(options({ truths, extractor: replay.extractor, fewShot: source.fewShot }));
+    expect(calls.map((call) => `${call.invoice?.id}:${call.invoice?.bucket}`).sort()).toEqual(["f03:conAlias", "f03:sinAlias"]);
+    expect(entry(result, "f03", "sinAlias").predicted).toEqual(TRUTHS.find((t) => t.id === "f03")?.extraction);
+    expect(replay.state).toEqual({ replayed: 3, missing: 2, filled: 2 });
+  });
+
+  it("informe del oráculo: aviso explícito y cabecera/líneas/exactitud como n/a", async () => {
+    const result = await runBench(options({ extractor: createOracleExtractor() }));
+    const markdown = renderMarkdown(result, { kind: "oracle" });
+    expect(markdown).toContain(ORACLE_BANNER);
+    expect(markdown).toContain("# Banco de evaluación del escaneo: ORÁCULO (solo emparejamiento)");
+    expect(markdown).toMatch(/\| sin alias \| Campos de cabecera \| n\/a \(oráculo\) \|/);
+    expect(markdown).toMatch(/\| todas \| sin alias \| 8 \| n\/a \(oráculo\) \| n\/a \(oráculo\) \| n\/a \(oráculo\) \| 100\.0 % \|/);
+    expect(markdown).toContain("solo metas de emparejamiento");
+    const replayMd = renderMarkdown(result, { kind: "replay", source: "runs/x.json", fillMissing: false, replayed: 3, missing: 1, filled: 0 });
+    expect(replayMd).toContain("**REPLAY** de runs/x.json");
+    expect(replayMd).toContain("Tokens, tiempo y costo: de la corrida original");
+    expect(replayMd).not.toContain("n/a (oráculo)");
+  });
+});
+
+describe("writeRun en modos sin modelo (SCN-10l)", () => {
+  it("oráculo: archivo marcado, aviso en .md y en el JSON; replay registra la corrida de origen", async () => {
+    const result = await runBench(options({ extractor: createOracleExtractor() }));
+    const dir = mkdtempSync(join(tmpdir(), "invoice-eval-oracle-"));
+    try {
+      const now = new Date("2026-10-15T15:00:00Z");
+      const oracleMeta: RunMeta = { mode: "oracle", notice: ORACLE_BANNER, requested: { provider: "oracle" }, fewShot: false, quotaCut: false, quotaSkipped: 0 };
+      const files = writeRun(result, oracleMeta, dir, now);
+      expect(files.markdownPath).toBe(join(dir, "2026-10-15-oraculo-solo-emparejamiento.md"));
+      const markdown = readFileSync(files.markdownPath, "utf8");
+      expect(markdown).toContain("few-shot no (no aplica en oráculo)");
+      expect(markdown).toContain(ORACLE_BANNER);
+      expect(JSON.parse(readFileSync(files.jsonPath, "utf8")).run.notice).toBe(ORACLE_BANNER);
+
+      const replayMeta: RunMeta = {
+        mode: "replay",
+        requested: {},
+        fewShot: true,
+        quotaCut: false,
+        quotaSkipped: 0,
+        replay: { source: "runs/o.json", sourceProvider: "google", sourceModel: "m", fillMissing: false, replayed: 3, missing: 1, filled: 0, usage: "de la corrida original" },
+      };
+      const replayResult = { ...result, meta: { ...result.meta, provider: "google", modelId: "gemini-2.5-flash" } };
+      const replayFiles = writeRun(replayResult, replayMeta, dir, now);
+      expect(replayFiles.jsonPath).toBe(join(dir, "2026-10-15-replay-google-gemini-2.5-flash.json"));
+      expect(renderRunMarkdown(replayResult, replayMeta)).toContain("> Pedido: --replay runs/o.json; few-shot sí");
+      expect(JSON.parse(readFileSync(replayFiles.jsonPath, "utf8")).run.replay.source).toBe("runs/o.json");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

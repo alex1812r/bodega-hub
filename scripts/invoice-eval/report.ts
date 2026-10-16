@@ -31,6 +31,50 @@ const METRIC_LABELS: Record<string, string> = {
 
 const BUCKET_LABELS: Record<Bucket, string> = { sinAlias: "sin alias", conAlias: "con alias" };
 
+// ───────────────────────── modo de la corrida (SCN-10l) ─────────────────────────
+
+export const ORACLE_BANNER = "ORÁCULO: extracción = verdad; mide solo emparejamiento; NO es una métrica del modelo";
+export const ORACLE_NA = "n/a (oráculo)";
+export const FROM_ORIGINAL = "de la corrida original";
+
+/** Métricas que con el oráculo no miden nada (lectura perfecta, 0 llamadas). */
+export const ORACLE_HIDDEN_METRICS: readonly string[] = [
+  "headerFieldRate",
+  "linesDetectedRate",
+  "exactRate",
+  "p95DurationMs1Page",
+  "avgCostUsd",
+];
+
+export type ReportMode =
+  | { kind: "model" }
+  | { kind: "oracle" }
+  | { kind: "replay"; source: string; fillMissing: boolean; replayed: number; missing: number; filled: number };
+
+const MODEL_MODE: ReportMode = { kind: "model" };
+
+function hidden(mode: ReportMode, metric: string): boolean {
+  return mode.kind === "oracle" && ORACLE_HIDDEN_METRICS.includes(metric);
+}
+
+function modeLines(mode: ReportMode): string[] {
+  if (mode.kind === "oracle") {
+    return [
+      `> **${ORACLE_BANNER}.**`,
+      "> Cabecera, líneas, exactitud, tiempo y costo: n/a (la extracción es la verdad; 0 llamadas). Few-shot no aplica.",
+      "",
+    ];
+  }
+  if (mode.kind === "replay") {
+    return [
+      `> **REPLAY** de ${mode.source}: extracciones guardadas reutilizadas; el emparejamiento se recalcula con el código y el lab actuales.`,
+      `> Tokens, tiempo y costo: ${FROM_ORIGINAL}. Reutilizadas ${mode.replayed}, sin extracción ${mode.missing}${mode.fillMissing ? `, extraídas de nuevo (--fill-missing) ${mode.filled}` : ""}.`,
+      "",
+    ];
+  }
+  return [];
+}
+
 function pct(value: number | null): string {
   return value === null ? NONE : `${(value * 100).toFixed(1)} %`;
 }
@@ -65,29 +109,36 @@ function invoiceLabel(entry: Pick<BenchInvoiceResult, "id" | "synthetic">): stri
   return entry.synthetic ? `${entry.id} (sintética)` : entry.id;
 }
 
-function targetRows(checks: readonly TargetCheck[]): string[][] {
+function targetRows(checks: readonly TargetCheck[], mode: ReportMode = MODEL_MODE): string[][] {
   return checks.map((c) => [
     c.scope === "total" ? "total" : BUCKET_LABELS[c.scope],
     METRIC_LABELS[c.metric] ?? c.metric,
-    formatMetric(c.metric, c.value),
+    hidden(mode, c.metric) ? ORACLE_NA : formatMetric(c.metric, c.value),
     `${c.comparator} ${formatMetric(c.metric, c.target)}`,
-    c.skipped ? "sin datos" : c.ok ? OK : FAIL,
+    hidden(mode, c.metric) ? ORACLE_NA : c.skipped ? "sin datos" : c.ok ? OK : FAIL,
   ]);
 }
 
-function aggregateRow(scope: string, bucket: string, m: AggregateMetrics): string[] {
+/** Con el oráculo solo cuentan las metas de emparejamiento. */
+export function modeTargetsOk(result: Pick<BenchResult, "targets">, mode: ReportMode = MODEL_MODE): boolean {
+  if (mode.kind !== "oracle") return result.targets.ok;
+  return result.targets.checks.filter((c) => !hidden(mode, c.metric)).every((c) => c.skipped || c.ok);
+}
+
+function aggregateRow(scope: string, bucket: string, m: AggregateMetrics, mode: ReportMode = MODEL_MODE): string[] {
+  const or = (metric: string, text: string) => (hidden(mode, metric) ? ORACLE_NA : text);
   return [
     scope,
     bucket,
     String(m.invoices),
-    pct(m.headerFieldRate),
-    pct(m.linesDetectedRate),
-    pct(m.exactRate),
+    or("headerFieldRate", pct(m.headerFieldRate)),
+    or("linesDetectedRate", pct(m.linesDetectedRate)),
+    or("exactRate", pct(m.exactRate)),
     pct(m.matchOkRate),
     pct(m.confirmedWrongRate),
     `${m.duplicates.truePositive}/${m.duplicates.expected} (FP ${m.duplicates.falsePositive})`,
-    ms(m.p95DurationMs1Page),
-    usd(m.avgCostUsd),
+    or("p95DurationMs1Page", ms(m.p95DurationMs1Page)),
+    or("avgCostUsd", usd(m.avgCostUsd)),
   ];
 }
 
@@ -133,20 +184,29 @@ function invoiceRow(entry: BenchInvoiceResult): string[] {
   ];
 }
 
-export function renderMarkdown(result: BenchResult): string {
+export function renderMarkdown(result: BenchResult, mode: ReportMode = MODEL_MODE): string {
   const { meta } = result;
   const out: string[] = [];
-  out.push(`# Banco de evaluación del escaneo: ${meta.provider} / ${meta.modelId}`);
+  const title =
+    mode.kind === "oracle"
+      ? "ORÁCULO (solo emparejamiento)"
+      : mode.kind === "replay"
+        ? `REPLAY ${meta.provider} / ${meta.modelId}`
+        : `${meta.provider} / ${meta.modelId}`;
+  out.push(`# Banco de evaluación del escaneo: ${title}`);
   out.push("");
+  out.push(...modeLines(mode));
   out.push(`- Fecha: ${meta.date}`);
   out.push(`- Few-shot en "con alias": ${meta.fewShot ? "sí" : "no (reutiliza la extracción sin alias)"}`);
   out.push(`- Facturas: ${meta.invoices.real} reales, ${meta.invoices.synthetic} sintéticas`);
-  out.push(`- Resultado global contra metas: ${result.targets.ok ? `${OK} cumple` : `${FAIL} no cumple`}`);
+  const targetsOk = modeTargetsOk(result, mode);
+  const scopeNote = mode.kind === "oracle" ? " (solo metas de emparejamiento)" : "";
+  out.push(`- Resultado global contra metas${scopeNote}: ${targetsOk ? `${OK} cumple` : `${FAIL} no cumple`}`);
   out.push("");
 
   out.push("## Metas (plan §10)");
   out.push("");
-  out.push(...table(["Ámbito", "Métrica", "Valor", "Meta", "Resultado"], targetRows(result.targets.checks)));
+  out.push(...table(["Ámbito", "Métrica", "Valor", "Meta", "Resultado"], targetRows(result.targets.checks, mode)));
   out.push("");
 
   out.push("## Global por bucket");
@@ -158,8 +218,8 @@ export function renderMarkdown(result: BenchResult): string {
     ["sintéticas", result.global.synthetic],
   ];
   for (const [scope, metrics] of scopes) {
-    for (const bucket of BUCKETS) globalRows.push(aggregateRow(scope, BUCKET_LABELS[bucket], metrics.byBucket[bucket]));
-    globalRows.push(aggregateRow(scope, "total", metrics.total));
+    for (const bucket of BUCKETS) globalRows.push(aggregateRow(scope, BUCKET_LABELS[bucket], metrics.byBucket[bucket], mode));
+    globalRows.push(aggregateRow(scope, "total", metrics.total, mode));
   }
   out.push(
     ...table(
@@ -173,8 +233,8 @@ export function renderMarkdown(result: BenchResult): string {
         "Emparejamiento",
         "Confirmadas mal",
         "Duplicados",
-        "p95 1 pág.",
-        "$ medio",
+        mode.kind === "replay" ? `p95 1 pág. (${FROM_ORIGINAL})` : "p95 1 pág.",
+        mode.kind === "replay" ? `$ medio (${FROM_ORIGINAL})` : "$ medio",
       ],
       globalRows,
     ),
