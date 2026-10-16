@@ -48,6 +48,7 @@ import {
   INVOICE_SCAN_CLAIMED_MESSAGE,
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
   logInvoiceScanFailure,
+  readExtractedAliasKeys,
   readExtractedRawTexts,
   readStoredExtraction,
   type ConfirmedInvoiceScan,
@@ -293,6 +294,7 @@ export async function precheckInvoiceScan(
     id: usable.id,
     purchaseId: usable.purchaseId,
     rawTexts: readExtractedRawTexts(usable.extracted),
+    aliasKeys: readExtractedAliasKeys(usable.extracted),
     replay,
   };
 }
@@ -415,7 +417,11 @@ export async function finalizeInvoiceScan(
   }
 
   const confirmed = buildConfirmedPayload(
-    { extraction: readStoredExtraction(stored.extracted), rawTexts: readExtractedRawTexts(stored.extracted) },
+    {
+      extraction: readStoredExtraction(stored.extracted),
+      rawTexts: readExtractedRawTexts(stored.extracted),
+      aliasKeys: readExtractedAliasKeys(stored.extracted),
+    },
     input,
   );
 

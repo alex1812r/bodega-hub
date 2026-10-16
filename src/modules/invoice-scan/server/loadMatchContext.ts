@@ -17,7 +17,7 @@
  *    barcode): alícuota de la categoría, receta activa, tamaños de las recetas
  *    de las que es componente y último costo recibido.
  */
-import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
 
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { createRouteSupabaseClient } from "@/lib/supabase/route-client";
@@ -170,7 +170,8 @@ async function loadCandidates(
   const { data, error } = await supabase.rpc(MATCH_CANDIDATES_RPC, {
     p_supplier_name: normalizeAlias(extraction.supplier.name ?? ""),
     p_supplier_tax_id: extraction.supplier.taxId ?? null,
-    p_texts: extraction.lines.map((line) => normalizeAlias(line.rawText)),
+    // Alias difusos contra la clave con la que se aprenden (SCN-UI-Q2), no el rawText entero.
+    p_texts: extraction.lines.map((line) => invoiceAliasKey(line)),
     p_descriptions: extraction.lines.map((line) => normalizeAlias(line.description || line.rawText)),
     p_limit: MATCH_CANDIDATES_PER_LINE,
   });

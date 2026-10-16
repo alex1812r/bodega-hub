@@ -1,4 +1,4 @@
-import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
 
 import type { InvoiceExtractionLine, InvoiceMatchCandidate, InvoiceMatchStatus } from "../../contracts";
 import type { MatchAlias, MatchFuzzyCandidate, MatchProduct, MatchSupplierCatalog } from "../match.types";
@@ -73,12 +73,18 @@ function bySupplierSku(line: InvoiceExtractionLine, lookup: ProductLookup): stri
   );
 }
 
-/** Alias exactos de description y rawText (puede haber uno por texto, de productos distintos). */
+/**
+ * Alias exactos de la línea (puede haber uno por texto, de productos distintos):
+ * la clave con la que se aprenden (`invoiceAliasKey`, SCN-UI-Q2), la description y
+ * el rawText entero normalizados (clave de los alias aprendidos antes).
+ */
 function byExactAlias(line: InvoiceExtractionLine, lookup: ProductLookup): MatchAlias[] {
   if (!lookup.catalog) {
     return [];
   }
-  const texts = unique([normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean));
+  const texts = unique(
+    [invoiceAliasKey(line), normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean),
+  );
   return lookup.catalog.aliases.filter((alias) => texts.includes(alias.aliasNorm));
 }
 
