@@ -11,8 +11,9 @@
  *   alias de la línea (`invoiceAliasKey`, SCN-UI-Q2);
  *   a las líneas sin ninguno, segunda pasada con los textos limpios de
  *   `searchTextVariants` (como `loadVariantFuzzy`, SCN-11-it1);
- * - alícuotas activas de la tienda, tasa vigente y escaneos previos con el
- *   mismo número normalizado.
+ * - alícuotas activas de la tienda, tasa del día (`getCurrentExchangeRate`
+ *   mock, la del formulario de compra) y escaneos previos con el mismo número
+ *   normalizado.
  *
  * Diferencias asumidas: la similitud es la de bigramas de `textSimilarity`
  * (no la de trigramas de pg_trgm) y el último costo es `currentCostRef` del
@@ -21,12 +22,12 @@
 import { normalizeAlias } from "@bodega/core/invoice";
 import { invoiceAliasKey } from "../invoiceAliasKey";
 
+import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.mock-server";
 import { mockTaxRatesForStore } from "@/modules/settings/services/taxRates.mock-server";
 import {
   mockAppSettings,
   mockCategories,
   mockContacts,
-  mockExchangeRates,
   mockProductPackConversions,
   mockProducts,
   mockSupplierProducts,
@@ -223,12 +224,11 @@ function fuzzyCandidates(
   return fuzzy;
 }
 
+/** Paridad con `loadMatchContext`: la tasa del día del formulario de compra en mock (CIE-02). */
 function systemRate(storeId: string): number | undefined {
-  const latest = mockExchangeRates
-    .filter((rate) => ofStore(rate.storeId, storeId))
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  const { rateVes } = getCurrentExchangeRate(storeId);
 
-  return latest && latest.rateVes > 0 ? latest.rateVes : undefined;
+  return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
 }
 
 function previousScans(storeId: string, extraction: InvoiceExtraction, excludeScanId?: string): MatchPreviousScan[] {

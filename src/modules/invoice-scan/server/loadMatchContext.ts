@@ -7,8 +7,8 @@
  * por `storeId` (la tienda del servidor, nunca la del cliente):
  * 1. RPC `invoice_match_candidates` (20261019d: proveedores por RIF / trigram,
  *    proveedor más probable y candidatos difusos por línea), alícuotas
- *    (`tax_rates_for_store` + `app_settings.default_tax_rate_id`), tasa vigente,
- *    escaneos previos con el mismo número y productos por código de barras.
+ *    (`tax_rates_for_store` + `app_settings.default_tax_rate_id`), tasa del día
+ *    (`getCurrentExchangeRate`, la del formulario de compra), escaneos previos con el mismo número y productos por código de barras.
  * 2. Catálogo del proveedor elegido por la RPC: `supplier_products` activos con
  *    sus `supplier_product_pack_units` activos y `supplier_product_aliases`; en
  *    paralelo, la misma RPC con textos limpios (`searchTextVariants`) para las
@@ -22,6 +22,7 @@ import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
 
 import type { InvoiceExtraction } from "../contracts";
 
@@ -197,18 +198,22 @@ async function loadTaxRates(supabase: MatchContextSupabaseClient, storeId: strin
     });
 }
 
-/** Tasa vigente: la última `exchange_rates` de la tienda (como `fxDepreciationReport.server.ts`). */
-async function loadSystemRate(supabase: MatchContextSupabaseClient, storeId: string): Promise<number | undefined> {
-  const { data, error } = await supabase
-    .from("exchange_rates")
-    .select("rate_ves, created_at")
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  throwIfSupabaseError(error);
-  const rate = toNumber((data as { rate_ves: number | string } | null)?.rate_ves);
-  return rate && rate > 0 ? rate : undefined;
+/**
+ * Tasa del día: la MISMA que usa el formulario de compra para la conversión
+ * Bs<->REF (`useCurrentExchangeRate` -> `/api/exchange-rates/current` ->
+ * `getCurrentExchangeRate`: DolarAPI oficial con caché de proceso), para que la
+ * coherencia de precio y el costo precargado cuadren con el formulario (CIE-02).
+ * Si DolarAPI falla, el formulario se queda sin tasa del día (la ruta responde
+ * error, no cae a la última guardada); aquí igual: `undefined`, y `matchInvoice`
+ * aplica 6.7 (tasa impresa con aviso o, sin ella, sin costos REF y con aviso).
+ */
+async function loadSystemRate(storeId: string): Promise<number | undefined> {
+  try {
+    const { rateVes } = await getCurrentExchangeRate(storeId);
+    return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -593,7 +598,7 @@ export async function loadMatchContext(
   const [candidates, taxRates, systemRate, previousScans, barcodeRows] = await Promise.all([
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
-    loadSystemRate(supabase, storeId),
+    loadSystemRate(storeId),
     loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
     loadProductsWhere(supabase, storeId, "barcode", barcodeVariants(extraction)),
   ]);
