@@ -814,6 +814,37 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     rows().set(id, { ...(rows().get(id) as InvoiceScanRow), ...patch });
   }
 
+  /**
+   * Congela solo `Date`: el repositorio mock fecha las filas y cuenta la cuota
+   * por día de Caracas con el reloj real, y un `createdAt` retrasado cruza al
+   * día anterior si el test corre justo después de medianoche (SCN-13e).
+   */
+  function pinDateTo(iso: string) {
+    jest.useFakeTimers({
+      doNotFake: [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ],
+      now: new Date(iso),
+    });
+  }
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it.each([
     ["con otra forma", { lines: "ilegible", x: 1 }],
     ["vacía ({} en la columna)", null],
@@ -877,6 +908,9 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
   });
 
   it("una lectura vieja no pisa la nueva: si otra reserva tomó la fila, complete responde 409 y la fila sigue con el intento nuevo (C1/C2)", async () => {
+    // Mediodía en Caracas: retrasar la fila 10 min no la saca del día, así que la
+    // nueva reserva acumula usagePages sobre la anterior (a las 00:05 daría 1).
+    pinDateTo("2026-10-16T16:00:00.000Z");
     const ctx = newContext();
     const pages = [page("intento viejo")];
     const sha = sha256OfPages(pages.map((item) => item.data));
