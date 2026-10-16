@@ -183,9 +183,8 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "purchases.create");
     // Compra y pago se validan juntos: con un pago inválido no se crea nada.
-    const { initialPayment, invoiceScanId, invoiceScanLines, ...input } = createPurchaseSchema.parse(
-      await readJsonBody(request),
-    );
+    const { initialPayment, invoiceScanExtraction, invoiceScanId, invoiceScanLines, ...input } =
+      createPurchaseSchema.parse(await readJsonBody(request));
 
     if (initialPayment) {
       // Mismos permisos que `POST /api/payments` exige para un pago de compra,
@@ -229,6 +228,7 @@ export async function POST(request: Request) {
           scan,
           {
             clientRequestId: input.clientRequestId,
+            extraction: invoiceScanExtraction,
             items: input.items,
             lines: invoiceScanLines ?? [],
             purchaseId: purchase.id,

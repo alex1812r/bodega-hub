@@ -41,6 +41,7 @@ import {
   INVOICE_SCAN_CLAIMED_MESSAGE,
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
   readExtractedRawTexts,
+  readStoredExtraction,
   type ConfirmedInvoiceScan,
   type FinalizeInvoiceScanInput,
   type InvoiceScanClaimInput,
@@ -52,8 +53,10 @@ import {
 export type MockInvoiceScan = {
   /** Intento que tiene el reclamo (`claim_request_id`). */
   claimRequestId: string | null;
-  /** Momento del reclamo en ms (`claimed_at`). */
+  /** Momento del último reclamo en ms (`claimed_at`): mide la caducidad. */
   claimedAt: number | null;
+  /** Primer reclamo de la clave vigente en ms (`claim_started_at`, SCN-06-F3 / INT-01). */
+  claimStartedAt: number | null;
   /** Clave de idempotencia de la compra con la que se confirmó (replay). */
   confirmedClientRequestId: string | null;
   confirmed: ConfirmedInvoiceScan | null;
@@ -96,6 +99,7 @@ export function registerMockInvoiceScan(scan: {
 }): MockInvoiceScan {
   const stored: MockInvoiceScan = {
     claimRequestId: null,
+    claimStartedAt: null,
     claimedAt: null,
     confirmed: null,
     confirmedClientRequestId: null,
@@ -153,14 +157,17 @@ export async function precheckInvoiceScan(
       throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_CLAIMED_MESSAGE);
     }
 
-    // El mismo intento conserva su reclamo original (SCN-06-F3).
-    if (usable.claimRequestId !== input.clientRequestId || usable.claimedAt === null) {
-      usable.claimedAt = now;
+    // INT-01 (caos-5 B4): cada reclamo renueva la caducidad; el mismo intento
+    // conserva el momento de su primer reclamo (SCN-06-F3).
+    if (usable.claimRequestId !== input.clientRequestId || usable.claimStartedAt === null) {
+      usable.claimStartedAt = now;
     }
+    usable.claimedAt = now;
     usable.claimRequestId = input.clientRequestId;
   }
 
   return {
+    extraction: readStoredExtraction(usable.extracted),
     id: usable.id,
     purchaseId: usable.purchaseId,
     rawTexts: readExtractedRawTexts(usable.extracted),
@@ -183,6 +190,7 @@ export async function releaseInvoiceScanClaim(
   ) {
     stored.claimRequestId = null;
     stored.claimedAt = null;
+    stored.claimStartedAt = null;
   }
 }
 
@@ -253,17 +261,27 @@ export async function finalizeInvoiceScan(
   );
   const purchaseCreatedAt = Date.parse(findMockPurchase(input.purchaseId)?.createdAt ?? "");
   const createdBeforeClaim =
-    stored.claimedAt === null ||
+    stored.claimStartedAt === null ||
     (Number.isFinite(purchaseCreatedAt) &&
-      purchaseCreatedAt < stored.claimedAt - INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS);
+      purchaseCreatedAt < stored.claimStartedAt - INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS);
 
   if (linkedElsewhere || createdBeforeClaim) {
     stored.claimRequestId = null;
     stored.claimedAt = null;
+    stored.claimStartedAt = null;
     throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_KEY_REUSED_MESSAGE);
   }
 
-  const confirmed = buildConfirmedPayload(readExtractedRawTexts(stored.extracted), input);
+  const confirmed = buildConfirmedPayload(
+    { extraction: readStoredExtraction(stored.extracted), rawTexts: readExtractedRawTexts(stored.extracted) },
+    input,
+  );
+
+  // Como confirm_invoice_scan (D10): sin extracción no hay confirmación válida.
+  if (!confirmed.extraction) {
+    console.error("[invoice-scan] confirm falló; la compra quedó creada", { scanId: scan.id });
+    return { confirmed: false, learned: null };
+  }
 
   stored.status = "confirmed";
   stored.confirmed = confirmed;
@@ -271,6 +289,7 @@ export async function finalizeInvoiceScan(
   stored.confirmedClientRequestId = input.clientRequestId;
   stored.claimRequestId = null;
   stored.claimedAt = null;
+  stored.claimStartedAt = null;
 
   return { confirmed: true, learned: learnMockAliases(storeId, input.supplierId, confirmed, input.items) };
 }

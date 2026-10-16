@@ -40,6 +40,8 @@ import { ApiError } from "@/lib/api/apiError";
 import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+
 /** Máximo de líneas confirmadas por escaneo (mismo tope que `learn_invoice_aliases`). */
 export const MAX_INVOICE_SCAN_LINES = 500;
 
@@ -69,10 +71,18 @@ export const invoiceScanLineInputSchema = z.object({
 export type InvoiceScanLineInput = z.infer<typeof invoiceScanLineInputSchema>;
 
 /**
- * Campos opcionales del cuerpo de `POST /api/purchases`. `invoiceScanLines` solo
- * tiene sentido con `invoiceScanId` (ver `addInvoiceScanBodyIssues`).
+ * Campos opcionales del cuerpo de `POST /api/purchases`. `invoiceScanLines` e
+ * `invoiceScanExtraction` solo tienen sentido con `invoiceScanId` (ver
+ * `addInvoiceScanBodyIssues`). `invoiceScanExtraction` es la lectura corregida
+ * por el usuario (D10): va a `confirmed.extraction`; sin ella se guarda la del escaneo.
  */
 export const invoiceScanBodyFields = {
+  invoiceScanExtraction: invoiceExtractionSchema
+    .refine((extraction) => extraction.lines.length <= MAX_INVOICE_SCAN_LINES, {
+      message: `La factura puede tener como máximo ${MAX_INVOICE_SCAN_LINES} líneas.`,
+      path: ["lines"],
+    })
+    .optional(),
   invoiceScanId: z.string().uuid().optional(),
   invoiceScanLines: z.array(invoiceScanLineInputSchema).max(MAX_INVOICE_SCAN_LINES).optional(),
 };
@@ -82,7 +92,12 @@ export const invoiceScanBodySchema = z
   .superRefine((value, context) => addInvoiceScanBodyIssues(value, context));
 
 export function addInvoiceScanBodyIssues(
-  value: { clientRequestId?: string; invoiceScanId?: string; invoiceScanLines?: InvoiceScanLineInput[] },
+  value: {
+    clientRequestId?: string;
+    invoiceScanExtraction?: InvoiceExtraction;
+    invoiceScanId?: string;
+    invoiceScanLines?: InvoiceScanLineInput[];
+  },
   context: z.RefinementCtx,
 ) {
   // El reclamo del escaneo es por intento: sin clave no hay replay ni reclamo seguro.
@@ -99,6 +114,14 @@ export function addInvoiceScanBodyIssues(
       code: "custom",
       message: "Las líneas del escaneo requieren invoiceScanId.",
       path: ["invoiceScanLines"],
+    });
+  }
+
+  if (value.invoiceScanExtraction && !value.invoiceScanId) {
+    context.addIssue({
+      code: "custom",
+      message: "La extracción corregida requiere invoiceScanId.",
+      path: ["invoiceScanExtraction"],
     });
   }
 }
@@ -136,6 +159,8 @@ export type InvoiceScanStatus = "extracted" | "confirmed" | "discarded" | "faile
 /** Escaneo validado antes de crear la compra. */
 export type PrecheckedInvoiceScan = {
   id: string;
+  /** `extracted` guardado si cumple el contrato (null si no): la extracción por defecto de `confirmed` (D10). */
+  extraction: InvoiceExtraction | null;
   /** `rawText` de cada línea de `extracted.lines`, por índice (`null` si falta). */
   rawTexts: (string | null)[];
   /** `true`: reintento del mismo intento; ya confirmado con esta compra. */
@@ -164,6 +189,8 @@ export type InvoiceScanPurchaseItem = {
 
 export type FinalizeInvoiceScanInput = {
   clientRequestId?: string;
+  /** Lectura corregida por el usuario (`invoiceScanExtraction`); sin ella, la guardada. */
+  extraction?: InvoiceExtraction;
   /** Items de la compra creada: las líneas del escaneo se validan contra ellos (M3). */
   items: readonly InvoiceScanPurchaseItem[];
   lines: InvoiceScanLineInput[];
@@ -171,18 +198,40 @@ export type FinalizeInvoiceScanInput = {
   supplierId: string;
 };
 
-export type ConfirmedInvoiceScanLine = InvoiceScanLineInput & {
+/**
+ * Línea de `confirmed.lines` (D10: `{ lineIndex, productId, packLabel?, unitsPerPack? }`).
+ * Las claves de empaque en null (modo unidad) se omiten: `parseConfirmedScan` solo
+ * admite string / entero. `aliasNorm` y `rawText` (del escaneo GUARDADO) son extra:
+ * `learn_invoice_aliases` liga el aprendizaje a `aliasNorm` (SCN-06-F4).
+ */
+export type ConfirmedInvoiceScanLine = {
+  lineIndex: number;
+  productId: string;
+  packLabel?: string;
+  unitsPerPack?: number;
   aliasNorm: string;
   rawText: string;
 };
 
-/** JSON guardado en `invoice_scans.confirmed` (verdad de la capa 2). */
+/**
+ * JSON guardado en `invoice_scans.confirmed` (verdad de la capa 2, D10): la
+ * extracción corregida por el usuario y el producto elegido por línea. Lo valida
+ * al leer `parseConfirmedScan` (`scans.types.ts`); la raíz admite las claves extra.
+ */
 export type ConfirmedInvoiceScan = {
   confirmedAt: string;
+  extraction: InvoiceExtraction | null;
   lines: ConfirmedInvoiceScanLine[];
   purchaseId: string;
   supplierId: string;
 };
+
+/** `extracted` guardado como `InvoiceExtraction`, o null si no cumple el contrato. */
+export function readStoredExtraction(extracted: unknown): InvoiceExtraction | null {
+  const parsed = invoiceExtractionSchema.safeParse(extracted);
+
+  return parsed.success ? parsed.data : null;
+}
 
 /**
  * Línea para `learn_invoice_aliases`. Las claves de empaque viajan SIEMPRE salvo
@@ -227,7 +276,16 @@ export function buildConfirmedLines(
       return [];
     }
 
-    return [{ ...line, aliasNorm: normalizeAlias(rawText), rawText }];
+    return [
+      {
+        lineIndex: line.lineIndex,
+        productId: line.productId,
+        ...(line.packLabel != null ? { packLabel: line.packLabel } : {}),
+        ...(line.unitsPerPack != null ? { unitsPerPack: line.unitsPerPack } : {}),
+        aliasNorm: normalizeAlias(rawText),
+        rawText,
+      },
+    ];
   });
 }
 
@@ -299,13 +357,14 @@ function toLearnPackLabel(label: string | undefined): string | null {
 }
 
 export function buildConfirmedPayload(
-  rawTexts: (string | null)[],
+  scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts">,
   input: FinalizeInvoiceScanInput,
   now = new Date(),
 ): ConfirmedInvoiceScan {
   return {
     confirmedAt: now.toISOString(),
-    lines: buildConfirmedLines(rawTexts, input.lines),
+    extraction: input.extraction ?? scan.extraction,
+    lines: buildConfirmedLines(scan.rawTexts, input.lines),
     purchaseId: input.purchaseId,
     supplierId: input.supplierId,
   };
@@ -408,6 +467,7 @@ export async function precheckInvoiceScan(
   }
 
   return {
+    extraction: readStoredExtraction(row.extracted),
     id: row.id,
     purchaseId: row.purchase_id,
     rawTexts: readExtractedRawTexts(row.extracted),
@@ -456,7 +516,7 @@ export async function finalizeInvoiceScan(
     return { confirmed: false, learned: null };
   }
 
-  const confirmed = buildConfirmedPayload(scan.rawTexts, input);
+  const confirmed = buildConfirmedPayload(scan, input);
   let keyReused = false;
 
   try {

@@ -19,7 +19,12 @@ import {
   registerMockInvoiceScan,
   resetMockInvoiceScans,
 } from "@/modules/invoice-scan/server/confirmScan.mock-server";
-import { INVOICE_SCAN_KEY_REUSED_MESSAGE } from "@/modules/invoice-scan/server/confirmScan.server";
+import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
+import {
+  INVOICE_SCAN_KEY_REUSED_MESSAGE,
+  type ConfirmedInvoiceScan,
+} from "@/modules/invoice-scan/server/confirmScan.server";
+import { parseConfirmedScan } from "@/modules/invoice-scan/server/scans.types";
 import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -35,12 +40,29 @@ const SUPPLIER_ID = "33333333-3333-4333-8333-333333333333";
 const OUTSIDE_PRODUCT = "44444444-4444-4444-8444-444444444444";
 const OTHER_SCAN_ID = "6b1f2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3e";
 
-const extracted = {
-  lines: [
-    { rawText: "REF.MALTA 1.5 X6" },
-    { rawText: "AZÚCAR  Montalbán" },
-    { rawText: "***" },
-  ],
+const extractedLine = (rawText: string) => ({
+  confidence: 0.9,
+  description: rawText,
+  lineTotal: 1020,
+  quantity: 1,
+  rawText,
+  unitPrice: 1020,
+});
+
+/** Lectura guardada del escaneo (InvoiceExtraction válida). */
+const extracted: InvoiceExtraction = {
+  confidence: 0.9,
+  currency: "VES",
+  lines: [extractedLine("REF.MALTA 1.5 X6"), extractedLine("AZÚCAR  Montalbán"), extractedLine("***")],
+  supplier: { name: "Distribuidora Lab" },
+  warnings: [],
+};
+
+/** La misma lectura corregida por el usuario (D10): otra cantidad y el RIF que el modelo no leyó. */
+const corrected: InvoiceExtraction = {
+  ...extracted,
+  lines: [{ ...extracted.lines[0]!, quantity: 2, lineTotal: 2040 }, ...extracted.lines.slice(1)],
+  supplier: { name: "Distribuidora Lab", taxId: "J-12345678-9" },
 };
 
 const purchase = {
@@ -109,8 +131,10 @@ function post(body: unknown, headers: Record<string, string> = {}) {
 
 type FakeScan = {
   claim_request_id?: string | null;
-  /** Reloj lógico del reclamo (`claimed_at`). */
+  /** Reloj lógico del último reclamo (`claimed_at`). */
   claimed_at?: number | null;
+  /** Reloj lógico del primer reclamo de la clave (`claim_started_at`, INT-01). */
+  claim_started_at?: number | null;
   extracted: unknown;
   id: string;
   purchase_id: string | null;
@@ -167,9 +191,10 @@ function createFake(state: FakeState) {
         };
       }
 
-      // El mismo intento conserva su reclamo original (SCN-06-F3).
-      if (scan.claim_request_id !== key || scan.claimed_at == null) {
-        scan.claimed_at = ++clock;
+      // INT-01: cada reclamo renueva claimed_at; el mismo intento conserva claim_started_at (SCN-06-F3).
+      scan.claimed_at = ++clock;
+      if (scan.claim_request_id !== key || scan.claim_started_at == null) {
+        scan.claim_started_at = scan.claimed_at;
       }
       scan.claim_request_id = key;
       return { data: "claimed", error: null };
@@ -181,6 +206,7 @@ function createFake(state: FakeState) {
       if (scan && scan.status === "extracted" && scan.claim_request_id === args.p_client_request_id) {
         scan.claim_request_id = null;
         scan.claimed_at = null;
+        scan.claim_started_at = null;
       }
 
       return { data: null, error: null };
@@ -230,8 +256,8 @@ function createFake(state: FakeState) {
       // SCN-06-F3: y creada después del reclamo (no una compra vieja de la misma clave).
       if (
         target?.client_request_id !== args.p_client_request_id ||
-        scan.claimed_at == null ||
-        (target?.created_at ?? 0) < scan.claimed_at
+        scan.claim_started_at == null ||
+        (target?.created_at ?? 0) < scan.claim_started_at
       ) {
         return { data: null, error: { code: "PT409", message: "La compra no corresponde a este intento" } };
       }
@@ -244,6 +270,7 @@ function createFake(state: FakeState) {
       scan.purchase_id = args.p_purchase_id as string;
       scan.claim_request_id = null;
       scan.claimed_at = null;
+      scan.claim_started_at = null;
 
       return { data: true, error: null };
     }
@@ -356,6 +383,8 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(confirmArgs).toEqual({
         p_confirmed: {
           confirmedAt: expect.any(String),
+          // D10: sin invoiceScanExtraction, la extracción es la guardada en el escaneo.
+          extraction: extracted,
           lines: [
             { ...scanLines[0], aliasNorm: "ref malta 1 5 x6", rawText: "REF.MALTA 1.5 X6" },
             { ...scanLines[1], aliasNorm: "azucar montalban", rawText: "AZÚCAR  Montalbán" },
@@ -377,6 +406,48 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       });
       // El escaneo se lee con filtro explícito por tienda.
       expect(fake.client.from).toHaveBeenCalledWith("invoice_scans");
+    });
+
+    it("D10: invoiceScanExtraction (corregida) se guarda en confirmed.extraction; el alias sigue saliendo del rawText guardado", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanExtraction: { ...corrected, lines: [{ ...corrected.lines[0]!, rawText: "OTRO TEXTO" }, ...corrected.lines.slice(1)] },
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [{ lineIndex: 0, packLabel: null, productId: PRODUCT_A, unitsPerPack: null }, scanLines[1]],
+      });
+
+      expect(response.status).toBe(201);
+      const confirmed = fake.rpc.mock.calls.find(([name]) => name === "confirm_invoice_scan")![1].p_confirmed as ConfirmedInvoiceScan;
+      expect(confirmed.extraction?.lines[0]).toMatchObject({ quantity: 2, rawText: "OTRO TEXTO" });
+      expect(confirmed.extraction?.supplier.taxId).toBe("J-12345678-9");
+      // Las claves de empaque en null (modo unidad) no viajan: D10 solo admite string / entero.
+      expect(confirmed.lines).toEqual([
+        { aliasNorm: "ref malta 1 5 x6", lineIndex: 0, productId: PRODUCT_A, rawText: "REF.MALTA 1.5 X6" },
+        { aliasNorm: "azucar montalban", lineIndex: 1, productId: PRODUCT_B, rawText: "AZÚCAR  Montalbán" },
+      ]);
+    });
+
+    it("D10 ida y vuelta: lo que confirm guarda lo lee parseConfirmedScan (few-shot) sin perder nada", async () => {
+      await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanExtraction: corrected,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [...scanLines, { lineIndex: 1, packLabel: null, productId: PRODUCT_B, unitsPerPack: null }],
+      });
+
+      const confirmed = fake.rpc.mock.calls.find(([name]) => name === "confirm_invoice_scan")![1].p_confirmed;
+      const parsed = parseConfirmedScan(JSON.parse(JSON.stringify(confirmed)));
+
+      expect(parsed).not.toBeNull();
+      expect(parsed!.extraction).toEqual(corrected);
+      expect(parsed!.lines).toEqual([
+        { lineIndex: 0, packLabel: "Caja", productId: PRODUCT_A, unitsPerPack: 6 },
+        { lineIndex: 1, productId: PRODUCT_B },
+        { lineIndex: 2, productId: PRODUCT_B },
+        { lineIndex: 1, productId: PRODUCT_B },
+      ]);
     });
 
     it("si learn falla la compra sigue siendo 201 y se registra el error", async () => {
@@ -714,6 +785,19 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       ["productId que no es uuid", { invoiceScanId: SCAN_ID, invoiceScanLines: [{ lineIndex: 0, productId: "prod-a" }] }],
       ["lineIndex negativo", { invoiceScanId: SCAN_ID, invoiceScanLines: [{ lineIndex: -1, productId: PRODUCT_A }] }],
       ["unitsPerPack 0", { invoiceScanId: SCAN_ID, invoiceScanLines: [{ lineIndex: 0, productId: PRODUCT_A, unitsPerPack: 0 }] }],
+      ["invoiceScanExtraction sin invoiceScanId", { invoiceScanExtraction: corrected }],
+      [
+        "invoiceScanExtraction fuera del contrato",
+        { clientRequestId: PURCHASE_KEY, invoiceScanExtraction: { ...corrected, currency: "EUR" }, invoiceScanId: SCAN_ID },
+      ],
+      [
+        "invoiceScanExtraction con más de 500 líneas",
+        {
+          clientRequestId: PURCHASE_KEY,
+          invoiceScanExtraction: { ...corrected, lines: Array.from({ length: 501 }, () => extracted.lines[0]) },
+          invoiceScanId: SCAN_ID,
+        },
+      ],
       [
         "más de 500 líneas",
         { invoiceScanId: SCAN_ID, invoiceScanLines: Array.from({ length: 501 }, () => ({ lineIndex: 0, productId: PRODUCT_A })) },
@@ -750,6 +834,7 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(secondPayload.data.id).toBe(firstPayload.data.id);
       expect(secondPayload.data.invoiceScan).toEqual({ confirmed: true, learned: null });
       expect(getMockInvoiceScan(SCAN_ID)?.purchaseId).toBe(firstPayload.data.id);
+      expect(parseConfirmedScan(getMockInvoiceScan(SCAN_ID)?.confirmed)?.extraction).toEqual(extracted);
       expect(listMockLearnedAliases(DEFAULT_STORE_ID).map((alias) => [alias.aliasNorm, alias.hits])).toEqual([
         ["ref malta 1 5 x6", 1],
         ["azucar montalban", 1],

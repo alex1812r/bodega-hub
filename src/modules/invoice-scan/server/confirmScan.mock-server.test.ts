@@ -5,6 +5,11 @@
 
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import { createdMockPurchases } from "@/modules/purchases/services/purchaseMockStore";
+import { mockPurchases } from "@/shared/mocks/erp-data";
+
+import type { InvoiceExtraction } from "../contracts";
+
 import {
   finalizeInvoiceScan,
   getMockInvoiceScan,
@@ -22,7 +27,18 @@ const SUPPLIER = "33333333-3333-4333-8333-333333333333";
 const KEY_1 = "7a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
 const KEY_2 = "9c3d4e5f-6a7b-4c8d-8e9f-0a1b2c3d4e5f";
 
-const extracted = { lines: [{ rawText: "Harina P.A.N. 1kg" }, { rawText: "  " }] };
+/** Lectura guardada válida (D10: confirmed.extraction sale de aquí si el cliente no corrige). */
+function extraction(...rawTexts: string[]): InvoiceExtraction {
+  return {
+    confidence: 0.9,
+    currency: "VES",
+    lines: rawTexts.map((rawText) => ({ confidence: 0.9, description: rawText, lineTotal: 1, quantity: 1, rawText, unitPrice: 1 })),
+    supplier: { name: "Proveedor" },
+    warnings: [],
+  };
+}
+
+const extracted = extraction("Harina P.A.N. 1kg", "  ");
 
 async function confirm(scanId: string, purchaseId: string, productId: string, key: string) {
   const scan = await precheckInvoiceScan({ clientRequestId: key, scanId }, DEFAULT_STORE_ID);
@@ -240,9 +256,62 @@ describe("confirmScan.mock-server", () => {
     });
   });
 
+  it("D10: guarda la extracción corregida si llega y, sin ninguna válida, no confirma (como confirm_invoice_scan)", async () => {
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+    registerMockInvoiceScan({ extracted: { lines: [{ rawText: "x" }] }, id: "scan-2" });
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const corrected = { ...extracted, number: "FAC-1" };
+    const finalize = async (scanId: string, purchaseId: string, extraction?: InvoiceExtraction) =>
+      finalizeInvoiceScan(
+        await precheckInvoiceScan({ clientRequestId: KEY_1, scanId }, DEFAULT_STORE_ID),
+        { clientRequestId: KEY_1, extraction, items: [], lines: [], purchaseId, supplierId: SUPPLIER },
+        DEFAULT_STORE_ID,
+      );
+
+    expect(await finalize("scan-1", "p-1", corrected)).toEqual({ confirmed: true, learned: 0 });
+    expect(getMockInvoiceScan("scan-1")?.confirmed?.extraction).toEqual(corrected);
+    expect(await finalize("scan-2", "p-2")).toEqual({ confirmed: false, learned: null });
+    expect(getMockInvoiceScan("scan-2")?.status).toBe("extracted");
+    jest.restoreAllMocks();
+  });
+
+  it("caos-5 B4: el re-reclamo de la misma clave pasado el plazo renueva la caducidad y la compra de su primer reclamo sigue confirmando", async () => {
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+    const start = Date.parse("2026-10-15T12:00:00Z");
+    const now = jest.spyOn(Date, "now").mockReturnValue(start);
+    await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    // La compra se creó con el primer reclamo (resultado incierto: el reclamo se quedó).
+    createdMockPurchases().set("p-incierta", {
+      items: [],
+      purchase: { ...mockPurchases[0]!, createdAt: new Date(start + 500).toISOString(), id: "p-incierta" },
+    });
+
+    // Reintento del MISMO intento pasados 6 min: renueva el reclamo.
+    now.mockReturnValue(start + 6 * 60 * 1000);
+    const scan = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    expect(getMockInvoiceScan("scan-1")?.claimedAt).toBe(start + 6 * 60 * 1000);
+
+    // Otra clave ya no puede quitárselo.
+    now.mockReturnValue(start + 7 * 60 * 1000);
+    await expect(precheckInvoiceScan({ clientRequestId: KEY_2, scanId: "scan-1" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
+      message: "El escaneo se está confirmando en otra compra",
+      status: 400,
+    });
+
+    // SCN-06-F3 compara contra el PRIMER reclamo: la compra del intento confirma.
+    const outcome = await finalizeInvoiceScan(
+      scan,
+      { clientRequestId: KEY_1, items: [], lines: [], purchaseId: "p-incierta", supplierId: SUPPLIER },
+      DEFAULT_STORE_ID,
+    );
+    expect(outcome).toEqual({ confirmed: true, learned: 0 });
+    createdMockPurchases().delete("p-incierta");
+    now.mockRestore();
+  });
+
   it("alias normalizado de más de 200 caracteres: se guarda en confirmed pero no se aprende", async () => {
     const longText = Array.from({ length: 60 }, (_, index) => `palabra${index}`).join(" ");
-    registerMockInvoiceScan({ extracted: { lines: [{ rawText: longText }] }, id: "scan-1" });
+    registerMockInvoiceScan({ extracted: extraction(longText), id: "scan-1" });
 
     const scan = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
     const outcome = await finalizeInvoiceScan(

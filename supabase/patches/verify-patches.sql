@@ -2498,14 +2498,45 @@ select
   ), false)
 union all
 select
-  'confirm_invoice_scan rechaza una compra creada antes del reclamo y claim conserva claimed_at del mismo intento (20261019b, SCN-06-F3)',
-  coalesce((
-    select p.prosrc ilike '%v_purchase_created_at < v_scan.claimed_at - interval%'
+  'confirm_invoice_scan rechaza una compra creada antes del primer reclamo (claim_started_at) y claim conserva claim_started_at del mismo intento (20261019b, SCN-06-F3 / INT-01)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoice_scans'
+      and column_name = 'claim_started_at' and data_type = 'timestamp with time zone'
+  )
+  and coalesce((
+    select p.prosrc ilike '%v_purchase_created_at < v_scan.claim_started_at - interval%'
     from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
   ), false)
   and coalesce((
-    select p.prosrc ilike '%when s.claim_request_id = p_client_request_id and s.claimed_at is not null then s.claimed_at%'
+    select p.prosrc ilike '%when s.claim_request_id = p_client_request_id and s.claim_started_at is not null then s.claim_started_at%'
     from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'claim_invoice_scan renueva claimed_at en cada reclamo, tambien el de la misma clave; release y confirm limpian claim_started_at (20261019b, INT-01 caos-5 B4)',
+  coalesce((
+    select p.prosrc ilike '%set claim_request_id = p_client_request_id,%claimed_at = now(),%claim_started_at = case%'
+      and p.prosrc not ilike '%then s.claimed_at%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%claim_started_at = null%'
+    from pg_proc p where p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%claim_started_at = null%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
+  ), false)
+union all
+select
+  'confirm_invoice_scan exige la forma D10 { extraction: objeto con lines, lines: array } y ya no acepta un array suelto (20261019b, INT-01 D10)',
+  coalesce((
+    select p.prosrc ilike '%jsonb_typeof(p_confirmed -> ''extraction'') is distinct from ''object''%'
+      and p.prosrc ilike '%jsonb_typeof(p_confirmed -> ''extraction'' -> ''lines'') is distinct from ''array''%'
+      and p.prosrc ilike '%jsonb_typeof(p_confirmed -> ''lines'') is distinct from ''array''%'
+      and p.prosrc not ilike '%when ''array'' then p_confirmed%'
+    from pg_proc p where p.oid = to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)')
   ), false)
 union all
 select
