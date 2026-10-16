@@ -80,6 +80,8 @@ export type InvoiceReviewLine = {
   productName?: string;
   /** El usuario confirmó el producto (aceptar candidato, Enter o buscador). */
   accepted: boolean;
+  /** El usuario la dejó sin emparejar (Esc): ya no se pinta como dudosa. */
+  leftUnmatched?: boolean;
   discarded: boolean;
   /** Candidato marcado con las flechas: Enter lo acepta. */
   markedProductId?: string;
@@ -251,7 +253,8 @@ function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefine
     return "discarded";
   }
   if (!line.productId) {
-    return "pending_unmatched";
+    // Dudosa del servidor con candidatos pero sin producto propuesto: sigue siendo dudosa.
+    return line.origin === "doubtful" && !line.leftUnmatched ? "pending_doubtful" : "pending_unmatched";
   }
   const complete = getLineNeeds(line).length === 0;
   if (line.accepted) {
@@ -381,6 +384,7 @@ function setProduct(state: InvoiceReviewState, line: InvoiceReviewLine, product:
     productId: product.productId,
     productName: product.name,
     accepted: true,
+    leftUnmatched: undefined,
     markedProductId: undefined,
   };
   if (!productChanged) {
@@ -486,6 +490,7 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
               productId: undefined,
               productName: undefined,
               accepted: false,
+              leftUnmatched: true,
               markedProductId: undefined,
             },
       );

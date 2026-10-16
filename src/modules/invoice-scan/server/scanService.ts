@@ -105,6 +105,8 @@ export type InvoiceScanDetail = {
   pages: number;
   createdAt: string;
   imageUrls: string[];
+  /** Compra registrada con este escaneo; null si aún no se confirmó en ninguna. */
+  purchaseId: string | null;
 };
 
 export type DiscardedInvoiceScan = { scanId: string; status: InvoiceScanStatus };
@@ -613,6 +615,7 @@ export async function getInvoiceScanDetail(
     imageUrls,
     matched: validDetailMatch(row.matched),
     pages: row.pages,
+    purchaseId: row.purchaseId,
     scanId: row.id,
     status: row.status,
   };

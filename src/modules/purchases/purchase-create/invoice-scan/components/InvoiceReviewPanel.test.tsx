@@ -31,6 +31,24 @@ jest.mock("../../../../invoice-scan/client/useInvoiceScanImages", () => ({
   useInvoiceScanImages: () => ({ error: null, isLoading: false, refetch: jest.fn(), urls: ["https://s/1.jpg"] }),
 }));
 
+let mockDuplicatePurchaseId: string | null = null;
+const mockUseInvoiceScanPurchase = jest.fn((scanId?: string | null) => ({
+  purchaseId: scanId ? mockDuplicatePurchaseId : null,
+}));
+
+jest.mock("../../../../invoice-scan/client/useInvoiceScanPurchase", () => ({
+  useInvoiceScanPurchase: (scanId?: string | null) => mockUseInvoiceScanPurchase(scanId),
+}));
+
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ children, href, ...rest }: { children?: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 type FakeModalProps = {
   initialValues?: { name?: string; currentCostRef?: number };
   onCreated: (product: { id: string; name: string }) => void;
@@ -396,5 +414,106 @@ describe("InvoiceReviewPanel", () => {
     expect(screen.getByTestId("invoice-review-blockers")).toHaveTextContent("Elige el proveedor.");
     await user.click(screen.getByRole("button", { name: /Chevere Depot C\.A\./ }));
     expect(loadButton()).toBeEnabled();
+  });
+
+  it("SCN-08-F1 (6.17): la siguiente dudosa con empaque recibe el foco en la fila; Enter acepta, luego unidades y Enter salta", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel(
+      makeReviewResponse({
+        lines: [
+          doubtfulLine(1),
+          doubtfulLine(2, 0.8, { read: { unit: "caja" }, match: { entryMode: "pack", unitsPerPack: undefined } }),
+          doubtfulLine(3),
+        ],
+      }),
+    );
+
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.keyboard("{Enter}");
+
+    // Antes de aceptar el producto el foco va a la fila, no al campo de unidades.
+    await waitFor(() => expect(row(1)).toHaveFocus());
+    await user.keyboard("{Enter}");
+
+    const units = within(row(1)).getByLabelText("Unidades por caja");
+    await waitFor(() => expect(units).toHaveFocus());
+    expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+
+    await user.keyboard("12{Enter}");
+
+    expect(row(1)).toHaveAttribute("data-status", "resolved");
+    await waitFor(() => expect(row(2)).toHaveFocus());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(loadButton()).toHaveFocus());
+    await user.keyboard("{Enter}");
+    expect(props.onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("SCN-08-F1 (6.17): unidades escritas antes de aceptar; Enter en el campo acepta el marcado y salta", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [
+          doubtfulLine(1, 0.8, { read: { unit: "caja" }, match: { entryMode: "pack", unitsPerPack: undefined } }),
+          doubtfulLine(2),
+        ],
+      }),
+    );
+
+    const units = within(row(0)).getByLabelText("Unidades por caja");
+    await user.click(units);
+    await user.keyboard("12");
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+    await user.keyboard("{Enter}");
+
+    expect(row(0)).toHaveAttribute("data-status", "resolved");
+    expect(within(row(0)).getByText("Producto 1")).toBeInTheDocument();
+    await waitFor(() => expect(row(1)).toHaveFocus());
+  });
+
+  it("SCN-08-F1: una dudosa del servidor sin producto propuesto se pinta Dudosa; Esc la deja Sin emparejar", async () => {
+    const user = userEvent.setup();
+    renderPanel(makeReviewResponse({ lines: [doubtfulLine(1, 0.6, { match: { productId: undefined } })] }));
+
+    expect(within(row(0)).getByText("Dudosa")).toBeInTheDocument();
+    expect(within(row(0)).queryByText("Sin emparejar")).not.toBeInTheDocument();
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.keyboard("{Escape}");
+    expect(within(row(0)).getByText("Sin emparejar")).toBeInTheDocument();
+  });
+
+  it("SCN-08-F1: factura duplicada ya registrada en una compra enlaza «Ver» a esa compra, sin bloquear", async () => {
+    mockDuplicatePurchaseId = "00000000-0000-4000-8000-0000000000aa";
+    try {
+      renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
+
+      expect(mockUseInvoiceScanPurchase).toHaveBeenCalledWith("scan-anterior");
+      expect(screen.getByText(/ya se registró en una compra/)).toBeInTheDocument();
+      expect(screen.queryByText(/ya se escaneó antes/)).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Ver" })).toHaveAttribute(
+        "href",
+        "/purchases/00000000-0000-4000-8000-0000000000aa",
+      );
+      expect(loadButton()).toBeEnabled();
+    } finally {
+      mockDuplicatePurchaseId = null;
+    }
+  });
+
+  it("SCN-08-F1: factura duplicada sin compra registrada solo dice que ya se escaneó", () => {
+    renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
+
+    expect(screen.getByText(/ya se escaneó antes/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Ver" })).not.toBeInTheDocument();
+  });
+
+  it("sin duplicado no consulta ninguna compra", () => {
+    mockUseInvoiceScanPurchase.mockClear();
+    renderPanel(makeReviewResponse({ lines: [{}] }));
+
+    expect(mockUseInvoiceScanPurchase).not.toHaveBeenCalledWith(expect.any(String));
   });
 });

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 
 import { ClientApiError } from "@/shared/api/apiFetch";
 
@@ -2211,5 +2211,36 @@ describe("EntityAutocomplete: texto inicial (initialQuery)", () => {
     await advance(300);
 
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("con StrictMode (doble montaje) relanza la búsqueda abortada y no queda en Buscando… (SCN-08-F1)", async () => {
+    const fetcher = jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+      ({ signal }) =>
+        new Promise((resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+          void Promise.resolve().then(() => {
+            if (!signal?.aborted) {
+              resolve([product(1)]);
+            }
+          });
+        }),
+    );
+    render(
+      <StrictMode>
+        <Harness autoFocus entity="product" fetcher={fetcher} initialQuery="Harina PAN" />
+      </StrictMode>,
+    );
+
+    await advance(300);
+    await flushPromises();
+
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByText("Buscando…")).not.toBeInTheDocument();
+    const lastCall = fetcher.mock.calls.at(-1)?.[0];
+    expect(lastCall?.signal?.aborted).toBe(false);
   });
 });

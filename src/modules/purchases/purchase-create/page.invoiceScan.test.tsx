@@ -19,6 +19,7 @@ const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockCan = jest.fn();
 let mockReviewDraft: InvoiceReviewDraft;
+let mockExchangeRate: { data: { rateVes: number } | undefined; error: Error | null };
 
 function mockBuildTaxRate(code: string, label: string, pct: number, sortOrder: number) {
   return { code, id: `tax-${code}`, isActive: true, isDefault: code === "general", isGlobal: true, label, pct, sortOrder };
@@ -45,7 +46,7 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
-  useCurrentExchangeRate: () => ({ data: { rateVes: 510 }, error: null }),
+  useCurrentExchangeRate: () => mockExchangeRate,
 }));
 jest.mock("../../settings/hooks/useSettings", () => ({
   settingsQueryKeys: { paymentMethods: () => ["settings", "payment-methods"] },
@@ -392,6 +393,7 @@ beforeEach(() => {
   mockCan.mockReset();
   mockCan.mockReturnValue(true);
   mockReviewDraft = makeLoadedReviewDraft();
+  mockExchangeRate = { data: { rateVes: 510 }, error: null };
   window.localStorage.clear();
   window.history.replaceState(null, "", "/purchases/create");
   installApi();
@@ -713,5 +715,61 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     expect(reviewPanel()).not.toBeInTheDocument();
     expect(screen.getByTestId("invoice-scan-modal")).toBeInTheDocument();
     await waitFor(() => expect(api.posts.map((post) => post.url)).toEqual([DISCARD_URL]));
+  });
+});
+
+describe("PurchaseCreatePage · factura cargada sin tasa del día (SCN-08-F1, 6.7)", () => {
+  beforeEach(() => {
+    mockExchangeRate = { data: undefined, error: new Error("No hay tasa del día.") };
+  });
+
+  it("el formulario y el alta usan la tasa elegida en la revisión, nunca el respaldo de 510", async () => {
+    const api = installApi();
+    mockReviewDraft = makeLoadedReviewDraft({ invoiceRateVes: 500, rateVes: 500 });
+    renderPage();
+
+    await scanAndLoad();
+
+    expect(lineTexts()[0]).toBe(
+      "Harina PAN · 2 u a REF 10 / Bs 5000 · en ref · IVA general · bloqueada",
+    );
+
+    const body = await confirmPurchase(api);
+    const items = body.items as Array<Record<string, unknown>>;
+
+    expect(body.refRateVes).toBe(500);
+    expect(items[0]).toMatchObject({ unitCostVes: 5000 });
+  });
+
+  it("factura en dólares sin ninguna tasa: no deja confirmar y lo dice en español", async () => {
+    const api = installApi();
+    const usdDraft = makeLoadedReviewDraft();
+    delete usdDraft.invoiceRateVes;
+    delete usdDraft.rateVes;
+    mockReviewDraft = usdDraft;
+    renderPage();
+
+    await scanAndLoad();
+    click(/Confirmar Compra/);
+
+    expect(
+      await screen.findByText(
+        "No hay tasa del día ni tasa de la factura: registra la tasa del día para confirmar la compra.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Registrar (compra|pedido)$/ })).not.toBeInTheDocument();
+    expect(api.posts.some((post) => post.url === "/api/purchases")).toBe(false);
+  });
+
+  it("compra manual sin escaneo: sigue con el respaldo de siempre", async () => {
+    const api = installApi();
+    renderPage();
+
+    click("elegir proveedor");
+    click("agregar cable");
+
+    const body = await confirmPurchase(api);
+
+    expect(body.refRateVes).toBe(510);
   });
 });

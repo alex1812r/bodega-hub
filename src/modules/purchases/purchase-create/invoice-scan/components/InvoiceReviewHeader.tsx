@@ -1,7 +1,9 @@
 "use client";
 
 import { AlertTriangle, Camera, Copy } from "lucide-react";
+import Link from "next/link";
 
+import { useInvoiceScanPurchase } from "@/modules/invoice-scan/client/useInvoiceScanPurchase";
 import { PurchaseSupplierCard } from "@/modules/purchases/purchase-create/components/PurchaseSupplierCard";
 import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
@@ -35,6 +37,8 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
   const lowConfidence = extraction.confidence < LOW_EXTRACTION_CONFIDENCE;
   const warnings = extraction.warnings;
   const showCandidates = !supplier.contactId && supplier.candidates.length > 0;
+  // Factura duplicada: si el escaneo anterior ya está en una compra, se enlaza (no bloquea).
+  const { purchaseId: duplicatePurchaseId } = useInvoiceScanPurchase(state.duplicateOfScanId);
 
   return (
     <section aria-label="Datos de la factura" className="flex flex-col gap-4">
@@ -71,8 +75,23 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
           role="status"
         >
           <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
-          Esta factura (mismo proveedor y número) ya se escaneó antes en la tienda. Revisa que no la cargues dos
-          veces.
+          {duplicatePurchaseId ? (
+            <span>
+              Esta factura (mismo proveedor y número) ya se registró en una compra. Revisa que no la cargues dos
+              veces.{" "}
+              <Link
+                className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
+                href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
+              >
+                Ver
+              </Link>
+            </span>
+          ) : (
+            <span>
+              Esta factura (mismo proveedor y número) ya se escaneó antes en la tienda. Revisa que no la cargues dos
+              veces.
+            </span>
+          )}
         </div>
       ) : null}
 

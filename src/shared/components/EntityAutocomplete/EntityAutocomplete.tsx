@@ -316,6 +316,8 @@ export function EntityAutocomplete<K extends EntityKind>({
     return () => {
       requestIdRef.current += 1;
       abortRef.current?.abort();
+      // La búsqueda abortada no quedó hecha: al volver a montar (StrictMode) se relanza.
+      requestedKeyRef.current = null;
       scanControllers.forEach((controller) => controller.abort());
     };
   }, []);
