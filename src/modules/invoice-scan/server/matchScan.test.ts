@@ -97,6 +97,59 @@ describe("normalizeExtractionForMatch", () => {
 
     expect(normalized).toEqual({ ...singlePageExtraction, supplier: { name: "X" } });
   });
+
+  it.each(["", "   ", "\t\n"])(
+    "SCN-13a: número, teléfono, dirección, barcode y supplierSku %j quedan ausentes; el resto intacto",
+    (blank) => {
+      const [first, second, ...rest] = singlePageExtraction.lines;
+      const input: InvoiceExtraction = {
+        ...singlePageExtraction,
+        lines: [
+          { ...first!, barcode: blank, supplierSku: blank },
+          { ...second!, barcode: "7591234567890", supplierSku: blank },
+          ...rest,
+        ],
+        number: blank,
+        supplier: { address: blank, name: "X", phone: blank, taxId: "J-1" },
+      };
+
+      const normalized = normalizeExtractionForMatch(input);
+      const { number: _number, ...withoutNumber } = singlePageExtraction;
+      void _number;
+
+      expect(normalized).toEqual({
+        ...withoutNumber,
+        lines: [first, { ...second, barcode: "7591234567890" }, ...rest],
+        supplier: { name: "X", taxId: "J-1" },
+      });
+      expect("number" in normalized).toBe(false);
+      expect(["address", "phone"].some((key) => key in normalized.supplier)).toBe(false);
+      expect(["barcode", "supplierSku"].some((key) => key in normalized.lines[0]!)).toBe(false);
+      expect("supplierSku" in normalized.lines[1]!).toBe(false);
+      // Idempotente y sin mutar la entrada.
+      expect(normalizeExtractionForMatch(normalized)).toBe(normalized);
+      expect(input.number).toBe(blank);
+      expect(input.lines[0]!.barcode).toBe(blank);
+    },
+  );
+
+  it("SCN-13a: el emparejamiento recibe sin barcode/supplierSku/número vacíos", async () => {
+    const loadContext = jest.fn<ReturnType<MatchScanDeps["loadContext"]>, Parameters<MatchScanDeps["loadContext"]>>(
+      async () => buildContext(),
+    );
+    const matcher = createMatchScan(deps({ loadContext }));
+    const extraction: InvoiceExtraction = {
+      ...singlePageExtraction,
+      lines: singlePageExtraction.lines.map((line) => ({ ...line, barcode: " ", supplierSku: "" })),
+      number: "",
+    };
+
+    await matcher(extraction, { dataSource: "supabase", scanId: "s", storeId: "t" });
+
+    const passed = loadContext.mock.calls[0]![2];
+    expect("number" in passed).toBe(false);
+    expect(passed.lines.every((line) => !("barcode" in line) && !("supplierSku" in line))).toBe(true);
+  });
 });
 
 describe("matchScan (mock)", () => {

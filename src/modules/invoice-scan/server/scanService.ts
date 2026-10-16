@@ -32,7 +32,7 @@ import {
 import { toFewShotFormat } from "./fewShot";
 import { inspectInvoiceImage } from "./imageInfo";
 import { invoiceMatchSchema } from "./invoiceMatchSchema";
-import { matchScan, type InvoiceScanMatcher } from "./matchScan";
+import { matchScan, normalizeExtractionForMatch, type InvoiceScanMatcher } from "./matchScan";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 import * as mockRepo from "./scans.mock-server";
 import * as serverRepo from "./scans.server";
@@ -402,19 +402,21 @@ async function readCachedScan(
     throw new ApiError(409, "CONFLICT", INVOICE_SCAN_CHANGED_MESSAGE);
   }
 
-  const extraction = invoiceExtractionSchema.safeParse(cached.extracted);
+  const parsed = invoiceExtractionSchema.safeParse(cached.extracted);
 
-  if (!extraction.success) {
+  if (!parsed.success) {
     return null;
   }
 
+  // Una fila guardada antes de SCN-13a puede traer textos opcionales vacíos.
+  const extraction = normalizeExtractionForMatch(parsed.data);
   const matched = invoiceMatchSchema.safeParse(cached.matched).success && cached.matched
     ? cached.matched
-    : await rematchCachedScan(deps, ctx, cached.id, extraction.data);
+    : await rematchCachedScan(deps, ctx, cached.id, extraction);
 
   return {
     cached: true,
-    extraction: extraction.data,
+    extraction,
     limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
     matched,
     scanId: cached.id,
@@ -512,8 +514,11 @@ export async function scanInvoice(
     throw toInvoiceScanApiError(error);
   }
 
+  // SCN-13a: textos opcionales vacíos → ausentes antes de emparejar y de guardar `extracted`.
+  const extraction = normalizeExtractionForMatch(result.extraction);
+
   try {
-    matched = await deps.matcher(result.extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
+    matched = await deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
   } catch (error) {
     await fail("MATCH_ERROR");
     throw error;
@@ -521,7 +526,7 @@ export async function scanInvoice(
 
   const row = await deps.repo.completeScan(ctx, scanId, attemptId, {
     durationMs: result.durationMs,
-    extracted: result.extraction,
+    extracted: extraction,
     inputTokens: result.inputTokens,
     matched,
     outputTokens: result.outputTokens,
@@ -533,7 +538,7 @@ export async function scanInvoice(
 
   return {
     cached: false,
-    extraction: result.extraction,
+    extraction,
     limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
     matched,
     scanId: row.id,
