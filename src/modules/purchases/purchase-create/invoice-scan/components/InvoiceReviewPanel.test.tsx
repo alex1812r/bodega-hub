@@ -284,6 +284,29 @@ describe("InvoiceReviewPanel", () => {
     expect(loadButton()).toBeDisabled();
   });
 
+  it("SCN-UI-C3 (N4): más unidades por bulto de las que acepta el servidor deja la línea pendiente", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [
+          doubtfulLine(1, 0.8, { read: { unit: "bulto" }, match: { entryMode: "pack", unitsPerPack: undefined } }),
+          doubtfulLine(2),
+        ],
+      }),
+    );
+
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.keyboard("{Enter}");
+    const units = within(row(0)).getByLabelText("Unidades por bulto");
+    await waitFor(() => expect(units).toHaveFocus());
+    await user.keyboard("1000000000");
+    await user.tab();
+
+    expect(row(0)).not.toHaveAttribute("data-status", "resolved");
+    expect(within(row(0)).getByText("Máximo 100.000 unidades por empaque.")).toBeInTheDocument();
+    expect(loadButton()).toBeDisabled();
+  });
+
   it("aviso de tasa impresa: se elige entre la de hoy y la de la factura", async () => {
     const user = userEvent.setup();
     const props = renderPanel(makeReviewResponse({ lines: [{}], extraction: { printedRate: 875.65 } }));
