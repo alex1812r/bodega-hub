@@ -152,7 +152,9 @@ export async function POST(request: Request) {
       invoiceScanId && input.clientRequestId
         ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
         : null;
-    const scan = scanClaim ? await scanService.precheckInvoiceScan(scanClaim, auth.storeId) : null;
+    const scan = scanClaim
+      ? await scanService.precheckInvoiceScan({ ...scanClaim, lines: invoiceScanLines }, auth.storeId)
+      : null;
 
     const service = getPurchasesService();
     let purchase: Awaited<ReturnType<typeof service.createPurchase>>;

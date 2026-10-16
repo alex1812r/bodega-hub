@@ -98,6 +98,8 @@ export function addInvoiceScanBodyIssues(
     invoiceScanExtraction?: InvoiceExtraction;
     invoiceScanId?: string;
     invoiceScanLines?: InvoiceScanLineInput[];
+    /** Items de la compra: cada línea del escaneo debe apuntar a uno de sus productos. */
+    items?: readonly { productId: string }[];
   },
   context: z.RefinementCtx,
 ) {
@@ -124,6 +126,70 @@ export function addInvoiceScanBodyIssues(
       message: "La extracción corregida requiere invoiceScanId.",
       path: ["invoiceScanExtraction"],
     });
+  }
+
+  addInvoiceScanLineIssues(value, context);
+}
+
+/**
+ * SCN-UI-C2 (caos 6.14): cada línea del escaneo apunta a UNA línea distinta de la
+ * extracción corregida (si viene) y a un producto de los items de la compra. Si no,
+ * 400 antes de reclamar el escaneo y de crear la compra. El rango contra la
+ * extracción GUARDADA lo comprueba `assertScanLinesInStoredExtraction`.
+ */
+function addInvoiceScanLineIssues(
+  value: {
+    invoiceScanExtraction?: InvoiceExtraction;
+    invoiceScanLines?: InvoiceScanLineInput[];
+    items?: readonly { productId: string }[];
+  },
+  context: z.RefinementCtx,
+) {
+  const productIds = value.items ? new Set(value.items.map((item) => item.productId)) : null;
+  const seen = new Set<number>();
+
+  (value.invoiceScanLines ?? []).forEach((line, index) => {
+    if (seen.has(line.lineIndex)) {
+      context.addIssue({
+        code: "custom",
+        message: `La línea ${line.lineIndex + 1} de la factura está repetida.`,
+        path: ["invoiceScanLines", index, "lineIndex"],
+      });
+    }
+    seen.add(line.lineIndex);
+
+    if (value.invoiceScanExtraction && line.lineIndex >= value.invoiceScanExtraction.lines.length) {
+      context.addIssue({
+        code: "custom",
+        message: `La línea ${line.lineIndex + 1} no existe en la factura.`,
+        path: ["invoiceScanLines", index, "lineIndex"],
+      });
+    }
+
+    if (productIds && !productIds.has(line.productId)) {
+      context.addIssue({
+        code: "custom",
+        message: `El producto de la línea ${line.lineIndex + 1} de la factura no está en la compra.`,
+        path: ["invoiceScanLines", index, "productId"],
+      });
+    }
+  });
+}
+
+export const INVOICE_SCAN_LINE_OUT_OF_RANGE_MESSAGE =
+  "Una línea de la compra no corresponde a ninguna línea de la factura escaneada.";
+
+/**
+ * SCN-UI-C2: con el escaneo aún `extracted`, toda línea debe apuntar a una línea
+ * guardada con `rawText` (si no, `buildConfirmedLines` la omitiría y se perdería la
+ * verdad de la capa 2). Se llama ANTES del reclamo.
+ */
+export function assertScanLinesInStoredExtraction(
+  rawTexts: readonly (string | null)[],
+  lines: readonly InvoiceScanLineInput[] | undefined,
+) {
+  if ((lines ?? []).some((line) => typeof rawTexts[line.lineIndex] !== "string")) {
+    throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_LINE_OUT_OF_RANGE_MESSAGE);
   }
 }
 
@@ -461,6 +527,9 @@ type DbInvoiceScanRow = {
 /** Clave del reclamo: el escaneo y el intento de compra que lo confirma. */
 export type InvoiceScanClaimInput = { clientRequestId: string; scanId: string };
 
+/** Entrada del pre-check: el reclamo y las líneas del cliente, validadas antes de reclamar. */
+export type InvoiceScanPrecheckInput = InvoiceScanClaimInput & { lines?: readonly InvoiceScanLineInput[] };
+
 /**
  * Rechazos del reclamo en la respuesta: PT404 / PT409 → 400 (contrato de caos
  * 6.14, mismo código que el pre-check anterior); el resto (PT403, 5xx) tal cual.
@@ -474,23 +543,14 @@ function toClaimRejection(error: unknown): ApiError {
 }
 
 export async function precheckInvoiceScan(
-  input: InvoiceScanClaimInput,
+  input: InvoiceScanPrecheckInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
   const supabase = await createRouteSupabaseClient();
 
-  // Reclamo atómico ANTES de create_purchase (SCN-06-F1): la RPC filtra por la
-  // tienda de la sesión y decide entre reclamado, replay o rechazo.
-  const { data: claim, error: claimError } = await supabase.rpc("claim_invoice_scan", {
-    p_client_request_id: input.clientRequestId,
-    p_scan_id: input.scanId,
-  });
-
-  if (claimError) {
-    throw toClaimRejection(claimError);
-  }
-
-  // Filtro explícito por tienda además de la RLS (caos 6.14).
+  // Filtro explícito por tienda además de la RLS (caos 6.14). Se lee ANTES del
+  // reclamo para rechazar líneas fuera de la extracción sin reclamar (SCN-UI-C2):
+  // `extracted` ya no cambia; el estado lo sigue decidiendo el reclamo.
   const { data, error } = await supabase
     .from("invoice_scans")
     .select("id, status, purchase_id, extracted")
@@ -504,6 +564,21 @@ export async function precheckInvoiceScan(
 
   if (!row) {
     throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_NOT_FOUND_MESSAGE);
+  }
+
+  if (row.status === "extracted") {
+    assertScanLinesInStoredExtraction(readExtractedRawTexts(row.extracted), input.lines);
+  }
+
+  // Reclamo atómico ANTES de create_purchase (SCN-06-F1): la RPC filtra por la
+  // tienda de la sesión y decide entre reclamado, replay o rechazo.
+  const { data: claim, error: claimError } = await supabase.rpc("claim_invoice_scan", {
+    p_client_request_id: input.clientRequestId,
+    p_scan_id: input.scanId,
+  });
+
+  if (claimError) {
+    throw toClaimRejection(claimError);
   }
 
   return {

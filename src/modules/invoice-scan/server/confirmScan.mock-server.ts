@@ -38,6 +38,7 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { ApiError } from "@/lib/api/apiError";
 
 import {
+  assertScanLinesInStoredExtraction,
   assertScanUsable,
   buildConfirmedPayload,
   buildLearnLines,
@@ -53,6 +54,7 @@ import {
   type FinalizeInvoiceScanInput,
   type InvoiceScanClaimInput,
   type InvoiceScanOutcome,
+  type InvoiceScanPrecheckInput,
   type InvoiceScanStatus,
   type PrecheckedInvoiceScan,
   type ScanPackUnit,
@@ -246,7 +248,7 @@ export function resetMockInvoiceScans() {
 }
 
 export async function precheckInvoiceScan(
-  input: InvoiceScanClaimInput,
+  input: InvoiceScanPrecheckInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
   const scan = ownRow(input.scanId, storeId);
@@ -258,6 +260,11 @@ export async function precheckInvoiceScan(
   const { replay } = assertScanUsable(scan, replayPurchaseId);
   const usable = scan as NonNullable<typeof scan>;
   const usableClaim = claim as NonNullable<typeof claim>;
+
+  // SCN-UI-C2: líneas fuera de la extracción guardada → 400 antes de reclamar.
+  if (!replay) {
+    assertScanLinesInStoredExtraction(readExtractedRawTexts(usable.extracted), input.lines);
+  }
 
   // Espejo del UPDATE condicional de claim_invoice_scan (sin await en medio: atómico).
   if (!replay) {

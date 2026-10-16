@@ -5,7 +5,7 @@ import { singlePageExtraction } from "./__fixtures__/extractions";
 import { resetMockInvoiceScans } from "./confirmScan.mock-server";
 import { matchInvoice } from "./match";
 import { loadMockMatchContext } from "./matchContext.mock-server";
-import { seedScanForTest } from "./scans.mock-server";
+import { putMockScanRow, seedScanForTest } from "./scans.mock-server";
 
 const STORE_SUR = "00000000-0000-4000-8000-000000000002";
 
@@ -73,5 +73,30 @@ describe("loadMockMatchContext · posible duplicado (paridad SCN-11-F4)", () => 
     const ctx = loadMockMatchContext(DEFAULT_STORE_ID, scanned);
 
     expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe(previous.id);
+  });
+});
+
+describe("loadMockMatchContext · duplicado prefiere el escaneo confirmado (paridad SCN-UI-C2)", () => {
+  const scanCtx = { storeId: DEFAULT_STORE_ID, userId: "user-1" };
+  const seed = (sha: string, createdAt: string, purchaseId: string | null) =>
+    seedScanForTest(scanCtx, {
+      extracted: singlePageExtraction,
+      imageSha256: sha.repeat(64),
+      model: "mock",
+      provider: "mock",
+      storagePath: `${DEFAULT_STORE_ID}/${sha.repeat(64)}/p1.jpg`,
+    }).then((row) =>
+      putMockScanRow({ ...row, createdAt, purchaseId, status: purchaseId ? "confirmed" : "extracted" }),
+    );
+
+  beforeEach(() => resetMockInvoiceScans());
+
+  it("el aviso apunta al confirmado con compra aunque haya un abandonado más reciente", async () => {
+    const confirmed = await seed("a", "2026-10-01T10:00:00.000Z", "purchase-1");
+    await seed("b", "2026-10-02T10:00:00.000Z", null);
+
+    const ctx = loadMockMatchContext(DEFAULT_STORE_ID, singlePageExtraction);
+
+    expect(matchInvoice(singlePageExtraction, ctx).duplicateOfScanId).toBe(confirmed.id);
   });
 });

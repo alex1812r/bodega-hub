@@ -262,6 +262,7 @@ function previousScans(storeId: string, extraction: InvoiceExtraction, excludeSc
     number: scan.extracted?.number ?? null,
     date: scan.extracted?.date,
     total: scan.extracted?.total,
+    purchaseId: scan.purchaseId ?? undefined,
   }));
 }
 

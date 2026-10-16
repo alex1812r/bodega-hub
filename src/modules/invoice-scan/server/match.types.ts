@@ -174,6 +174,8 @@ export type MatchPreviousScan = {
   date?: string | null;
   /** Total leído en ese escaneo (`extracted->total`), para el posible duplicado. */
   total?: number | null;
+  /** Compra con la que se confirmó (`purchase_id`): el aviso prefiere estos (SCN-UI-C2). */
+  purchaseId?: string | null;
 };
 
 export type MatchContext = {
