@@ -2,7 +2,7 @@
  * SCN-08a · Modelo de la revisión del escaneo (plan factura-escaneo §5.3 SCN-08;
  * caos 6.7, 6.8, 6.16, 6.17, 6.19, 6.20, 6.21).
  */
-import { USD_DOCUMENT_ISSUE } from "@/modules/invoice-scan/server/match/money";
+import { USD_DOCUMENT_ISSUE, resolveRate } from "@/modules/invoice-scan/server/match/money";
 
 import {
   makeReviewResponse,
@@ -285,6 +285,20 @@ describe("6.20 · tasa impresa 875,65 vs sistema 900,00", () => {
   it("una diferencia de 2 % o menos no avisa", () => {
     const state = stateOf([confirmed], { extraction: { printedRate: 890 } });
     expect(state.rate.warning).toBeUndefined();
+  });
+
+  it.each([
+    [882, false],
+    [918, false],
+    [881.91, true],
+    [918.09, true],
+  ])("borde exacto D8 frente a 900: impresa %p avisa = %p, igual que matched.rate.warning", (printedRate, warns) => {
+    const state = stateOf([confirmed], { extraction: { printedRate } });
+    const serverWarning = resolveRate(900, printedRate).info?.warning;
+
+    expect(state.rate.choice).toBe("system");
+    expect(state.rate.warning !== undefined).toBe(warns);
+    expect(serverWarning !== undefined).toBe(warns);
   });
 });
 
