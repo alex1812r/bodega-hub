@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
+import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
 import { inventoryQueryKeys } from "@/modules/inventory/hooks/useInventory";
 import {
   useSupplierProducts as useContactSupplierProducts,
@@ -57,6 +58,24 @@ export type PurchaseInput = {
    */
   initialPayment?: PaymentFormPayload & { clientRequestId: string };
   purchaseNumber?: string;
+  /** Escaneo de factura del que sale la compra (SCN-08c); exige `clientRequestId`. */
+  invoiceScanId?: string;
+  /** Producto y empaque finales de cada línea de la factura que entra en la compra. */
+  invoiceScanLines?: Array<{
+    lineIndex: number;
+    productId: string;
+    packLabel?: string;
+    unitsPerPack?: number;
+  }>;
+  /** Extracción corregida por el usuario (D10). */
+  invoiceScanExtraction?: InvoiceExtraction;
+};
+
+/** Resultado del escaneo de factura al crear la compra (`invoiceScan` de la respuesta). */
+export type CreatedPurchaseInvoiceScan = {
+  confirmed: boolean;
+  /** Alias aprendidos; `null` si no se aprendió (reintento o fallo). */
+  learned: number | null;
 };
 
 /**
@@ -70,6 +89,7 @@ export type PurchaseInitialPaymentResult =
 /** La compra creada; lleva `initialPayment` solo si se envió un pago inicial. */
 export type CreatedPurchase = PurchaseMock & {
   initialPayment?: PurchaseInitialPaymentResult;
+  invoiceScan?: CreatedPurchaseInvoiceScan;
 };
 
 export type PurchaseListRow = PurchaseMock & {

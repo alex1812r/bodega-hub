@@ -17,6 +17,7 @@ import {
   precheckInvoiceScan,
   registerMockInvoiceScan,
   releaseInvoiceScanClaim,
+  removeMockLearnedAlias,
   resetMockInvoiceScans,
 } from "./confirmScan.mock-server";
 
@@ -100,6 +101,8 @@ describe("confirmScan.mock-server", () => {
       {
         aliasNorm: "harina p a n 1kg",
         hits: 1,
+        id: expect.any(String),
+        lastSeenAt: expect.any(String),
         packLabel: "Bulto",
         productId: PRODUCT_A,
         storeId: DEFAULT_STORE_ID,
@@ -130,15 +133,28 @@ describe("confirmScan.mock-server", () => {
     registerMockInvoiceScan({ extracted, id: "scan-3" });
 
     await confirm("scan-1", "purchase-1", PRODUCT_A, KEY_1);
+    const firstId = listMockLearnedAliases(DEFAULT_STORE_ID)[0].id;
     await confirm("scan-2", "purchase-2", PRODUCT_A, KEY_2);
     expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([
-      expect.objectContaining({ hits: 2, productId: PRODUCT_A }),
+      expect.objectContaining({ hits: 2, id: firstId, productId: PRODUCT_A }),
     ]);
 
     await confirm("scan-3", "purchase-3", PRODUCT_B, "0d4e5f6a-7b8c-4d9e-9f0a-1b2c3d4e5f6a");
     expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([
-      expect.objectContaining({ hits: 1, productId: PRODUCT_B }),
+      expect.objectContaining({ hits: 1, id: firstId, productId: PRODUCT_B }),
     ]);
+  });
+
+  it("removeMockLearnedAlias borra solo el alias de la tienda (SCN-09b)", async () => {
+    registerMockInvoiceScan({ extracted, id: "scan-1" });
+    await confirm("scan-1", "purchase-1", PRODUCT_A, KEY_1);
+    const [alias] = listMockLearnedAliases(DEFAULT_STORE_ID);
+
+    expect(removeMockLearnedAlias(OTHER_STORE_ID, alias.id)).toBe(false);
+    expect(removeMockLearnedAlias(DEFAULT_STORE_ID, "no-existe")).toBe(false);
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toHaveLength(1);
+    expect(removeMockLearnedAlias(DEFAULT_STORE_ID, alias.id)).toBe(true);
+    expect(listMockLearnedAliases(DEFAULT_STORE_ID)).toEqual([]);
   });
 
   it("reclamo: otro intento vigente → 400 antes de crear; el mismo intento puede reintentar (SCN-06-F1)", async () => {

@@ -63,6 +63,12 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
   /** Devuelve el motivo por el que la opción no puede elegirse. */
   getOptionDisabled?: (option: EntityOption<K>) => string | false | null | undefined;
   helperText?: string;
+  /**
+   * Texto con el que nace el campo, como si se hubiera tecleado: busca con él y,
+   * si el campo nace enfocado (`autoFocus`), queda seleccionado para que lo que se
+   * teclee lo reemplace. Solo se lee al montar.
+   */
+  initialQuery?: string;
   label: string;
   onChange: (option: EntityOption<K> | null) => void;
   /**
@@ -130,6 +136,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   filters,
   getOptionDisabled,
   helperText,
+  initialQuery = "",
   label,
   onChange,
   onNotFound,
@@ -170,8 +177,8 @@ export function EntityAutocomplete<K extends EntityKind>({
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
 
-  const [text, setText] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
+  const [text, setText] = useState(initialQuery);
+  const [isDirty, setIsDirty] = useState(initialQuery !== "");
   const [isOpen, setIsOpen] = useState(false);
   const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null);
   const [recents, setRecents] = useState<EntityOption<K>[]>([]);
@@ -309,6 +316,8 @@ export function EntityAutocomplete<K extends EntityKind>({
     return () => {
       requestIdRef.current += 1;
       abortRef.current?.abort();
+      // La búsqueda abortada no quedó hecha: al volver a montar (StrictMode) se relanza.
+      requestedKeyRef.current = null;
       scanControllers.forEach((controller) => controller.abort());
     };
   }, []);
@@ -328,6 +337,18 @@ export function EntityAutocomplete<K extends EntityKind>({
       inputRef.current?.select();
     }
   }, [restoredScans]);
+
+  // Texto inicial con el foco ya en el campo: queda seleccionado, lo tecleado lo reemplaza.
+  // Solo al montar: después el texto es del usuario.
+  const selectInitialQuery = useEffectEvent(() => {
+    if (initialQuery !== "" && document.activeElement === inputRef.current) {
+      inputRef.current?.select();
+    }
+  });
+
+  useLayoutEffect(() => {
+    selectInitialQuery();
+  }, []);
 
   // Con un valor elegido y el foco en el campo, escribir reemplaza la etiqueta.
   useEffect(() => {

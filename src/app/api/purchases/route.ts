@@ -7,66 +7,16 @@ import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as invoiceScanMockServer from "@/modules/invoice-scan/server/confirmScan.mock-server";
 import * as invoiceScanServer from "@/modules/invoice-scan/server/confirmScan.server";
-import {
-  addPaymentLineIssues,
-  paymentLineFields,
-} from "@/modules/payments/services/paymentSchemas";
+import { normalizeExtractionForMatch } from "@/modules/invoice-scan/server/matchScan";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
-import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
-import { safeText } from "@/modules/purchases/schemas/safeText";
+import {
+  createPurchaseSchema,
+  type initialPaymentSchema,
+} from "@/modules/purchases/schemas/createPurchase.schema";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
-
-/**
- * Pago inicial opcional de la compra: el cuerpo de `POST /api/payments` sin el
- * documento (`purchaseId` lo pone el servidor con la compra recién creada), con las
- * mismas reglas por método. Lleva su propia clave de idempotencia, obligatoria: la
- * compra puede reintentarse y el pago no debe entrar dos veces.
- */
-const initialPaymentSchema = z
-  .object({
-    ...paymentLineFields,
-    clientRequestId: z.string().uuid(),
-  })
-  .superRefine((value, context) => {
-    addPaymentLineIssues(value, context);
-
-    if (value.change && value.change.amount > 0) {
-      context.addIssue({
-        code: "custom",
-        message: "El vuelto solo aplica a pagos de venta.",
-        path: ["change"],
-      });
-    }
-  });
-
-const createPurchaseSchema = z
-  .object({
-    // Clave de idempotencia por intento (C6): con la misma clave en la misma tienda
-    // el servidor devuelve el resultado original en vez de repetir el movimiento.
-    // Opcional para no romper clientes que aun no la envian.
-    clientRequestId: z.string().uuid().optional(),
-    discountRef: z.number().min(0),
-    discountVes: z.number().min(0),
-    exchangeRateId: z.string().uuid().optional(),
-    initialPayment: initialPaymentSchema.optional(),
-    // SCN-06: escaneo de factura del que sale la compra (opcional). Ver
-    // `confirmScan.server.ts`: se valida antes de crear y se confirma y aprende después.
-    ...invoiceScanServer.invoiceScanBodyFields,
-    items: z.array(purchaseItemInputSchema).min(1),
-    notes: safeText().optional(),
-    purchaseNumber: safeText().optional(),
-    refRateVes: z.number().positive(),
-    status: z.enum(["pedido", "recibido"]).default("recibido"),
-    subtotalRef: z.number().min(0),
-    subtotalVes: z.number().min(0),
-    supplierId: safeText().min(1),
-    taxRef: z.number().min(0),
-    taxVes: z.number().min(0),
-  })
-  .superRefine((value, context) => invoiceScanServer.addInvoiceScanBodyIssues(value, context));
 
 const LIST_FILTER_KEYS = ["from", "to", "pendingBalance"] as const;
 
@@ -202,7 +152,9 @@ export async function POST(request: Request) {
       invoiceScanId && input.clientRequestId
         ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
         : null;
-    const scan = scanClaim ? await scanService.precheckInvoiceScan(scanClaim, auth.storeId) : null;
+    const scan = scanClaim
+      ? await scanService.precheckInvoiceScan({ ...scanClaim, lines: invoiceScanLines }, auth.storeId)
+      : null;
 
     const service = getPurchasesService();
     let purchase: Awaited<ReturnType<typeof service.createPurchase>>;
@@ -228,7 +180,8 @@ export async function POST(request: Request) {
           scan,
           {
             clientRequestId: input.clientRequestId,
-            extraction: invoiceScanExtraction,
+            // SCN-13a-F1: la lectura corregida del cliente pasa por el mismo borde que la del modelo.
+            extraction: invoiceScanExtraction && normalizeExtractionForMatch(invoiceScanExtraction),
             items: input.items,
             lines: invoiceScanLines ?? [],
             purchaseId: purchase.id,

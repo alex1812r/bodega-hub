@@ -20,8 +20,9 @@
  * 3. `finalizeInvoiceScan` DESPUÉS de crear la compra: `confirm_invoice_scan` con el
  *    JSON confirmado (la verdad de la capa 2), exige el reclamo del mismo intento y,
  *    solo si confirmó en esta llamada (devuelve `true`), UNA llamada a
- *    `learn_invoice_aliases` (cada llamada suma `hits`). El alias sale del `rawText`
- *    GUARDADO en el escaneo (`normalizeAlias`), nunca del cliente; un alias de más
+ *    `learn_invoice_aliases` (cada llamada suma `hits`). El alias sale de la línea
+ *    GUARDADA en el escaneo (`invoiceAliasKey`: descripción o rawText sin cantidades
+ *    ni importes, SCN-UI-Q2), nunca del cliente; un alias de más
  *    de 200 caracteres no se aprende (nunca coincidiría exacto al recortarlo y la
  *    RPC rechazaría la llamada entera), pero sigue en el JSON confirmado.
  *    Nunca lanza: la compra ya existe; un fallo se registra en el log y se informa
@@ -33,12 +34,13 @@
  *    Solo se aprenden las líneas cuyo producto está en los items de la compra, y el
  *    empaque se toma del item (SCN-06-F2 · M3; ver `buildLearnLines`).
  */
-import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../invoiceAliasKey";
 import { z } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
 import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { createSupplierProductPackUnit } from "@/modules/contacts/services/supplierProducts.server";
 
 import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
 
@@ -97,6 +99,8 @@ export function addInvoiceScanBodyIssues(
     invoiceScanExtraction?: InvoiceExtraction;
     invoiceScanId?: string;
     invoiceScanLines?: InvoiceScanLineInput[];
+    /** Items de la compra: cada línea del escaneo debe apuntar a uno de sus productos. */
+    items?: readonly { productId: string }[];
   },
   context: z.RefinementCtx,
 ) {
@@ -123,6 +127,70 @@ export function addInvoiceScanBodyIssues(
       message: "La extracción corregida requiere invoiceScanId.",
       path: ["invoiceScanExtraction"],
     });
+  }
+
+  addInvoiceScanLineIssues(value, context);
+}
+
+/**
+ * SCN-UI-C2 (caos 6.14): cada línea del escaneo apunta a UNA línea distinta de la
+ * extracción corregida (si viene) y a un producto de los items de la compra. Si no,
+ * 400 antes de reclamar el escaneo y de crear la compra. El rango contra la
+ * extracción GUARDADA lo comprueba `assertScanLinesInStoredExtraction`.
+ */
+function addInvoiceScanLineIssues(
+  value: {
+    invoiceScanExtraction?: InvoiceExtraction;
+    invoiceScanLines?: InvoiceScanLineInput[];
+    items?: readonly { productId: string }[];
+  },
+  context: z.RefinementCtx,
+) {
+  const productIds = value.items ? new Set(value.items.map((item) => item.productId)) : null;
+  const seen = new Set<number>();
+
+  (value.invoiceScanLines ?? []).forEach((line, index) => {
+    if (seen.has(line.lineIndex)) {
+      context.addIssue({
+        code: "custom",
+        message: `La línea ${line.lineIndex + 1} de la factura está repetida.`,
+        path: ["invoiceScanLines", index, "lineIndex"],
+      });
+    }
+    seen.add(line.lineIndex);
+
+    if (value.invoiceScanExtraction && line.lineIndex >= value.invoiceScanExtraction.lines.length) {
+      context.addIssue({
+        code: "custom",
+        message: `La línea ${line.lineIndex + 1} no existe en la factura.`,
+        path: ["invoiceScanLines", index, "lineIndex"],
+      });
+    }
+
+    if (productIds && !productIds.has(line.productId)) {
+      context.addIssue({
+        code: "custom",
+        message: `El producto de la línea ${line.lineIndex + 1} de la factura no está en la compra.`,
+        path: ["invoiceScanLines", index, "productId"],
+      });
+    }
+  });
+}
+
+export const INVOICE_SCAN_LINE_OUT_OF_RANGE_MESSAGE =
+  "Una línea de la compra no corresponde a ninguna línea de la factura escaneada.";
+
+/**
+ * SCN-UI-C2: con el escaneo aún `extracted`, toda línea debe apuntar a una línea
+ * guardada con `rawText` (si no, `buildConfirmedLines` la omitiría y se perdería la
+ * verdad de la capa 2). Se llama ANTES del reclamo.
+ */
+export function assertScanLinesInStoredExtraction(
+  rawTexts: readonly (string | null)[],
+  lines: readonly InvoiceScanLineInput[] | undefined,
+) {
+  if ((lines ?? []).some((line) => typeof rawTexts[line.lineIndex] !== "string")) {
+    throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_LINE_OUT_OF_RANGE_MESSAGE);
   }
 }
 
@@ -163,6 +231,8 @@ export type PrecheckedInvoiceScan = {
   extraction: InvoiceExtraction | null;
   /** `rawText` de cada línea de `extracted.lines`, por índice (`null` si falta). */
   rawTexts: (string | null)[];
+  /** Clave de alias (`invoiceAliasKey`) de cada línea guardada; sin ella, la del `rawText`. */
+  aliasKeys?: (string | null)[];
   /** `true`: reintento del mismo intento; ya confirmado con esta compra. */
   replay: boolean;
   purchaseId: string | null;
@@ -261,6 +331,26 @@ export function readExtractedRawTexts(extracted: unknown): (string | null)[] {
 }
 
 /**
+ * Clave de alias (`invoiceAliasKey`) por índice desde `extracted` guardado, con
+ * su `description` (SCN-UI-Q2); tolera un JSON incompleto (`null` sin `rawText`).
+ */
+export function readExtractedAliasKeys(extracted: unknown): (string | null)[] {
+  const lines = (extracted as { lines?: unknown } | null)?.lines;
+
+  if (!Array.isArray(lines)) {
+    return [];
+  }
+
+  return lines.map((line) => {
+    const { rawText, description } = (line ?? {}) as { rawText?: unknown; description?: unknown };
+    if (typeof rawText !== "string") {
+      return null;
+    }
+    return invoiceAliasKey({ rawText, description: typeof description === "string" ? description : null });
+  });
+}
+
+/**
  * Enriquecer las líneas del cliente con el texto guardado. Se omiten las que
  * apuntan fuera de `extracted.lines` (o a una línea sin `rawText`): no describen
  * ninguna línea de la factura.
@@ -268,6 +358,7 @@ export function readExtractedRawTexts(extracted: unknown): (string | null)[] {
 export function buildConfirmedLines(
   rawTexts: (string | null)[],
   lines: InvoiceScanLineInput[],
+  aliasKeys: readonly (string | null)[] = [],
 ): ConfirmedInvoiceScanLine[] {
   return lines.flatMap((line) => {
     const rawText = rawTexts[line.lineIndex];
@@ -282,7 +373,7 @@ export function buildConfirmedLines(
         productId: line.productId,
         ...(line.packLabel != null ? { packLabel: line.packLabel } : {}),
         ...(line.unitsPerPack != null ? { unitsPerPack: line.unitsPerPack } : {}),
-        aliasNorm: normalizeAlias(rawText),
+        aliasNorm: aliasKeys[line.lineIndex] ?? invoiceAliasKey({ rawText }),
         rawText,
       },
     ];
@@ -292,7 +383,7 @@ export function buildConfirmedLines(
 /**
  * Líneas para `learn_invoice_aliases`: sin las que normalizan a "" ni las de más de
  * 200 caracteres (la RPC rechazaría la llamada entera; recortar daría un alias que
- * nunca coincide exacto con `normalizeAlias(rawText)`).
+ * nunca coincide exacto con su clave).
  */
 export function buildLearnLines(
   confirmedLines: ConfirmedInvoiceScanLine[],
@@ -356,15 +447,54 @@ function toLearnPackLabel(label: string | undefined): string | null {
   return Array.from(trimmed).slice(0, MAX_PACK_LABEL_LENGTH).join("").trim() || null;
 }
 
+/** Empaque del proveedor que usa una línea escaneada en modo empaque (SCN-08-F2 · 6.8). */
+export type ScanPackUnit = { label: string; productId: string; unitsPerPack: number };
+
+/**
+ * Empaques del proveedor que la compra escaneada debe dejar registrados
+ * (SCN-08-F2 · 6.8): las líneas con `unitsPerPack` que casan con un item en
+ * modo empaque del mismo producto y tamaño (la regla de `resolveLearnPack`),
+ * con la etiqueta del item; uno por producto y tamaño. `create_purchase` solo
+ * los crea cuando el vínculo es nuevo (20261010d).
+ */
+export function buildScanPackUnits(
+  confirmedLines: readonly ConfirmedInvoiceScanLine[],
+  items: readonly InvoiceScanPurchaseItem[],
+): ScanPackUnit[] {
+  const packs = new Map<string, ScanPackUnit>();
+
+  for (const line of confirmedLines) {
+    if (line.unitsPerPack == null) {
+      continue;
+    }
+
+    const unitsPerPack = line.unitsPerPack;
+    const item = items.find(
+      (candidate) =>
+        candidate.productId === line.productId &&
+        candidate.entryMode === "pack" &&
+        candidate.unitsPerPack === unitsPerPack,
+    );
+    const label = toLearnPackLabel(item?.packLabel);
+    const key = `${line.productId}:${unitsPerPack}`;
+
+    if (label && !packs.has(key)) {
+      packs.set(key, { label, productId: line.productId, unitsPerPack });
+    }
+  }
+
+  return [...packs.values()];
+}
+
 export function buildConfirmedPayload(
-  scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts">,
+  scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts" | "aliasKeys">,
   input: FinalizeInvoiceScanInput,
   now = new Date(),
 ): ConfirmedInvoiceScan {
   return {
     confirmedAt: now.toISOString(),
     extraction: input.extraction ?? scan.extraction,
-    lines: buildConfirmedLines(scan.rawTexts, input.lines),
+    lines: buildConfirmedLines(scan.rawTexts, input.lines, scan.aliasKeys),
     purchaseId: input.purchaseId,
     supplierId: input.supplierId,
   };
@@ -372,7 +502,7 @@ export function buildConfirmedPayload(
 
 /** Log sin datos de la factura: solo ids y el código/mensaje del rechazo. */
 export function logInvoiceScanFailure(
-  step: "confirm" | "learn" | "release",
+  step: "confirm" | "learn" | "pack" | "release",
   scanId: string,
   error: unknown,
 ) {
@@ -421,6 +551,9 @@ type DbInvoiceScanRow = {
 /** Clave del reclamo: el escaneo y el intento de compra que lo confirma. */
 export type InvoiceScanClaimInput = { clientRequestId: string; scanId: string };
 
+/** Entrada del pre-check: el reclamo y las líneas del cliente, validadas antes de reclamar. */
+export type InvoiceScanPrecheckInput = InvoiceScanClaimInput & { lines?: readonly InvoiceScanLineInput[] };
+
 /**
  * Rechazos del reclamo en la respuesta: PT404 / PT409 → 400 (contrato de caos
  * 6.14, mismo código que el pre-check anterior); el resto (PT403, 5xx) tal cual.
@@ -434,23 +567,14 @@ function toClaimRejection(error: unknown): ApiError {
 }
 
 export async function precheckInvoiceScan(
-  input: InvoiceScanClaimInput,
+  input: InvoiceScanPrecheckInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
   const supabase = await createRouteSupabaseClient();
 
-  // Reclamo atómico ANTES de create_purchase (SCN-06-F1): la RPC filtra por la
-  // tienda de la sesión y decide entre reclamado, replay o rechazo.
-  const { data: claim, error: claimError } = await supabase.rpc("claim_invoice_scan", {
-    p_client_request_id: input.clientRequestId,
-    p_scan_id: input.scanId,
-  });
-
-  if (claimError) {
-    throw toClaimRejection(claimError);
-  }
-
-  // Filtro explícito por tienda además de la RLS (caos 6.14).
+  // Filtro explícito por tienda además de la RLS (caos 6.14). Se lee ANTES del
+  // reclamo para rechazar líneas fuera de la extracción sin reclamar (SCN-UI-C2):
+  // `extracted` ya no cambia; el estado lo sigue decidiendo el reclamo.
   const { data, error } = await supabase
     .from("invoice_scans")
     .select("id, status, purchase_id, extracted")
@@ -466,11 +590,27 @@ export async function precheckInvoiceScan(
     throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_NOT_FOUND_MESSAGE);
   }
 
+  if (row.status === "extracted") {
+    assertScanLinesInStoredExtraction(readExtractedRawTexts(row.extracted), input.lines);
+  }
+
+  // Reclamo atómico ANTES de create_purchase (SCN-06-F1): la RPC filtra por la
+  // tienda de la sesión y decide entre reclamado, replay o rechazo.
+  const { data: claim, error: claimError } = await supabase.rpc("claim_invoice_scan", {
+    p_client_request_id: input.clientRequestId,
+    p_scan_id: input.scanId,
+  });
+
+  if (claimError) {
+    throw toClaimRejection(claimError);
+  }
+
   return {
     extraction: readStoredExtraction(row.extracted),
     id: row.id,
     purchaseId: row.purchase_id,
     rawTexts: readExtractedRawTexts(row.extracted),
+    aliasKeys: readExtractedAliasKeys(row.extracted),
     replay: claim === "replay",
   };
 }
@@ -495,6 +635,66 @@ export async function releaseInvoiceScanClaim(
     }
   } catch (error) {
     logInvoiceScanFailure("release", input.scanId, error);
+  }
+}
+
+type DbSupplierProductPacksRow = {
+  id: string;
+  supplier_product_pack_units:
+    | { is_active: boolean | null; is_default: boolean | null; units_per_pack: number | string }[]
+    | null;
+};
+
+/**
+ * Crea el empaque del proveedor que falte para las líneas escaneadas en modo
+ * empaque (SCN-08-F2 · 6.8) con el servicio de pack units, que valida la receta
+ * (SCN-13d). Con un empaque ACTIVO de ese tamaño no hace nada (idempotente).
+ * Nunca lanza: la compra ya existe; un rechazo (receta, red) se registra y sigue.
+ */
+async function ensureScanPackUnits(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  scanId: string,
+  supplierId: string,
+  packs: readonly ScanPackUnit[],
+  storeId: string,
+): Promise<void> {
+  for (const pack of packs) {
+    try {
+      const { data, error } = await supabase
+        .from("supplier_products")
+        .select("id, supplier_product_pack_units(units_per_pack, is_active, is_default)")
+        .eq("store_id", storeId)
+        .eq("supplier_id", supplierId)
+        .eq("product_id", pack.productId)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      throwIfSupabaseError(error);
+
+      const link = (data as DbSupplierProductPacksRow | null) ?? null;
+
+      if (!link) {
+        continue;
+      }
+
+      const existing = (link.supplier_product_pack_units ?? []).filter((row) => row.is_active !== false);
+
+      if (existing.some((row) => Number(row.units_per_pack) === pack.unitsPerPack)) {
+        continue;
+      }
+
+      await createSupplierProductPackUnit(
+        link.id,
+        {
+          isDefault: !existing.some((row) => row.is_default === true),
+          label: pack.label,
+          unitsPerPack: pack.unitsPerPack,
+        },
+        storeId,
+      );
+    } catch (error) {
+      logInvoiceScanFailure("pack", scanId, error);
+    }
   }
 }
 
@@ -562,6 +762,8 @@ export async function finalizeInvoiceScan(
       scanId: scan.id,
     });
   }
+
+  await ensureScanPackUnits(supabase, scan.id, input.supplierId, buildScanPackUnits(confirmed.lines, input.items), storeId);
 
   const learnLines = buildLearnLines(confirmed.lines, input.items);
 

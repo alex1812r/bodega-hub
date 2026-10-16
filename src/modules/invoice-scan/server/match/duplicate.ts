@@ -25,7 +25,9 @@ export function findDuplicateScan(input: {
     (input.contactId !== undefined && scan.supplierId === input.contactId) || sameTaxId(input.taxId, scan.supplierTaxId);
 
   if (number) {
-    const exact = input.previousScans.find((scan) => normalizeInvoiceNumber(scan.number) === number && sameSupplier(scan));
+    const exact = preferConfirmed(
+      input.previousScans.filter((scan) => normalizeInvoiceNumber(scan.number) === number && sameSupplier(scan)),
+    );
     if (exact) {
       return exact.scanId;
     }
@@ -40,7 +42,7 @@ export function findDuplicateScan(input: {
     return undefined;
   }
 
-  const possible = input.previousScans.find((scan) => {
+  const possible = preferConfirmed(input.previousScans.filter((scan) => {
     if (typeof scan.total !== "number" || Math.abs(scan.total - total) > DUPLICATE_TOTAL_TOLERANCE) {
       return false;
     }
@@ -51,7 +53,16 @@ export function findDuplicateScan(input: {
       return false;
     }
     return sameSupplier(scan);
-  });
+  }));
 
   return possible?.scanId;
+}
+
+/**
+ * SCN-UI-C2 (caos UI M2): de los escaneos que coinciden (del más reciente al más
+ * antiguo), el confirmado con compra más reciente; si no hay, el más reciente. Un
+ * escaneo abandonado en `extracted` no tapa la compra ya registrada.
+ */
+function preferConfirmed(scans: MatchPreviousScan[]): MatchPreviousScan | undefined {
+  return scans.find((scan) => Boolean(scan.purchaseId)) ?? scans[0];
 }

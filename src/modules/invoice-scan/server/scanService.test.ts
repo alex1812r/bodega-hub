@@ -485,6 +485,7 @@ describe("getInvoiceScanDetail y discardInvoiceScan", () => {
     expect(detail).toMatchObject({
       extraction: singlePageExtraction,
       pages: 3,
+      purchaseId: null,
       scanId,
       status: "extracted",
     });
@@ -492,6 +493,17 @@ describe("getInvoiceScanDetail y discardInvoiceScan", () => {
       [1, 2, 3].map((n) => `https://signed.local/${ctx.storeId}/${sha}/p${n}.jpg?ttl=${INVOICE_READ_URL_TTL_SECONDS}`),
     );
     expect(storage.signedReadUrl).toHaveBeenCalledTimes(3);
+  });
+
+  it("lleva la compra registrada con el escaneo (SCN-08-F1)", async () => {
+    const ctx = newContext();
+    const { built } = deps();
+    const { scanId } = await scanInvoice(built, ctx, { pages: [page("con compra")], source: "upload" });
+    const row = (await mockRepo.getScan(ctx, scanId)) as InvoiceScanRow;
+    const purchaseId = "00000000-0000-4000-8000-0000000000aa";
+    mockRepo.putMockScanRow({ ...row, purchaseId, status: "confirmed" });
+
+    await expect(getInvoiceScanDetail(built, ctx, scanId)).resolves.toMatchObject({ purchaseId, status: "confirmed" });
   });
 
   it("404 para otra tienda o un id inválido", async () => {
@@ -814,6 +826,37 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     rows().set(id, { ...(rows().get(id) as InvoiceScanRow), ...patch });
   }
 
+  /**
+   * Congela solo `Date`: el repositorio mock fecha las filas y cuenta la cuota
+   * por día de Caracas con el reloj real, y un `createdAt` retrasado cruza al
+   * día anterior si el test corre justo después de medianoche (SCN-13e).
+   */
+  function pinDateTo(iso: string) {
+    jest.useFakeTimers({
+      doNotFake: [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ],
+      now: new Date(iso),
+    });
+  }
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it.each([
     ["con otra forma", { lines: "ilegible", x: 1 }],
     ["vacía ({} en la columna)", null],
@@ -877,6 +920,9 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
   });
 
   it("una lectura vieja no pisa la nueva: si otra reserva tomó la fila, complete responde 409 y la fila sigue con el intento nuevo (C1/C2)", async () => {
+    // Mediodía en Caracas: retrasar la fila 10 min no la saca del día, así que la
+    // nueva reserva acumula usagePages sobre la anterior (a las 00:05 daría 1).
+    pinDateTo("2026-10-16T16:00:00.000Z");
     const ctx = newContext();
     const pages = [page("intento viejo")];
     const sha = sha256OfPages(pages.map((item) => item.data));
@@ -924,5 +970,56 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     (storage.signedReadUrl as jest.Mock).mockRejectedValueOnce(new ApiError(503, "INTERNAL_ERROR", "caído"));
 
     await expect(getInvoiceScanDetail(built, ctx, scanId)).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe("scanInvoice · textos opcionales vacíos (SCN-13a)", () => {
+  const blankExtraction: InvoiceExtraction = {
+    ...singlePageExtraction,
+    lines: singlePageExtraction.lines.map((line, index) =>
+      index === 0 ? { ...line, barcode: "", supplierSku: "   " } : { ...line, barcode: "7591234567890" },
+    ),
+    number: "  ",
+    supplier: { address: "", name: singlePageExtraction.supplier.name, phone: " \t", taxId: "" },
+  };
+
+  function expectNoBlankOptionals(extraction: InvoiceExtraction | null | undefined) {
+    expect(extraction?.supplier).toEqual({ name: singlePageExtraction.supplier.name });
+    expect(extraction).not.toHaveProperty("number");
+    expect(extraction?.lines[0]).not.toHaveProperty("barcode");
+    expect(extraction?.lines[0]).not.toHaveProperty("supplierSku");
+    expect(extraction?.lines[1]?.barcode).toBe("7591234567890");
+  }
+
+  it('"" o solo espacios quedan ausentes en lo emparejado, lo guardado y la respuesta', async () => {
+    const ctx = newContext();
+    const { built, matcher } = deps({ extract: jest.fn(async () => extractResult({ extraction: blankExtraction })) });
+
+    const response = await scanInvoice(built, ctx, { pages: [page("blank")], source: "upload" });
+    const stored = await mockRepo.getScan(ctx, response.scanId);
+
+    expectNoBlankOptionals(matcher.mock.calls[0]?.[0]);
+    expectNoBlankOptionals(stored?.extracted);
+    expectNoBlankOptionals(response.extraction);
+  });
+
+  it("una fila en caché con textos vacíos se sirve ya normalizada", async () => {
+    const ctx = newContext();
+    const pages = [page("blank-cached")];
+    const sha = sha256OfPages(pages.map((item) => item.data));
+    await mockRepo.seedScanForTest(ctx, {
+      extracted: blankExtraction,
+      imageSha256: sha,
+      model: "invoice-scan-mock",
+      provider: "mock",
+      storagePath: `${ctx.storeId}/${sha}/p1.jpg`,
+    });
+    const { built, extract } = deps();
+
+    const response = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(response.cached).toBe(true);
+    expect(extract).not.toHaveBeenCalled();
+    expectNoBlankOptionals(response.extraction);
   });
 });

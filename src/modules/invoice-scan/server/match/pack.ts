@@ -158,6 +158,8 @@ function resolveWithSize(size: number, input: PackInput, fromAlias: boolean): Pa
  *   factura DECLARA caja/bulto/paquete/display -> dudosa con aviso de
  *   contradicción y el empaque solo propuesto, nunca confirmado (caos A-r3-1).
  * - Tamaño leído = empaque registrado -> modo empaque con `packUnitId`.
+ * - Tamaño leído = tamaño del alias aprendido -> modo empaque ya confirmado
+ *   (con `packUnitId` si además hay empaque registrado de ese tamaño).
  * - Tamaño leído distinto del registrado o del alias -> dudosa con aviso, SIN
  *   fijar `unitsPerPack` (6.8, caos A1).
  * - Tamaño leído sin empaque registrado -> dudosa, `unitsPerPack` leído como
@@ -198,6 +200,11 @@ function resolvePackMode(input: PackInput): PackResolution {
           `La factura dice ${packWord(line)} de ${readSize} unidades y el alias aprendido es de ${aliasSize}: confirma las unidades por empaque.`,
         ],
       };
+    }
+    if (aliasSize === readSize) {
+      // El proveedor ya confirmó este tamaño (alias aprendido): no se vuelve a preguntar (SCN-08-F2).
+      const registered = input.packUnits.find((pack) => pack.unitsPerPack === readSize);
+      return { entryMode: "pack", ...(registered ? { packUnitId: registered.id } : {}), unitsPerPack: readSize, issues: [] };
     }
     if (indicated || readSize > 1) {
       return resolveWithSize(readSize, input, false);

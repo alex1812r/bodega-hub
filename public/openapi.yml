@@ -2598,6 +2598,26 @@ paths:
         siendo 201 con la compra y `initialPayment.status = failed`: la compra queda
         pendiente de pago. Repetir la peticion con las mismas dos claves de
         idempotencia devuelve la misma compra y el mismo pago.
+
+
+        Con `invoiceScanId` la compra sale de un escaneo de factura (SCN-06):
+        `clientRequestId` es obligatorio (sin el, 400). Antes de crear la compra
+        el servidor reclama el escaneo para este intento, siempre en la tienda de
+        la sesion: un escaneo de otra tienda o inexistente ("Escaneo no
+        encontrado"), ya confirmado con otra compra ("El escaneo ya fue
+        confirmado"), descartado o fallido ("El escaneo no está disponible") o
+        reclamado por otro intento vigente ("El escaneo se está confirmando en
+        otra compra") responde 400 y no crea la compra. Si la creacion se rechaza
+        (4xx) el reclamo se suelta; con un resultado incierto caduca a los 5
+        minutos. Tras crear la compra se confirma el escaneo con
+        `invoiceScanExtraction` (o, sin ella, la lectura guardada) y las lineas
+        de `invoiceScanLines`, y se aprenden los alias de las lineas cuyo
+        producto esta en `items`; el texto del alias sale de la lectura
+        guardada, nunca del cliente. Un fallo al confirmar o aprender no deshace
+        la compra: se informa en `invoiceScan`. Repetir el mismo intento (misma
+        clave, escaneo ya confirmado con esa compra) devuelve la misma compra y
+        no vuelve a aprender. Si la clave ya creo otra compra (ligada a otro
+        escaneo o anterior al reclamo) responde 400 sin confirmar el escaneo.
       x-permission: purchases.create
       requestBody:
         required: true
@@ -2608,7 +2628,8 @@ paths:
       responses:
         "201":
           description: >-
-            Compra creada. Lleva `initialPayment` solo si la peticion lo envio.
+            Compra creada. Lleva `initialPayment` solo si la peticion lo envio e
+            `invoiceScan` solo si envio `invoiceScanId`.
           content:
             application/json:
               schema:
@@ -2858,6 +2879,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/purchases/invoice-scan/limits:
+    get:
+      tags: [Purchases]
+      summary: Cuota diaria de escaneo de facturas
+      description: >-
+        Paginas escaneadas hoy (dia operativo de Caracas) por la tienda de la
+        sesion frente a `INVOICE_SCAN_DAILY_LIMIT`. Lo pinta el modal de escaneo
+        antes de subir nada ("Escaneos hoy: X de Y") y lo vuelve a pedir tras un
+        escaneo fallido, porque el intento pudo contar.
+      x-permission: purchases.create
+      responses:
+        "200":
+          description: Uso y cuota del dia.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InvoiceScanLimits"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/purchases/invoice-scan/upload-url:
     get:
       tags: [Purchases]
@@ -3062,6 +3108,53 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/purchases/{id}/invoice-scan:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Purchases]
+      summary: Factura escaneada de una compra
+      description: >-
+        Escaneo confirmado del que salio la compra, con las lineas aprendidas
+        (texto de la factura y producto elegido) y URLs firmadas de lectura de
+        cada pagina, validas 5 minutos (falsas en modo mock). `data` es null si
+        la compra no salio de un escaneo. Una compra de otra tienda responde
+        404. Si la imagen ya se borro, `imageUrls` va vacio e `imageExpired` es
+        true. Con datos reales exige una sesion de usuario (la demo no sirve).
+      x-permission: purchases.view
+      parameters:
+        - name: images
+          in: query
+          required: false
+          description: Con `0` no firma las imagenes (`imageUrls` vacio); solo comprueba si hay escaneo.
+          schema:
+            type: string
+            enum: ["0", "1"]
+      responses:
+        "200":
+          description: Escaneo de la compra, o null si no tiene.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/PurchaseInvoiceScan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: El almacenamiento de facturas no esta disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/{id}/receive:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3273,6 +3366,70 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/ReportArrayResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/contacts/{id}/product-aliases:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Alias aprendidos de facturas de un proveedor
+      description: Alias de `supplier_product_aliases` (SCN-09b) de la tienda de la sesion para el proveedor, mas recientes primero (tope 500). `inSupplierProducts` indica si el producto esta en la lista de productos del proveedor. Un proveedor ajeno o inexistente devuelve una lista vacia.
+      x-permission: purchases.view
+      responses:
+        "200":
+          description: Alias del proveedor
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SupplierProductAlias"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/contacts/{id}/product-aliases/{aliasId}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: aliasId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Contacts]
+      summary: Quitar un alias aprendido de facturas
+      description: Borra el alias via la RPC `remove_supplier_product_alias` (20261020a). El proximo escaneo de ese texto ya no lo propone. Alias de otra tienda, de otro proveedor o inexistente responde 404.
+      x-permission: purchases.create
+      responses:
+        "200":
+          description: Alias quitado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id:
+                        type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
   /api/supplier-products:
@@ -6585,6 +6742,38 @@ components:
         preferredAutoAssigned:
           type: boolean
           description: El servidor movio o quito el habitual sin que la lista marcara uno.
+    SupplierProductAlias:
+      type: object
+      required: [id, aliasNorm, productId, productName, packLabel, unitsPerPack, hits, lastSeenAt, inSupplierProducts]
+      properties:
+        id:
+          type: string
+          format: uuid
+        aliasNorm:
+          type: string
+          description: Texto de la factura normalizado (normalizeAlias).
+        productId:
+          type: string
+        productName:
+          type: string
+          nullable: true
+        packLabel:
+          type: string
+          nullable: true
+        unitsPerPack:
+          type: integer
+          minimum: 1
+          nullable: true
+        hits:
+          type: integer
+          minimum: 1
+          description: Veces que se confirmo con el mismo producto.
+        lastSeenAt:
+          type: string
+          format: date-time
+        inSupplierProducts:
+          type: boolean
+          description: El producto esta vinculado al proveedor (supplier_products).
     SupplierProduct:
       type: object
       required: [id, supplierId, productId, isActive]
@@ -7423,12 +7612,15 @@ components:
           type: string
         date:
           type: string
-          format: date
+          description: Fecha de la factura, ISO `YYYY-MM-DD`. El servidor no valida el formato.
         currency:
           type: string
           enum: [VES, USD, unknown]
         printedRate:
           type: number
+          minimum: 0
+          exclusiveMinimum: true
+          description: Tasa Bs/USD impresa al pie, si la hay.
         lines:
           type: array
           items:
@@ -7572,7 +7764,7 @@ components:
           description: true si vino del cache por hash (0 llamadas al modelo).
     InvoiceScanDetail:
       type: object
-      required: [scanId, status, extraction, matched, pages, createdAt, imageUrls]
+      required: [scanId, status, extraction, matched, pages, createdAt, imageUrls, purchaseId]
       properties:
         scanId:
           type: string
@@ -7599,6 +7791,62 @@ components:
           description: URL firmada de lectura de cada pagina, valida 5 minutos.
           items:
             type: string
+        purchaseId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Compra registrada con este escaneo; null si aun no se confirmo en ninguna.
+    PurchaseInvoiceScan:
+      type: object
+      description: Escaneo confirmado de una compra y las lineas que se aprendieron de el.
+      required: [scanId, createdAt, confirmedAt, pages, imageUrls, imageExpired, lines, learned]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pages:
+          type: integer
+        imageUrls:
+          type: array
+          description: >-
+            URL firmada de lectura de cada pagina, valida 5 minutos. Vacio si la
+            imagen ya se borro (`imageExpired`) o si se pidio `images=0`.
+          items:
+            type: string
+        imageExpired:
+          type: boolean
+          description: La imagen ya no esta (retencion de 90 dias o ausente en el bucket).
+        learned:
+          type: integer
+          description: Cuantas lineas de la factura quedaron ligadas a un producto.
+        lines:
+          type: array
+          items:
+            type: object
+            required: [lineIndex, rawText, productId, productName]
+            properties:
+              lineIndex:
+                type: integer
+              rawText:
+                type: string
+                description: Texto de la linea tal como se leyo en la factura.
+              productId:
+                type: string
+              productName:
+                type: string
+                nullable: true
+                description: null si el producto ya no existe en la tienda.
+              packLabel:
+                type: string
+              unitsPerPack:
+                type: integer
     PurchaseLastCost:
       type: object
       description: Ultima linea de compra recibida de un producto.
@@ -7839,6 +8087,53 @@ components:
               properties:
                 initialPayment:
                   $ref: "#/components/schemas/PurchaseInitialPaymentResult"
+                invoiceScan:
+                  $ref: "#/components/schemas/PurchaseInvoiceScanOutcome"
+    PurchaseInvoiceScanOutcome:
+      type: object
+      description: >-
+        Resultado del escaneo de factura de la compra. La compra ya existe aunque
+        `confirmed` sea false (el fallo queda en el log del servidor).
+      required: [confirmed, learned]
+      properties:
+        confirmed:
+          type: boolean
+          description: El escaneo quedo (o ya estaba, al repetir el intento) confirmado con esta compra.
+        learned:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: >-
+            Alias aprendidos en esta llamada; null si no se aprendio (intento
+            repetido, escaneo sin confirmar o fallo del aprendizaje).
+    PurchaseInvoiceScanLineInput:
+      type: object
+      description: >-
+        Producto elegido para una linea de la factura (D10). Una linea cuyo
+        `lineIndex` no existe en la lectura guardada se ignora; si su producto no
+        esta en `items` se guarda pero no se aprende. El empaque solo se aprende
+        si coincide con un item del mismo producto en modo empaque y el mismo
+        `unitsPerPack` (con la etiqueta del item); sin empaque y con el producto
+        en modo unidad, el alias queda sin empaque.
+      required: [lineIndex, productId]
+      properties:
+        lineIndex:
+          type: integer
+          minimum: 0
+          description: Indice de la linea en `extraction.lines` del escaneo guardado.
+        productId:
+          type: string
+          format: uuid
+        packLabel:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Se recorta de espacios.
+        unitsPerPack:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          nullable: true
     PurchaseInitialPaymentResult:
       description: >-
         Resultado del pago inicial. `registered`: el pago quedo registrado.
@@ -7902,7 +8197,16 @@ components:
           $ref: "#/components/schemas/PaymentDenominations"
     PurchaseCreateInput:
       type: object
-      required: [supplierId, items]
+      required:
+        - supplierId
+        - items
+        - discountRef
+        - discountVes
+        - refRateVes
+        - subtotalRef
+        - subtotalVes
+        - taxRef
+        - taxVes
       properties:
         initialPayment:
           $ref: "#/components/schemas/PurchaseInitialPaymentInput"
@@ -7931,13 +8235,47 @@ components:
         discountRef:
           type: number
           minimum: 0
+        discountVes:
+          type: number
+          minimum: 0
+        subtotalRef:
+          type: number
+          minimum: 0
+        subtotalVes:
+          type: number
+          minimum: 0
         taxRef:
+          type: number
+          minimum: 0
+        taxVes:
           type: number
           minimum: 0
         refRateVes:
           type: number
           minimum: 0
           exclusiveMinimum: true
+        invoiceScanId:
+          type: string
+          format: uuid
+          description: >-
+            Escaneo de factura del que sale la compra (`POST
+            /api/purchases/invoice-scan`). Exige `clientRequestId`. Escaneo de
+            otra tienda, inexistente, ya confirmado con otra compra, descartado,
+            fallido o reclamado por otro intento: 400 sin crear la compra.
+        invoiceScanLines:
+          type: array
+          maxItems: 500
+          description: Producto elegido por linea de la factura. Exige `invoiceScanId`.
+          items:
+            $ref: "#/components/schemas/PurchaseInvoiceScanLineInput"
+        invoiceScanExtraction:
+          description: >-
+            Lectura corregida por el usuario (D10), con el mismo contrato que la
+            del modelo y como maximo 500 lineas. Exige `invoiceScanId`. Se guarda
+            como la extraccion confirmada del escaneo (los textos opcionales
+            vacios quedan ausentes); sin ella se guarda la lectura del escaneo.
+          allOf:
+            - $ref: "#/components/schemas/InvoiceExtraction"
     Payment:
       type: object
       required: [id, direction, method, amount, amountVes, amountRef, contactId]

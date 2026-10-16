@@ -22,7 +22,7 @@
  *   La 1.ª factura de cada proveedor no entra en este bucket (no hay nada
  *   aprendido), pero sí alimenta alias y `previousScans`.
  */
-import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../../src/modules/invoice-scan/invoiceAliasKey";
 
 import type { InvoiceExtraction, InvoiceMatch } from "../../src/modules/invoice-scan/contracts";
 import { matchInvoice } from "../../src/modules/invoice-scan/server/match";
@@ -286,7 +286,8 @@ export function learnAliases(previous: readonly ScanStateLike[], scenario: Bench
       if (!productId) continue;
       const predicted = predictedLines[pair.predictedIndex];
       const truthLine = truthLines[pair.truthIndex];
-      const aliasNorm = normalizeAlias(predicted.rawText);
+      // Misma clave que aprende producción (`buildConfirmedLines`, SCN-UI-Q2).
+      const aliasNorm = invoiceAliasKey(predicted);
       if (!aliasNorm) continue;
       const packLabel = predicted.unit ?? truthLine.unit ?? null;
       const unitsPerPack = truthLine.unitsPerPack ?? null;

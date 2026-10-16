@@ -18,6 +18,7 @@
  *    de las que es componente y último costo recibido.
  */
 import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { createRouteSupabaseClient } from "@/lib/supabase/route-client";
@@ -60,7 +61,7 @@ const LAST_LINE_SELECT = "id, purchase_items(unit_cost_ref, purchases!inner(crea
 const SUPPLIER_PRODUCT_SELECT =
   "id, product_id, supplier_sku, is_preferred, supplier_product_pack_units(id, label, units_per_pack, is_default, is_active)";
 const PREVIOUS_SCAN_SELECT =
-  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId, date:extracted->>date, total:extracted->>total";
+  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId, date:extracted->>date, total:extracted->>total, purchase_id";
 
 type CandidatesRpcResult = {
   suppliers?: Array<{
@@ -120,6 +121,7 @@ type PreviousScanRow = {
   matched_contact_id: string | null;
   date?: string | null;
   total?: number | string | null;
+  purchase_id?: string | null;
 };
 
 const EMPTY_CATALOG: MatchSupplierCatalog = { supplierProducts: [], aliases: [], packUnits: [] };
@@ -169,7 +171,8 @@ async function loadCandidates(
   const { data, error } = await supabase.rpc(MATCH_CANDIDATES_RPC, {
     p_supplier_name: normalizeAlias(extraction.supplier.name ?? ""),
     p_supplier_tax_id: extraction.supplier.taxId ?? null,
-    p_texts: extraction.lines.map((line) => normalizeAlias(line.rawText)),
+    // Alias difusos contra la clave con la que se aprenden (SCN-UI-Q2), no el rawText entero.
+    p_texts: extraction.lines.map((line) => invoiceAliasKey(line)),
     p_descriptions: extraction.lines.map((line) => normalizeAlias(line.description || line.rawText)),
     p_limit: MATCH_CANDIDATES_PER_LINE,
   });
@@ -237,6 +240,7 @@ async function loadPreviousScans(
     number: row.number ?? null,
     date: row.date ?? undefined,
     total: toNumber(row.total),
+    purchaseId: row.purchase_id ?? undefined,
   }));
 }
 

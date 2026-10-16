@@ -21,11 +21,16 @@
  * rechaza (SCN-06-F3) una compra creada antes del reclamo (la clave ya había
  * creado una compra vieja sin escaneo).
  *
- * Punto de integración: el mock de Extracción (`POST /api/purchases/invoice-scan`
- * en modo mock) debe llamar a `registerMockInvoiceScan` con el `scanId`, la tienda
- * y la `extraction` que devuelve, para que la compra pueda confirmarlo aquí. Hasta
- * entonces solo los tests registran escaneos.
+ * Almacén (SCN-13a): las filas son las de `scans.mock-server.ts`, el mismo almacén
+ * donde `POST /api/purchases/invoice-scan` guarda el escaneo en modo mock (con su
+ * caché por hash y su descarte), así que una compra mock confirma el escaneo que
+ * acaba de leer. Las columnas del reclamo viven al lado (`mockScanClaim`).
+ * `registerMockInvoiceScan` solo siembra filas para tests.
  */
+import {
+  createSupplierProductPackUnit,
+  listSupplierProducts,
+} from "@/modules/contacts/services/supplierProducts.mock-server";
 import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
@@ -33,23 +38,38 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { ApiError } from "@/lib/api/apiError";
 
 import {
+  assertScanLinesInStoredExtraction,
   assertScanUsable,
   buildConfirmedPayload,
   buildLearnLines,
+  buildScanPackUnits,
   INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS,
   INVOICE_SCAN_CLAIM_TTL_MS,
   INVOICE_SCAN_CLAIMED_MESSAGE,
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
+  logInvoiceScanFailure,
+  readExtractedAliasKeys,
   readExtractedRawTexts,
   readStoredExtraction,
   type ConfirmedInvoiceScan,
   type FinalizeInvoiceScanInput,
   type InvoiceScanClaimInput,
   type InvoiceScanOutcome,
+  type InvoiceScanPrecheckInput,
   type InvoiceScanStatus,
   type PrecheckedInvoiceScan,
+  type ScanPackUnit,
 } from "./confirmScan.server";
+import {
+  findMockScanRow,
+  listMockScansOfStore,
+  mockScanClaim,
+  putMockScanRow,
+  resetMockScanStore,
+} from "./scans.mock-server";
+import type { InvoiceScanRow, InvoiceScanStatus as InvoiceScanRowStatus } from "./scans.types";
 
+/** Vista de una fila del almacén compartido con las columnas de su reclamo. */
 export type MockInvoiceScan = {
   /** Intento que tiene el reclamo (`claim_request_id`). */
   claimRequestId: string | null;
@@ -63,23 +83,23 @@ export type MockInvoiceScan = {
   extracted: unknown;
   id: string;
   purchaseId: string | null;
-  status: InvoiceScanStatus;
+  status: InvoiceScanRowStatus;
   storeId: string;
 };
 
 export type MockLearnedAlias = {
   aliasNorm: string;
   hits: number;
+  /** Id estable del registro (`supplier_product_aliases.id`): se conserva al reasignar. */
+  id: string;
+  /** `last_seen_at` (ISO): se renueva en cada aprendizaje. */
+  lastSeenAt: string;
   packLabel: string | null;
   productId: string;
   storeId: string;
   supplierId: string;
   unitsPerPack: number | null;
 };
-
-function scans() {
-  return mockState("invoice-scan:confirm:scans", () => new Map<string, MockInvoiceScan>());
-}
 
 function aliases() {
   return mockState("invoice-scan:confirm:aliases", () => new Map<string, MockLearnedAlias>());
@@ -89,7 +109,47 @@ function aliasKey(storeId: string, supplierId: string, aliasNorm: string) {
   return `${storeId}:${supplierId}:${aliasNorm}`;
 }
 
-/** Registra (o reemplaza) un escaneo mock. Ver el punto de integración arriba. */
+/** Fila del almacén compartido (copia) si es de la tienda. */
+function ownRow(id: string, storeId: string) {
+  const row = findMockScanRow(id);
+
+  return row && row.storeId === storeId ? row : null;
+}
+
+function clearClaim(id: string) {
+  const claim = mockScanClaim(id);
+  claim.claimRequestId = null;
+  claim.claimedAt = null;
+  claim.claimStartedAt = null;
+}
+
+function toView(id: string): MockInvoiceScan | undefined {
+  const row = findMockScanRow(id);
+
+  if (!row) {
+    return undefined;
+  }
+
+  const claim = mockScanClaim(id);
+
+  return {
+    claimRequestId: claim.claimRequestId,
+    claimStartedAt: claim.claimStartedAt,
+    claimedAt: claim.claimedAt,
+    confirmed: (row.confirmed ?? null) as ConfirmedInvoiceScan | null,
+    confirmedClientRequestId: claim.confirmedClientRequestId,
+    extracted: row.extracted,
+    id: row.id,
+    purchaseId: row.purchaseId,
+    status: row.status,
+    storeId: row.storeId,
+  };
+}
+
+/**
+ * SOLO TESTS: siembra (o reemplaza) un escaneo en el almacén compartido sin pasar
+ * por la extracción. El BFF crea las filas con `reserveScan` + `completeScan`.
+ */
 export function registerMockInvoiceScan(scan: {
   extracted: unknown;
   id?: string;
@@ -97,25 +157,43 @@ export function registerMockInvoiceScan(scan: {
   status?: InvoiceScanStatus;
   storeId?: string;
 }): MockInvoiceScan {
-  const stored: MockInvoiceScan = {
-    claimRequestId: null,
-    claimStartedAt: null,
-    claimedAt: null,
+  const id = scan.id ?? crypto.randomUUID();
+  const storeId = scan.storeId ?? DEFAULT_STORE_ID;
+  // Hash único: la fila sembrada no choca con el caché de una foto real.
+  const sha256 = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+
+  putMockScanRow({
     confirmed: null,
-    confirmedClientRequestId: null,
-    extracted: scan.extracted,
-    id: scan.id ?? crypto.randomUUID(),
+    confirmedAt: null,
+    createdAt: new Date().toISOString(),
+    createdBy: "mock-register",
+    durationMs: null,
+    error: null,
+    // Los tests siembran también lecturas fuera del contrato (D10): se guardan tal cual.
+    extracted: scan.extracted as InvoiceScanRow["extracted"],
+    id,
+    imageSha256: sha256,
+    inputTokens: null,
+    matched: null,
+    model: "invoice-scan-mock",
+    outputTokens: null,
+    pages: 1,
+    provider: "mock",
     purchaseId: scan.purchaseId ?? null,
     status: scan.status ?? "extracted",
-    storeId: scan.storeId ?? DEFAULT_STORE_ID,
-  };
+    storagePath: `${storeId}/${sha256}/p1.jpg`,
+    storeId,
+    supplierId: null,
+    usagePages: 0,
+  });
+  clearClaim(id);
+  mockScanClaim(id).confirmedClientRequestId = null;
 
-  scans().set(stored.id, stored);
-  return stored;
+  return toView(id) as MockInvoiceScan;
 }
 
 export function getMockInvoiceScan(id: string): MockInvoiceScan | undefined {
-  return scans().get(id);
+  return toView(id);
 }
 
 /** Alias aprendidos de la tienda (opcionalmente de un proveedor). */
@@ -125,33 +203,78 @@ export function listMockLearnedAliases(storeId: string, supplierId?: string): Mo
   );
 }
 
-/** Solo tests: vacía escaneos y alias. */
+/**
+ * SOLO TESTS (SCN-09b): siembra un alias aprendido sin pasar por una compra
+ * escaneada. En la app los alias solo nacen de `finalizeInvoiceScan`.
+ */
+export function registerMockLearnedAlias(
+  alias: Pick<MockLearnedAlias, "aliasNorm" | "productId" | "supplierId"> & Partial<MockLearnedAlias>,
+): MockLearnedAlias {
+  const row: MockLearnedAlias = {
+    hits: 1,
+    id: crypto.randomUUID(),
+    lastSeenAt: new Date().toISOString(),
+    packLabel: null,
+    storeId: DEFAULT_STORE_ID,
+    unitsPerPack: null,
+    ...alias,
+  };
+
+  aliases().set(aliasKey(row.storeId, row.supplierId, row.aliasNorm), row);
+
+  return row;
+}
+
+/**
+ * SCN-09b · Espejo de `remove_supplier_product_alias`: borra el alias si es de la
+ * tienda; `false` si es ajeno o no existe (el BFF responde 404).
+ */
+export function removeMockLearnedAlias(storeId: string, aliasId: string): boolean {
+  const store = aliases();
+
+  for (const [key, alias] of store) {
+    if (alias.id === aliasId && alias.storeId === storeId) {
+      store.delete(key);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** Solo tests: vacía el almacén compartido de escaneos (filas y reclamos) y los alias. */
 export function resetMockInvoiceScans() {
-  scans().clear();
+  resetMockScanStore();
   aliases().clear();
 }
 
 export async function precheckInvoiceScan(
-  input: InvoiceScanClaimInput,
+  input: InvoiceScanPrecheckInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
-  const stored = scans().get(input.scanId);
-  const scan = stored && stored.storeId === storeId ? stored : null;
+  const scan = ownRow(input.scanId, storeId);
+  const claim = scan ? mockScanClaim(scan.id) : null;
   const replayPurchaseId =
-    scan?.status === "confirmed" && scan.confirmedClientRequestId === input.clientRequestId
+    scan?.status === "confirmed" && claim?.confirmedClientRequestId === input.clientRequestId
       ? scan.purchaseId
       : null;
   const { replay } = assertScanUsable(scan, replayPurchaseId);
-  const usable = scan as MockInvoiceScan;
+  const usable = scan as NonNullable<typeof scan>;
+  const usableClaim = claim as NonNullable<typeof claim>;
+
+  // SCN-UI-C2: líneas fuera de la extracción guardada → 400 antes de reclamar.
+  if (!replay) {
+    assertScanLinesInStoredExtraction(readExtractedRawTexts(usable.extracted), input.lines);
+  }
 
   // Espejo del UPDATE condicional de claim_invoice_scan (sin await en medio: atómico).
   if (!replay) {
     const now = Date.now();
     const claimFree =
-      usable.claimRequestId === null ||
-      usable.claimRequestId === input.clientRequestId ||
-      usable.claimedAt === null ||
-      usable.claimedAt < now - INVOICE_SCAN_CLAIM_TTL_MS;
+      usableClaim.claimRequestId === null ||
+      usableClaim.claimRequestId === input.clientRequestId ||
+      usableClaim.claimedAt === null ||
+      usableClaim.claimedAt < now - INVOICE_SCAN_CLAIM_TTL_MS;
 
     if (!claimFree) {
       throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_CLAIMED_MESSAGE);
@@ -159,11 +282,11 @@ export async function precheckInvoiceScan(
 
     // INT-01 (caos-5 B4): cada reclamo renueva la caducidad; el mismo intento
     // conserva el momento de su primer reclamo (SCN-06-F3).
-    if (usable.claimRequestId !== input.clientRequestId || usable.claimStartedAt === null) {
-      usable.claimStartedAt = now;
+    if (usableClaim.claimRequestId !== input.clientRequestId || usableClaim.claimStartedAt === null) {
+      usableClaim.claimStartedAt = now;
     }
-    usable.claimedAt = now;
-    usable.claimRequestId = input.clientRequestId;
+    usableClaim.claimedAt = now;
+    usableClaim.claimRequestId = input.clientRequestId;
   }
 
   return {
@@ -171,6 +294,7 @@ export async function precheckInvoiceScan(
     id: usable.id,
     purchaseId: usable.purchaseId,
     rawTexts: readExtractedRawTexts(usable.extracted),
+    aliasKeys: readExtractedAliasKeys(usable.extracted),
     replay,
   };
 }
@@ -180,17 +304,10 @@ export async function releaseInvoiceScanClaim(
   input: InvoiceScanClaimInput,
   storeId: string,
 ): Promise<void> {
-  const stored = scans().get(input.scanId);
+  const stored = ownRow(input.scanId, storeId);
 
-  if (
-    stored &&
-    stored.storeId === storeId &&
-    stored.status === "extracted" &&
-    stored.claimRequestId === input.clientRequestId
-  ) {
-    stored.claimRequestId = null;
-    stored.claimedAt = null;
-    stored.claimStartedAt = null;
+  if (stored?.status === "extracted" && mockScanClaim(stored.id).claimRequestId === input.clientRequestId) {
+    clearClaim(stored.id);
   }
 }
 
@@ -218,6 +335,8 @@ function learnMockAliases(
     store.set(key, {
       aliasNorm: line.alias_norm,
       hits: previous && sameProduct ? previous.hits + 1 : 1,
+      id: previous?.id ?? crypto.randomUUID(),
+      lastSeenAt: new Date().toISOString(),
       packLabel: keep("pack_label" in line, line.pack_label, previous?.packLabel),
       productId: line.product_id,
       storeId,
@@ -229,6 +348,32 @@ function learnMockAliases(
   return lastByAlias.size;
 }
 
+/**
+ * Paridad de `ensureScanPackUnits` (SCN-08-F2 · 6.8): crea con el servicio mock
+ * de pack units (valida la receta) el empaque del proveedor que falte; con uno
+ * activo del mismo tamaño no hace nada. Un rechazo se registra y no rompe.
+ */
+function ensureMockScanPackUnits(scanId: string, supplierId: string, packs: readonly ScanPackUnit[], storeId: string) {
+  for (const pack of packs) {
+    try {
+      const params = new URLSearchParams({ isActive: "true", productId: pack.productId, supplierId });
+      const [link] = listSupplierProducts(params, storeId).items;
+
+      if (!link || link.packUnits.some((existing) => existing.unitsPerPack === pack.unitsPerPack)) {
+        continue;
+      }
+
+      createSupplierProductPackUnit(
+        link.id,
+        { isDefault: !link.packUnits.some((existing) => existing.isDefault), label: pack.label, unitsPerPack: pack.unitsPerPack },
+        storeId,
+      );
+    } catch (error) {
+      logInvoiceScanFailure("pack", scanId, error);
+    }
+  }
+}
+
 export async function finalizeInvoiceScan(
   scan: PrecheckedInvoiceScan,
   input: FinalizeInvoiceScanInput,
@@ -238,16 +383,17 @@ export async function finalizeInvoiceScan(
     return { confirmed: scan.purchaseId === input.purchaseId, learned: null };
   }
 
-  const stored = scans().get(scan.id);
+  const stored = ownRow(scan.id, storeId);
+  const claim = stored ? mockScanClaim(stored.id) : null;
 
   // Mismo rechazo que confirm_invoice_scan: ausente/ajeno, ya no `extracted` o
   // reclamado por otro intento.
   if (
     !stored ||
-    stored.storeId !== storeId ||
+    !claim ||
     stored.status !== "extracted" ||
     !input.clientRequestId ||
-    stored.claimRequestId !== input.clientRequestId
+    claim.claimRequestId !== input.clientRequestId
   ) {
     console.error("[invoice-scan] confirm falló; la compra quedó creada", { scanId: scan.id });
     return { confirmed: stored?.purchaseId === input.purchaseId, learned: null };
@@ -256,24 +402,26 @@ export async function finalizeInvoiceScan(
   // SCN-06-F2 · M1: compra ya ligada a otro escaneo (la clave se reutilizó y el mock
   // de compras devolvió la compra vieja) → suelta el reclamo y 400. SCN-06-F3: lo
   // mismo si la compra se creó antes del reclamo (compra vieja sin escaneo).
-  const linkedElsewhere = [...scans().values()].some(
-    (other) => other.id !== stored.id && other.storeId === storeId && other.purchaseId === input.purchaseId,
+  const linkedElsewhere = listMockScansOfStore(storeId).some(
+    (other) => other.id !== stored.id && other.purchaseId === input.purchaseId,
   );
   const purchaseCreatedAt = Date.parse(findMockPurchase(input.purchaseId)?.createdAt ?? "");
   const createdBeforeClaim =
-    stored.claimStartedAt === null ||
+    claim.claimStartedAt === null ||
     (Number.isFinite(purchaseCreatedAt) &&
-      purchaseCreatedAt < stored.claimStartedAt - INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS);
+      purchaseCreatedAt < claim.claimStartedAt - INVOICE_SCAN_CLAIM_CLOCK_SKEW_MS);
 
   if (linkedElsewhere || createdBeforeClaim) {
-    stored.claimRequestId = null;
-    stored.claimedAt = null;
-    stored.claimStartedAt = null;
+    clearClaim(stored.id);
     throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_KEY_REUSED_MESSAGE);
   }
 
   const confirmed = buildConfirmedPayload(
-    { extraction: readStoredExtraction(stored.extracted), rawTexts: readExtractedRawTexts(stored.extracted) },
+    {
+      extraction: readStoredExtraction(stored.extracted),
+      rawTexts: readExtractedRawTexts(stored.extracted),
+      aliasKeys: readExtractedAliasKeys(stored.extracted),
+    },
     input,
   );
 
@@ -283,13 +431,18 @@ export async function finalizeInvoiceScan(
     return { confirmed: false, learned: null };
   }
 
-  stored.status = "confirmed";
-  stored.confirmed = confirmed;
-  stored.purchaseId = input.purchaseId;
-  stored.confirmedClientRequestId = input.clientRequestId;
-  stored.claimRequestId = null;
-  stored.claimedAt = null;
-  stored.claimStartedAt = null;
+  // Como confirm_invoice_scan: status, confirmed, purchase_id, confirmed_at y supplier_id.
+  putMockScanRow({
+    ...stored,
+    confirmed,
+    confirmedAt: new Date().toISOString(),
+    purchaseId: input.purchaseId,
+    status: "confirmed",
+    supplierId: input.supplierId,
+  });
+  clearClaim(stored.id);
+  claim.confirmedClientRequestId = input.clientRequestId;
+  ensureMockScanPackUnits(scan.id, input.supplierId, buildScanPackUnits(confirmed.lines, input.items), storeId);
 
   return { confirmed: true, learned: learnMockAliases(storeId, input.supplierId, confirmed, input.items) };
 }

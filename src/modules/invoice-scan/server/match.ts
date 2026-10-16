@@ -93,11 +93,14 @@ function matchLine(
 ): InvoiceLineMatch {
   const productMatch = matchLineProduct(line, buildLookup(ctx, state, index));
   const product = productMatch.productId ? state.productsById.get(productMatch.productId) : undefined;
+  // Sin producto identificado, el empaque se resuelve con el primer candidato (sus empaques y receta; SCN-08-F2 · M2).
+  const candidateId = productMatch.candidates[0]?.productId;
+  const packProduct = product ?? (candidateId ? state.productsById.get(candidateId) : undefined);
   const packUnits =
-    product && state.catalog ? state.catalog.packUnits.filter((pack) => pack.productId === product.id) : [];
+    packProduct && state.catalog ? state.catalog.packUnits.filter((pack) => pack.productId === packProduct.id) : [];
   const pack = resolvePack({
     line,
-    product,
+    product: packProduct,
     packUnits,
     alias: productMatch.alias,
     aliasOfProduct: productMatch.aliasOfProduct,

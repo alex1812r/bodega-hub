@@ -7,7 +7,8 @@
  *   `matchInvoice` usa únicamente el del proveedor que resuelve), con sus
  *   empaques activos y los alias aprendidos en `confirmScan.mock-server.ts`;
  * - difusos por línea: productos activos con nombre parecido (≥ 0,6) a la
- *   descripción y alias del proveedor más probable parecidos al `rawText`;
+ *   descripción y alias del proveedor más probable parecidos a la clave de
+ *   alias de la línea (`invoiceAliasKey`, SCN-UI-Q2);
  *   a las líneas sin ninguno, segunda pasada con los textos limpios de
  *   `searchTextVariants` (como `loadVariantFuzzy`, SCN-11-it1);
  * - alícuotas activas de la tienda, tasa vigente y escaneos previos con el
@@ -18,6 +19,7 @@
  * producto (no la última línea recibida).
  */
 import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { mockTaxRatesForStore } from "@/modules/settings/services/taxRates.mock-server";
 import {
@@ -27,9 +29,9 @@ import {
   mockExchangeRates,
   mockProductPackConversions,
   mockProducts,
-  mockSupplierProductPackUnits,
   mockSupplierProducts,
 } from "@/shared/mocks/erp-data";
+import { listActiveMockPackUnitsOfLink } from "@/modules/contacts/services/supplierProducts.mock-server";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
@@ -91,10 +93,9 @@ function catalogOf(storeId: string, supplierId: string): MatchSupplierCatalog {
       supplierSku: link.supplierSku ?? null,
       isPreferred: link.isPreferred === true,
     })),
+    // Estado vivo del mock: incluye los empaques que crean compras y escaneos (SCN-08-F2 · 6.8).
     packUnits: links.flatMap((link) =>
-      mockSupplierProductPackUnits
-        .filter((pack) => pack.supplierProductId === link.id && pack.isActive !== false)
-        .map((pack) => ({
+      listActiveMockPackUnitsOfLink(link.id).map((pack) => ({
           id: pack.id,
           productId: link.productId,
           label: pack.label,
@@ -186,7 +187,7 @@ function fuzzyCandidates(
   const fuzzy: Record<number, MatchFuzzyCandidate[]> = {};
 
   extraction.lines.forEach((line, index) => {
-    const text = normalizeAlias(line.rawText);
+    const text = invoiceAliasKey(line);
     const description = normalizeAlias(line.description || line.rawText);
     const list = candidatesFor(text, description, catalog, storeProducts);
     if (list.length > 0) {
@@ -263,6 +264,7 @@ function previousScans(storeId: string, extraction: InvoiceExtraction, excludeSc
     number: scan.extracted?.number ?? null,
     date: scan.extracted?.date,
     total: scan.extracted?.total,
+    purchaseId: scan.purchaseId ?? undefined,
   }));
 }
 

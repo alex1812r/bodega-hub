@@ -4,6 +4,7 @@ import { paginateList } from "@/lib/api/pagination";
 import {
   mockCategories,
   mockContacts,
+  mockProductPackConversions,
   mockProducts,
   mockSupplierProductPackUnits,
   mockSupplierProductPriceHistory,
@@ -28,6 +29,7 @@ import {
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { isSupplierContactType } from "@/shared/auth/contactAccess";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
+import { assertPackSizeMatchesRecipe, resolvePackRecipeRule } from "./supplierProductPackRecipe";
 import { parseSupplierProductSort, sortSupplierProductItems } from "./supplierProductSort";
 
 import type {
@@ -843,6 +845,31 @@ function findPackUnit(supplierProductId: string, packUnitId: string) {
   return packUnit;
 }
 
+/** Paridad de `loadPackRecipeRule` (server): recetas activas de la tienda. */
+function packRecipeRule(productId: string, storeId: string) {
+  const recipes = mockProductPackConversions.filter((recipe) => recipe.storeId === storeId && recipe.isActive);
+
+  return resolvePackRecipeRule({
+    componentSizes: recipes.flatMap((recipe) =>
+      recipe.components
+        .filter((component) => component.unitProductId === productId && component.unitsPerPack === recipe.totalUnits)
+        .map((component) => component.unitsPerPack),
+    ),
+    packTotalUnits: recipes.find((recipe) => recipe.packProductId === productId)?.totalUnits,
+  });
+}
+
+/**
+ * Empaques activos de un vínculo en el estado VIVO del mock (los que crean
+ * compras y escaneos), sin comprobar la tienda: el llamador ya filtró el
+ * vínculo por tienda (contexto de emparejamiento del escaneo, SCN-08-F2).
+ */
+export function listActiveMockPackUnitsOfLink(supplierProductId: string) {
+  return packUnits
+    .filter((item) => item.supplierProductId === supplierProductId && (item.isActive ?? true))
+    .map(normalizePackUnit);
+}
+
 export function listSupplierProductPackUnits(supplierProductId: string, storeId: string) {
   getSupplierProductById(supplierProductId, storeId);
 
@@ -853,7 +880,8 @@ export function listSupplierProductPackUnits(supplierProductId: string, storeId:
 
 export function createSupplierProductPackUnit(supplierProductId: string,
   input: SupplierProductPackUnitInput, storeId: string) {
-  getSupplierProductById(supplierProductId, storeId);
+  const link = getSupplierProductById(supplierProductId, storeId);
+  assertPackSizeMatchesRecipe(packRecipeRule(link.productId, storeId), input.unitsPerPack);
 
   const isDefault = input.isDefault ?? false;
 
@@ -866,7 +894,8 @@ export function createSupplierProductPackUnit(supplierProductId: string,
   }
 
   const created: SupplierProductPackUnitMock = {
-    id: `sp-pack-mock-${Date.now()}`,
+    // Con sufijo: el escaneo crea varios empaques en el mismo milisegundo (SCN-08-F2).
+    id: `sp-pack-mock-${Date.now()}-${nextPurchaseLinkSequence()}`,
     isActive: true,
     isDefault,
     label: input.label.trim(),
@@ -881,8 +910,16 @@ export function createSupplierProductPackUnit(supplierProductId: string,
 export function updateSupplierProductPackUnit(supplierProductId: string,
   packUnitId: string,
   input: SupplierProductPackUnitUpdateInput, storeId: string) {
-  getSupplierProductById(supplierProductId, storeId);
+  const link = getSupplierProductById(supplierProductId, storeId);
   const packUnit = findPackUnit(supplierProductId, packUnitId);
+
+  // Cambiar el tamaño o reactivar exige que case con la receta; renombrar o desactivar un empaque viejo, no.
+  if (input.unitsPerPack !== undefined || input.isActive === true) {
+    assertPackSizeMatchesRecipe(
+      packRecipeRule(link.productId, storeId),
+      input.unitsPerPack ?? packUnit.unitsPerPack,
+    );
+  }
 
   if (input.isDefault === true) {
     for (const item of packUnits) {

@@ -1,0 +1,450 @@
+/**
+ * SCN-08a · Modelo de la revisión del escaneo (plan factura-escaneo §5.3 SCN-08;
+ * caos 6.7, 6.8, 6.16, 6.17, 6.19, 6.20, 6.21).
+ */
+import { USD_DOCUMENT_ISSUE, resolveRate } from "@/modules/invoice-scan/server/match/money";
+
+import {
+  makeReviewResponse,
+  productUuid,
+  REVIEW_TAX_RATES,
+  doubtfulLine,
+  unmatchedLine,
+  type ReviewFixtureLine,
+} from "./reviewFixtures";
+import {
+  canLoad,
+  createInvoiceReviewState,
+  getEffectiveRate,
+  getInvoiceReviewBlockers,
+  getInvoiceReviewTotals,
+  getLineCosts,
+  getLineNeeds,
+  getPendingCount,
+  getRateOptions,
+  getReviewSections,
+  isLineMismatch,
+  nextPendingIndex,
+  orderedLineIndices,
+  pressEnter,
+  pressEscape,
+  reviewReducer,
+  summarizeInvoiceReview,
+  type InvoiceReviewContext,
+  type InvoiceReviewState,
+} from "./reviewModel";
+
+const ctx: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES };
+
+function stateOf(
+  lines: ReviewFixtureLine[],
+  extra: Omit<Parameters<typeof makeReviewResponse>[0], "lines"> = {},
+  context: InvoiceReviewContext = ctx,
+) {
+  return createInvoiceReviewState(makeReviewResponse({ lines, ...extra }), context);
+}
+
+const confirmed: ReviewFixtureLine = {};
+
+describe("orden por urgencia", () => {
+  it("sin emparejar, dudosas y confirmadas, estable por índice; confirmadas aparte con su conteo", () => {
+    const state = stateOf([confirmed, doubtfulLine(2), unmatchedLine(3), confirmed, unmatchedLine(5), doubtfulLine(6)]);
+
+    expect(orderedLineIndices(state)).toEqual([2, 4, 1, 5, 0, 3]);
+    const sections = getReviewSections(state);
+    expect(sections.review.map((line) => line.index)).toEqual([2, 4, 1, 5]);
+    expect(sections.confirmed.map((line) => line.index)).toEqual([0, 3]);
+    expect(sections.confirmedCount).toBe(2);
+    expect(state.lines.map((line) => line.status)).toEqual([
+      "confirmed_by_match",
+      "pending_doubtful",
+      "pending_unmatched",
+      "confirmed_by_match",
+      "pending_unmatched",
+      "pending_doubtful",
+    ]);
+  });
+
+  it("las filas no saltan al resolver: el orden sale del estado de origen", () => {
+    let state = stateOf([confirmed, doubtfulLine(2), unmatchedLine(3)]);
+    state = reviewReducer(state, { type: "acceptCandidate", index: 1, productId: productUuid(2) });
+
+    expect(orderedLineIndices(state)).toEqual([2, 1, 0]);
+  });
+});
+
+describe("6.16 · score 0,99 no se resuelve sola", () => {
+  it("una dudosa con candidato 0,99 sigue pendiente hasta que el usuario la acepta", () => {
+    let state = stateOf([doubtfulLine(1, 0.99)]);
+
+    expect(state.lines[0].status).toBe("pending_doubtful");
+    expect(getPendingCount(state)).toBe(1);
+    expect(canLoad(state)).toBe(false);
+
+    state = reviewReducer(state, { type: "markCandidate", index: 0, productId: productUuid(1) });
+    expect(state.lines[0].status).toBe("pending_doubtful");
+
+    state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: productUuid(1) });
+    expect(state.lines[0]).toMatchObject({ status: "resolved", accepted: true, productId: productUuid(1) });
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("aceptar un producto que no es candidato no hace nada (eso va por chooseProduct)", () => {
+    const state = stateOf([doubtfulLine(1, 0.99)]);
+    const next = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: productUuid(77) });
+
+    expect(next).toBe(state);
+  });
+});
+
+describe("6.17 · 20 líneas, 15 confirmadas: las 5 pendientes solo con teclado", () => {
+  it("Enter acepta y salta a la siguiente pendiente; las confirmadas nunca reciben foco", () => {
+    const pendingAt = new Set([2, 7, 11, 15, 19]);
+    const lines = Array.from({ length: 20 }, (_, index) =>
+      pendingAt.has(index) ? doubtfulLine(index + 1) : confirmed,
+    );
+    let state = stateOf(lines);
+    const visited: number[] = [];
+    let focus = nextPendingIndex(state, null);
+
+    while (focus !== null) {
+      visited.push(focus);
+      expect(state.lines[focus].status).toMatch(/^pending_/);
+      const result = pressEnter(state, focus);
+      state = result.state;
+      focus = result.next;
+      expect(visited.length).toBeLessThanOrEqual(5);
+    }
+
+    expect(visited).toEqual([2, 7, 11, 15, 19]);
+    expect(getPendingCount(state)).toBe(0);
+    expect(getReviewSections(state).confirmedCount).toBe(15);
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("Enter acepta el candidato marcado y no el primero", () => {
+    let state = stateOf([doubtfulLine(1)]);
+    state = reviewReducer(state, { type: "markCandidate", index: 0, productId: productUuid(101) });
+    const { state: next, next: focus } = pressEnter(state, 0);
+
+    expect(next.lines[0]).toMatchObject({ status: "resolved", productId: productUuid(101), productName: "Otro 1" });
+    expect(focus).toBeNull();
+  });
+
+  it("Enter en una sin emparejar acepta el primer parecido; sin candidatos el foco se queda", () => {
+    const state = stateOf([unmatchedLine(1), unmatchedLine(2, false)]);
+    const first = pressEnter(state, 0);
+
+    expect(first.state.lines[0].status).toBe("resolved");
+    expect(first.next).toBe(1);
+    const second = pressEnter(first.state, 1);
+    expect(second.state.lines[1].status).toBe("pending_unmatched");
+    expect(second.next).toBe(1);
+  });
+});
+
+describe("Esc · dejar sin emparejar", () => {
+  it("quita el producto, la línea queda sin emparejar y el foco pasa a la siguiente pendiente", () => {
+    const state = stateOf([doubtfulLine(1), confirmed, doubtfulLine(3)]);
+    const { state: next, next: focus } = pressEscape(state, 0);
+
+    expect(next.lines[0]).toMatchObject({ status: "pending_unmatched", accepted: false });
+    expect(next.lines[0].productId).toBeUndefined();
+    expect(focus).toBe(2);
+    expect(canLoad(next)).toBe(false);
+    // Sigue pudiendo elegirse un candidato después de Esc.
+    expect(next.lines[0].candidates).toHaveLength(2);
+  });
+
+  it("Esc en una confirmada la sube con las dudosas", () => {
+    const state = stateOf([confirmed, doubtfulLine(2)]);
+    const { state: next } = pressEscape(state, 0);
+
+    expect(next.lines[0].status).toBe("pending_unmatched");
+    expect(orderedLineIndices(next)).toEqual([0, 1]);
+  });
+});
+
+describe("canLoad y pendingCount", () => {
+  it("descartar explícitamente cuenta como resuelto; restaurar vuelve a pendiente", () => {
+    let state = stateOf([confirmed, unmatchedLine(2, false)]);
+    expect(getPendingCount(state)).toBe(1);
+    expect(canLoad(state)).toBe(false);
+
+    state = reviewReducer(state, { type: "discardLine", index: 1 });
+    expect(state.lines[1].status).toBe("discarded");
+    expect(getPendingCount(state)).toBe(0);
+    expect(canLoad(state)).toBe(true);
+
+    state = reviewReducer(state, { type: "restoreLine", index: 1 });
+    expect(state.lines[1].status).toBe("pending_unmatched");
+    expect(canLoad(state)).toBe(false);
+  });
+
+  it("exige proveedor confirmado y al menos una línea sin descartar", () => {
+    let state = stateOf([confirmed], {
+      matched: {
+        supplier: { candidates: [{ contactId: "c1", name: "Chevere", score: 0.8, reason: "RIF parecido" }] },
+      },
+    });
+    expect(getInvoiceReviewBlockers(state)).toEqual(["Elige el proveedor."]);
+
+    state = reviewReducer(state, { type: "setSupplier", supplier: { contactId: "c1", name: "Chevere" } });
+    expect(canLoad(state)).toBe(true);
+
+    state = reviewReducer(state, { type: "discardLine", index: 0 });
+    expect(getInvoiceReviewBlockers(state)).toEqual(["No queda ninguna línea para cargar."]);
+  });
+
+  it("buscador: chooseProduct resuelve una sin emparejar sin candidatos", () => {
+    let state = stateOf([unmatchedLine(1, false)]);
+    state = reviewReducer(state, {
+      type: "chooseProduct",
+      index: 0,
+      product: { productId: productUuid(50), name: "Nuevo" },
+    });
+
+    expect(state.lines[0]).toMatchObject({ status: "resolved", productName: "Nuevo" });
+  });
+
+  it("una cantidad inválida deja pendiente incluso una confirmada", () => {
+    let state = stateOf([confirmed]);
+    state = reviewReducer(state, { type: "editQuantity", index: 0, quantity: 1.5 });
+
+    expect(state.lines[0].status).toBe("pending_doubtful");
+    expect(getLineNeeds(state.lines[0])).toEqual(["quantity"]);
+    state = reviewReducer(state, { type: "editQuantity", index: 0, quantity: 3 });
+    expect(state.lines[0].status).toBe("confirmed_by_match");
+  });
+
+  it("editTaxRate solo admite alícuotas del catálogo", () => {
+    let state = stateOf([confirmed]);
+    state = reviewReducer(state, { type: "editTaxRate", index: 0, taxRateCode: "exento" });
+    expect(state.lines[0].taxRateCode).toBe("exento");
+    expect(reviewReducer(state, { type: "editTaxRate", index: 0, taxRateCode: "inexistente" })).toBe(state);
+  });
+});
+
+describe("totales y lineMismatch", () => {
+  it("compara leído con calculado y marca las líneas cuyo cantidad × precio no da su total", () => {
+    let state = stateOf(
+      [
+        { read: { quantity: 2, unitPrice: 100, lineTotal: 200 } },
+        { read: { quantity: 3, unitPrice: 33.33, lineTotal: 100 } },
+        { read: { quantity: 4, unitPrice: 50, lineTotal: 2400 } },
+      ],
+      { extraction: { total: 2700 } },
+    );
+    let totals = getInvoiceReviewTotals(state);
+
+    // 200 + 99,99 + 200 = 499,99 frente a 2700 leídos.
+    expect(totals).toMatchObject({ read: 2700, computed: 499.99, mismatch: true, lineMismatches: [2] });
+    expect(isLineMismatch(state, state.lines[1])).toBe(false);
+
+    // CAJA x12: el precio impreso era por unidad dentro; el usuario lo corrige.
+    state = reviewReducer(state, { type: "editUnitPrice", index: 2, unitPrice: 600 });
+    totals = getInvoiceReviewTotals(state);
+    expect(totals).toMatchObject({ computed: 2699.99, mismatch: false, lineMismatches: [] });
+  });
+
+  it("el total leído con IVA también cuadra; las descartadas no suman", () => {
+    let state = stateOf([{ read: { quantity: 1, unitPrice: 100, lineTotal: 100 } }, { read: { quantity: 1, unitPrice: 50, lineTotal: 50 } }], {
+      extraction: { total: 174 },
+    });
+    // 150 neto, 174 con 16 %: el pie compara lo que se registra (base + IVA) con el leído.
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ computed: 150, registered: 174, mismatch: false });
+
+    state = reviewReducer(state, { type: "discardLine", index: 1 });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ computed: 100, mismatch: true });
+  });
+
+  it("con subtotal leído compara contra el subtotal (tolerancia 1 % o 1 Bs)", () => {
+    const state = stateOf([{ read: { quantity: 1, unitPrice: 100.5, lineTotal: 100.5 } }], {
+      extraction: { subtotal: 100, tax: 16, total: 116 },
+    });
+    expect(getInvoiceReviewTotals(state).mismatch).toBe(false);
+  });
+});
+
+describe("6.20 · tasa impresa 875,65 vs sistema 900,00", () => {
+  it("avisa (> 2 %, D8), ofrece la impresa y recalcula el REF con la elegida", () => {
+    let state = stateOf([{ read: { quantity: 1, unitPrice: 9000, lineTotal: 9000 } }], {
+      extraction: { printedRate: 875.65 },
+    });
+
+    expect(state.rate.choice).toBe("system");
+    expect(state.rate.warning).toMatch(/875,65.*900,00/);
+    expect(getRateOptions(state)).toEqual(["system", "printed", "manual"]);
+    expect(getLineCosts(state, state.lines[0])).toEqual({ ves: 9000, ref: 10 });
+
+    state = reviewReducer(state, { type: "setRateChoice", choice: "printed" });
+    expect(getEffectiveRate(state)).toBe(875.65);
+    expect(getLineCosts(state, state.lines[0])).toEqual({ ves: 9000, ref: 10.28 });
+  });
+
+  it("una diferencia de 2 % o menos no avisa", () => {
+    const state = stateOf([confirmed], { extraction: { printedRate: 890 } });
+    expect(state.rate.warning).toBeUndefined();
+  });
+
+  it.each([
+    [882, false],
+    [918, false],
+    [881.91, true],
+    [918.09, true],
+  ])("borde exacto D8 frente a 900: impresa %p avisa = %p, igual que matched.rate.warning", (printedRate, warns) => {
+    const state = stateOf([confirmed], { extraction: { printedRate } });
+    const serverWarning = resolveRate(900, printedRate).info?.warning;
+
+    expect(state.rate.choice).toBe("system");
+    expect(state.rate.warning !== undefined).toBe(warns);
+    expect(serverWarning !== undefined).toBe(warns);
+  });
+});
+
+describe("6.7 · sin tasa del sistema", () => {
+  it("usa la impresa con aviso", () => {
+    const state = stateOf([confirmed], { extraction: { printedRate: 875.65 } }, { taxRates: REVIEW_TAX_RATES });
+
+    expect(state.rate).toMatchObject({ choice: "printed", printed: 875.65 });
+    expect(state.rate.notice).toMatch(/tasa impresa/);
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("sin impresa exige la tasa manual: nada se precarga en REF y no se puede cargar", () => {
+    let state = stateOf([confirmed], {}, { taxRates: REVIEW_TAX_RATES });
+
+    expect(state.rate.choice).toBe("manual");
+    expect(state.rate.notice).toMatch(/escribe la tasa/);
+    expect(getLineCosts(state, state.lines[0]).ref).toBeUndefined();
+    expect(canLoad(state)).toBe(false);
+    expect(getInvoiceReviewBlockers(state)).toContain("Escribe la tasa para convertir los costos a REF.");
+
+    state = reviewReducer(state, { type: "setRateChoice", choice: "manual", manualRate: 0 });
+    expect(canLoad(state)).toBe(false);
+    state = reviewReducer(state, { type: "setRateChoice", choice: "manual", manualRate: 1000 });
+    expect(getLineCosts(state, state.lines[0])).toEqual({ ves: 100, ref: 0.1 });
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("no deja elegir una tasa que no existe", () => {
+    const state = stateOf([confirmed], {}, { taxRates: REVIEW_TAX_RATES });
+    expect(reviewReducer(state, { type: "setRateChoice", choice: "system" })).toBe(state);
+    expect(reviewReducer(state, { type: "setRateChoice", choice: "printed" })).toBe(state);
+  });
+});
+
+describe("6.21 · factura en dólares", () => {
+  it("todas las líneas dudosas con aviso, nada como Bs; tras aceptar los costos van como REF", () => {
+    let state = stateOf([confirmed, doubtfulLine(2)], { extraction: { currency: "USD" } });
+
+    expect(state.usd.anomaly).toBe(true);
+    expect(state.lines.map((line) => line.status)).toEqual(["pending_doubtful", "pending_doubtful"]);
+    expect(state.lines.every((line) => line.issues.includes(USD_DOCUMENT_ISSUE))).toBe(true);
+    expect(getLineCosts(state, state.lines[0])).toEqual({});
+
+    state = reviewReducer(state, { type: "acceptMarked", index: 0 });
+    state = reviewReducer(state, { type: "acceptMarked", index: 1 });
+    expect(getPendingCount(state)).toBe(0);
+    expect(getInvoiceReviewBlockers(state)).toEqual([
+      "Confirma que la factura está en dólares para cargar los costos como REF.",
+    ]);
+
+    state = reviewReducer(state, { type: "acceptUsdAnomaly" });
+    expect(getLineCosts(state, state.lines[0])).toEqual({ ref: 100 });
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("también detecta el $ por el aviso del emparejamiento aunque la moneda no diga USD", () => {
+    const state = stateOf([{ match: { status: "doubtful", issues: [USD_DOCUMENT_ISSUE] } }]);
+    expect(state.usd.anomaly).toBe(true);
+  });
+
+  it("con dólares aceptados no exige tasa", () => {
+    let state = stateOf([confirmed], { extraction: { currency: "USD" } }, { taxRates: REVIEW_TAX_RATES });
+    state = reviewReducer(state, { type: "acceptMarked", index: 0 });
+    state = reviewReducer(state, { type: "acceptUsdAnomaly" });
+    expect(canLoad(state)).toBe(true);
+  });
+});
+
+describe("unitsPerPack obligatorio (6.8, 6.19)", () => {
+  it("6.8 CAJA x12 con empaque registrado de 6: dudosa; aceptar no basta; con 12 se resuelve como empaque nuevo", () => {
+    let state: InvoiceReviewState = stateOf([
+      doubtfulLine(1, 0.95, {
+        read: { rawText: "MALTA CAJA X12", unit: "caja", unitsPerPack: 12, quantity: 2, unitPrice: 1200, lineTotal: 2400 },
+        match: {
+          entryMode: "pack",
+          issues: ["La factura dice caja de 12 unidades y el empaque registrado es de 6: confirma las unidades por empaque."],
+        },
+      }),
+    ]);
+    expect(state.lines[0]).toMatchObject({ status: "pending_doubtful", entryMode: "pack", packLabel: "Caja" });
+    expect(state.lines[0].unitsPerPack).toBeUndefined();
+
+    const entered = pressEnter(state, 0);
+    state = entered.state;
+    expect(state.lines[0].status).toBe("pending_doubtful");
+    expect(getLineNeeds(state.lines[0])).toEqual(["unitsPerPack"]);
+    expect(entered.next).toBe(0);
+    expect(canLoad(state)).toBe(false);
+
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 12 });
+    expect(state.lines[0]).toMatchObject({ status: "resolved", unitsPerPack: 12 });
+    expect(state.lines[0].packUnitId).toBeUndefined();
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("6.19 BULTO sin número: no entra como 1 unidad; un tamaño no entero tampoco vale", () => {
+    let state = stateOf([
+      unmatchedLine(1, true, {
+        read: { rawText: "ARROZ BULTO", unit: "bulto", quantity: 1, unitPrice: 5000, lineTotal: 5000 },
+        match: { entryMode: "pack", issues: ["La factura no dice cuántas unidades trae cada bulto: indícalo."] },
+      }),
+    ]);
+    state = reviewReducer(state, { type: "acceptMarked", index: 0 });
+    expect(state.lines[0]).toMatchObject({ status: "pending_doubtful", entryMode: "pack", packLabel: "Bulto" });
+
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 2.5 });
+    expect(state.lines[0].status).toBe("pending_doubtful");
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 20 });
+    expect(state.lines[0].status).toBe("resolved");
+  });
+
+  it("volver al tamaño registrado recupera su packUnitId", () => {
+    let state = stateOf([
+      { match: { entryMode: "pack", unitsPerPack: 6, packUnitId: "pu-6" }, read: { unit: "caja", unitsPerPack: 6 } },
+    ]);
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 12 });
+    expect(state.lines[0].packUnitId).toBeUndefined();
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 6 });
+    expect(state.lines[0].packUnitId).toBe("pu-6");
+  });
+
+  it("otro producto pierde empaque registrado y desarmar; volver al propuesto los recupera", () => {
+    let state = stateOf([
+      doubtfulLine(1, 0.8, {
+        match: { entryMode: "pack", unitsPerPack: 24, packUnitId: "pu-24", disassembleOnReceive: true },
+      }),
+    ]);
+    state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: productUuid(101) });
+    expect(state.lines[0]).toMatchObject({ disassembleOnReceive: false, unitsPerPack: 24 });
+    expect(state.lines[0].packUnitId).toBeUndefined();
+
+    state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: productUuid(1) });
+    expect(state.lines[0]).toMatchObject({ disassembleOnReceive: true, packUnitId: "pu-24", unitsPerPack: 24 });
+  });
+});
+
+describe("summarizeInvoiceReview", () => {
+  it("junta pendientes, confirmadas, bloqueos, totales y tasa", () => {
+    const summary = summarizeInvoiceReview(stateOf([confirmed, doubtfulLine(2)]));
+    expect(summary).toMatchObject({
+      pendingCount: 1,
+      confirmedCount: 1,
+      canLoad: false,
+      blockers: ["Queda 1 línea por resolver."],
+      effectiveRate: 900,
+    });
+  });
+});

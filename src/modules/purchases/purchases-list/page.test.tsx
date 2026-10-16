@@ -1055,6 +1055,35 @@ describe("PurchasesListPage", () => {
       }
     });
 
+    it("SCN-07 · el estado vacío ofrece «Escanear factura», que abre la compra nueva con scan=1", async () => {
+      listItems = [];
+      renderPage();
+      await screen.findByText("Registra una compra para verla aquí.");
+
+      expect(screen.getByRole("link", { name: "Escanear factura" })).toHaveAttribute(
+        "href",
+        `/purchases/create?scan=1&returnTo=${encodeURIComponent("/purchases")}`,
+      );
+    });
+
+    it("SCN-07 · sin purchases.create no aparece «Escanear factura» en el estado vacío", async () => {
+      mockDeniedPermissions.add("purchases.create");
+      listItems = [];
+      renderPage();
+      await screen.findByText("Registra una compra para verla aquí.");
+
+      expect(screen.queryByRole("link", { name: "Escanear factura" })).not.toBeInTheDocument();
+    });
+
+    it("SCN-07 · sin resultados por filtros no ofrece escanear", async () => {
+      listItems = [];
+      openAt("pendingBalance=1");
+      renderPage();
+      await screen.findByText(/Ninguna compra coincide con los filtros/);
+
+      expect(screen.queryByRole("link", { name: "Escanear factura" })).not.toBeInTheDocument();
+    });
+
     it("en la tarjeta móvil el número es un enlace real al detalle con returnTo", async () => {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,

@@ -1,4 +1,5 @@
 import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../../invoiceAliasKey";
 
 import type { InvoiceExtractionLine } from "../../contracts";
 
@@ -36,11 +37,11 @@ function splitUnits(text: string): string {
  * ninguno: description y rawText sin marcadores de empaque, prefijos, tamaño de
  * empaque ni relleno, tal cual y con la unidad separada del número. Ya
  * normalizados (`normalizeAlias`), sin repetir los que se mandan en la primera
- * llamada (`normalizeAlias(rawText)` y `normalizeAlias(description)`). Solo
+ * llamada (`invoiceAliasKey(line)` y `normalizeAlias(description)`). Solo
  * alimentan la búsqueda difusa: lo que salga es dudosa, nunca confirmada.
  */
 export function searchTextVariants(line: Pick<InvoiceExtractionLine, "rawText" | "description">): string[] {
-  const sent = new Set([normalizeAlias(line.rawText), normalizeAlias(line.description || line.rawText)]);
+  const sent = new Set([invoiceAliasKey(line), normalizeAlias(line.description || line.rawText)]);
   const variants = [line.description, line.rawText].flatMap((text) => {
     const cleaned = clean(text ?? "");
     return [cleaned, splitUnits(cleaned)];

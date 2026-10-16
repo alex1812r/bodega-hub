@@ -1,0 +1,210 @@
+{
+  "cached": false,
+  "extraction": {
+    "supplier": {
+      "name": "PROVEEDOR UNO, C.A"
+    },
+    "number": "00003570",
+    "date": "2026-09-08",
+    "currency": "VES",
+    "printedRate": 814.7,
+    "lines": [
+      {
+        "rawText": "POWER MAX 400ML\n1,00 x 4.358,64\n[CAJA X 15,00]",
+        "description": "POWER MAX 400ML",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 15,
+        "unitPrice": 4358.64,
+        "lineTotal": 4358.64,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP COLA 2L\n1,00 x 5.173,34\n[BULTO X 6,00]",
+        "description": "GLUP COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5173.34,
+        "lineTotal": 5173.34,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L\n1,00 x 7.226,39\n[BULTO X 6,00]",
+        "description": "COCA COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7226.39,
+        "lineTotal": 7226.39,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L\n2,00 x 4.163,12\n[BULTO X 6,00]",
+        "description": "GLUP SABORES 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4163.12,
+        "lineTotal": 8326.24,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 400ML\n2,00 x 4.032,77\n[BULTO X 15,00]",
+        "description": "JUSTY 400ML",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4032.77,
+        "lineTotal": 8065.54,
+        "taxHint": "unknown",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 33150.15,
+    "tax": 0,
+    "total": 33150.15,
+    "confidence": 1,
+    "warnings": [
+      "No se encontró el RIF del proveedor.",
+      "El documento es una 'ORDEN DE DESPACHO', no una factura fiscal.",
+      "El documento indica 'SIN DERECHO A CREDITO FISCAL', por lo que no se desglosa el IVA."
+    ]
+  },
+  "limits": {
+    "limit": 50,
+    "remaining": 46,
+    "used": 4
+  },
+  "matched": {
+    "supplier": {
+      "contactId": "00000000-0000-4000-8000-900000000001",
+      "candidates": [
+        {
+          "contactId": "00000000-0000-4000-8000-900000000001",
+          "name": "Proveedor eval",
+          "score": 0.8235,
+          "reason": "nombre parecido 0,82"
+        }
+      ]
+    },
+    "lines": [
+      {
+        "index": 0,
+        "status": "doubtful",
+        "candidates": [
+          {
+            "productId": "00000000-0000-4000-8000-900000000002",
+            "name": "Power Max 400 ml",
+            "score": 0.7778,
+            "reason": "nombre parecido 0,78 · vinculado al proveedor"
+          }
+        ],
+        "entryMode": "pack",
+        "packUnitId": "00000000-0000-4000-8000-900000000003",
+        "unitsPerPack": 15,
+        "taxRateCode": "general",
+        "unitCostVes": 4358.64,
+        "unitCostRef": 4.95,
+        "issues": []
+      },
+      {
+        "index": 1,
+        "status": "doubtful",
+        "candidates": [
+          {
+            "productId": "00000000-0000-4000-8000-900000000004",
+            "name": "Glup Cola 2 Lt",
+            "score": 0.7143,
+            "reason": "alias parecido 0,71 · vinculado al proveedor"
+          }
+        ],
+        "entryMode": "pack",
+        "packUnitId": "00000000-0000-4000-8000-900000000005",
+        "unitsPerPack": 6,
+        "taxRateCode": "general",
+        "unitCostVes": 5173.34,
+        "unitCostRef": 5.88,
+        "issues": []
+      },
+      {
+        "index": 2,
+        "status": "doubtful",
+        "candidates": [
+          {
+            "productId": "00000000-0000-4000-8000-900000000006",
+            "name": "Coca Cola 2L",
+            "score": 1,
+            "reason": "nombre parecido 1,00 · vinculado al proveedor"
+          }
+        ],
+        "entryMode": "pack",
+        "packUnitId": "00000000-0000-4000-8000-900000000007",
+        "unitsPerPack": 6,
+        "taxRateCode": "general",
+        "unitCostVes": 7226.39,
+        "unitCostRef": 8.21,
+        "issues": []
+      },
+      {
+        "index": 3,
+        "status": "doubtful",
+        "candidates": [
+          {
+            "productId": "00000000-0000-4000-8000-900000000008",
+            "name": "Glup Sabores 2 Lt",
+            "score": 0.75,
+            "reason": "alias parecido 0,75 · vinculado al proveedor"
+          },
+          {
+            "productId": "00000000-0000-4000-8000-900000000009",
+            "name": "Glup Sabores 1 Lt",
+            "score": 0.619,
+            "reason": "nombre parecido 0,62 · vinculado al proveedor"
+          }
+        ],
+        "entryMode": "pack",
+        "packUnitId": "00000000-0000-4000-8000-900000000010",
+        "unitsPerPack": 6,
+        "taxRateCode": "general",
+        "unitCostVes": 4163.12,
+        "unitCostRef": 4.73,
+        "issues": []
+      },
+      {
+        "index": 4,
+        "status": "doubtful",
+        "candidates": [
+          {
+            "productId": "00000000-0000-4000-8000-900000000011",
+            "name": "Justy pequeño 400 ml",
+            "score": 0.6829,
+            "reason": "alias parecido 0,68 · vinculado al proveedor"
+          }
+        ],
+        "entryMode": "pack",
+        "packUnitId": "00000000-0000-4000-8000-900000000012",
+        "unitsPerPack": 15,
+        "taxRateCode": "general",
+        "unitCostVes": 4032.77,
+        "unitCostRef": 4.58,
+        "issues": []
+      }
+    ],
+    "totals": {
+      "read": 33150.15,
+      "computed": 33150.15,
+      "mismatch": false
+    },
+    "rate": {
+      "system": 880.1159,
+      "printed": 814.7,
+      "warning": "La factura trae tasa 814,70; hoy es 880,12."
+    }
+  },
+  "scanId": "00000000-0000-4000-8000-900000000013"
+}
