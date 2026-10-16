@@ -908,14 +908,15 @@ export function PurchaseCreatePage() {
     return { initialPayment, input };
   }
 
+  /** La revisión de la factura leída llega en SCN-08c; por ahora se guarda y se cierra el modal. */
+  function onInvoiceScanned(response: InvoiceScanResponse) {
+    setScannedInvoice(response);
+    setInvoiceScanOpen(false);
+  }
+
   // Lector con la confirmación abierta (CNF-F5): su Enter no llega al botón del modal. Como
   // cualquier línea que llega con el modal abierto, lo cierra: el código se resuelve en la
   // cola de escaneos y, si entra, hay que volver a confirmar.
-  /** La revisión de la factura leída llega en SCN-08c; por ahora solo se guarda. */
-  function onInvoiceScanned(response: InvoiceScanResponse) {
-    setScannedInvoice(response);
-  }
-
   function handleConfirmScan(candidates: string[] | null) {
     if (createPurchase.isPending || !candidates) {
       showToast({

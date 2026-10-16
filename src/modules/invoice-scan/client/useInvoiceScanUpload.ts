@@ -166,6 +166,7 @@ export function useInvoiceScanUpload({
   const [error, setError] = useState<InvoiceScanUploadError | null>(null);
   const [limits, setLimits] = useState<InvoiceScanLimits | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const limitsControllerRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFileRef = useRef<File | null>(null);
   const preparedRef = useRef<PreparedInvoice | null>(null);
@@ -186,12 +187,10 @@ export function useInvoiceScanUpload({
     return controller;
   }, [clearTimer]);
 
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-
+  const loadLimits = useCallback(() => {
+    limitsControllerRef.current?.abort();
     const controller = new AbortController();
+    limitsControllerRef.current = controller;
 
     apiFetch<InvoiceScanLimits>(INVOICE_SCAN_LIMITS_ENDPOINT, { signal: controller.signal })
       .then((next) => {
@@ -202,13 +201,24 @@ export function useInvoiceScanUpload({
       // Sin cuota conocida el modal sigue usable: el POST la vuelve a validar.
       .catch(() => undefined);
 
+    return controller;
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const controller = loadLimits();
+
     return () => controller.abort();
-  }, [enabled]);
+  }, [enabled, loadLimits]);
 
   // Al desmontar (cerrar el modal, salir de la pantalla) no queda nada en vuelo.
   useEffect(
     () => () => {
       controllerRef.current?.abort();
+      limitsControllerRef.current?.abort();
       clearTimer();
     },
     [clearTimer],
@@ -364,6 +374,8 @@ export function useInvoiceScanUpload({
       }
 
       clearTimer();
+      // Una recarga del contador aún en vuelo no debe pisar la cuota que trae la respuesta.
+      limitsControllerRef.current?.abort();
       setResult(response);
       setLimits(response.limits);
       setStage("done");
@@ -379,6 +391,9 @@ export function useInvoiceScanUpload({
 
       if (quotaLimits) {
         setLimits(quotaLimits);
+      } else {
+        // El servidor pudo cobrar el intento (p. ej. un 502 del proveedor): el contador se pide de nuevo.
+        loadLimits();
       }
 
       fail(
@@ -393,7 +408,7 @@ export function useInvoiceScanUpload({
         controllerRef.current = null;
       }
     }
-  }, [clearTimer, fail, sendByStorage, sendMultipart, startRun]);
+  }, [clearTimer, fail, loadLimits, sendByStorage, sendMultipart, startRun]);
 
   const retry = useCallback(async () => {
     if (failedStepRef.current === "prepare" && lastFileRef.current) {

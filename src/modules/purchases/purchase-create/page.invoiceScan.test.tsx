@@ -133,6 +133,15 @@ describe("PurchaseCreatePage · Escanear factura (SCN-07)", () => {
     expect(screen.queryByTestId("invoice-scan-modal")).not.toBeInTheDocument();
   });
 
+  it("al leer la factura el modal se cierra (SCN-07-F1)", async () => {
+    const user = renderPage();
+
+    await user.click(scanButton() as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "factura leída" }));
+
+    expect(screen.queryByTestId("invoice-scan-modal")).not.toBeInTheDocument();
+  });
+
   it("sin purchases.create no hay botón «Escanear factura»", () => {
     mockCan.mockImplementation((permission: string) => permission !== "purchases.create");
     renderPage();
@@ -179,8 +188,9 @@ describe("PurchaseCreatePage · Escanear factura (SCN-07)", () => {
     expect(guard).toHaveTextContent("Si sales ahora, la lectura de la factura se cancela.");
 
     await user.click(within(guard).getByRole("button", { name: "Seguir aquí" }));
-    await user.click(screen.getByRole("button", { name: "factura leída" }));
+    // Como el modal real: el escaneo deja de estar en curso y luego entrega la factura (que lo cierra).
     await user.click(screen.getByRole("button", { name: "terminar escaneo" }));
+    await user.click(screen.getByRole("button", { name: "factura leída" }));
 
     fireEvent.click(screen.getByRole("link", { name: "Ventas" }));
 

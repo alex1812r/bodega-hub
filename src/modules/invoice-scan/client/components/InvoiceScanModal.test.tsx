@@ -255,6 +255,34 @@ describe("InvoiceScanModal", () => {
     expect(screen.getByRole("button", { name: "Elegir otro archivo" })).toBeDisabled();
   });
 
+  it("tras un 502 vuelve a pedir la cuota: el servidor ya contó el intento (SCN-07-F1)", async () => {
+    postResponses = [
+      async () => {
+        limitsPayload = { limit: 50, remaining: 47, used: 3 };
+        return jsonResponse(
+          { error: { code: "INVOICE_SCAN_PROVIDER_ERROR", message: "El servicio de IA no está disponible." } },
+          502,
+        );
+      },
+    ];
+    renderModal();
+    await screen.findByText("Escaneos hoy: 2 de 50");
+
+    await selectFile();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("El servicio de IA no está disponible.");
+    expect(await screen.findByText("Escaneos hoy: 3 de 50")).toBeInTheDocument();
+  });
+
+  it("con el uso por encima del límite no muestra números incoherentes (SCN-07-F1)", async () => {
+    limitsPayload = { limit: 5, remaining: 0, used: 32 };
+    renderModal();
+
+    expect(await screen.findByText(INVOICE_SCAN_QUOTA_EXHAUSTED_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByTestId("invoice-scan-limits")).toHaveTextContent("Escaneos hoy: 5 de 5");
+    expect(screen.queryByText(/32 de 5/)).not.toBeInTheDocument();
+  });
+
   it("con la cuota del día agotada el botón de seleccionar está deshabilitado con su mensaje", async () => {
     limitsPayload = { limit: 50, remaining: 0, used: 50 };
     const prepareFile = jest.fn(async () => preparedInvoice());

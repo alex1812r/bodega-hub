@@ -198,7 +198,10 @@ export function InvoiceScanModal({
     >
       <div className="space-y-4">
         <p className="text-sm text-on-surface-variant" data-testid="invoice-scan-limits">
-          {limits ? `Escaneos hoy: ${limits.used} de ${limits.limit}` : "Consultando los escaneos de hoy…"}
+          {/* Con la cuota rebasada (p. ej. se bajó el límite) el uso se acota: nunca "32 de 5". */}
+          {limits
+            ? `Escaneos hoy: ${Math.min(limits.used, limits.limit)} de ${limits.limit}`
+            : "Consultando los escaneos de hoy…"}
         </p>
 
         {quotaExhausted ? (
