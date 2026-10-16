@@ -32,11 +32,13 @@ const UNAUTHORIZED_BODY = { error: { code: "UNAUTHORIZED", message: UNAUTHENTICA
  */
 const PUBLIC_HANDLERS: Record<string, string> = {
   "GET /api/cron/cash-sessions/auto-close": "se autentica con el secreto del cron, no con sesión",
+  "GET /api/cron/invoice-scans/purge": "se autentica con el secreto del cron, no con sesión",
   "GET /api/docs": "documentación pública del toolkit de desarrollo",
   "GET /api/openapi": "especificación pública del toolkit de desarrollo",
   "POST /api/auth/login": "crea la sesión; su 401 es de credenciales incorrectas",
   "POST /api/auth/logout": "cerrar una sesión ya caducada no es un error",
   "POST /api/cron/cash-sessions/auto-close": "se autentica con el secreto del cron, no con sesión",
+  "POST /api/cron/invoice-scans/purge": "se autentica con el secreto del cron, no con sesión",
 };
 
 type RouteHandler = (
