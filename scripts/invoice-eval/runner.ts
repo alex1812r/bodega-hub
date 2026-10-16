@@ -560,6 +560,10 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       const duplicate = states.get(truth.id);
       if (!original || !duplicate) continue;
       const detectedOf = duplicate.matched?.duplicateOfScanId;
+      const occluded = [
+        ...(truth.occludedHeaderFields ?? []),
+        ...(truths.find((t) => t.id === truth.duplicateOf)?.occludedHeaderFields ?? []),
+      ];
       pairs.push({
         bucket,
         id: truth.id,
@@ -571,8 +575,9 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
             ? pairConsistency(
                 { extraction: original.extraction, matched: original.matched },
                 { extraction: duplicate.extraction, matched: duplicate.matched },
+                occluded,
               )
-            : pairConsistency({ extraction: original.extraction }, { extraction: duplicate.extraction }),
+            : pairConsistency({ extraction: original.extraction }, { extraction: duplicate.extraction }, occluded),
         expectedDetected: true,
         detected: Boolean(detectedOf),
         ...(detectedOf ? { detectedOf } : {}),

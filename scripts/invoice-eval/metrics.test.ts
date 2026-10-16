@@ -515,6 +515,30 @@ describe("pairConsistency", () => {
     expect(r.evaluable).toBe(true);
     expect(r.notEvaluableReason).toBeUndefined();
   });
+
+  describe("SCN-10-F6: campos ocluidos en la verdad del par", () => {
+    it("f02/f03: omitir la fecha ocluida de un lado no rompe la consistencia", () => {
+      const r = pairConsistency({ extraction: extraction() }, { extraction: extraction({ date: undefined }) }, ["date"]);
+      expect(r.headerDiffs).toEqual([]);
+      expect(r.consistent).toBe(true);
+    });
+
+    it("si ambos traen el campo ocluido y difieren, sí cuenta", () => {
+      const r = pairConsistency({ extraction: extraction() }, { extraction: extraction({ date: "2026-09-02" }) }, ["date"]);
+      expect(r.headerDiffs).toEqual(["date"]);
+      expect(r.consistent).toBe(false);
+    });
+
+    it("omitir un campo NO ocluido sigue contando", () => {
+      const r = pairConsistency({ extraction: extraction() }, { extraction: extraction({ total: undefined }) }, ["date"]);
+      expect(r.headerDiffs).toEqual(["total"]);
+    });
+
+    it("sin ocluidos el comportamiento no cambia", () => {
+      const r = pairConsistency({ extraction: extraction() }, { extraction: extraction({ date: undefined }) });
+      expect(r.headerDiffs).toEqual(["date"]);
+    });
+  });
 });
 
 describe("evaluateInvoice: fecha del costo", () => {

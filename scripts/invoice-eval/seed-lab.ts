@@ -6,6 +6,8 @@
  *
  * Idempotente: borra y recrea TODO lo de `stores.slug = 'eval-facturas'` (y su
  * usuario), así que dos corridas seguidas dejan el mismo estado sin duplicados.
+ * Toma `.notes/factura-escaneo/lab.lock` antes de escribir (espera hasta 15 min
+ * si otro lo tiene; uno de más de 30 min se da por abandonado) y lo libera al final.
  * No toca ninguna otra tienda. Solo lee `.env.stock-lab` y aborta si la API o
  * la base no son 127.0.0.1 / localhost (guard de stock-lab + chequeo propio).
  *
@@ -28,6 +30,7 @@
  * sesión con perfil activo: el runner debe iniciar sesión con
  * SCENARIO_USER_EMAIL / SCENARIO_USER_PASSWORD (un cliente service-role da 42501).
  */
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -49,6 +52,7 @@ import {
   SCENARIO_USER_PASSWORD,
   scenarioSku,
 } from "./scenario/catalog";
+import { LAB_LOCK_PATH, releaseLabLock } from "./run";
 import { plannedExchangeRates, plannedPurchases, productCostSources, type PlannedPurchase } from "./scenario/plan";
 import { loadTruth, type InvoiceTruth } from "./truth";
 
@@ -459,11 +463,86 @@ export async function loadScenarioIds(client: SupabaseClient): Promise<ScenarioI
 }
 
 // ---------------------------------------------------------------------------
+// Cerrojo del lab (.notes/factura-escaneo/lab.lock, el mismo que run.ts)
+// ---------------------------------------------------------------------------
+
+export type SeedLockDeps = {
+  now: () => Date;
+  sleep: (ms: number) => Promise<void>;
+  log: (message: string) => void;
+};
+
+const LOCK_STALE_MS = 30 * 60_000;
+const LOCK_RETRY_MS = 30_000;
+const LOCK_MAX_WAIT_MS = 15 * 60_000;
+
+const realLockDeps: SeedLockDeps = {
+  now: () => new Date(),
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  log: (message) => console.warn(message),
+};
+
+/**
+ * Toma el cerrojo con `evaluacion-seed <ISO>`. Dueño ajeno con < 30 min: espera
+ * reintentando cada 30 s hasta 15 min y aborta. Más viejo: avisa y lo toma.
+ */
+async function acquireSeedLabLock(path: string, deps: SeedLockDeps): Promise<string> {
+  mkdirSync(resolve(path, ".."), { recursive: true });
+  const start = deps.now().getTime();
+  for (;;) {
+    const stamp = `evaluacion-seed ${deps.now().toISOString()}`;
+    try {
+      writeFileSync(path, `${stamp}\n`, { encoding: "utf8", flag: "wx" });
+      return stamp;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    let holder: string;
+    let ageMs: number;
+    try {
+      holder = readFileSync(path, "utf8").trim();
+      ageMs = deps.now().getTime() - statSync(path).mtimeMs;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; // se liberó entre medias
+      throw error;
+    }
+    if (ageMs >= LOCK_STALE_MS) {
+      deps.log(`lab.lock "${holder}" tiene ${Math.round(ageMs / 60_000)} min (> 30): lo considero abandonado y lo tomo.`);
+      unlinkSync(path);
+      continue;
+    }
+    if (deps.now().getTime() - start >= LOCK_MAX_WAIT_MS) {
+      throw new Error(`El lab sigue ocupado tras 15 min (lab.lock: "${holder}"). Seed abortado sin escribir nada.`);
+    }
+    deps.log(`lab ocupado (lab.lock: "${holder}"): reintento en 30 s.`);
+    await deps.sleep(LOCK_RETRY_MS);
+  }
+}
+
+/** Corre `fn` con el cerrojo tomado y lo libera (si sigue siendo nuestro) al terminar. */
+export async function withSeedLabLock<T>(
+  path: string,
+  fn: () => Promise<T>,
+  deps: SeedLockDeps = realLockDeps,
+): Promise<T> {
+  const stamp = await acquireSeedLabLock(path, deps);
+  try {
+    return await fn();
+  } finally {
+    releaseLabLock(path, stamp);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Orquestación
 // ---------------------------------------------------------------------------
 
 export async function runScenarioSeed(rawEnv: Record<string, string | undefined>): Promise<ScenarioSummary> {
   const env = assertScenarioEnv(rawEnv);
+  return withSeedLabLock(LAB_LOCK_PATH, () => seedScenario(env));
+}
+
+async function seedScenario(env: SeedEnv): Promise<ScenarioSummary> {
   const truths = loadTruth(TRUTH_DIR);
   const admin = createClient(env.supabaseUrl, env.serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const db = new Client({ connectionString: env.dbUrl, connectionTimeoutMillis: 10000 });

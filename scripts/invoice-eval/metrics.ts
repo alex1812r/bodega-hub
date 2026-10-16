@@ -946,8 +946,10 @@ export type PairConsistency = {
  * Dos escaneos de la misma factura (f02/f03, f07/f16): misma cabecera y mismas
  * líneas alineadas (todas emparejadas 1 a 1 con iguales cantidad, precio y
  * total; y, si se pasa `matched`, mismo estado y producto).
+ * `occluded`: campos de cabecera ocluidos en la verdad de cualquiera de los dos
+ * lados; si un lado los omite no cuentan (si ambos los traen y difieren, sí).
  */
-export function pairConsistency(a: PairSide, b: PairSide): PairConsistency {
+export function pairConsistency(a: PairSide, b: PairSide, occluded: readonly HeaderField[] = []): PairConsistency {
   const ea = a.extraction;
   const eb = b.extraction;
   if (!ea || !eb) {
@@ -982,6 +984,13 @@ export function pairConsistency(a: PairSide, b: PairSide): PairConsistency {
       ? ea.total === eb.total
       : moneyEquals(ea.total, eb.total);
   if (!totalSame) headerDiffs.push("total");
+  // Campo ocluido en la verdad y omitido por un lado: no cuenta.
+  const omitted = (e: InvoiceExtraction, field: HeaderField): boolean =>
+    field === "supplier" ? !e.supplier.taxId && !e.supplier.name : (e[field] ?? "") === "";
+  const excused = headerDiffs.filter(
+    (field) => occluded.includes(field) && (omitted(ea, field) || omitted(eb, field)),
+  );
+  excused.forEach((field) => headerDiffs.splice(headerDiffs.indexOf(field), 1));
 
   // alignLines(predicted=B, truth=A): truthIndex es el índice en A.
   const pairs = alignLines(eb.lines, ea.lines);
