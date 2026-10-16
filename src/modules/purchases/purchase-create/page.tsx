@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -35,13 +36,16 @@ import {
   applyInvoiceReviewDraft,
   buildInvoiceScanSubmission,
   describeInvoiceForNotes,
+  describeLoadedInvoiceRate,
   describeLearnedAliases,
   pruneLoadedInvoiceScan,
   type LoadedInvoiceScan,
 } from "./invoice-scan/loadedInvoiceScan";
+import { fetchResumableInvoiceScan } from "./invoice-scan/resumeInvoiceReview";
 import type { InvoiceReviewDraft } from "./invoice-scan/reviewDraft";
 import { PurchaseConfirmModal } from "./components/PurchaseConfirmModal";
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
+import { InvoiceReviewResumeBanner } from "./components/InvoiceReviewResumeBanner";
 import { PurchaseDraftBanner } from "./components/PurchaseDraftBanner";
 import { PurchaseFormNotices } from "./components/PurchaseFormNotices";
 import { PurchaseNewProductModal } from "./components/PurchaseNewProductModal";
@@ -83,6 +87,7 @@ import {
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
 import {
   describeDraftSupplierUnavailable,
+  isInvoiceReviewOnlyDraft,
   restorePurchaseDraft,
   storedDraftSourceItems,
   toStoredInvoiceScan,
@@ -258,9 +263,12 @@ export function PurchaseCreatePage() {
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
   const catalog = productSearchResult.catalog;
   const currentRateVes = exchangeRate.data?.rateVes;
-  // Con una factura cargada y sin tasa del día manda la elegida en la revisión (6.7): el
-  // respaldo fijo solo sirve a la compra manual. `undefined` = factura sin ninguna tasa.
-  const formRateVes = currentRateVes ?? (loadedScan ? loadedScan.invoiceRateVes : FALLBACK_RATE_VES);
+  // Con una factura cargada manda la tasa elegida en la revisión (SCN-UI-C1, 6.20; 6.7 sin
+  // tasa del día); después la del día; el respaldo fijo solo sirve a la compra manual.
+  // `undefined` = factura en dólares sin ninguna tasa.
+  const formRateVes =
+    loadedScan?.invoiceRateVes ?? currentRateVes ?? (loadedScan ? undefined : FALLBACK_RATE_VES);
+  const loadedInvoiceRateNotice = describeLoadedInvoiceRate(loadedScan, currentRateVes);
   const invoiceRateMissing = formRateVes === undefined;
   const activeRateVes = formRateVes ?? FALLBACK_RATE_VES;
   // Código → % del catálogo: todo para la pista de la extracción, solo activas para la revisión.
@@ -454,6 +462,8 @@ export function PurchaseCreatePage() {
       ),
       lines: { ...(disassemble ? { disassemble } : {}), items, locks, review, taxState },
       notes,
+      // Revisión de factura abierta (SCN-UI-C1): al recargar se ofrece retomarla.
+      ...(scannedInvoice ? { pendingInvoiceReview: { scanId: scannedInvoice.scanId } } : {}),
       rateVes: activeRateVes,
       status: status === "pedido" ? "pedido" : "recibido",
       supplierId,
@@ -470,6 +480,7 @@ export function PurchaseCreatePage() {
       locks,
       notes,
       review,
+      scannedInvoice,
       status,
       supplierId,
       supplierName,
@@ -477,6 +488,31 @@ export function PurchaseCreatePage() {
     ],
   );
   const hasPendingDraft = draft.pending !== null;
+  // Revisión de factura a medias en el borrador sin decidir (SCN-UI-C1): se ofrece retomarla
+  // solo si el escaneo sigue por revisar. «Descartar» la deja de ofrecer en esta visita.
+  const pendingReviewScanId = draft.pending?.pendingInvoiceReview?.scanId ?? null;
+  const reviewOnlyDraft = draft.pending !== null && isInvoiceReviewOnlyDraft(draft.pending);
+  const [dismissedReviewScanId, setDismissedReviewScanId] = useState<string | null>(null);
+  const [isResumingReview, setIsResumingReview] = useState(false);
+  const askResumeReview =
+    pendingReviewScanId !== null && pendingReviewScanId !== dismissedReviewScanId && !reviewingInvoice;
+  const resumableReview = useQuery({
+    enabled: askResumeReview,
+    queryFn: ({ signal }) => fetchResumableInvoiceScan(pendingReviewScanId ?? "", signal),
+    queryKey: ["invoice-scan", "resume", pendingReviewScanId ?? ""],
+    retry: false,
+  });
+  const resumeReviewResponse = askResumeReview ? (resumableReview.data ?? null) : null;
+  const reviewNotResumable = askResumeReview && resumableReview.isSuccess && resumableReview.data === null;
+  const { clear: clearDraft } = draft;
+
+  // Un borrador que solo guardaba una revisión que ya no se puede retomar no tiene nada que
+  // ofrecer: se olvida.
+  useEffect(() => {
+    if (reviewNotResumable && reviewOnlyDraft) {
+      clearDraft();
+    }
+  }, [clearDraft, reviewNotResumable, reviewOnlyDraft]);
   const { saveBlock, schedule: scheduleDraft, sync: syncDraft } = draft;
   // Borrador restaurado cuyas líneas esperan otro proveedor: siguen en lo guardado, y el
   // formulario (aún sin ellas) no lo pisa hasta que entren.
@@ -705,11 +741,12 @@ export function PurchaseCreatePage() {
 
   // `saved`: el borrador guardado; `new`: la compra nueva de la segunda ranura (tras
   // recargar sin decidir). La que no se restaura se descarta.
+  // `true` si la compra guardada volvió al formulario.
   async function handleRestoreDraft(which: "new" | "saved") {
     const stored = which === "new" ? draft.pendingNew : draft.pending;
 
     if (!stored || currentRateVes === undefined) {
-      return;
+      return false;
     }
 
     setIsRestoringDraft(true);
@@ -724,7 +761,8 @@ export function PurchaseCreatePage() {
                 stored.supplierId,
                 stored.lines.items.map((item) => item.productId),
               ),
-              rateVes: currentRateVes,
+              // Con un escaneo cargado, su tasa sigue siendo la de la compra (SCN-UI-C1).
+              rateVes: stored.invoiceScan?.invoiceRateVes ?? currentRateVes,
               taxRates: taxRates.rates,
             })
           : null;
@@ -771,14 +809,45 @@ export function PurchaseCreatePage() {
         setPendingRestock(null);
       }
       setFormError(null);
+      return true;
     } catch (error) {
       showToast({
         description: errorMessage(error),
         title: "No pudimos restaurar la compra",
         tone: "error",
       });
+      return false;
     } finally {
       setIsRestoringDraft(false);
+    }
+  }
+
+  /**
+   * «Retomar la revisión de la factura»: con la compra que había debajo (si la había)
+   * restaurada, la revisión vuelve a abrirse con lo guardado en el escaneo.
+   */
+  async function resumeInvoiceReview(response: InvoiceScanResponse) {
+    setIsResumingReview(true);
+
+    try {
+      if (reviewOnlyDraft) {
+        draft.adopt();
+      } else if (!(await handleRestoreDraft("saved"))) {
+        return;
+      }
+      setScannedInvoice(response);
+    } finally {
+      setIsResumingReview(false);
+    }
+  }
+
+  /** «Descartar» la revisión a medias: el escaneo se descarta en el servidor. */
+  function discardPendingInvoiceReview(response: InvoiceScanResponse) {
+    setDismissedReviewScanId(response.scanId);
+    discardScannedInvoice(response);
+
+    if (reviewOnlyDraft) {
+      draft.clear();
     }
   }
 
@@ -1033,8 +1102,8 @@ export function PurchaseCreatePage() {
         lockExisting: lockOnAdd,
         nextId: nextPurchaseLineId,
         products,
-        // Aún no es la del formulario: sin tasa del día, la de esta factura.
-        rateVes: currentRateVes ?? reviewDraft.invoiceRateVes ?? reviewDraft.rateVes ?? FALLBACK_RATE_VES,
+        // Aún no es la del formulario: la elegida en la revisión (USD aceptado: la del día).
+        rateVes: reviewDraft.invoiceRateVes ?? currentRateVes ?? reviewDraft.rateVes ?? FALLBACK_RATE_VES,
         replace,
       });
       const keptNotes = replace ? "" : notes;
@@ -1265,7 +1334,16 @@ export function PurchaseCreatePage() {
         </>
       ) : (
       <>
-      {draft.pending ? (
+      {resumeReviewResponse ? (
+        <InvoiceReviewResumeBanner
+          isResuming={isResumingReview || isRestoringDraft}
+          onDiscard={() => discardPendingInvoiceReview(resumeReviewResponse)}
+          onResume={() => void resumeInvoiceReview(resumeReviewResponse)}
+          resumeDisabled={!reviewOnlyDraft && currentRateVes === undefined}
+        />
+      ) : null}
+
+      {draft.pending && !reviewOnlyDraft ? (
         <PurchaseDraftBanner
           draft={draft.pending}
           isRestoring={isRestoringDraft}
@@ -1293,6 +1371,8 @@ export function PurchaseCreatePage() {
       ) : null}
 
       <PurchaseFormNotices messages={notices} onDismiss={() => setNotices([])} />
+
+      {loadedInvoiceRateNotice ? <PurchaseFormNotices messages={[loadedInvoiceRateNotice]} /> : null}
 
       {dependencyError ? (
         <ErrorState

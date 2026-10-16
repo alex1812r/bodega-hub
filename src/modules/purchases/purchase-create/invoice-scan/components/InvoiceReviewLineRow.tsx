@@ -167,6 +167,18 @@ export function InvoiceReviewLineRow({
             </div>
           ) : null}
 
+          {/* El buscador va antes que las acciones (SCN-UI-C1, 6.17): Tab abre el buscador y,
+              hacia delante, sigue a «Nuevo producto» y «Descartar línea» antes que a los campos. */}
+          {searchOpen ? (
+            <InvoiceReviewProductSearch
+              candidates={line.candidates}
+              fetcher={productFetcher}
+              initialQuery={line.description || line.rawText}
+              label={`Producto de la línea ${index + 1}`}
+              onPick={(product) => onPickProduct(index, product)}
+            />
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => onOpenSearch(index)} size="sm" variant="outline">
               <Search aria-hidden className="size-4" />
@@ -189,16 +201,6 @@ export function InvoiceReviewLineRow({
               </Button>
             ) : null}
           </div>
-
-          {searchOpen ? (
-            <InvoiceReviewProductSearch
-              candidates={line.candidates}
-              fetcher={productFetcher}
-              initialQuery={line.description || line.rawText}
-              label={`Producto de la línea ${index + 1}`}
-              onPick={(product) => onPickProduct(index, product)}
-            />
-          ) : null}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,8rem)_minmax(0,10rem)_auto] sm:items-end">
             <NumberInput
@@ -256,12 +258,14 @@ export function InvoiceReviewLineRow({
                 ))}
               </div>
               {line.entryMode === "pack" ? (
+                // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
+                // corrige solo; la línea queda sin resolver y lo dice.
                 <NumberInput
+                  allowNegative
                   className="max-w-40"
                   data-need="unitsPerPack"
                   decimals={0}
                   label={`Unidades por ${line.packLabel.toLowerCase()}`}
-                  min={1}
                   onValueChange={(value) =>
                     onAction({ type: "editUnitsPerPack", index, unitsPerPack: value ?? undefined })
                   }

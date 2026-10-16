@@ -6,12 +6,11 @@
  * Costos: el precio de la factura es la BASE SIN IVA por unidad de entrada, igual
  * que el costo de línea del formulario (`getDraftLineTotals` suma el IVA encima).
  *
- * Moneda de captura (decisión del gerente):
- * - `ves` por defecto, con los Bs de la factura (el formulario los pasa a REF con la
- *   tasa del sistema);
- * - `ref` con los costos ya convertidos (Bs ÷ tasa elegida) cuando la tasa elegida no
- *   es la del sistema (la impresa, también la usada por falta de tasa del día, o una
- *   manual), y con el precio tal cual en una factura en dólares aceptada (USD = REF).
+ * Moneda de captura (SCN-UI-C1, decisión del supervisor):
+ * - `ves` siempre, con los Bs exactos de la factura. La tasa elegida en la revisión (la
+ *   del día, la impresa o una manual) es la tasa de la compra: REF = Bs ÷ tasa elegida;
+ * - `ref` solo en una factura en dólares aceptada, con el precio tal cual (USD = REF) y
+ *   la tasa del día.
  */
 import {
   createPackDraftItem,
@@ -73,14 +72,14 @@ export type InvoiceReviewDraft = {
   date?: string;
   costCurrency: PurchaseCostCurrency;
   /**
-   * Tasa con la que se armaron los espejos Bs/REF de las líneas: la del sistema si
-   * existe, si no la elegida. `undefined` solo en factura USD aceptada sin tasa.
+   * Tasa con la que se armaron los espejos Bs/REF de las líneas: la elegida; en una
+   * factura USD aceptada, la del sistema. `undefined` solo en factura USD aceptada sin tasa.
    */
   rateVes?: number;
   /**
-   * Tasa elegida en la revisión con la que los Bs de la factura pasan a REF.
-   * Ausente en una factura en dólares aceptada: sus precios ya son REF. Con ella el
-   * formulario devuelve sus costos finales a Bs de la factura (D10).
+   * Tasa elegida en la revisión: la de la compra escaneada (`refRateVes`) y con la que
+   * los Bs de la factura pasan a REF. Ausente en una factura en dólares aceptada: sus
+   * precios ya son REF y la compra va a la tasa del día.
    */
   invoiceRateVes?: number;
   lines: InvoiceReviewDraftLine[];
@@ -115,10 +114,7 @@ export function taxHintFromCode(
 
 /** Moneda de captura de la compra que sale de la revisión (ver cabecera del archivo). */
 export function getDraftCostCurrency(state: InvoiceReviewState): PurchaseCostCurrency {
-  if (isUsdAccepted(state)) {
-    return "ref";
-  }
-  return state.rate.choice === "system" ? "ves" : "ref";
+  return isUsdAccepted(state) ? "ref" : "ves";
 }
 
 function packLabelOf(line: InvoiceReviewLine): string {
@@ -128,13 +124,11 @@ function packLabelOf(line: InvoiceReviewLine): string {
 function buildItem(
   state: InvoiceReviewState,
   line: InvoiceReviewLine & { productId: string },
-  input: { costCurrency: PurchaseCostCurrency; id: string; mirrorRate: number; chosenRate?: number },
+  input: { costCurrency: PurchaseCostCurrency; id: string; mirrorRate: number },
 ): PurchaseDraftItem {
   const price = roundMoney(line.unitPrice);
-  const cost =
-    input.costCurrency === "ves"
-      ? { ves: price }
-      : { ref: isUsdAccepted(state) ? price : roundMoney(price / (input.chosenRate ?? 1)) };
+  // Bs de la factura, o el precio en dólares de una factura USD aceptada (USD = REF).
+  const cost = input.costCurrency === "ves" ? { ves: price } : { ref: price };
   const base = {
     costCurrency: input.costCurrency,
     id: input.id,
@@ -216,7 +210,7 @@ export function buildInvoiceReviewDraft(
   const nextId = options.nextId ?? ((lineIndex: number) => `invoice-scan-${state.scanId}-${lineIndex}`);
   const costCurrency = getDraftCostCurrency(state);
   const chosenRate = getEffectiveRate(state);
-  const mirrorRate = state.rate.system ?? chosenRate;
+  const mirrorRate = isUsdAccepted(state) ? (state.rate.system ?? chosenRate) : chosenRate;
   const kept = state.lines.filter(
     (line): line is InvoiceReviewLine & { productId: string } => !line.discarded && line.productId !== undefined,
   );
@@ -232,7 +226,6 @@ export function buildInvoiceReviewDraft(
       costCurrency,
       id: nextId(line.index),
       mirrorRate: mirrorRate ?? 0,
-      ...(chosenRate !== undefined ? { chosenRate } : {}),
     }),
   }));
 

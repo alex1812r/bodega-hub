@@ -23,6 +23,7 @@ import {
   settlePurchaseLines,
   switchPurchaseReviewCostCurrency,
 } from "../utils/purchaseLineReview";
+import { formatRate } from "./components/invoiceReviewView";
 import {
   taxHintFromCode,
   type InvoiceReviewDraft,
@@ -37,7 +38,10 @@ export type LoadedInvoiceScan = {
   lineIndexByItemId: Record<string, number>;
   /** Extracción corregida en la revisión (D10). */
   extraction: InvoiceExtraction;
-  /** Tasa elegida en la revisión; ausente = precios de la factura en REF (USD aceptado). */
+  /**
+   * Tasa elegida en la revisión: la de la compra mientras el escaneo esté cargado
+   * (SCN-UI-C1). Ausente = precios de la factura en REF (USD aceptado), tasa del día.
+   */
   invoiceRateVes?: number;
 };
 
@@ -159,6 +163,25 @@ export function applyInvoiceReviewDraft(
     },
     notices: removed.length > 0 ? [describeRemoved(removed)] : [],
   };
+}
+
+/**
+ * Aviso junto a la tasa mientras el escaneo esté cargado y su tasa no sea la del día:
+ * «Tasa de la factura 875,65 (hoy 900,00)». `null` si coinciden o no hay tasa elegida.
+ */
+export function describeLoadedInvoiceRate(
+  loaded: Pick<LoadedInvoiceScan, "invoiceRateVes"> | null,
+  systemRateVes: number | undefined,
+) {
+  const rate = loaded?.invoiceRateVes;
+
+  if (rate === undefined || (systemRateVes !== undefined && roundMoney(rate) === roundMoney(systemRateVes))) {
+    return null;
+  }
+
+  return systemRateVes === undefined
+    ? `Tasa de la factura ${formatRate(rate)} (sin tasa del día)`
+    : `Tasa de la factura ${formatRate(rate)} (hoy ${formatRate(systemRateVes)})`;
 }
 
 /** `2026-10-14` → `14/10/2026`; otro formato se muestra tal cual. */

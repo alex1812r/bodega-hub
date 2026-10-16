@@ -259,6 +259,31 @@ describe("InvoiceReviewPanel", () => {
     expect(within(row(0)).getByText("Resuelta")).toBeInTheDocument();
   });
 
+  it.each(["0", "-3"])("SCN-UI-C1 (6.19): %s en Unidades por bulto no se corrige ni resuelve la línea", async (typed) => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [
+          doubtfulLine(1, 0.8, { read: { unit: "bulto" }, match: { entryMode: "pack", unitsPerPack: undefined } }),
+          doubtfulLine(2),
+        ],
+      }),
+    );
+
+    // Enter en la fila acepta el producto marcado y lleva el foco a las unidades.
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.keyboard("{Enter}");
+    const units = within(row(0)).getByLabelText("Unidades por bulto");
+    await waitFor(() => expect(units).toHaveFocus());
+    await user.keyboard(typed);
+    await user.tab();
+
+    expect(units).toHaveValue(typed);
+    expect(row(0)).not.toHaveAttribute("data-status", "resolved");
+    expect(within(row(0)).getByText("Debe ser un entero mayor que 0.")).toBeInTheDocument();
+    expect(loadButton()).toBeDisabled();
+  });
+
   it("aviso de tasa impresa: se elige entre la de hoy y la de la factura", async () => {
     const user = userEvent.setup();
     const props = renderPanel(makeReviewResponse({ lines: [{}], extraction: { printedRate: 875.65 } }));
@@ -274,7 +299,8 @@ describe("InvoiceReviewPanel", () => {
 
     await user.click(loadButton());
     const draft = (props.onLoad as jest.Mock).mock.calls[0][0] as InvoiceReviewDraft;
-    expect(draft.costCurrency).toBe("ref");
+    // SCN-UI-C1: la elegida es la tasa de la compra, que va en los Bs de la factura.
+    expect(draft).toMatchObject({ costCurrency: "ves", invoiceRateVes: 875.65, rateVes: 875.65 });
   });
 
   it("sin tasa del día ni impresa pide la tasa con NumberInput", async () => {
@@ -447,6 +473,29 @@ describe("InvoiceReviewPanel", () => {
     await waitFor(() => expect(loadButton()).toHaveFocus());
     await user.keyboard("{Enter}");
     expect(props.onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("SCN-UI-C1 (6.17): en una sin emparejar, Tab hacia delante desde el buscador llega a «Descartar línea»", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel(
+      makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }),
+      { productFetcher: jest.fn(async () => []) },
+    );
+
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.tab();
+    await waitFor(() => expect(within(row(0)).getByRole("combobox")).toHaveFocus());
+
+    const discard = within(row(0)).getByRole("button", { name: "Descartar línea" });
+    for (let presses = 0; presses < 8 && document.activeElement !== discard; presses += 1) {
+      expect(row(0)).toContainElement(document.activeElement as HTMLElement);
+      await user.tab();
+    }
+    expect(discard).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(row(0)).toHaveAttribute("data-status", "discarded");
+    expect(props.onLoad).not.toHaveBeenCalled();
   });
 
   it("SCN-08-F1 (6.17): unidades escritas antes de aceptar; Enter en el campo acepta el marcado y salta", async () => {
