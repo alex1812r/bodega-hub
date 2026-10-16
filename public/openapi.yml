@@ -3300,6 +3300,70 @@ paths:
           $ref: "#/components/responses/ReportArrayResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/contacts/{id}/product-aliases:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Alias aprendidos de facturas de un proveedor
+      description: Alias de `supplier_product_aliases` (SCN-09b) de la tienda de la sesion para el proveedor, mas recientes primero (tope 500). `inSupplierProducts` indica si el producto esta en la lista de productos del proveedor. Un proveedor ajeno o inexistente devuelve una lista vacia.
+      x-permission: purchases.view
+      responses:
+        "200":
+          description: Alias del proveedor
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SupplierProductAlias"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/contacts/{id}/product-aliases/{aliasId}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: aliasId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Contacts]
+      summary: Quitar un alias aprendido de facturas
+      description: Borra el alias via la RPC `remove_supplier_product_alias` (20261020a). El proximo escaneo de ese texto ya no lo propone. Alias de otra tienda, de otro proveedor o inexistente responde 404.
+      x-permission: purchases.create
+      responses:
+        "200":
+          description: Alias quitado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id:
+                        type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/supplier-products:
     get:
       tags: [SupplierProducts]
@@ -6610,6 +6674,38 @@ components:
         preferredAutoAssigned:
           type: boolean
           description: El servidor movio o quito el habitual sin que la lista marcara uno.
+    SupplierProductAlias:
+      type: object
+      required: [id, aliasNorm, productId, productName, packLabel, unitsPerPack, hits, lastSeenAt, inSupplierProducts]
+      properties:
+        id:
+          type: string
+          format: uuid
+        aliasNorm:
+          type: string
+          description: Texto de la factura normalizado (normalizeAlias).
+        productId:
+          type: string
+        productName:
+          type: string
+          nullable: true
+        packLabel:
+          type: string
+          nullable: true
+        unitsPerPack:
+          type: integer
+          minimum: 1
+          nullable: true
+        hits:
+          type: integer
+          minimum: 1
+          description: Veces que se confirmo con el mismo producto.
+        lastSeenAt:
+          type: string
+          format: date-time
+        inSupplierProducts:
+          type: boolean
+          description: El producto esta vinculado al proveedor (supplier_products).
     SupplierProduct:
       type: object
       required: [id, supplierId, productId, isActive]

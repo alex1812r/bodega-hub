@@ -33,6 +33,7 @@ import { useSupplierProducts } from "../../hooks/useSupplierProducts";
 import { EditSupplierProductModal } from "../../components/supplier-products/EditSupplierProductModal";
 import { LinkSupplierProductModal } from "../../components/supplier-products/LinkSupplierProductModal";
 import { RegisterSupplierPriceModal } from "../../components/supplier-products/RegisterSupplierPriceModal";
+import { SupplierProductAliasesSection } from "../../components/supplier-products/SupplierProductAliasesSection";
 import { SupplierProductOriginChip } from "../../components/supplier-products/SupplierProductOriginChip";
 import { SupplierProductPriceHistoryModal } from "../../components/supplier-products/SupplierProductPriceHistoryModal";
 import { SupplierProductStatusBadge } from "../../components/supplier-products/SupplierProductStatusBadge";
@@ -351,6 +352,13 @@ export function ContactSupplierProductsTab({
           />
         </div>
       ) : null}
+
+      <SupplierProductAliasesSection
+        productHref={(productId) =>
+          withChainedReturnTo(`/products/${encodeURIComponent(productId)}`, list.href)
+        }
+        supplierId={supplierId}
+      />
 
       <RegisterSupplierPriceModal
         onOpenChange={(open: boolean) => !open && setActiveModal(null)}

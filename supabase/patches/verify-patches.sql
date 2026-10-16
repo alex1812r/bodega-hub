@@ -2874,4 +2874,40 @@ select
       and p.prosrc ilike '%interval ''5 minutes''%'
       and p.prosrc ilike '%se está confirmando en una compra%'
   )
+union all
+select
+  'remove_supplier_product_alias(uuid) uuid existe, security definer y search_path=public (20261020a)',
+  exists (
+    select 1 from pg_proc p
+    where p.oid = to_regprocedure('public.remove_supplier_product_alias(uuid)')
+      and p.prorettype = 'uuid'::regtype
+      and p.prosecdef
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false)
+  )
+union all
+select
+  'remove_supplier_product_alias: execute authenticated / service_role, sin public ni anon (20261020a)',
+  coalesce((
+    select has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not exists (
+        select 1 from aclexplode(p.proacl) acl
+        where acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+      )
+    from pg_proc p
+    where p.oid = to_regprocedure('public.remove_supplier_product_alias(uuid)')
+  ), false)
+union all
+select
+  'remove_supplier_product_alias: tienda de assert_store_context, rol admin|almacen (PT403) y PT404 si es ajeno o no existe (20261020a)',
+  exists (
+    select 1 from pg_proc p
+    where p.oid = to_regprocedure('public.remove_supplier_product_alias(uuid)')
+      and p.prosrc ilike '%assert_store_context()%'
+      and p.prosrc ilike '%a.store_id = v_store_id%'
+      and p.prosrc ilike '%(''admin'', ''almacen'')%'
+      and p.prosrc ilike '%errcode = ''PT403''%'
+      and p.prosrc ilike '%errcode = ''PT404''%'
+  )
 order by 1;
