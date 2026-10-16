@@ -620,11 +620,11 @@ Precarga la compra desde la foto o el PDF de la factura. La IA propone y nada se
 |----------|---------|----------|
 | GET `/api/purchases/invoice-scan/limits` | `purchases.create` | `{ used, limit, remaining }` del día |
 | GET `/api/purchases/invoice-scan/upload-url?sha256=&pages=&types=` | `purchases.create` | URLs firmadas de subida al bucket `invoice-scans` (facturas de más de 4 MB) |
-| POST `/api/purchases/invoice-scan` | `purchases.create` | Lee y empareja. Multipart (`page[]`, `sha256?`, `supplierId?`) o JSON `{ sha256, storagePaths, supplierId? }`. Devuelve `{ scanId, extraction, matched, limits, cached }`; 409 si ya se está leyendo, 413, 429 de cuota y 502 si falla la IA |
+| POST `/api/purchases/invoice-scan` | `purchases.create` | Lee y empareja. Multipart (`page[]`, `sha256?`, `supplierId?`) o JSON `{ sha256, storagePaths, supplierId? }`. Devuelve `{ scanId, extraction, matched, limits, cached }`; 400 si una página supera 1600 px de lado mayor (CIE-07), 409 si ya se está leyendo, 413, 429 de cuota, 502 si falla la IA y 503 si con datos en Supabase falta la key de IA (CIE-08, sin reservar ni cobrar) |
 | GET `/api/purchases/invoice-scan/[id]` | `purchases.view` | Escaneo con URLs firmadas de lectura (5 min) |
-| POST `/api/purchases/invoice-scan/[id]/discard` | `purchases.create` | Descarta un escaneo `extracted`; 409 en otro estado o si una compra lo está confirmando |
+| POST `/api/purchases/invoice-scan/[id]/discard` | `purchases.create` | Descarta un escaneo `extracted`; 409 en otro estado, si una compra lo está confirmando o si la clave de su reclamo ya creó su compra (CIE-06) |
 | GET `/api/purchases/[id]/invoice-scan?images=0` | `purchases.view` | Escaneo confirmado de la compra (o `null`) con las líneas aprendidas |
-| POST `/api/purchases` + `invoiceScanId`, `invoiceScanLines`, `invoiceScanExtraction` | `purchases.create` | Confirma el escaneo con la lectura corregida (D10) y aprende los alias. Exige `clientRequestId`; responde `invoiceScan: { confirmed, learned }` |
+| POST `/api/purchases` + `invoiceScanId`, `invoiceScanLines`, `invoiceScanExtraction` | `purchases.create` | Confirma el escaneo con la lectura corregida (D10) y aprende los alias. Exige `clientRequestId`; responde `invoiceScan: { confirmed, learned }`. 400 por textos con caracteres de control o de más de 1000 caracteres y 400 "Esta factura ya se registró en otra compra" si otra clave ya creó su compra con el escaneo (CIE-06) |
 | GET `/api/contacts/[id]/product-aliases` | `purchases.view` | Alias aprendidos del proveedor |
 | DELETE `/api/contacts/[id]/product-aliases/[aliasId]` | `purchases.create` | Quita un alias (RPC `remove_supplier_product_alias`) |
 | GET/POST `/api/cron/invoice-scans/purge` | `CRON_SECRET` | Borra imágenes y filas de más de 90 días (job diario en `cash-auto-close.yml`) |

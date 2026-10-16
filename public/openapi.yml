@@ -2607,16 +2607,29 @@ paths:
         encontrado"), ya confirmado con otra compra ("El escaneo ya fue
         confirmado"), descartado o fallido ("El escaneo no está disponible") o
         reclamado por otro intento vigente ("El escaneo se está confirmando en
-        otra compra") responde 400 y no crea la compra. Si la creacion se rechaza
-        (4xx) el reclamo se suelta; con un resultado incierto caduca a los 5
-        minutos. Tras crear la compra se confirma el escaneo con
+        otra compra") responde 400 y no crea la compra. Los textos de
+        `invoiceScanExtraction` y de `invoiceScanLines` (`packLabel`, CIE-09)
+        no admiten U+0000, caracteres de control C0/C1 (salvo tabulador, salto
+        de linea y retorno de carro) ni surrogates sueltos, y tienen como maximo
+        1000 caracteres (50 avisos como maximo): si no cumplen responde 400 ("Un
+        texto de la factura tiene caracteres no permitidos." o "Cada texto de la
+        factura puede tener como máximo 1000 caracteres.") antes de reclamar el
+        escaneo y de crear la compra (CIE-06). Si la creacion se rechaza (4xx) el
+        reclamo se suelta; con un resultado incierto (5xx, red) caduca a los 5
+        minutos, salvo que la clave ya haya creado su compra: entonces el
+        reclamo queda ligado a esa compra, no caduca ni se suelta, y otra clave
+        recibe 400 "Esta factura ya se registró en otra compra" (CIE-06). Tras
+        crear la compra se confirma el escaneo con
         `invoiceScanExtraction` (o, sin ella, la lectura guardada) y las lineas
         de `invoiceScanLines`, y se aprenden los alias de las lineas cuyo
         producto esta en `items`; el texto del alias sale de la lectura
         guardada, nunca del cliente. Un fallo al confirmar o aprender no deshace
-        la compra: se informa en `invoiceScan`. Repetir el mismo intento (misma
-        clave, escaneo ya confirmado con esa compra) devuelve la misma compra y
-        no vuelve a aprender. Si la clave ya creo otra compra (ligada a otro
+        la compra: se informa en `invoiceScan` y, con `confirmed: false`, la UI
+        avisa "La compra se registró pero no se pudo vincular la factura. No la
+        vuelvas a registrar.". Repetir el mismo intento (misma clave) devuelve la
+        misma compra y reintenta sobre ella lo que falto: el confirm y, si
+        `learned_at` sigue null, una llamada de aprendizaje (CIE-06). Si la
+        clave ya creo otra compra (ligada a otro
         escaneo o anterior al reclamo) responde 400 sin confirmar el escaneo.
       x-permission: purchases.create
       requestBody:
@@ -2778,7 +2791,12 @@ paths:
         paginas. El servidor recalcula el sha256 sobre los bytes (si el cliente
         manda otro, 400), comprueba por sus bytes que cada pagina es una imagen
         del tipo declarado (si no, 400 sin subirla ni cobrar) y valida cada ruta
-        contra la tienda de la sesion. Mismo hash en la tienda con lectura
+        contra la tienda de la sesion. Una pagina con el lado mayor por encima
+        de 1600 px responde 400 "La imagen supera 1.600 px en su lado mayor.
+        Vuelve a subirla desde la app para que se reduzca." (CIE-07): en
+        multipart antes de subirla, reservar o cobrar; con `storagePaths` tras
+        descargarla y antes de reservar, y el objeto ya subido con la URL
+        firmada queda en el bucket hasta la purga. Mismo hash en la tienda con lectura
         vigente = mismo escaneo, con `cached: true`, sin llamar al modelo ni
         consumir cuota; si otra peticion esta leyendo esa misma imagen, 409. Una
         lectura guardada que no cumple el contrato no se sirve: se vuelve a leer
@@ -2880,7 +2898,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: El almacenamiento de facturas no esta disponible (subida o descarga de las paginas); no se llama al modelo.
+          description: >-
+            El almacenamiento de facturas no esta disponible (subida o descarga de
+            las paginas); no se llama al modelo. Tambien con datos en Supabase y
+            sin ninguna key de IA: "El escaneo de facturas no está configurado:
+            falta la key del proveedor de IA.", antes de reservar (sin fila, sin
+            cupo y sin cache; CIE-08). El proveedor mock solo se usa con
+            `INVOICE_SCAN_PROVIDER=mock` o con datos mock.
           content:
             application/json:
               schema:
@@ -3017,7 +3041,8 @@ paths:
       summary: Descartar un escaneo de factura
       description: >-
         Marca como `discarded` un escaneo que sigue en `extracted`. No borra la
-        imagen (la purga a 90 dias lo hace).
+        imagen (la purga a 90 dias lo hace). No se descarta si una compra lo
+        esta confirmando o si la clave de su reclamo ya creo su compra (CIE-06).
       x-permission: purchases.create
       responses:
         "200":
@@ -3048,8 +3073,10 @@ paths:
             El escaneo no esta en `extracted`: se esta leyendo, ya esta
             confirmado, ya estaba descartado o su lectura fallo. Tambien si esta
             reclamado por una compra en curso ("Esta factura se está confirmando
-            en una compra; espera a que termine.", parche 20261019k). El mensaje
-            en espanol explica cual.
+            en una compra; espera a que termine.", parche 20261019k) o si la
+            clave de su reclamo ya creo su compra, aunque el reclamo haya
+            caducado ("Esta factura ya tiene una compra registrada y no se puede
+            descartar.", CIE-06). El mensaje en espanol explica cual.
           content:
             application/json:
               schema:
@@ -8115,7 +8142,10 @@ components:
       type: object
       description: >-
         Resultado del escaneo de factura de la compra. La compra ya existe aunque
-        `confirmed` sea false (el fallo queda en el log del servidor).
+        `confirmed` sea false (el fallo queda en el log del servidor); la
+        factura sigue ligada a esa compra, no puede registrar otra y la UI avisa
+        de no volver a registrarla. Repetir el mismo intento reintenta el
+        confirm y el aprendizaje pendiente sobre la misma compra.
       required: [confirmed, learned]
       properties:
         confirmed:
@@ -8127,7 +8157,8 @@ components:
           nullable: true
           description: >-
             Alias aprendidos en esta llamada; null si no se aprendio (intento
-            repetido, escaneo sin confirmar o fallo del aprendizaje).
+            repetido con el aprendizaje ya hecho, escaneo sin confirmar o fallo
+            del aprendizaje).
     PurchaseInvoiceScanLineInput:
       type: object
       description: >-
@@ -8150,7 +8181,10 @@ components:
           type: string
           maxLength: 100
           nullable: true
-          description: Se recorta de espacios.
+          description: >-
+            Se recorta de espacios. Sin U+0000, caracteres de control C0/C1
+            (salvo tabulador, salto de linea y retorno de carro) ni surrogates
+            sueltos (CIE-09); si no, 400.
         unitsPerPack:
           type: integer
           minimum: 1
@@ -8296,6 +8330,10 @@ components:
             del modelo y como maximo 500 lineas. Exige `invoiceScanId`. Se guarda
             como la extraccion confirmada del escaneo (los textos opcionales
             vacios quedan ausentes); sin ella se guarda la lectura del escaneo.
+            Cada texto rechaza U+0000, caracteres de control C0/C1 (salvo
+            tabulador, salto de linea y retorno de carro) y surrogates sueltos y
+            admite como maximo 1000 caracteres; como maximo 50 avisos. Si no
+            cumple, 400 antes de reclamar el escaneo y de crear la compra (CIE-06).
           allOf:
             - $ref: "#/components/schemas/InvoiceExtraction"
     Payment:
