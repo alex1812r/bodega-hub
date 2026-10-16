@@ -1,4 +1,5 @@
-import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
+import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../../invoiceAliasKey";
 
 import type { InvoiceExtractionLine, InvoiceMatchCandidate, InvoiceMatchStatus } from "../../contracts";
 import type { MatchAlias, MatchFuzzyCandidate, MatchProduct, MatchSupplierCatalog } from "../match.types";

@@ -1,5 +1,5 @@
 import { invoiceAliasKey, stableRawText } from "./invoiceAliasKey";
-import { normalizeAlias } from "./normalizeAlias";
+import { normalizeAlias } from "@bodega/core/invoice";
 
 describe("stableRawText", () => {
   it.each([

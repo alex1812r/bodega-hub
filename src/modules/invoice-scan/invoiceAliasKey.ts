@@ -1,4 +1,4 @@
-import { normalizeAlias } from "./normalizeAlias";
+import { normalizeAlias } from "@bodega/core/invoice";
 
 /**
  * Número con formato de dinero o de cantidad impresa: con exactamente dos

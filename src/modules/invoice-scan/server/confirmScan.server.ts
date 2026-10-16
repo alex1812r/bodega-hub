@@ -34,7 +34,7 @@
  *    Solo se aprenden las líneas cuyo producto está en los items de la compra, y el
  *    empaque se toma del item (SCN-06-F2 · M3; ver `buildLearnLines`).
  */
-import { invoiceAliasKey } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../invoiceAliasKey";
 import { z } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";

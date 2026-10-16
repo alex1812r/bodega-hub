@@ -1,4 +1,5 @@
-import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
+import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../../invoiceAliasKey";
 
 import type { InvoiceExtractionLine } from "../../contracts";
 

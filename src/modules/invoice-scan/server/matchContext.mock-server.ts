@@ -18,7 +18,8 @@
  * (no la de trigramas de pg_trgm) y el último costo es `currentCostRef` del
  * producto (no la última línea recibida).
  */
-import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
+import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { mockTaxRatesForStore } from "@/modules/settings/services/taxRates.mock-server";
 import {

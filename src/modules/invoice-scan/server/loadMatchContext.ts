@@ -17,7 +17,8 @@
  *    barcode): alícuota de la categoría, receta activa, tamaños de las recetas
  *    de las que es componente y último costo recibido.
  */
-import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
+import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { createRouteSupabaseClient } from "@/lib/supabase/route-client";

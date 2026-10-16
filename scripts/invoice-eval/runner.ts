@@ -22,7 +22,7 @@
  *   La 1.ª factura de cada proveedor no entra en este bucket (no hay nada
  *   aprendido), pero sí alimenta alias y `previousScans`.
  */
-import { invoiceAliasKey } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "../../src/modules/invoice-scan/invoiceAliasKey";
 
 import type { InvoiceExtraction, InvoiceMatch } from "../../src/modules/invoice-scan/contracts";
 import { matchInvoice } from "../../src/modules/invoice-scan/server/match";
