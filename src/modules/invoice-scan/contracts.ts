@@ -110,7 +110,7 @@ export type InvoiceMatch = {
   };
   lines: InvoiceLineMatch[];
   totals: { read?: number; computed: number; mismatch: boolean };
-  /** Tasa usada para convertir Bs → REF y la impresa si difiere > 3 %. */
+  /** Tasa usada para convertir Bs → REF y la impresa si difiere > 2 % (D8). */
   rate?: { system?: number; printed?: number; warning?: string };
   /** Mismo proveedor + número ya escaneado en la tienda (duplicado). */
   duplicateOfScanId?: string;

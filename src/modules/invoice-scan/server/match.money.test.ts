@@ -29,7 +29,7 @@ describe("matchInvoice · moneda y tasa", () => {
     expect(result.lines[0].unitCostVes).toBe(50);
   });
 
-  it("tasa impresa > 3 % de la del sistema: aviso con ambas, convierte con la del sistema (6.20)", () => {
+  it("tasa impresa > 2 % de la del sistema: aviso con ambas, convierte con la del sistema (6.20)", () => {
     const result = matchInvoice(
       buildExtraction({ printedRate: 850.4, lines: [buildLine({ unitPrice: 450, lineTotal: 5400 })] }),
       buildContext({ systemRate: 900 }),
@@ -44,12 +44,21 @@ describe("matchInvoice · moneda y tasa", () => {
     expect(result.lines[0].status).toBe("confirmed");
   });
 
-  it("tasa impresa dentro del 3 %: sin aviso (875,65 vs 900,00 es un 2,7 %)", () => {
+  it("tasa impresa dentro del 2 %: sin aviso (102 vs 100 es un 2 % justo)", () => {
     const result = matchInvoice(buildExtraction({ printedRate: 102 }), buildContext());
 
     expect(result.rate).toEqual({ system: 100, printed: 102 });
+    expect(matchInvoice(buildExtraction({ printedRate: 98.5 }), buildContext()).rate?.warning).toBeUndefined();
+  });
+
+  it("D8: 875,65 vs 900,00 (un 2,7 %, caso 6.20 del dueño) avisa", () => {
     const plan = matchInvoice(buildExtraction({ printedRate: 875.65 }), buildContext({ systemRate: 900 }));
-    expect(plan.rate?.warning).toBeUndefined();
+
+    expect(plan.rate).toEqual({
+      system: 900,
+      printed: 875.65,
+      warning: "La factura trae tasa 875,65; hoy es 900,00.",
+    });
   });
 
   it("formatea miles con punto en el aviso", () => {
