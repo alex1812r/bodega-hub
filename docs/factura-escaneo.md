@@ -299,28 +299,29 @@ Protecciones del CLI:
 
 ## Resultados por proveedor de IA
 
-Las metas son las del §10 del plan. Todas las llamadas a modelos se hicieron el 2026-10-15 (noche de Caracas) con la key de Gemini en free tier, que tiene cuota diaria por modelo, con `--resume --concurrency 1` y few-shot en "con alias". Por modelo hay 51 extracciones por medir: 32 sin alias (22 reales y 10 sintéticas) y 19 con alias y few-shot.
+Las metas son las del §10 del plan. La key de Gemini está en free tier, con cuota diaria por modelo que se reinicia a las 07:00 UTC. Todas las corridas con modelo usan `--resume --concurrency 1` y few-shot en "con alias". Por modelo hay 51 extracciones por medir: 32 sin alias (22 reales y 10 sintéticas) y 19 con alias y few-shot. Las primeras llamadas se hicieron el 2026-10-15 (noche de Caracas). El 2026-10-16 (CIE-04, desde las 13:50 UTC) se completó lo que permitió la cuota.
 
 ### Cobertura por modelo
 
-| Modelo | Medidas (sin / con alias) | Pendientes | Motivo | Corrida original |
-|--------|---------------------------|------------|--------|------------------|
+| Modelo | Medidas (sin / con alias) | Pendientes | Motivo | Corrida |
+|--------|---------------------------|------------|--------|---------|
 | gemini-3.5-flash-lite | 32/32 · 19/19 | 0 | — | `runs/2026-10-15-google-gemini-3.5-flash-lite-resume.md` |
 | gemini-3.1-flash-lite | 32/32 · 18/19 | 1 | f10 con alias: timeout dos veces (con 3 imágenes de few-shot pasa de los 45 s de `extractInvoice`). No es cuota. | `runs/2026-10-15-google-gemini-3.1-flash-lite-resume.md` |
-| gemini-3.6-flash | 9/32 · 0/19 | 42 | Cuota diaria (429) tras unas 10 llamadas y un 503 en f05 | `runs/2026-10-15-google-gemini-3.6-flash.md` |
-| gemini-2.5-flash | 1/32 · 0/19 | 50 | Cuota diaria ya agotada (429 desde la 1.ª llamada nueva) | `runs/2026-10-15-google-gemini-2.5-flash-2.md` |
-| gemini-3.8-flash | 1/32 · 0/19 | 50 | 503, timeout y cuota diaria (429) | `runs/2026-10-15-google-gemini-3.8-flash-2.md` |
+| gemini-3.6-flash | 14/32 · 0/19 | 37 | 2026-10-16: 5 nuevas (f12, f13, f16, f17, f18). Luego hubo 503 en f05 y f11, timeouts y 429 desde f19, y la pasada se cortó por cuota. | `runs/2026-10-15-google-gemini-3.6-flash.md` → `runs/2026-10-16-google-gemini-3.6-flash-cie04.md` |
+| gemini-3.8-flash | 2/32 · 0/19 | 49 | 2026-10-16: 1 nueva (f09). Hubo 503 en f02–f06 y 429 desde f07, y la pasada se cortó por cuota. | `runs/2026-10-15-google-gemini-3.8-flash-2.md` → `runs/2026-10-16-google-gemini-3.8-flash-cie04.md` |
+| gemini-2.5-flash | 1/32 · 0/19 | 50 | Cuota diaria ya agotada (429 desde la 1.ª llamada nueva). No se reintentó el 16-10. | `runs/2026-10-15-google-gemini-2.5-flash-2.md` |
 | gemini-2.5-flash-lite | 0 | 51 | 404: la key no tiene acceso al modelo. Los modelos 2.5 solo se sirven a proyectos que ya los usaban. | `runs/2026-10-15-google-gemini-2.5-flash-lite-sonda.md` |
-| claude-haiku-4-5 / claude-haiku-5-5 | 0 | 51 / 51 | **Sin medir**: `ANTHROPIC_API_KEY` está vacía en el archivo de keys | — |
+| claude-haiku-4-5 / claude-haiku-5-5 | 0 | 51 / 51 | **No verificado**: `ANTHROPIC_API_KEY` está vacía en el archivo de keys | — |
 
-### Medición actual (código de HEAD `ca6a83f`, replay de las extracciones guardadas)
+### Medición actual (2026-10-16, código de HEAD `7f37c31`, replay de las extracciones guardadas)
 
-Los dos modelos lite tienen el banco completo (o casi) y se midieron de nuevo con `--replay` sobre sus corridas originales: las extracciones son exactamente las mismas (0 llamadas) y el emparejamiento, la cabecera y las métricas se recalculan con el código y el banco actuales. Tokens, p95 y costo salen de la corrida original. El qa-final reprodujo los números de 3.5-flash-lite con `--resume` desde la caché (51 de caché, 0 llamadas nuevas).
+Los dos modelos lite tienen el banco completo (o casi) y se midieron de nuevo con `--replay` sobre sus corridas originales. Las extracciones son exactamente las mismas (0 llamadas); el emparejamiento, la cabecera y las métricas se recalculan con el código y el lab actuales. Tokens, p95 y costo salen de la corrida original. El HEAD `7f37c31` incluye la UI (alias por clave estable en `match.ts`), CIE-02 (fuente de tasa en `loadMatchContext`) y CIE-03b (`tax_id_match` con letra en `20261019d`, aplicado al lab).
 
-- 3.5-flash-lite: `runs/2026-10-16-replay-google-gemini-3.5-flash-lite-f3.md`.
-- 3.1-flash-lite: `runs/2026-10-16-replay-google-gemini-3.1-flash-lite-f5.md`.
+- 3.5-flash-lite: `runs/2026-10-16-replay-google-gemini-3.5-flash-lite-cie04.md`. La anterior es `…-f3.md`, de HEAD `ca6a83f`.
+- 3.1-flash-lite: `runs/2026-10-16-replay-google-gemini-3.1-flash-lite-cie04.md`. La anterior es `…-f5.md`.
+- Oráculo: `runs/2026-10-16-oraculo-solo-emparejamiento-cie04.md`.
 
-p95 y $/factura son de la corrida entera (la meta es sobre el total); van en la fila "sin alias" de cada modelo.
+p95 y $/factura son de la corrida entera (la meta es sobre el total) y van en la fila "sin alias" de cada modelo. El p95 por el BFF está en "p95 y costo por el BFF".
 
 | Modelo · bucket | Cabecera | Líneas | Exactitud | Emp. OK | Confirmadas mal | Fugas few-shot | p95 1 pág. | $/factura | Cobertura |
 |-----------------|----------|--------|-----------|---------|-----------------|----------------|------------|-----------|-----------|
@@ -328,24 +329,39 @@ p95 y $/factura son de la corrida entera (la meta es sobre el total); van en la 
 | gemini-3.5-flash-lite · sin alias | 98,4 % | 99,5 % | 99,0 % | 88,6 % | 0 % | — | 6,8 s | $0,0036 | 32/32 |
 | gemini-3.5-flash-lite · con alias | 100 % | 100 % | 100 % | 96,1 % | 0 % | 0/19 | ↑ | ↑ | 19/19 |
 | gemini-3.1-flash-lite · sin alias | 97,6 % | 99,0 % | 94,8 % | 88,6 % | 0 % | — | 7,9 s | $0,0024 | 32/32 |
-| gemini-3.1-flash-lite · con alias | **94,7 % ✗** | 96,2 % | 96,1 % | 90,2 % | 0 % | 0/18 | ↑ | ↑ | 18/19 |
+| gemini-3.1-flash-lite · con alias | **94,7 % ✗** | 96,2 % | 96,1 % | 91,2 % | 0 % | 0/18 | ↑ | ↑ | 18/19 |
 
-- **gemini-3.5-flash-lite cumple todas las metas** del §10 en los dos buckets. Duplicados 4/4 detectados, 0 falsos positivos; f07 y f09 sin líneas inventadas.
-- **gemini-3.1-flash-lite falla solo la cabecera con alias**, y toda la diferencia viene de f10 con alias, que no tiene extracción por el timeout: cuenta como fallo total (4 de 76 campos). Además, en f11 sin alias leyó una línea tapada con confianza (1 inventada) y en f03 sin alias omitió el número. Duplicados 4/4 (f03 sin alias se detecta como posible duplicado, ver F4).
+**Frente a la medición de `ca6a83f`, ninguna métrica del §10 empeora** en ningún bucket, modelo ni en el oráculo:
+
+- 3.5-flash-lite: las seis métricas son idénticas en los dos buckets.
+- 3.1-flash-lite: el emparejamiento con alias sube de 90,2 % a 91,2 %; las demás no cambian.
+- Duplicados: 4/4 en los dos modelos y en el oráculo, 0 falsos positivos. f07 y f09 sin líneas inventadas.
+- Pares consistentes: 3/4 en 3.5-flash-lite (antes 1/4: F6 corrige f03), 2/4 en 3.1-flash-lite y 4/4 en el oráculo.
+
+El cambio visible es de **automatización**: en "con alias" muchas más líneas pasan de dudosa correcta a **confirmada correcta**, sin ninguna confirmada mal. Es el efecto del alias por clave estable de la UI (`5bdf8ae`, `9ff1f01`):
+
+| Confirmadas correctas · con alias | `ca6a83f` | `7f37c31` |
+|-----------------------------------|-----------|-----------|
+| 3.5-flash-lite | 10 | 59 |
+| 3.1-flash-lite | 7 | 61 |
+| Oráculo | 32 | 75 |
+
+- **gemini-3.5-flash-lite cumple todas las metas de calidad** del §10 en los dos buckets.
+- **gemini-3.1-flash-lite falla solo la cabecera con alias**. Toda la diferencia viene de f10 con alias, que no tiene extracción por el timeout y cuenta como fallo total (4 de 76 campos). Además, en f11 sin alias leyó una línea tapada con confianza (1 inventada) y en f03 sin alias omitió el número.
 - En los dos, la cabecera de s09 con alias sale ✓ porque el modelo trae el proveedor de los ejemplos few-shot, que es el mismo de la verdad. Por eso no cuenta como fuga (la fuga exige que el campo difiera de la verdad) ni como inventado. Ver el caos 6.1.
 
-**Modelos con medición parcial.** No tienen replay con el código actual: los números son los de la corrida original del 15-10 y solo cubren lo medido (el agregado del informe cuenta lo pendiente como fallo total). Con 1 o 9 facturas no se pueden comparar con los lite.
+**Modelos con medición parcial.** Las métricas son "solo sobre lo medido", con el código de la corrida indicada (las de 3.6 y 3.8 son del HEAD `7f37c31`). El agregado del informe cuenta lo pendiente como fallo total. Con tan pocas facturas, no se pueden comparar con los lite.
 
 | Modelo | Cabecera | Líneas | Exactitud | Emp. OK | Confirmadas mal | Fugas few-shot | p95 1 pág. | $/factura | Cobertura |
 |--------|----------|--------|-----------|---------|-----------------|----------------|------------|-----------|-----------|
-| gemini-3.6-flash (9 facturas, sin alias) | 86,1 % | 90,2 % | 89,8 % | 87,8 % | 0 % | — | 27,1 s ✗ | $0,0116 ✗ | 9/51 |
-| gemini-2.5-flash (1 factura) | 100 % | 100 % | 100 % | 100 % | 0 % | — | 14,9 s | $0,0085 | 1/51 |
-| gemini-3.8-flash (1 factura) | 100 % | 100 % | 100 % | 100 % | 0 % | — | 41,6 s ✗ | $0,0110 ✗ | 1/51 |
+| gemini-3.6-flash (14 facturas, sin alias) | 92,7 % | 95,3 % | 92,3 % | 86,0 % | 0 % | — | 44,4 s ✗ | $0,0125 ✗ | 14/51 |
+| gemini-3.8-flash (2 facturas, sin alias) | 100 % | 100 % | 100 % | 92,9 % | 0 % | — | 41,6 s ✗ | $0,0127 ✗ | 2/51 |
+| gemini-2.5-flash (1 factura, 15-10) | 100 % | 100 % | 100 % | 100 % | 0 % | — | 14,9 s | $0,0085 | 1/51 |
 | gemini-2.5-flash-lite | — | — | — | — | — | — | — | — | 0/51 (404) |
-| claude-haiku-4-5 | sin medir | | | | | | | | 0/51 |
-| claude-haiku-5-5 | sin medir | | | | | | | | 0/51 |
+| claude-haiku-4-5 | No verificado | | | | | | | | 0/51 |
+| claude-haiku-5-5 | No verificado | | | | | | | | 0/51 |
 
-Aun con tan pocas facturas, 3.6-flash y 3.8-flash superan la meta de tiempo y la de costo. Además, su precio sube el 2027-01-01 (tabla `MODEL_PRICES_USD_PER_MTOK`).
+3.6-flash y 3.8-flash incumplen la meta de tiempo y la de costo con lo medido. Además, el 16-10 dieron 503 en la mitad de las llamadas, y su precio sube el 2027-01-01 (tabla `MODEL_PRICES_USD_PER_MTOK`).
 
 ### Medición inicial (2026-10-15) frente a la actual
 
@@ -354,7 +370,7 @@ Aun con tan pocas facturas, 3.6-flash y 3.8-flash superan la meta de tiempo y la
 | 3.5-flash-lite · sin alias, inicial → actual | 94,3 → 98,4 % | 97,5 → 99,5 % | 97,0 → 99,0 % | 87,2 → 88,6 % | 0 → 0 % |
 | 3.5-flash-lite · con alias, inicial → actual | **94,7** → 100 % | 96,3 → 100 % | 96,3 → 100 % | 93,3 → 96,1 % | 0 → 0 % |
 | 3.1-flash-lite · sin alias, inicial → actual | 94,3 → 97,6 % | 97,0 → 99,0 % | 92,9 → 94,8 % | 87,2 → 88,6 % | 0 → 0 % |
-| 3.1-flash-lite · con alias, inicial → actual | 94,4 → 94,7 % | 96,2 → 96,2 % | 96,1 → 96,1 % | 91,1 → 90,2 % | 0 → 0 % |
+| 3.1-flash-lite · con alias, inicial → actual | 94,4 → 94,7 % | 96,2 → 96,2 % | 96,1 → 96,1 % | 91,1 → 91,2 % | 0 → 0 % |
 
 La medición inicial es la de `runs/2026-10-15-google-gemini-<modelo>-resume.md`, recalculada solo sobre lo medido (en 3.1 sin f10 con alias; en la actual f10 cuenta como fallo). Con esa medición, **3.5-flash-lite no cumplía la cabecera con alias (94,7 % < 95 %)**.
 
@@ -363,21 +379,55 @@ Las extracciones son las mismas: no se volvió a llamar al modelo ni se tocó ni
 1. **F3, definición del banco** (`93037d1`). `occludedHeaderFields` declara lo que la foto no permite leer: la fecha de f03 (la tapa el pulgar) y los cuatro campos de cabecera de s09 (foto casi ilegible a propósito), con todas las líneas de s09 `occluded`. Omitir un campo ocluido cuenta como acierto y traerlo distinto de la verdad cuenta como fallo (inventado). La regla es la misma para todos los modelos y se decide mirando la foto, no lo que devolvió un modelo: **no es etiquetar salidas**. La verdad conserva el valor real para detectar lo inventado. Esto explica la subida de la cabecera (s09 y la fecha de f03) y la de líneas y exactitud (las 4 líneas de s09 ya no cuentan como perdidas).
 2. **Emparejamiento recalculado con el código actual** (it1, it2, F4, F5). Cada corrida original usaba el `match.ts` que había al lanzarla. F5 además hace que los `previousScans` del banco lleven la fecha y el total leídos, y con eso el posible duplicado de F4 también se ve en el banco.
 
+### p95 y costo por el BFF (modelo por defecto, 2026-10-16)
+
+Se midió por el camino real, no por el banco:
+
+- **Servidor**: `next dev` del HEAD `7f37c31` contra el lab (`.env.stock-lab`), con `INVOICE_SCAN_PROVIDER=google` y sin `INVOICE_SCAN_MODEL`.
+- **Petición**: `POST /api/purchases/invoice-scan` multipart con Bearer del usuario lab `eval-facturas-admin@eval.local` (admin, con `purchases.create`).
+- **Fotos**: reales, comprimidas como el cliente (JPEG, lado mayor ≤ 1600 px, ≤ 1 MB) y todas distintas, para que ninguna caiga en la caché por hash.
+- **Modelo**: todas las filas de `invoice_scans` registran `model = gemini-3.5-flash-lite`.
+- **Medidas**: la duración es `invoice_scans.duration_ms` (el tiempo de pared por HTTP añade unos 0,3 s). El costo sale de los tokens de la fila con `estimateCostUsd`.
+
+| Tanda | Facturas | p95 (rango más cercano) | Mediana | $/factura (media) | Fallos |
+|-------|----------|-------------------------|---------|-------------------|--------|
+| 1 (pedida: 5 facturas) | f01, f04, f12, f18, f21 | **26,1 s ✗** (f12, 41 líneas) | 10,0 s | $0,0049 ✓ | 0 |
+| 2 (control) | f02, f06, f08, f15, f19 | — | — | — | f02: TIMEOUT a los 45 s → 502 `INVOICE_SCAN_PROVIDER_ERROR` |
+| 1 + 2 (9 correctas de 10) | | 26,1 s ✗ (45 s con el timeout) | 9,7 s | $0,0038 ✓ | 1/10 |
+
+- **El costo cumple la meta (≤ $0,01)**. Solo una factura larga como f12 (41 líneas, 5.799 tokens de salida, $0,0152) la supera por sí sola.
+- **El p95 por el BFF no cumple la meta (≤ 15 s)**: f04 tardó 16,6 s y f12 26,1 s, y f02 agotó los 45 s. Las líneas extraídas coinciden con la verdad en número (6, 5, 41, 1 y 1).
+- **Por qué el banco da 6,8 s y el BFF no**:
+  - el BFF añade poco: la diferencia entre la pared HTTP y `duration_ms` es de unos 0,3 s;
+  - la latencia del modelo del 16-10 fue mucho mayor: hasta las facturas de 1 línea tardan unos 8,5 s, frente a 2,5 s en la corrida del banco;
+  - ese mismo día 3.6-flash y 3.8-flash dieron 503 en la mitad de las llamadas.
+  - Con free tier no se puede separar la carga de Google de la latencia propia del modelo.
+- El escaneo fallido (f02) queda `failed` con `usage_pages = 1`: consume cupo diario aunque no lea nada.
+- Evidencia: `.notes/factura-escaneo/cierre/CIE-04/` del repo principal (`bff-requests.log`, `bff-invoice_scans.txt`, `bff-p95-costo.txt`). Los 10 escaneos y sus imágenes se borraron del lab al terminar.
+
 ### Recomendación
 
-**`INVOICE_SCAN_MODEL=gemini-3.5-flash-lite`, de forma provisional.** En el banco cumple todas las metas del §10: cabecera 98,4 % / 100 %, líneas 99,5 % / 100 %, exactitud 99,0 % / 100 %, emparejamiento 88,6 % / 96,1 %, 0 % confirmadas mal, 0/19 fugas, p95 6,8 s y $0,0036 por factura.
+**`INVOICE_SCAN_MODEL=gemini-3.5-flash-lite` (el default), de forma provisional.**
 
-- **Alternativa más barata: `gemini-3.1-flash-lite`** ($0,0024 por factura, p95 7,9 s). Tiene la exactitud más baja (94,8 % frente a 99,0 % sin alias), el emparejamiento con alias más bajo (90,2 % frente a 96,1 %, justo en la meta) y un timeout con few-shot (f10) que lo deja fuera de la meta de cabecera con alias. También inventó una línea tapada en f11.
+- En el banco cumple todas las metas del §10: cabecera 98,4 % / 100 %, líneas 99,5 % / 100 %, exactitud 99,0 % / 100 %, emparejamiento 88,6 % / 96,1 %, 0 % confirmadas mal, 0/19 fugas y $0,0036 por factura.
+- El 16-10 se volvió a medir con HEAD `7f37c31` y no empeora ninguna métrica.
+- **Condición pendiente: el tiempo.** Por el BFF, el p95 de 5 facturas fue 26,1 s y hubo 1 timeout en 10. Antes de abrir el escaneo a tiendas reales hay que:
+  1. pasar la key a plan de pago (D18; además, en free tier Google puede usar los datos);
+  2. repetir la medición del BFF con ≥ 20 facturas para que el p95 no sea simplemente el máximo.
+  - Si con plan de pago sigue por encima de 15 s, la meta de tiempo queda incumplida para este modelo y hay que revisar el timeout de 45 s y el aviso al usuario.
+- **Alternativa más barata: `gemini-3.1-flash-lite`** ($0,0024 por factura, p95 de banco 7,9 s). Tiene la exactitud más baja (94,8 % frente a 99,0 % sin alias) y el emparejamiento con alias más bajo (91,2 % frente a 96,1 %). Además, el timeout con few-shot en f10 lo deja fuera de la meta de cabecera con alias, e inventó una línea tapada en f11.
+- **3.6-flash y 3.8-flash no son alternativa**: con lo medido incumplen tiempo y costo, y dieron 503 frecuentes.
 - **Cuándo revisar la recomendación**:
   - al medir Haiku 4.5 y 5.5 (hace falta `ANTHROPIC_API_KEY`);
-  - al completar 3.6-flash y 3.8-flash con una key de pago, con el mismo comando: `npm run invoice-eval -- --provider google --model <id> --resume --concurrency 1`. La caché hace que solo se llame por lo pendiente.
+  - al completar 3.6-flash y 3.8-flash, con el mismo comando: `npm run invoice-eval -- --provider google --model <id> --resume --concurrency 1`. La caché hace que solo se llame por lo pendiente. Con free tier caben unas 5 llamadas por día y modelo.
+  - al repetir el p95 por el BFF con la key de pago.
 - **Fine-tuning.** En Vertex, el modelo ajustable de la familia lite es Gemini 3.1 Flash-Lite. 3.5-flash-lite no figura como ajustable según el research de precios y tuning (los ajustables son `gemini-3.5-flash`, 3.1 Flash-Lite y los 2.5). Hoy el ajuste **no se justifica**: el emparejamiento sin alias de 3.5-flash-lite es 88,6 %, por encima de la meta del 70 %, y las capas de alias y few-shot ya llevan el bucket con alias al 96,1 %.
 
 ### Emparejamiento con oráculo
 
 `npm run invoice-eval -- --provider oracle` usa la verdad de `truth/` como extracción: 0 llamadas a la IA, tokens y costo `null`, duración 0. Así mide **solo el emparejamiento** (proveedor, producto, alias, empaque) con una lectura perfecta. **No es una métrica del modelo**: el informe lo marca con un aviso, y cabecera, líneas, exactitud, tiempo y costo salen como "n/a (oráculo)". Sirve para iterar las reglas de emparejamiento sin gastar cuota.
 
-Estado actual (`runs/2026-10-16-oraculo-solo-emparejamiento-f5.md`): emparejamiento 96,8 % sin alias y 98,1 % con alias, 0 % confirmadas mal, duplicados 4/4 sin falsos positivos. Coincide con it1 "después": it2, F4 y F5 no lo mueven.
+Estado actual (`runs/2026-10-16-oraculo-solo-emparejamiento-cie04.md`, HEAD `7f37c31`): emparejamiento 96,8 % sin alias y 98,1 % con alias, 0 % confirmadas mal, duplicados 4/4 sin falsos positivos. Coincide con it1 "después": it2, F4, F5, la UI, CIE-02 y CIE-03b no lo mueven. Lo único que cambia es que en "con alias" las confirmadas correctas suben de 32 a 75 (alias por clave estable).
 
 ### Iteraciones de ajuste (SCN-11)
 
