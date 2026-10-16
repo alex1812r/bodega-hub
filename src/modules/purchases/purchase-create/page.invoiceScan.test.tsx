@@ -704,6 +704,26 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
   });
 
+  it("CIE-09 (R2): la instrucción «No la vuelvas a registrar.» va en su propia línea del toast, para que el recorte móvil del título no la oculte", async () => {
+    const api = installApi({
+      purchase: {
+        payload: { data: { id: "purchase-nueva", invoiceScan: { confirmed: false, learned: null } } },
+        status: 201,
+      },
+    });
+    renderPage();
+
+    await scanAndLoad();
+    await confirmPurchase(api);
+
+    const title = await screen.findByText("La compra se registró pero no se pudo vincular la factura.");
+    const instruction = screen.getByText("No la vuelvas a registrar.");
+
+    expect(title).not.toBe(instruction);
+    expect(title).not.toContainElement(instruction);
+    expect(title.textContent).not.toMatch(/vuelvas/);
+  });
+
   it("una línea de la factura quitada del formulario no viaja en invoiceScanLines", async () => {
     const api = installApi();
     renderPage();

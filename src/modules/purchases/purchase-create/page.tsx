@@ -167,9 +167,11 @@ function requestErrorMessage(error: unknown) {
  * CIE-06 (auditoría M1): la compra se creó pero el escaneo no quedó confirmado con
  * ella (`invoiceScan.confirmed: false`). La factura sigue ligada a esa compra en el
  * servidor y no puede registrar otra.
+ * CIE-09 (R2): la instrucción va en la descripción del toast; en móvil el título se
+ * recorta a 2 líneas y la cortaba en «No la vuelvas a…».
  */
-export const INVOICE_SCAN_NOT_LINKED_MESSAGE =
-  "La compra se registró pero no se pudo vincular la factura. No la vuelvas a registrar.";
+export const INVOICE_SCAN_NOT_LINKED_MESSAGE = "La compra se registró pero no se pudo vincular la factura.";
+export const INVOICE_SCAN_NOT_LINKED_INSTRUCTION = "No la vuelvas a registrar.";
 
 export function PurchaseCreatePage() {
   const router = useRouter();
@@ -1319,7 +1321,11 @@ export function PurchaseCreatePage() {
       const learned = purchase.invoiceScan?.learned;
 
       if (purchase.invoiceScan?.confirmed === false) {
-        showToast({ title: INVOICE_SCAN_NOT_LINKED_MESSAGE, tone: "error" });
+        showToast({
+          description: INVOICE_SCAN_NOT_LINKED_INSTRUCTION,
+          title: INVOICE_SCAN_NOT_LINKED_MESSAGE,
+          tone: "error",
+        });
       } else if (learned) {
         showToast({ title: describeLearnedAliases(learned) });
       }

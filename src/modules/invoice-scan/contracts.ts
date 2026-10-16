@@ -40,7 +40,7 @@ export const INVOICE_TEXT_TOO_LONG_MESSAGE = `Cada texto de la factura puede ten
  * rechaza el U+0000 y los surrogates sueltos en `jsonb` (22P05), y el fallo
  * llegaba al confirmar el escaneo, DESPUÉS de crear la compra.
  */
-function hasForbiddenInvoiceChar(value: string): boolean {
+export function hasForbiddenInvoiceChar(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
 
