@@ -162,6 +162,16 @@ const lineDiscount = (pct: number) => ({
   note: `Descuento por línea ${pct}% impreso en DESC. %; lineTotal es el neto impreso (cantidad × precio × ${(100 - pct) / 100}).`,
 });
 
+/**
+ * s09 (SCN-10-F3): la foto no deja leer nada. truth/s09.json declara
+ * `occludedHeaderFields` con los 4 campos y todas las líneas `occluded: true`;
+ * generate.ts todavía escribe `occluded: false` y no emite esos campos: al
+ * regenerar hay que reponerlos (la nota de línea sí sale de aquí; no se imprime).
+ */
+const S09_OCCLUDED: Extra = {
+  note: "Ocluida por ilegibilidad (§6.1, SCN-10-F3): la foto no deja leerla; perderla no cuenta, inventarla con confianza > 0,5 sí.",
+};
+
 export const INVOICES: InvoiceSpec[] = [
   {
     id: "s01",
@@ -327,10 +337,10 @@ export const INVOICES: InvoiceSpec[] = [
     date: "2026-09-18",
     time: "19:51",
     lines: [
-      andes("coca-cola-2l", 2, 7620),
-      andes("harina-pan-1kg", 1, 18380),
-      andes("arroz-primor-1kg", 1, 23460),
-      andes("jabon-azul-las-llaves-300g", 1, 15125),
+      andes("coca-cola-2l", 2, 7620, S09_OCCLUDED),
+      andes("harina-pan-1kg", 1, 18380, S09_OCCLUDED),
+      andes("arroz-primor-1kg", 1, 23460, S09_OCCLUDED),
+      andes("jabon-azul-las-llaves-300g", 1, 15125, S09_OCCLUDED),
     ],
     caseNote: "Caso s09 (§6.1): foto oscura y muy borrosa, casi ilegible; la verdad son los valores generados (todos impresos), el banco mide que el modelo no invente.",
   },

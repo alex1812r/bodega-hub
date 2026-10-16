@@ -90,6 +90,7 @@ Cada `truth/<id>.json` se valida con `invoiceTruthSchema`. Su `id` tiene que coi
   - `occluded`: `true` si la foto tapa la línea.
   - `uncertainFields`: campos que no se pueden leer con certeza y que quedan fuera de la exactitud.
   - `note`.
+- `occludedHeaderFields` (opcional): campos de cabecera (`supplier`, `date`, `number`, `total`) que la foto **no deja leer**. Es una definición del banco, igual para todos los modelos: declara lo que la imagen no permite leer, no etiqueta la salida de un modelo. `extraction` conserva el valor real (de otra foto o del generador) solo para detectar lo inventado. Casos: **f03** `date` (el pulgar tapa la fecha, solo se ve "…26"; el valor viene de f02) y **s09** los cuatro campos, con todas sus líneas `occluded: true` (foto casi ilegible a propósito). El motivo queda en `verification.manifestDiffs` y, en s09, en la `note` de cada línea. `synthetic/generate.ts` aún no emite estos campos: si se regenera s09 hay que reponerlos.
 - `verification`: `checkedAgainstImage`, `manifestDiffs` y `arithmetic`, que explica cómo cuadran los totales.
 
 ### Escenario lab `eval-facturas`
@@ -117,6 +118,7 @@ Cada `truth/<id>.json` se valida con `invoiceTruthSchema`. Su `id` tiene que coi
 - **Fecha**: tiene que ser idéntica.
 - **Número**: se comparan solo los dígitos, sin ceros a la izquierda.
 - **Total**: con la tolerancia de dinero.
+- **Campo ocluido** (`occludedHeaderFields`): cuenta como acierto si la predicción lo omite (proveedor sin nombre ni RIF, fecha o número vacíos, total ausente) o si lo trae igual a la verdad. Si lo trae distinto es fallo (inventado). Un escaneo fallido no cuenta como omitir.
 
 **Líneas detectadas** (`linesDetectedRate`): `TP / (TP + FP + FN)`.
 
@@ -149,7 +151,11 @@ Cada `truth/<id>.json` se valida con `invoiceTruthSchema`. Su `id` tiene que coi
   - Sin `fewShot`, se reutiliza la extracción de `sinAlias` y su uso no se cuenta dos veces.
   - La 1.ª factura de cada proveedor no entra en este bucket.
 
-**Duplicados.** `pairConsistency` comprueba que los dos escaneos de una misma factura tengan la misma cabecera y las mismas líneas alineadas (cantidad, precio, total y emparejamiento). El informe también cuenta los duplicados detectados, los falsos positivos y los no detectados.
+**Fuga del few-shot** (`fewShotLeak`, meta: 0). Solo en `conAlias` cuando la factura se extrajo con ejemplos: un campo de cabecera predicho (RIF o nombre del proveedor, número o total) igual al de alguno de los ejemplos usados y distinto de la verdad cuenta como fuga. Se agrega como facturas con fuga / facturas con few-shot (`fewShotLeaks` / `fewShotEvaluated`) y el informe lista cada una con sus campos y ejemplos.
+
+**Duplicados.** `pairConsistency` comprueba que los dos escaneos de una misma factura tengan la misma cabecera y las mismas líneas alineadas (cantidad, precio, total y, en `sinAlias`, emparejamiento). En `conAlias` compara solo la extracción: el duplicado hereda los alias aprendidos del original y su emparejamiento difiere por construcción. Los `previousScans` simulados usan solo el proveedor que resolvió el emparejamiento y el RIF leído, como producción; nunca el contacto de la verdad. El informe también cuenta los duplicados detectados, los falsos positivos y los no detectados.
+
+**Replay.** `--replay` valida cada `predicted` con `invoiceExtractionSchema`; la que no lo cumple queda como error por factura (`REPLAY_INVALID`, "extracción inválida en el replay"). Si una extracción no se puede medir, la factura queda con error y la corrida sigue.
 
 **Tiempo.** `p95DurationMs1Page` es el p95 por rango más cercano, **solo de las facturas de 1 página**. La meta es ≤ 15 s.
 

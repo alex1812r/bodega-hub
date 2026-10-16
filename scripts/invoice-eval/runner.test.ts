@@ -25,6 +25,8 @@ import {
   measuredMetrics,
   parseReplaySource,
   pendingExtractions,
+  REPLAY_INVALID_CODE,
+  REPLAY_INVALID_MESSAGE,
   REPLAY_MISSING_CODE,
   REPLAY_MISSING_MESSAGE,
   renderRunMarkdown,
@@ -594,5 +596,83 @@ describe("pares no evaluables y fecha de la corrida (SCN-10m)", () => {
     expect(entry(before, "f01", "sinAlias").costUsd).toBeCloseTo((1000 * 0.75 + 200 * 3.75) / 1e6, 10);
     expect(entry(after, "f01", "sinAlias").costUsd).toBeCloseTo((1000 * 1.5 + 200 * 7.5) / 1e6, 10);
     expect(after.meta.date).toBe("2027-02-01T12:00:00.000Z");
+  });
+});
+
+describe("SCN-10-F3: robustez y pasada con alias", () => {
+  it("una extracción con null no tumba la corrida: error por factura y el resto sigue", async () => {
+    const base = fakeExtractor();
+    const extractor: BenchExtractor = async (input) => {
+      const result = await base(input);
+      if (input.invoice?.id !== "f02") return result;
+      const broken = { ...result.extraction, number: null, supplier: { name: null } } as unknown as InvoiceExtraction;
+      return { ...result, extraction: broken };
+    };
+    const result = await runBench(options({ extractor }));
+    const f02 = entry(result, "f02", "sinAlias");
+    expect(f02.error?.message).toBeTruthy();
+    expect(f02.predicted).toBeNull();
+    expect(entry(result, "f01", "sinAlias").metrics.exact.rate).toBe(1);
+    expect(entry(result, "f14", "sinAlias").metrics.exact.rate).toBe(1);
+  });
+
+  it("replay: una extracción que no cumple el schema queda con error por factura", async () => {
+    const raw = {
+      meta: { provider: "google", modelId: "gemini-2.5-flash", fewShot: false },
+      perInvoice: [
+        { id: "f01", bucket: "sinAlias", predicted: structuredClone(TRUTHS[0].extraction), tokens: {}, durationMs: 1 },
+        {
+          id: "f02",
+          bucket: "sinAlias",
+          predicted: { ...structuredClone(TRUTHS[1].extraction), number: null, supplier: { name: null } },
+          tokens: {},
+          durationMs: 1,
+        },
+      ],
+    };
+    const source = parseReplaySource(raw, "runs/origen.json");
+    const replay = createReplayExtractor(source);
+    const truths = TRUTHS.filter((t) => ["f01", "f02"].includes(t.id));
+    const result = await runBench(options({ truths, extractor: replay.extractor }));
+    const f02 = entry(result, "f02", "sinAlias");
+    expect(f02.error).toEqual({ message: REPLAY_INVALID_MESSAGE, code: REPLAY_INVALID_CODE });
+    expect(f02.predicted).toBeNull();
+    expect(entry(result, "f01", "sinAlias").error).toBeUndefined();
+  });
+
+  it("oráculo con alias: el par f02/f03 es consistente (se compara solo la extracción)", async () => {
+    const result = await runBench(options({ extractor: createOracleExtractor() }));
+    const pair = result.pairs.find((p) => p.bucket === "conAlias" && p.id === "f03");
+    expect(pair?.consistency.matchDiffs).toEqual([]);
+    expect(pair?.consistency.consistent).toBe(true);
+  });
+
+  it("previousScans no usa el contacto de la verdad si el emparejamiento no resolvió el proveedor", async () => {
+    const base = fakeExtractor();
+    // f02 se lee sin proveedor (ni nombre ni RIF): producción no sabría de quién es.
+    const extractor: BenchExtractor = async (input) => {
+      const result = await base(input);
+      if (input.invoice?.id !== "f02") return result;
+      return { ...result, extraction: { ...result.extraction, supplier: { name: "" } } };
+    };
+    const truths = TRUTHS.filter((t) => ["f02", "f03"].includes(t.id));
+    const result = await runBench(options({ truths, extractor }));
+    expect(entry(result, "f02", "sinAlias").matched?.supplier.contactId).toBeUndefined();
+    expect(entry(result, "f03", "sinAlias").duplicateOfScanId).toBeUndefined();
+  });
+
+  it("few-shot: la fuga de cabecera del ejemplo se mide en conAlias", async () => {
+    const base = fakeExtractor();
+    const extractor: BenchExtractor = async (input) => {
+      const result = await base(input);
+      if (input.invoice?.id !== "f02" || input.invoice.bucket !== "conAlias") return result;
+      return { ...result, extraction: { ...result.extraction, number: TRUTHS[0].extraction.number } };
+    };
+    const result = await runBench(options({ fewShot: true, extractor }));
+    const f02 = entry(result, "f02", "conAlias");
+    expect(f02.fewShotIds).toEqual(["f01"]);
+    expect(f02.metrics.fewShotLeak).toEqual({ evaluated: true, leaked: true, fields: ["number"] });
+    expect(result.global.all.byBucket.conAlias.fewShotLeaks).toBe(1);
+    expect(renderMarkdown(result)).toContain("Fugas de cabecera desde el few-shot");
   });
 });

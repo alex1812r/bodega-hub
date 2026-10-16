@@ -47,7 +47,7 @@ import { extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { createClient } from "@supabase/supabase-js";
 
-import type { InvoiceExtraction } from "../../src/modules/invoice-scan/contracts";
+import { invoiceExtractionSchema, type InvoiceExtraction } from "../../src/modules/invoice-scan/contracts";
 import { extractInvoice, type InvoiceFewShotExample } from "../../src/modules/invoice-scan/server/extract";
 import {
   loadMatchContext,
@@ -395,6 +395,8 @@ export function createOracleExtractor(): BenchExtractor {
 
 export const REPLAY_MISSING_CODE = "REPLAY_MISSING";
 export const REPLAY_MISSING_MESSAGE = "sin extracción en el replay";
+export const REPLAY_INVALID_CODE = "REPLAY_INVALID";
+export const REPLAY_INVALID_MESSAGE = "extracción inválida en el replay";
 
 export type ReplayEntry = {
   predicted: InvoiceExtraction;
@@ -408,8 +410,10 @@ export type ReplaySource = {
   provider: string;
   modelId: string;
   fewShot: boolean;
-  /** Clave `<id>:<bucket>`; solo entradas con `predicted`. */
+  /** Clave `<id>:<bucket>`; solo entradas con `predicted` válido según `invoiceExtractionSchema`. */
   entries: Map<string, ReplayEntry>;
+  /** Claves cuyo `predicted` no cumple el schema (run.json editado o truncado): error por factura. */
+  invalid: Set<string>;
 };
 
 export function replayKey(id: string, bucket: string): string {
@@ -434,19 +438,26 @@ export function parseReplaySource(raw: unknown, path: string): ReplaySource {
     throw new Error(`${path}: meta sin provider/modelId/fewShot.`);
   }
   const entries = new Map<string, ReplayEntry>();
+  const invalid = new Set<string>();
   for (const item of raw.perInvoice) {
     if (!isRecord(item) || typeof item.id !== "string" || typeof item.bucket !== "string") continue;
-    const predicted = item.predicted;
-    if (!isRecord(predicted) || !Array.isArray(predicted.lines)) continue;
+    if (item.predicted === null || item.predicted === undefined) continue;
+    const key = replayKey(item.id, item.bucket);
+    // Mismo contrato que la caché y producción: un null o un tipo raro no llega a las métricas.
+    const parsed = invoiceExtractionSchema.safeParse(item.predicted);
+    if (!parsed.success) {
+      invalid.add(key);
+      continue;
+    }
     const tokens = isRecord(item.tokens) ? item.tokens : {};
-    entries.set(replayKey(item.id, item.bucket), {
-      predicted: predicted as unknown as InvoiceExtraction,
+    entries.set(key, {
+      predicted: parsed.data,
       inputTokens: numberOrNull(tokens.input),
       outputTokens: numberOrNull(tokens.output),
       durationMs: numberOrNull(item.durationMs),
     });
   }
-  return { path, provider: meta.provider, modelId: meta.modelId, fewShot: meta.fewShot, entries };
+  return { path, provider: meta.provider, modelId: meta.modelId, fewShot: meta.fewShot, entries, invalid };
 }
 
 /** --fill-missing solo con el mismo proveedor/modelo de la corrida de origen. */
@@ -468,7 +479,11 @@ export function createReplayExtractor(source: ReplaySource, fallback?: BenchExtr
   const state = { replayed: 0, missing: 0, filled: 0 };
   const extractor: BenchExtractor = async (input) => {
     if (!input.invoice) throw new Error("Replay: el runner no indicó la factura.");
-    const entry = source.entries.get(replayKey(input.invoice.id, input.invoice.bucket));
+    const key = replayKey(input.invoice.id, input.invoice.bucket);
+    if (source.invalid.has(key)) {
+      throw Object.assign(new Error(REPLAY_INVALID_MESSAGE), { code: REPLAY_INVALID_CODE });
+    }
+    const entry = source.entries.get(key);
     if (entry) {
       state.replayed += 1;
       return {
@@ -822,6 +837,9 @@ export function summaryLines(result: BenchResult, meta: RunMeta, files: { markdo
     row("Exactitud", "exactRate", (m) => m.exactRate, ">="),
     row("Emparejadas OK", "matchOkRate", (m) => m.matchOkRate, ">="),
     row("Confirmadas mal", "confirmedWrongRateMax", (m) => m.confirmedWrongRate, "<="),
+    oracle
+      ? `Fugas few-shot         ${ORACLE_NA}`
+      : `Fugas few-shot         ${con.fewShotLeaks}/${con.fewShotEvaluated} con alias (${con.fewShotLeaks === 0 ? "OK" : "NO"} meta 0)`,
     oracle
       ? `p95 1 página           ${ORACLE_NA}`
       : `p95 1 página           ${total.p95DurationMs1Page === null ? "–" : `${total.p95DurationMs1Page} ms`} (${mark(total.p95DurationMs1Page, TARGETS.p95DurationMs1PageMax, "<=")} <=${TARGETS.p95DurationMs1PageMax} ms)${fromOriginal}`,

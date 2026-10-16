@@ -168,6 +168,12 @@ export function modeTargetsOk(result: Pick<BenchResult, "targets">, mode: Report
   return result.targets.checks.filter((c) => !hidden(mode, c.metric)).every((c) => c.skipped || c.ok);
 }
 
+/** Fugas de cabecera desde el few-shot (meta: 0) sobre las facturas extraídas con few-shot. */
+function fewShotLeakCell(m: AggregateMetrics): string {
+  if (m.fewShotEvaluated === 0) return NONE;
+  return `${m.fewShotLeaks}/${m.fewShotEvaluated} ${m.fewShotLeaks === 0 ? OK : FAIL}`;
+}
+
 function aggregateRow(scope: string, bucket: string, m: AggregateMetrics, mode: ReportMode = MODEL_MODE): string[] {
   const or = (metric: string, text: string) => (hidden(mode, metric) ? ORACLE_NA : text);
   return [
@@ -180,6 +186,7 @@ function aggregateRow(scope: string, bucket: string, m: AggregateMetrics, mode: 
     pct(m.matchOkRate),
     pct(m.confirmedWrongRate),
     `${m.duplicates.truePositive}/${m.duplicates.expected} (FP ${m.duplicates.falsePositive})`,
+    mode.kind === "oracle" ? ORACLE_NA : fewShotLeakCell(m),
     or("p95DurationMs1Page", ms(m.p95DurationMs1Page)),
     or("avgCostUsd", usd(m.avgCostUsd)),
   ];
@@ -276,6 +283,7 @@ export function renderMarkdown(result: BenchResult, mode: ReportMode = MODEL_MOD
         "Emparejamiento",
         "Confirmadas mal",
         "Duplicados",
+        "Fugas few-shot (meta 0)",
         mode.kind === "replay" ? `p95 1 pág. (${FROM_ORIGINAL})` : "p95 1 pág.",
         mode.kind === "replay" ? `$ medio (${FROM_ORIGINAL})` : "$ medio",
       ],
@@ -317,6 +325,29 @@ export function renderMarkdown(result: BenchResult, mode: ReportMode = MODEL_MOD
     );
   }
   out.push("");
+
+  if (mode.kind !== "oracle") {
+    out.push("## Fugas de cabecera desde el few-shot (meta: 0)");
+    out.push("");
+    out.push(
+      "Con alias y few-shot: campo de cabecera (RIF o nombre del proveedor, número, total) igual al de un ejemplo few-shot y distinto de la verdad.",
+    );
+    out.push("");
+    const leaks = result.perInvoice.filter((entry) => entry.metrics.fewShotLeak.leaked);
+    const evaluated = result.perInvoice.filter((entry) => entry.metrics.fewShotLeak.evaluated).length;
+    if (evaluated === 0) {
+      out.push("Sin extracciones con few-shot en esta corrida.");
+    } else if (leaks.length === 0) {
+      out.push(`${OK} ninguna fuga en ${evaluated} extracciones con few-shot.`);
+    } else {
+      out.push(`${FAIL} ${leaks.length} de ${evaluated} extracciones con few-shot:`);
+      for (const entry of leaks) {
+        const fields = entry.metrics.fewShotLeak.fields.map((field) => HEADER_SHORT[field]).join(", ");
+        out.push(`- ${invoiceLabel(entry)} (${BUCKET_LABELS[entry.bucket]}): ${fields} (ejemplos ${entry.fewShotIds.join(", ")})`);
+      }
+    }
+    out.push("");
+  }
 
   out.push('## Casos "no inventar"');
   out.push("");

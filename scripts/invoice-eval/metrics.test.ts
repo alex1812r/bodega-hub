@@ -554,3 +554,88 @@ describe("loadTruth", () => {
     expect(() => loadTruth(dir)).toThrow(/f08\.json.*JSON mal formado/);
   });
 });
+
+describe("SCN-10-F3: cabecera ocluida (occludedHeaderFields)", () => {
+  const occluded = (fields: InvoiceTruth["occludedHeaderFields"]) => truth({ occludedHeaderFields: fields });
+
+  it("un campo ocluido que la predicción omite cuenta como acierto", () => {
+    const m = run({ truth: occluded(["date"]), predicted: extraction({ date: undefined }) });
+    expect(m.header.fields.date).toMatchObject({ evaluated: true, ok: true });
+    expect(m.header.headerAllOk).toBe(true);
+  });
+
+  it("igual a la verdad es acierto; distinto es fallo (inventado)", () => {
+    expect(run({ truth: occluded(["date"]) }).header.fields.date.ok).toBe(true);
+    expect(run({ truth: occluded(["date"]), predicted: extraction({ date: "2026-09-02" }) }).header.fields.date.ok).toBe(false);
+  });
+
+  it("los cuatro campos ocluidos omitidos (s09) dan cabecera completa; un número inventado falla", () => {
+    const all = occluded(["supplier", "date", "number", "total"]);
+    const omitted = extraction({ supplier: { name: "" }, number: undefined, date: undefined, total: undefined });
+    const m = run({ truth: all, predicted: omitted, matched: null });
+    expect(m.header.okCount).toBe(4);
+    expect(m.header.evaluatedCount).toBe(4);
+    const invented = run({ truth: all, predicted: { ...omitted, number: "0009999" }, matched: null });
+    expect(invented.header.fields.number.ok).toBe(false);
+  });
+
+  it("sin ocluir, omitir sigue siendo fallo; un escaneo fallido no cuenta como omitir", () => {
+    expect(run({ predicted: extraction({ date: undefined }) }).header.fields.date.ok).toBe(false);
+    expect(run({ truth: occluded(["date"]), predicted: null, matched: null }).header.fields.date.ok).toBe(false);
+  });
+});
+
+describe("SCN-10-F3: fuga de cabecera desde el few-shot", () => {
+  const example = extraction({
+    supplier: { name: "Mayorista Los Andes, C.A.", taxId: "J-50473921-6" },
+    number: "0004000",
+    total: 1234.5,
+  });
+
+  it("número igual al de un ejemplo y distinto de la verdad cuenta como fuga", () => {
+    const m = run({ bucket: "conAlias", fewShot: [example], predicted: extraction({ number: "0004000" }) });
+    expect(m.fewShotLeak).toEqual({ evaluated: true, leaked: true, fields: ["number"] });
+  });
+
+  it("RIF o nombre del proveedor y total del ejemplo también cuentan", () => {
+    const byTax = run({ bucket: "conAlias", fewShot: [example], predicted: extraction({ supplier: { name: "", taxId: "J504739216" } }) });
+    expect(byTax.fewShotLeak.fields).toEqual(["supplier"]);
+    const byName = run({
+      bucket: "conAlias",
+      fewShot: [example],
+      predicted: extraction({ supplier: { name: "MAYORISTA LOS ANDES" }, total: 1234.5 }),
+    });
+    expect(byName.fewShotLeak.fields).toEqual(["supplier", "total"]);
+  });
+
+  it("igual a la verdad no es fuga aunque coincida con el ejemplo; sin few-shot no se evalúa", () => {
+    const sameAsTruth = run({ bucket: "conAlias", fewShot: [extraction()] });
+    expect(sameAsTruth.fewShotLeak).toEqual({ evaluated: true, leaked: false, fields: [] });
+    expect(run().fewShotLeak).toEqual({ evaluated: false, leaked: false, fields: [] });
+  });
+
+  it("se agrega por bucket", () => {
+    const leak = run({ bucket: "conAlias", fewShot: [example], predicted: extraction({ number: "4000" }) });
+    const clean = run({ bucket: "conAlias", fewShot: [example] });
+    const global = aggregate([leak, clean, run()]);
+    expect(global.byBucket.conAlias.fewShotLeaks).toBe(1);
+    expect(global.byBucket.conAlias.fewShotEvaluated).toBe(2);
+    expect(global.byBucket.sinAlias.fewShotLeaks).toBe(0);
+    expect(global.total.fewShotLeaks).toBe(1);
+  });
+});
+
+describe("SCN-10-F3: verdades con cabecera ocluida", () => {
+  const real = loadTruth(join(__dirname, "truth"));
+  const byId = (id: string) => real.find((t) => t.id === id) as InvoiceTruth;
+
+  it("f03: la fecha la tapa el pulgar", () => {
+    expect(byId("f03").occludedHeaderFields).toEqual(["date"]);
+  });
+
+  it("s09: toda la cabecera y todas las líneas ocluidas", () => {
+    const s09 = byId("s09");
+    expect(s09.occludedHeaderFields).toEqual(["supplier", "date", "number", "total"]);
+    expect(s09.lines.every((l) => l.occluded)).toBe(true);
+  });
+});

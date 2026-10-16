@@ -71,6 +71,9 @@
     "confidence": 1,
     "warnings": []
   },
+  "occludedHeaderFields": [
+    "date"
+  ],
   "lines": [
     {
       "productKey": "power-max-400ml",
@@ -106,7 +109,8 @@
   "verification": {
     "checkedAgainstImage": true,
     "manifestDiffs": [
-      "La fecha (08/09/2026), 'ORDEN DE DESPACHO' y 'Nombre:' quedan tapados por el pulgar (solo se ve '...26'); la fecha se toma de f02 (misma factura: nº 00003570, hora 15:36, Ref 3704)"
+      "La fecha (08/09/2026), 'ORDEN DE DESPACHO' y 'Nombre:' quedan tapados por el pulgar (solo se ve '...26'); la fecha se toma de f02 (misma factura: nº 00003570, hora 15:36, Ref 3704)",
+      "occludedHeaderFields [date] (SCN-10-F3, definición del banco): la foto no deja leer la fecha (solo '...26'); el valor de extraction.date viene de f02. Omitirla es acierto; traer otra fecha es fallo."
     ],
     "arithmetic": "q×p=total en las 5 líneas; sum(lineTotal)=33.150,15 = Total impreso OK; Total Items 7 = 1+1+1+2+2 OK; 33.150,15/814,70 = 40,69 = Ref impreso OK. Todos los importes, cantidades, empaques, Tasa y Ref visibles coinciden con f02"
   }

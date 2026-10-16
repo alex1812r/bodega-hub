@@ -72,35 +72,43 @@
     "confidence": 1,
     "warnings": []
   },
+  "occludedHeaderFields": [
+    "supplier",
+    "date",
+    "number",
+    "total"
+  ],
   "lines": [
     {
       "productKey": "coca-cola-2l",
-      "occluded": false,
+      "occluded": true,
       "uncertainFields": [],
-      "note": ""
+      "note": "Ocluida por ilegibilidad (§6.1, SCN-10-F3): la foto no deja leerla; perderla no cuenta, inventarla con confianza > 0,5 sí."
     },
     {
       "productKey": "harina-pan-1kg",
-      "occluded": false,
+      "occluded": true,
       "uncertainFields": [],
-      "note": ""
+      "note": "Ocluida por ilegibilidad (§6.1, SCN-10-F3): la foto no deja leerla; perderla no cuenta, inventarla con confianza > 0,5 sí."
     },
     {
       "productKey": "arroz-primor-1kg",
-      "occluded": false,
+      "occluded": true,
       "uncertainFields": [],
-      "note": ""
+      "note": "Ocluida por ilegibilidad (§6.1, SCN-10-F3): la foto no deja leerla; perderla no cuenta, inventarla con confianza > 0,5 sí."
     },
     {
       "productKey": "jabon-azul-las-llaves-300g",
-      "occluded": false,
+      "occluded": true,
       "uncertainFields": [],
-      "note": ""
+      "note": "Ocluida por ilegibilidad (§6.1, SCN-10-F3): la foto no deja leerla; perderla no cuenta, inventarla con confianza > 0,5 sí."
     }
   ],
   "verification": {
     "checkedAgainstImage": true,
-    "manifestDiffs": [],
+    "manifestDiffs": [
+      "occludedHeaderFields [supplier, date, number, total] y todas las líneas occluded (SCN-10-F3, definición del banco): la foto oscura y borrosa no deja leer cabecera ni líneas; los valores de extraction son los generados (impresos) y solo sirven para detectar lo inventado. Omitir es acierto; traer valores distintos es fallo."
+    ],
     "arithmetic": "Caso s09 (§6.1): foto oscura y muy borrosa, casi ilegible; la verdad son los valores generados (todos impresos), el banco mide que el modelo no invente. cantidad × precio × (1 − desc. línea) = lineTotal en las 4 líneas OK; sum(lineTotal)=72.205,00; = SUB-TOTAL/SUBTTL OK; EXENTO 41.840,00; BI G 30.365,00 × 16% = IVA 4.858,40; 41.840,00 + 30.365,00 + 4.858,40 = TOTAL 77.063,40 OK"
   }
 }
