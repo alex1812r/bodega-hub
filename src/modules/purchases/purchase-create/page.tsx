@@ -38,7 +38,10 @@ import {
   describeInvoiceForNotes,
   describeLoadedInvoiceRate,
   describeLearnedAliases,
+  LOADED_INVOICE_SCAN_RELEASED_NOTICE,
   pruneLoadedInvoiceScan,
+  removesLastInvoiceScanLine,
+  switchLoadedInvoiceScanCurrency,
   type LoadedInvoiceScan,
 } from "./invoice-scan/loadedInvoiceScan";
 import { fetchResumableInvoiceScan } from "./invoice-scan/resumeInvoiceReview";
@@ -85,6 +88,7 @@ import {
   type PurchaseLineSource,
 } from "./utils/duplicatePurchase";
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
+import { isPurchaseLineLocked } from "./utils/purchaseLineLocks";
 import {
   describeDraftSupplierUnavailable,
   isInvoiceReviewOnlyDraft,
@@ -744,8 +748,11 @@ export function PurchaseCreatePage() {
   // `true` si la compra guardada volvió al formulario.
   async function handleRestoreDraft(which: "new" | "saved") {
     const stored = which === "new" ? draft.pendingNew : draft.pending;
+    // Con un escaneo cargado, su tasa sigue siendo la de la compra (SCN-UI-C1); con ella
+    // basta aunque no haya tasa del día (SCN-UI-C3).
+    const restoreRateVes = stored?.invoiceScan?.invoiceRateVes ?? currentRateVes;
 
-    if (!stored || currentRateVes === undefined) {
+    if (!stored || restoreRateVes === undefined) {
       return false;
     }
 
@@ -761,8 +768,7 @@ export function PurchaseCreatePage() {
                 stored.supplierId,
                 stored.lines.items.map((item) => item.productId),
               ),
-              // Con un escaneo cargado, su tasa sigue siendo la de la compra (SCN-UI-C1).
-              rateVes: stored.invoiceScan?.invoiceRateVes ?? currentRateVes,
+              rateVes: restoreRateVes,
               taxRates: taxRates.rates,
             })
           : null;
@@ -918,7 +924,48 @@ export function PurchaseCreatePage() {
 
   function handleCostCurrencyChange(nextCurrency: PurchaseCostCurrency) {
     setCostCurrency(nextCurrency);
+
+    // Con la factura cargada, volver a Bs devuelve sus Bs exactos (SCN-UI-C3).
+    if (loadedScan?.invoiceCostVesByItemId) {
+      const switched = switchLoadedInvoiceScanCurrency(
+        loadedScan,
+        { ...(disassemble ? { disassemble } : {}), items, locks, review, taxState },
+        { from: costCurrency, rateVes: activeRateVes, to: nextCurrency },
+      );
+
+      setLoadedScan(switched.loaded);
+      dispatchLines({ state: switched.lines, type: "linesRestored" });
+      return;
+    }
+
     dispatchLines({ currency: nextCurrency, rateVes: activeRateVes, type: "costCurrencyChanged" });
+  }
+
+  // Quitar la última línea de la factura suelta el escaneo (SCN-UI-C3): sin campos del
+  // escaneo en el alta, vuelve la tasa del día y el escaneo sigue por revisar.
+  function handleRemoveItem(itemId: string) {
+    dispatchLines({ itemId, type: "lineRemoved" });
+
+    if (
+      !loadedScan ||
+      isPurchaseLineLocked(locks, itemId) ||
+      !removesLastInvoiceScanLine(
+        loadedScan,
+        items.map((item) => item.id),
+        itemId,
+      )
+    ) {
+      return;
+    }
+
+    const dailyRateVes = currentRateVes ?? FALLBACK_RATE_VES;
+
+    setLoadedScan(null);
+    setNotices((current) => [...current, LOADED_INVOICE_SCAN_RELEASED_NOTICE]);
+    // Los espejos de las líneas que quedan se recalculan con la tasa del día.
+    if (dailyRateVes !== activeRateVes) {
+      dispatchLines({ currency: costCurrency, rateVes: dailyRateVes, type: "costCurrencyChanged" });
+    }
   }
 
   // `scanned`: entró por el lector; el foco se queda en el buscador para encadenar (D36).
@@ -1354,7 +1401,9 @@ export function PurchaseCreatePage() {
           onRestore={() => void handleRestoreDraft("saved")}
           onRestoreNew={() => void handleRestoreDraft("new")}
           replacesForm={items.length > 0 || pendingDuplicate !== null}
-          restoreDisabled={currentRateVes === undefined}
+          restoreDisabled={
+            currentRateVes === undefined && draft.pending.invoiceScan?.invoiceRateVes === undefined
+          }
         />
       ) : null}
 
@@ -1423,7 +1472,7 @@ export function PurchaseCreatePage() {
                   }
                 : undefined
             }
-            onRemoveItem={(itemId) => dispatchLines({ itemId, type: "lineRemoved" })}
+            onRemoveItem={handleRemoveItem}
             onScanMissed={(missed) =>
               showToast({
                 description: missed.message,

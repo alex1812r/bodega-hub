@@ -786,11 +786,18 @@ describe("PurchaseCreatePage · factura cargada sin tasa del día (SCN-08-F1, 6.
 
 describe("PurchaseCreatePage · tasa de la factura distinta de la del día (SCN-UI-C1, 6.20)", () => {
   /** Revisión real: Harina 2 × Bs 700,52 con tasa impresa 875,65 y tasa del día 900. */
-  function printedRateDraft(choice: "printed" | "system") {
+  function printedRateDraft(
+    choice: "printed" | "system",
+    read: { lineTotal: number; quantity: number; unitPrice: number } = {
+      lineTotal: 1401.04,
+      quantity: 2,
+      unitPrice: 700.52,
+    },
+  ) {
     let state = createInvoiceReviewState(
       makeReviewResponse({
         extraction: { printedRate: 875.65 },
-        lines: [{ read: { lineTotal: 1401.04, quantity: 2, unitPrice: 700.52 } }],
+        lines: [{ read }],
       }),
       { systemRateVes: 900, taxRates: REVIEW_TAX_RATES },
     );
@@ -840,6 +847,87 @@ describe("PurchaseCreatePage · tasa de la factura distinta de la del día (SCN-
 
     expect(body.refRateVes).toBe(900);
     expect((body.items as Array<Record<string, unknown>>)[0]).toMatchObject({ unitCostVes: 700.52 });
+  });
+
+  it("SCN-UI-C3 (N1): quitar todas las líneas de la factura suelta el escaneo y vuelve a la tasa del día", async () => {
+    const api = installApi();
+    mockReviewDraft = printedRateDraft("printed");
+    renderPage();
+
+    await scanAndLoad(1);
+    click("agregar cable");
+    click("desbloquear Harina PAN");
+    click("quitar Harina PAN");
+
+    expect(
+      screen.getByText("Quitaste todas las líneas de la factura: la compra ya no se vincula al escaneo"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Tasa de la factura/)).not.toBeInTheDocument();
+
+    const body = await confirmPurchase(api);
+
+    expect(body.refRateVes).toBe(900);
+    expect(body).not.toHaveProperty("invoiceScanId");
+    expect(body).not.toHaveProperty("invoiceScanLines");
+    expect(body).not.toHaveProperty("invoiceScanExtraction");
+    // El escaneo no se descarta solo: sigue por revisar.
+    expect(api.posts.some((post) => post.url === DISCARD_URL)).toBe(false);
+  });
+
+  it("SCN-UI-C3 (N2): Bs → REF → Bs devuelve los Bs exactos de la factura en las líneas sin editar", async () => {
+    const api = installApi();
+    // 9 631,20 / 875,65 = REF 11,00, que de vuelta serían 9 632,15.
+    mockReviewDraft = printedRateDraft("printed", { lineTotal: 19262.4, quantity: 2, unitPrice: 9631.2 });
+    renderPage();
+
+    await scanAndLoad(1);
+    click("REF");
+    click("Bs");
+
+    expect(lineTexts()[0]).toContain("Bs 9631.2 · en ves");
+
+    const body = await confirmPurchase(api);
+
+    expect((body.items as Array<Record<string, unknown>>)[0]).toMatchObject({ unitCostVes: 9631.2 });
+    expect(body.subtotalVes).toBe(19262.4);
+  });
+
+  it("SCN-UI-C3 (N2): una línea de la factura editada no recupera los Bs de la factura al alternar", async () => {
+    installApi();
+    mockReviewDraft = printedRateDraft("printed", { lineTotal: 19262.4, quantity: 2, unitPrice: 9631.2 });
+    renderPage();
+
+    await scanAndLoad(1);
+    click("desbloquear Harina PAN");
+    click("editar Harina PAN");
+    click("REF");
+    click("Bs");
+
+    expect(lineTexts()[0]).not.toContain("Bs 9631.2");
+  });
+
+  it("SCN-UI-C3 (N3): sin tasa del día se puede restaurar el borrador que trae la tasa de la factura", async () => {
+    const api = installApi();
+    mockReviewDraft = printedRateDraft("printed");
+    const first = renderPage();
+
+    await scanAndLoad(1);
+    await waitFor(() =>
+      expect(storedDraft()?.invoiceScan).toMatchObject({ invoiceRateVes: 875.65, scanId: REVIEW_SCAN_ID }),
+    );
+    first.view.unmount();
+
+    mockExchangeRate = { data: undefined, error: new Error("No hay tasa del día.") };
+    renderPage();
+
+    expect(screen.getByRole("button", { name: "Restaurar" })).toBeEnabled();
+    click("Restaurar");
+    await waitFor(() => expect(lineTexts()).toHaveLength(1));
+
+    const body = await confirmPurchase(api);
+
+    expect(body.refRateVes).toBe(875.65);
+    expect(body.invoiceScanId).toBe(REVIEW_SCAN_ID);
   });
 });
 
