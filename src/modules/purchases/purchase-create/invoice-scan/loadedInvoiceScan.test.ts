@@ -93,6 +93,11 @@ describe("applyInvoiceReviewDraft", () => {
     expect(applied.lineMeta.get(productUuid(1))).toMatchObject({ name: "Harina PAN", taxRate: 16 });
     expect(applied.loaded).toEqual({
       extraction: makeLoadedReviewDraft().body.invoiceScanExtraction,
+      // SCN-UI-C3: los Bs de la factura por línea, para volver a ellos al alternar la moneda.
+      invoiceCostVesByItemId: {
+        "line-1": { costVes: 5000, entryMode: "unit" },
+        "line-2": { costVes: 12000, entryMode: "pack" },
+      },
       invoiceRateVes: 500,
       lineIndexByItemId: { "line-1": 0, "line-2": 2 },
       scanId: REVIEW_SCAN_ID,

@@ -10,6 +10,7 @@ import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import {
   getLineCosts,
   getLineNeeds,
+  MAX_REVIEW_UNITS_PER_PACK,
   type InvoiceReviewLine,
   type InvoiceReviewLineStatus,
   type InvoiceReviewState,
@@ -128,6 +129,9 @@ export function confirmedToggleLabel(count: number, expanded: boolean): string {
 /** Qué le falta a la línea para quedar resuelta, en español (sin contar el producto). */
 export function lineNeedMessages(line: InvoiceReviewLine): string[] {
   return getLineNeeds(line).flatMap((need) => {
+    if (need === "unitsPerPack" && line.unitsPerPack !== undefined && line.unitsPerPack > MAX_REVIEW_UNITS_PER_PACK) {
+      return [`Máximo ${MAX_REVIEW_UNITS_PER_PACK.toLocaleString("es-VE")} unidades por empaque.`];
+    }
     if (need === "unitsPerPack" && line.unitsPerPack !== undefined) {
       return ["Debe ser un entero mayor que 0."];
     }

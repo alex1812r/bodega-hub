@@ -43,6 +43,19 @@ export type LoadedInvoiceScan = {
    * (SCN-UI-C1). Ausente = precios de la factura en REF (USD aceptado), tasa del día.
    */
   invoiceRateVes?: number;
+  /**
+   * SCN-UI-C3 · Costo en Bs de la factura (el del modo de entrada) de cada línea cargada
+   * en Bs: alternar «Costos en» Bs → REF → Bs lo devuelve sin el redondeo del REF.
+   */
+  invoiceCostVesByItemId?: Record<string, InvoiceLineCostVes>;
+};
+
+/** Costo Bs de una línea tal como vino de la factura. */
+export type InvoiceLineCostVes = {
+  costVes: number;
+  entryMode: PurchaseDraftItem["entryMode"];
+  /** Costo REF de la línea justo tras pasar a REF sin haberse editado; ausente si no aplica. */
+  refAfterSwitch?: number;
 };
 
 export type AppliedInvoiceReviewDraft = {
@@ -136,6 +149,13 @@ export function applyInvoiceReviewDraft(
   const lockedBefore = new Set(Object.keys(kept?.locks.locked ?? {}));
   const newlyLocked = toLock.filter((item) => !lockedBefore.has(item.id));
   const mergedDisassemble = { ...(kept?.disassemble ?? {}), ...disassemble };
+  const invoiceCostVesByItemId: Record<string, InvoiceLineCostVes> = {};
+
+  if (costCurrency === "ves") {
+    for (const item of added) {
+      invoiceCostVesByItemId[item.id] = { costVes: entryCostVes(item), entryMode: item.entryMode };
+    }
+  }
 
   return {
     costCurrency,
@@ -158,6 +178,7 @@ export function applyInvoiceReviewDraft(
     loaded: {
       extraction: draft.body.invoiceScanExtraction,
       ...(draft.invoiceRateVes !== undefined ? { invoiceRateVes: draft.invoiceRateVes } : {}),
+      ...(added.length > 0 && costCurrency === "ves" ? { invoiceCostVesByItemId } : {}),
       lineIndexByItemId,
       scanId: draft.body.invoiceScanId,
     },
@@ -221,6 +242,123 @@ export function pruneLoadedInvoiceScan(
     lineIndexByItemId: Object.fromEntries(
       Object.entries(loaded.lineIndexByItemId).filter(([itemId]) => kept.has(itemId)),
     ),
+  };
+}
+
+/** Aviso al quitar la última línea de la factura (SCN-UI-C3). */
+export const LOADED_INVOICE_SCAN_RELEASED_NOTICE =
+  "Quitaste todas las líneas de la factura: la compra ya no se vincula al escaneo";
+
+/**
+ * `true` si quitar `removedItemId` deja el formulario sin ninguna línea de la factura:
+ * la compra deja de vincularse al escaneo (que sigue por revisar) y vuelve la tasa del día.
+ */
+export function removesLastInvoiceScanLine(
+  loaded: LoadedInvoiceScan,
+  itemIds: Iterable<string>,
+  removedItemId: string,
+) {
+  if (!(removedItemId in loaded.lineIndexByItemId)) {
+    return false;
+  }
+
+  for (const itemId of itemIds) {
+    if (itemId !== removedItemId && itemId in loaded.lineIndexByItemId) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function entryCostVes(item: PurchaseDraftItem) {
+  return item.entryMode === "pack" ? item.packCostVes : item.unitCostVes;
+}
+
+function entryCostRef(item: PurchaseDraftItem) {
+  return item.entryMode === "pack" ? item.packCostRef : item.unitCostRef;
+}
+
+function withEntryCostVes(item: PurchaseDraftItem, costVes: number, rateVes: number) {
+  return syncLineCostFields(
+    item.entryMode === "pack" ? { ...item, packCostVes: costVes } : { ...item, unitCostVes: costVes },
+    rateVes,
+  );
+}
+
+/**
+ * «Costos en» con un escaneo cargado (SCN-UI-C3): la conversión de siempre, salvo que
+ * las líneas de la factura cuyo costo no se editó desde la carga, al volver a Bs,
+ * recuperan los Bs exactos de la factura (no los del REF redondeado).
+ */
+export function switchLoadedInvoiceScanCurrency(
+  loaded: LoadedInvoiceScan,
+  lines: PurchaseLinesSnapshot,
+  change: { from: PurchaseCostCurrency; rateVes: number; to: PurchaseCostCurrency },
+): { lines: PurchaseLinesSnapshot; loaded: LoadedInvoiceScan } {
+  const { from, rateVes, to } = change;
+  const items = lines.items.map((item) => switchCostCurrency(item, to, rateVes));
+  const review = switchPurchaseReviewCostCurrency(lines.review, to, rateVes);
+  const costs = loaded.invoiceCostVesByItemId;
+
+  if (!costs || from === to) {
+    return { lines: { ...lines, items, review }, loaded };
+  }
+
+  const nextCosts: Record<string, InvoiceLineCostVes> = {};
+  const restored = new Map<string, number>();
+
+  for (const [index, before] of lines.items.entries()) {
+    const cost = costs[before.id];
+
+    if (!cost) {
+      continue;
+    }
+
+    const base: InvoiceLineCostVes = { costVes: cost.costVes, entryMode: cost.entryMode };
+    const sameMode = before.entryMode === cost.entryMode;
+
+    nextCosts[before.id] =
+      to === "ref" && sameMode && roundMoney(entryCostVes(before)) === roundMoney(cost.costVes)
+        ? { ...base, refAfterSwitch: roundMoney(entryCostRef(items[index])) }
+        : base;
+
+    if (
+      to === "ves" &&
+      sameMode &&
+      cost.refAfterSwitch !== undefined &&
+      roundMoney(entryCostRef(before)) === cost.refAfterSwitch
+    ) {
+      restored.set(before.id, entryCostVes(items[index]));
+      items[index] = withEntryCostVes(items[index], cost.costVes, rateVes);
+    }
+  }
+
+  // Las fotos de revisión que coincidían con la línea siguen coincidiendo (no cuenta como edición).
+  const restoreSnapshots = (snapshots: PurchaseLinesSnapshot["review"]["baselines"]) =>
+    Object.fromEntries(
+      Object.entries(snapshots).map(([itemId, snapshot]) => {
+        const switchedVes = restored.get(itemId);
+        const cost = costs[itemId];
+
+        return switchedVes !== undefined &&
+          cost &&
+          snapshot.item.entryMode === cost.entryMode &&
+          roundMoney(entryCostVes(snapshot.item)) === roundMoney(switchedVes)
+          ? [itemId, { ...snapshot, item: withEntryCostVes(snapshot.item, cost.costVes, rateVes) }]
+          : [itemId, snapshot];
+      }),
+    );
+
+  return {
+    lines: {
+      ...lines,
+      items,
+      review:
+        restored.size > 0
+          ? { baselines: restoreSnapshots(review.baselines), reviewed: restoreSnapshots(review.reviewed) }
+          : review,
+    },
+    loaded: { ...loaded, invoiceCostVesByItemId: nextCosts },
   };
 }
 

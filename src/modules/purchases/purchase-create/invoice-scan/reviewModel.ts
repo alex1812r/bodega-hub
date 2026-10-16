@@ -42,6 +42,8 @@ export const MAX_REVIEW_CANDIDATES = 3;
 export const MAX_REVIEW_QUANTITY = 2_147_483_647;
 /** Importe o precio por encima de esto es una lectura imposible. */
 export const MAX_REVIEW_AMOUNT = 1e12;
+/** Unidades por empaque máximas: las mismas que valida el servidor en `invoiceScanLines`. */
+export const MAX_REVIEW_UNITS_PER_PACK = 100_000;
 /** Etiqueta de empaque cuando la factura no dice cuál (la misma de la compra duplicada). */
 export const DEFAULT_PACK_LABEL = "Bulto";
 
@@ -186,7 +188,7 @@ function isPositive(value: number | null | undefined): value is number {
 }
 
 function isValidUnitsPerPack(value: number | undefined): value is number {
-  return isPositive(value) && Number.isInteger(value);
+  return isPositive(value) && Number.isInteger(value) && value <= MAX_REVIEW_UNITS_PER_PACK;
 }
 
 const PACK_LABELS: Record<string, string> = {
