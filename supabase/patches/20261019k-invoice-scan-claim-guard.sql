@@ -39,6 +39,14 @@
 -- 3. Execute: revoke de public, anon y authenticated; grant solo a
 --    service_role (igual que 19i).
 --
+-- CIE-06 (auditoria pasada 1, M1): discard_invoice_scan tambien da PT409
+-- "Esta factura ya tiene una compra registrada y no se puede descartar." si la
+-- clave del reclamo ya creo su compra (purchases.client_request_id =
+-- claim_request_id y created_at >= claim_started_at - 1 s; misma regla que
+-- claim_invoice_scan de 19b), aunque el reclamo haya caducado: si no, el
+-- descarte y el reescaneo (reserve limpia el reclamo) dejaban confirmar la misma
+-- factura en otra compra. Sin 19b las columnas son null y no aplica.
+--
 -- No toca complete/fail_invoice_scan ni las RPC de Emparejamiento.
 --
 -- Reaplicación: si se reaplica 20261019i (o la cadena 19a → 19g → 19i), hay
@@ -231,6 +239,20 @@ begin
   -- compra ya enlazada.
   v_fields := to_jsonb(v_row);
 
+  -- CIE-06: la clave del reclamo ya creo su compra; el escaneo es de esa compra.
+  if v_fields->>'claim_request_id' is not null
+     and v_fields->>'claim_started_at' is not null
+     and exists (
+       select 1
+       from public.purchases p
+       where p.store_id = v_row.store_id
+         and p.client_request_id = (v_fields->>'claim_request_id')::uuid
+         and p.created_at >= (v_fields->>'claim_started_at')::timestamptz - interval '1 second'
+     ) then
+    raise exception 'Esta factura ya tiene una compra registrada y no se puede descartar.'
+      using errcode = 'PT409';
+  end if;
+
   if v_row.purchase_id is not null
      or v_row.confirmed is not null
      or (
@@ -254,7 +276,7 @@ end;
 $$;
 
 comment on function public.discard_invoice_scan(uuid, uuid) is
-  'Descarta un escaneo extracted de la tienda; PT409 con mensaje por estado, o si hay un reclamo activo de Emparejamiento, purchase_id o confirmed; solo service_role (SCN-03l, SCN-03n, SCN-03o).';
+  'Descarta un escaneo extracted de la tienda; PT409 con mensaje por estado, o si hay un reclamo activo de Emparejamiento, purchase_id, confirmed o la clave del reclamo ya creó su compra; solo service_role (SCN-03l, SCN-03n, SCN-03o, CIE-06).';
 
 -- 3. Solo service_role ------------------------------------------------------------------
 

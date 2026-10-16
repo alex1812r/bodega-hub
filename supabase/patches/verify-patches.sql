@@ -2886,6 +2886,33 @@ select
   )
 union all
 select
+  'claim_invoice_scan: el reclamo cuya clave ya creo su compra no caduca para otra clave y responde PT409 Esta factura ya se registró en otra compra (20261019b, CIE-06)',
+  coalesce((
+    select p.prosrc ilike '%s.claimed_at < now() - interval ''5 minutes'')%and not exists%p.client_request_id = s.claim_request_id%p.created_at >= s.claim_started_at - interval ''1 second''%'
+      and p.prosrc ilike '%Esta factura ya se registró en otra compra%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'release_invoice_scan_claim no suelta un reclamo ligado a la compra de su clave (20261019b, CIE-06)',
+  coalesce((
+    select p.prosrc ilike '%and not exists%p.client_request_id = s.claim_request_id%p.created_at >= s.claim_started_at - interval ''1 second''%'
+    from pg_proc p where p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)')
+  ), false)
+union all
+select
+  'discard_invoice_scan: PT409 si la clave del reclamo ya creo su compra, aunque el reclamo haya caducado (20261019k, CIE-06)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'discard_invoice_scan'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid, p_id uuid'
+      and p.prosrc ilike '%p.client_request_id = (v_fields->>''claim_request_id'')::uuid%'
+      and p.prosrc ilike '%(v_fields->>''claim_started_at'')::timestamptz - interval ''1 second''%'
+      and p.prosrc ilike '%ya tiene una compra registrada y no se puede descartar%'
+  )
+union all
+select
   'remove_supplier_product_alias(uuid) uuid existe, security definer y search_path=public (20261020a)',
   exists (
     select 1 from pg_proc p

@@ -10,6 +10,8 @@ import { mockPurchases } from "@/shared/mocks/erp-data";
 
 import type { InvoiceExtraction } from "../contracts";
 
+import { INVOICE_SCAN_PURCHASE_BOUND_MESSAGE } from "./confirmScan.server";
+
 import {
   finalizeInvoiceScan,
   getMockInvoiceScan,
@@ -323,6 +325,47 @@ describe("confirmScan.mock-server", () => {
     expect(outcome).toEqual({ confirmed: true, learned: 0 });
     createdMockPurchases().delete("p-incierta");
     now.mockRestore();
+  });
+
+  it("CIE-06 (M1): si el confirm falla tras crear la compra, el reclamo queda ligado a ella: no caduca para otra clave, no se suelta y el mismo intento confirma después", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    // Lectura guardada fuera del contrato: sin extracción corregida el confirm falla (D10).
+    registerMockInvoiceScan({ extracted: { lines: [{ rawText: "x" }] }, id: "scan-1" });
+    const start = Date.parse("2026-10-16T13:07:53Z");
+    const now = jest.spyOn(Date, "now").mockReturnValue(start);
+    const first = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    createdMockPurchases().set("p-primera", {
+      items: [],
+      purchase: { ...mockPurchases[0]!, createdAt: new Date(start + 500).toISOString(), id: "p-primera" },
+    });
+    const finalizeFirst = (scan: typeof first, extraction?: InvoiceExtraction) =>
+      finalizeInvoiceScan(
+        scan,
+        { clientRequestId: KEY_1, extraction, items: [], lines: [], purchaseId: "p-primera", supplierId: SUPPLIER },
+        DEFAULT_STORE_ID,
+      );
+
+    expect(await finalizeFirst(first)).toEqual({ confirmed: false, learned: null });
+
+    // ev-07: pasados 5 min otra clave ya no puede reclamar el escaneo para otra compra.
+    now.mockReturnValue(start + 6 * 60 * 1000);
+    await expect(precheckInvoiceScan({ clientRequestId: KEY_2, scanId: "scan-1" }, DEFAULT_STORE_ID)).rejects.toMatchObject({
+      message: INVOICE_SCAN_PURCHASE_BOUND_MESSAGE,
+      status: 400,
+    });
+
+    // Soltar el reclamo (lo que hace el BFF ante un 4xx de create_purchase) no lo libera.
+    await releaseInvoiceScanClaim({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    expect(getMockInvoiceScan("scan-1")).toMatchObject({ claimRequestId: KEY_1, status: "extracted" });
+
+    // El mismo intento reintenta y confirma la MISMA compra.
+    const retry = await precheckInvoiceScan({ clientRequestId: KEY_1, scanId: "scan-1" }, DEFAULT_STORE_ID);
+    expect(await finalizeFirst(retry, extracted)).toEqual({ confirmed: true, learned: 0 });
+    expect(getMockInvoiceScan("scan-1")).toMatchObject({ purchaseId: "p-primera", status: "confirmed" });
+
+    createdMockPurchases().delete("p-primera");
+    now.mockRestore();
+    jest.restoreAllMocks();
   });
 
   it("alias normalizado de más de 200 caracteres: se guarda en confirmed pero no se aprende", async () => {
