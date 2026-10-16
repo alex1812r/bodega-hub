@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "key": "ebb4ba7c06e464333e26fdbe7801cab6cc2792ed984f7d8fa41bd34080bc82d8",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s01",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA EL SAMAN 2024, C.A.",
+      "taxId": "J-41258736-0",
+      "phone": "0212-871.44.90",
+      "address": "AV. SUCRE, GALPON 12, ZONA INDUSTRIAL LOS FRAILES, CATIA, CARACAS"
+    },
+    "number": "00002318",
+    "date": "2026-09-02",
+    "currency": "VES",
+    "printedRate": 881.34,
+    "lines": [
+      {
+        "rawText": "SM-01045 REFRESCO GLUP COLA 2LT [BULTO X 6] 3 5.780,40 0,00 17.341,20",
+        "description": "REFRESCO GLUP COLA 2LT",
+        "quantity": 3,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5780.4,
+        "lineTotal": 17341.2,
+        "taxHint": "unknown",
+        "supplierSku": "SM-01045",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-01046 REFRESCO GLUP SABORES 2LT [BULTO X 6] 2 4.590,00 5,00 8.721,00",
+        "description": "REFRESCO GLUP SABORES 2LT",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4590,
+        "lineTotal": 8721,
+        "taxHint": "unknown",
+        "supplierSku": "SM-01046",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-01120 REFRESCO COCA COLA 2LT [BULTO X 6] 2 7.590,60 0,00 15.181,20",
+        "description": "REFRESCO COCA COLA 2LT",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7590.6,
+        "lineTotal": 15181.2,
+        "taxHint": "unknown",
+        "supplierSku": "SM-01120",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02001 HARINA PAN 1KG (E) [BULTO X 20] 2 18.450,00 3,00 35.793,00",
+        "description": "HARINA PAN 1KG (E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18450,
+        "lineTotal": 35793,
+        "taxHint": "exento",
+        "supplierSku": "SM-02001",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02210 ARROZ PRIMOR 1KG (E) [BULTO X 24] 1 23.520,00 0,00 23.520,00",
+        "description": "ARROZ PRIMOR 1KG (E)",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23520,
+        "lineTotal": 23520,
+        "taxHint": "exento",
+        "supplierSku": "SM-02210",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02305 PASTA HORIZONTE CORTA 1KG (E) CAJA X12 2 15.360,00 10,00 27.648,00",
+        "description": "PASTA HORIZONTE CORTA 1KG (E)",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 15360,
+        "lineTotal": 27648,
+        "taxHint": "exento",
+        "supplierSku": "SM-02305",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-03410 ATUN MARGARITA EN ACEITE 140GR CAJA X24 1 30.240,00 0,00 30.240,00",
+        "description": "ATUN MARGARITA EN ACEITE 140GR",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 30240,
+        "lineTotal": 30240,
+        "taxHint": "unknown",
+        "supplierSku": "SM-03410",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 158444.4,
+    "tax": 11208.6,
+    "total": 166484.11,
+    "confidence": 1,
+    "warnings": [
+      "Se detectó un descuento global en la factura que no está desglosado en las líneas."
+    ]
+  },
+  "inputTokens": 2747,
+  "outputTokens": 1443,
+  "durationMs": 3851,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:07:31.616Z"
+}

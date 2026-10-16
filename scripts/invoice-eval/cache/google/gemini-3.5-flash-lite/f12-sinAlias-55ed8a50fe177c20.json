@@ -1,0 +1,455 @@
+{
+  "version": 1,
+  "key": "55ed8a50fe177c20a745a9cb8b2bcd3592dad6f3c5293754f992b5226fc55abe",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f12",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "a297383355b0fa7ce656b3596451d51e03ec7a35446305911443e67c3c6911a9",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "INVERSIONES MARKET CATIA, C.A.",
+      "taxId": "J-500244150",
+      "address": "Calle Argentina Entre 3era y 4ta Avenida Local PB Nro 78 Perez Bonalde Catia Caracas D.C. Z.P. 1030"
+    },
+    "number": "00001028",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 X B 3.128,28 [MAYOR] DETERGENTE ALIVE FLORAL 500G - #[1X3] #",
+        "description": "DETERGENTE ALIVE FLORAL 500G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 3.128,28 [MAYOR] DETERGENTE ALIVE SUAVIZANTE ROSADO 500G - #[1X3] #",
+        "description": "DETERGENTE ALIVE SUAVIZANTE ROSADO 500G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 3.166,59 [MAYOR] DESINFECTANTE OSO BLANCO 1LITRO - #[1X3] #",
+        "description": "DESINFECTANTE OSO BLANCO 1LITRO",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 3166.59,
+        "lineTotal": 3166.59,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 2.893,53 [MAYOR BSS] CLORO OSO BLANCO 1L - #[1X3] #",
+        "description": "CLORO OSO BLANCO 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 2893.53,
+        "lineTotal": 2893.53,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 3.726,75 [MAYOR] LAVAPLATO AXION EN CREMA 235GR - #[1X3] #",
+        "description": "LAVAPLATO AXION EN CREMA 235GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 3726.75,
+        "lineTotal": 3726.75,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 1.056,03 BOLSA MARACAY 5KG - #[1X3] #",
+        "description": "BOLSA MARACAY 5KG",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 1056.03,
+        "lineTotal": 1056.03,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 1.410,56 BOLSA MARACAY 10KG - #[1X3] #",
+        "description": "BOLSA MARACAY 10KG",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 1410.56,
+        "lineTotal": 1410.56,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.013,84 [MAYOR] FLIPS BOLSA CHOCOLATE 120G - #[1X3] #",
+        "description": "FLIPS BOLSA CHOCOLATE 120G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4013.84,
+        "lineTotal": 4013.84,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.053,66 [MAYOR] FLIPS BOLSA DULCE LECHE 120G - #[1X3] #",
+        "description": "FLIPS BOLSA DULCE LECHE 120G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4053.66,
+        "lineTotal": 4053.66,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 2.545,65 [MAYOR] RANCHERA CHOCOLATE 6UND*28GRS - #[1X3] #",
+        "description": "RANCHERA CHOCOLATE 6UND*28GRS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 2545.65,
+        "lineTotal": 2545.65,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 2.534,48 FLIPS LONCHERA DULCE LECHE 6UND*28GRS - #[1X3] #",
+        "description": "FLIPS LONCHERA DULCE LECHE 6UND*28GRS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 2534.48,
+        "lineTotal": 2534.48,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 5.566,81 PALITOY CHOCO DISPLAY*18UND - #[1X3] #",
+        "description": "PALITOY CHOCO DISPLAY*18UND",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 18,
+        "unitPrice": 5566.81,
+        "lineTotal": 5566.81,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 2.029,85 CARAMELOS MENTA HELADA SUPER 38OGRS 100U - #[1X3] #",
+        "description": "CARAMELOS MENTA HELADA SUPER 38OGRS 100U",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 2029.85,
+        "lineTotal": 2029.85,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 7.588,36 [MAYOR] CHEESE TRIS 150G - #[1X3] #",
+        "description": "CHEESE TRIS 150G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 7588.36,
+        "lineTotal": 7588.36,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 5.159,48 [MAYOR] PAPAS RIZADAS YUPI POLLO130GR - #[1X3] #",
+        "description": "PAPAS RIZADAS YUPI POLLO130GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 5159.48,
+        "lineTotal": 5159.48,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 7.331,90 [MAYOR] RUFFLES CREMA CEBOLLA 122G - #[1X3] #",
+        "description": "RUFFLES CREMA CEBOLLA 122G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 7331.9,
+        "lineTotal": 7331.9,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 7.316,81 [MAYOR] RUFFLES QUESO 125G - #[1X3] #",
+        "description": "RUFFLES QUESO 125G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 7316.81,
+        "lineTotal": 7316.81,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 5.431,03 TOSTON TOM TIRA 80G*8UND - #[1X3] #",
+        "description": "TOSTON TOM TIRA 80G*8UND",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 8,
+        "unitPrice": 5431.03,
+        "lineTotal": 10862.07,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 8.961,21 DORITOS DINAMITA FLAMIN TIRA 40G*12 - #[1X3] #",
+        "description": "DORITOS DINAMITA FLAMIN TIRA 40G*12",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 8.961,21 DORITO COOL RANCH 42G*12U - #[1X3] #",
+        "description": "DORITO COOL RANCH 42G*12U",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.480,60 [MAYOR] PAPA RAYADA BBQ 105G - #[1X3] #",
+        "description": "PAPA RAYADA BBQ 105G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.480,60 [MAYOR] PAPA RAYADA POLLO 105G - #[1X3] #",
+        "description": "PAPA RAYADA POLLO 105G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 5.883,62 [MAYOR] DORITOS 150GR - #[1X3] #",
+        "description": "DORITOS 150GR",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitPrice": 5883.62,
+        "lineTotal": 11767.24,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 8.768,86 [MAYOR] GALLETA MAXCOCO 460GR - #[1X3] #",
+        "description": "GALLETA MAXCOCO 460GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 8768.86,
+        "lineTotal": 8768.86,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.457,97 [MANGA] MUNCHY RINGOS 62GRS - #[1X5] #",
+        "description": "MUNCHY RINGOS 62GRS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4457.97,
+        "lineTotal": 4457.97,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 3.771,55 SAMY 264G*24UND - #[1X3] #",
+        "description": "SAMY 264G*24UND",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 3771.55,
+        "lineTotal": 3771.55,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 3.918,25 [MAYOR] LECHE CONDENSADA CREMOR 395GR(E) - #[1X3] #",
+        "description": "LECHE CONDENSADA CREMOR 395GR(E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitPrice": 3918.25,
+        "lineTotal": 7836.5,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 2.462,07 [MAYOR] GALLETAS CRAKENAS 192G*8UND - #[1X3] #",
+        "description": "GALLETAS CRAKENAS 192G*8UND",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 8,
+        "unitPrice": 2462.07,
+        "lineTotal": 4924.14,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 8.478,75 [MAYOR] MANTEQUILLA MAVESA 500GR(E) - #[1X3] #",
+        "description": "MANTEQUILLA MAVESA 500GR(E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitPrice": 8478.75,
+        "lineTotal": 16957.5,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.211,38 [MAYOR] ACEITE SOYA LA PAMPA 500ML(E) - #[1X3] #",
+        "description": "ACEITE SOYA LA PAMPA 500ML(E)",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4211.38,
+        "lineTotal": 4211.38,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 5.892,25 [MAYOR] ACEITE SOYA LA PAMPA 700ML(E) - #[1X3] #",
+        "description": "ACEITE SOYA LA PAMPA 700ML(E)",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 5892.25,
+        "lineTotal": 5892.25,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 3.771,55 [MAYOR] ATUN WILLINGER EN ACEITE 170GR - #[1X3] #",
+        "description": "ATUN WILLINGER EN ACEITE 170GR",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitPrice": 3771.55,
+        "lineTotal": 7543.1,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 4.725,00 [MAYOR] MANTEQUILLA MAVESA 250GR(E) - #[1X3] #",
+        "description": "MANTEQUILLA MAVESA 250GR(E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitPrice": 4725,
+        "lineTotal": 9450,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 2.338,88 [MAYOR] SARDINA WILLINGER 155GR(E) - #[1X3] #",
+        "description": "SARDINA WILLINGER 155GR(E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitPrice": 2338.88,
+        "lineTotal": 4677.76,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "4 X B 3.031,88 [MAYOR] HARINA PAN 1KG(E) - #[1X3] #",
+        "description": "HARINA PAN 1KG(E)",
+        "quantity": 4,
+        "unit": "bulto",
+        "unitPrice": 3031.88,
+        "lineTotal": 12127.52,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "2 X B 6.918,63 [MAYOR] ARROZ MARY PREMIUM 900GR(E) - #[1X6] #",
+        "description": "ARROZ MARY PREMIUM 900GR(E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 6918.63,
+        "lineTotal": 13837.26,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "4 X B 6.428,63 [MAYOR] LECHE DOBON 200GR(E) - #[1X3] #",
+        "description": "LECHE DOBON 200GR(E)",
+        "quantity": 4,
+        "unit": "bulto",
+        "unitPrice": 6428.63,
+        "lineTotal": 25714.52,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 7.494,83 [MAYOR] CHIMO TIGRITO AMARILLO 6UND - #[1X3] #",
+        "description": "CHIMO TIGRITO AMARILLO 6UND",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7494.83,
+        "lineTotal": 7494.83,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 13.954,74 MINI SAMBA FRESA BOLSA 16G*35UND - #[1X3] #",
+        "description": "MINI SAMBA FRESA BOLSA 16G*35UND",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 35,
+        "unitPrice": 13954.74,
+        "lineTotal": 13954.74,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 4.827,59 MINI SAVOY LECHE BOLSA 150GRS - #[1X3] #",
+        "description": "MINI SAVOY LECHE BOLSA 150GRS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitPrice": 4827.59,
+        "lineTotal": 4827.59,
+        "taxHint": "general",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "1 X B 13.441,81 CAJA SAMBA FRESA 32G*20UND - #[1X3] #",
+        "description": "CAJA SAMBA FRESA 32G*20UND",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 20,
+        "unitPrice": 13441.81,
+        "lineTotal": 13441.81,
+        "taxHint": "general",
+        "confidence": 0.9
+      }
+    ],
+    "subtotal": 289453.23,
+    "tax": 29655.74,
+    "total": 315708.83,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2647,
+  "outputTokens": 5886,
+  "durationMs": 12227,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:54:27.766Z"
+}

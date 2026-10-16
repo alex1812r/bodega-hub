@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "key": "20ab2df1f85d301ca3e35ab368e2e73e5fd0b5ad6465fa2d5b4ccc44f6186239",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f17",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "f13",
+    "f14",
+    "f16"
+  ],
+  "systemPromptHash": "a297383355b0fa7ce656b3596451d51e03ec7a35446305911443e67c3c6911a9",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00003199",
+    "date": "2026-09-04",
+    "currency": "VES",
+    "printedRate": 804.81,
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2L 1,00 x 5.158,83 [BULTO X 6,00]",
+        "description": "Glup cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5158.83,
+        "lineTotal": 5158.83,
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 2L 1,00 x 7.082,33 [BULTO X 6,00]",
+        "description": "Coca-Cola 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7082.33,
+        "lineTotal": 7082.33,
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 1,00 x 8.852,91 [BULTO X 12,00]",
+        "description": "Justy 1,5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8852.91,
+        "lineTotal": 8852.91,
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L 1,00 x 4.104,53 [BULTO X 6,00]",
+        "description": "Glup sabores 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4104.53,
+        "lineTotal": 4104.53,
+        "confidence": 1
+      },
+      {
+        "rawText": "FANTA 2L 1,00 x 7.058,18 [BULTO X 6,00]",
+        "description": "Fanta 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7058.18,
+        "lineTotal": 7058.18,
+        "confidence": 1
+      }
+    ],
+    "total": 32256.78,
+    "confidence": 1,
+    "warnings": []
+  },
+  "inputTokens": 7136,
+  "outputTokens": 520,
+  "durationMs": 3594,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:57:19.667Z"
+}

@@ -69,6 +69,8 @@ export type BenchExtractInput = {
   fewShot?: BenchFewShotExample[];
   signal?: AbortSignal;
   invoice?: BenchInvoiceRef;
+  /** Ids de las facturas usadas como few-shot (parte de la clave de la caché, SCN-10n). */
+  fewShotIds?: string[];
 };
 
 export type BenchExtractResult = {
@@ -79,6 +81,8 @@ export type BenchExtractResult = {
   outputTokens: number | null;
   durationMs: number;
   pages: number;
+  /** true si vino de la caché de extracciones (tokens y duración son los de la llamada original). */
+  cached?: boolean;
 };
 
 /** Misma forma que `extractInvoice` (rama de Extracción): se conecta tal cual en el CLI. */
@@ -116,6 +120,12 @@ export type BenchOptions = {
   signal?: AbortSignal;
   /** Reloj inyectable para tests. */
   now?: () => Date;
+  /**
+   * Orden de las EXTRACCIONES dentro de cada pasada (el emparejamiento siempre
+   * va por id). "realFirst": reales antes que sintéticas, para que un corte por
+   * cuota deje medidas las reales. Default "id".
+   */
+  extractOrder?: "id" | "realFirst";
 };
 
 export type BenchError = { message: string; code?: string };
@@ -133,6 +143,8 @@ export type BenchInvoiceResult = {
   reusedExtraction: boolean;
   /** Ids de las facturas usadas como few-shot. */
   fewShotIds: string[];
+  /** La extracción contada vino de la caché (SCN-10n). */
+  fromCache: boolean;
   /** Id (de la verdad) del escaneo previo que el emparejamiento marcó como duplicado. */
   duplicateOfScanId?: string;
   predicted: InvoiceExtraction | null;
@@ -241,13 +253,19 @@ function prepareContext(
   return { ...ctx, supplierCatalogs, previousScans: [...previousScans] };
 }
 
-function toPreviousScan(state: ScanState, scenario: BenchScenario): MatchPreviousScan | null {
+/**
+ * Escaneo previo tal como lo vería producción: el proveedor que resolvió el
+ * emparejamiento (o ninguno) y el RIF leído; nunca el contacto de la verdad.
+ */
+function toPreviousScan(state: ScanState): MatchPreviousScan | null {
   if (!state.extraction) return null;
   return {
     scanId: state.truth.id,
-    supplierId: state.matched?.supplier.contactId ?? expectedContactId(state.truth, scenario),
+    supplierId: state.matched?.supplier.contactId ?? null,
     supplierTaxId: state.extraction.supplier.taxId ?? null,
     number: state.extraction.number ?? null,
+    date: state.extraction.date ?? null,
+    total: state.extraction.total ?? null,
   };
 }
 
@@ -309,6 +327,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
         ...(fewShot.length > 0 ? { fewShot } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
         invoice: { id: truth.id, bucket, truth },
+        ...(fewShotIds.length > 0 ? { fewShotIds } : {}),
       });
       provider ??= result.provider;
       modelId ??= result.modelId;
@@ -319,6 +338,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
   };
 
   const perInvoice: BenchInvoiceResult[] = [];
+  const truthById = new Map(truths.map((truth) => [truth.id, truth]));
   const contextCache = new Map<string, MatchContext>();
 
   /**
@@ -336,7 +356,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     countUsage: boolean;
   }): Promise<{ state: ScanState; entry: BenchInvoiceResult }> => {
     const { truth, bucket, extracted } = input;
-    const extraction = extracted.result?.extraction ?? null;
+    let extraction = extracted.result?.extraction ?? null;
     let matched: InvoiceMatch | null = null;
     let error = extracted.error;
     if (extraction) {
@@ -356,23 +376,42 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       }
     }
     const usage = input.countUsage ? extracted.result : undefined;
-    const metrics = evaluateInvoice({
-      truth,
-      predicted: extraction,
-      matched,
-      catalog: scenario.products,
-      bucket,
-      expectedContactId: expectedContactId(truth, scenario),
-      at: runAt,
-      ...(usage
-        ? {
-            durationMs: usage.durationMs,
-            ...(usage.inputTokens !== null ? { inputTokens: usage.inputTokens } : {}),
-            ...(usage.outputTokens !== null ? { outputTokens: usage.outputTokens } : {}),
-            modelId: usage.modelId,
-          }
-        : {}),
-    });
+    // Ejemplos few-shot de esta extracción (solo si se extrajo de nuevo con ellos).
+    const fewShot = usage
+      ? extracted.fewShotIds.flatMap((id) => {
+          const example = truthById.get(id);
+          return example ? [example.extraction] : [];
+        })
+      : [];
+    const measure = (predicted: InvoiceExtraction | null, match: InvoiceMatch | null) =>
+      evaluateInvoice({
+        truth,
+        predicted,
+        matched: match,
+        catalog: scenario.products,
+        bucket,
+        expectedContactId: expectedContactId(truth, scenario),
+        at: runAt,
+        ...(fewShot.length > 0 ? { fewShot } : {}),
+        ...(usage
+          ? {
+              durationMs: usage.durationMs,
+              ...(usage.inputTokens !== null ? { inputTokens: usage.inputTokens } : {}),
+              ...(usage.outputTokens !== null ? { outputTokens: usage.outputTokens } : {}),
+              modelId: usage.modelId,
+            }
+          : {}),
+      });
+    let metrics: InvoiceMetrics;
+    try {
+      metrics = measure(extraction, matched);
+    } catch (caught) {
+      // Extracción que las métricas no pueden leer: error de la factura, la corrida sigue.
+      error = toBenchError(caught);
+      extraction = null;
+      matched = null;
+      metrics = measure(null, null);
+    }
     const entry: BenchInvoiceResult = {
       id: truth.id,
       synthetic: truth.synthetic,
@@ -384,6 +423,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       costUsd: metrics.usage.costUsd,
       reusedExtraction: !input.countUsage,
       fewShotIds: extracted.fewShotIds,
+      fromCache: input.countUsage && extracted.result?.cached === true,
       ...(matched?.duplicateOfScanId ? { duplicateOfScanId: matched.duplicateOfScanId } : {}),
       predicted: extraction,
       matched,
@@ -391,9 +431,15 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     return { state: { truth, extraction, matched }, entry };
   };
 
+  const extractionOrder = <T>(items: readonly T[], truthOf: (item: T) => InvoiceTruth): T[] =>
+    opts.extractOrder === "realFirst"
+      ? [...items].sort((a, b) => Number(truthOf(a).synthetic) - Number(truthOf(b).synthetic) || byId(truthOf(a), truthOf(b)))
+      : [...items];
+
   // a) sinAlias
   let extractedCount = 0;
-  const passA = await mapPool(truths, concurrency, async (truth) => {
+  const orderA = extractionOrder(truths, (truth) => truth);
+  const passA = await mapPool(orderA, concurrency, async (truth) => {
     const extracted = await extract(truth, "sinAlias", []);
     extractedCount += 1;
     opts.onProgress?.({
@@ -406,7 +452,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     });
     return extracted;
   });
-  const extractedA = new Map(truths.map((truth, index) => [truth.id, passA[index]]));
+  const extractedA = new Map(orderA.map((truth, index) => [truth.id, passA[index]]));
   const stateA = new Map<string, ScanState>();
   const scansA: MatchPreviousScan[] = [];
   for (const [index, truth] of truths.entries()) {
@@ -420,7 +466,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     });
     perInvoice.push(entry);
     stateA.set(truth.id, state);
-    const scan = toPreviousScan(state, scenario);
+    const scan = toPreviousScan(state);
     if (scan) scansA.push(scan);
     opts.onProgress?.({ phase: "match", bucket: "sinAlias", id: truth.id, done: index + 1, total: truths.length });
   }
@@ -444,7 +490,8 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
   const extractedB = new Map<string, Extracted>();
   if (opts.fewShot) {
     let done = 0;
-    const results = await mapPool(targetsB, concurrency, async ({ truth, previous }) => {
+    const orderB = extractionOrder(targetsB, (target) => target.truth);
+    const results = await mapPool(orderB, concurrency, async ({ truth, previous }) => {
       const root = duplicateRoot(truth);
       const examples = previous.filter((p) => duplicateRoot(p) !== root).slice(-3);
       const extracted = await extract(truth, "conAlias", examples);
@@ -459,7 +506,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       });
       return extracted;
     });
-    targetsB.forEach(({ truth }, index) => extractedB.set(truth.id, results[index]));
+    orderB.forEach(({ truth }, index) => extractedB.set(truth.id, results[index]));
   }
 
   // Estado por factura en conAlias: las primeras de cada proveedor quedan con su estado de sinAlias.
@@ -495,7 +542,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       opts.onProgress?.({ phase: "match", bucket: "conAlias", id: truth.id, done: matchedB, total: targetsB.length });
     }
     stateB.set(truth.id, state);
-    const scan = toPreviousScan(state, scenario);
+    const scan = toPreviousScan(state);
     if (scan) scansB.push(scan);
   }
 
@@ -513,14 +560,24 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       const duplicate = states.get(truth.id);
       if (!original || !duplicate) continue;
       const detectedOf = duplicate.matched?.duplicateOfScanId;
+      const occluded = [
+        ...(truth.occludedHeaderFields ?? []),
+        ...(truths.find((t) => t.id === truth.duplicateOf)?.occludedHeaderFields ?? []),
+      ];
       pairs.push({
         bucket,
         id: truth.id,
         duplicateOf: truth.duplicateOf,
-        consistency: pairConsistency(
-          { extraction: original.extraction, matched: original.matched },
-          { extraction: duplicate.extraction, matched: duplicate.matched },
-        ),
+        // conAlias: el duplicado hereda los alias aprendidos del original, así que su
+        // emparejamiento difiere por construcción; ahí se compara solo la extracción.
+        consistency:
+          bucket === "sinAlias"
+            ? pairConsistency(
+                { extraction: original.extraction, matched: original.matched },
+                { extraction: duplicate.extraction, matched: duplicate.matched },
+                occluded,
+              )
+            : pairConsistency({ extraction: original.extraction }, { extraction: duplicate.extraction }, occluded),
         expectedDetected: true,
         detected: Boolean(detectedOf),
         ...(detectedOf ? { detectedOf } : {}),

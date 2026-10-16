@@ -1,0 +1,732 @@
+{
+  "run": {
+    "mode": "model",
+    "label": "sonda",
+    "requested": {
+      "provider": "google",
+      "model": "gemini-2.5-flash-lite"
+    },
+    "fewShot": false,
+    "only": [
+      "f01"
+    ],
+    "quotaCut": false,
+    "quotaSkipped": 0,
+    "resume": true,
+    "cache": {
+      "enabled": true,
+      "hits": 0,
+      "calls": 0,
+      "errors": 1,
+      "invalid": 0,
+      "dir": "scripts/invoice-eval/cache"
+    },
+    "pending": [
+      {
+        "id": "f01",
+        "bucket": "sinAlias",
+        "code": "PROVIDER_ERROR",
+        "reason": "proveedor no disponible (503/otro)"
+      }
+    ]
+  },
+  "meta": {
+    "provider": "google",
+    "modelId": "gemini-2.5-flash-lite",
+    "date": "2026-10-16T03:03:45.463Z",
+    "fewShot": false,
+    "invoices": {
+      "real": 1,
+      "synthetic": 0
+    }
+  },
+  "perInvoice": [
+    {
+      "id": "f01",
+      "synthetic": false,
+      "bucket": "sinAlias",
+      "metrics": {
+        "id": "f01",
+        "bucket": "sinAlias",
+        "synthetic": false,
+        "pageCount": 1,
+        "header": {
+          "fields": {
+            "supplier": {
+              "evaluated": true,
+              "ok": false,
+              "expected": "508357612"
+            },
+            "date": {
+              "evaluated": true,
+              "ok": false,
+              "expected": "2026-10-12"
+            },
+            "number": {
+              "evaluated": true,
+              "ok": false,
+              "expected": "00006894"
+            },
+            "total": {
+              "evaluated": true,
+              "ok": false,
+              "expected": 40516.32
+            }
+          },
+          "okCount": 0,
+          "evaluatedCount": 4,
+          "headerScore": 0,
+          "headerAllOk": false
+        },
+        "pairs": [],
+        "lines": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 6,
+          "rate": 0,
+          "invented": [],
+          "lost": [
+            {
+              "truthIndex": 0,
+              "rawText": "GLUP COLA 2L [BULTO X 6,00]"
+            },
+            {
+              "truthIndex": 1,
+              "rawText": "GLUP SABORES 2L [BULTO X 6,00]"
+            },
+            {
+              "truthIndex": 2,
+              "rawText": "GLUP SABORES 1L [BULTO X 12,00]"
+            },
+            {
+              "truthIndex": 3,
+              "rawText": "JUSTY 1.5 [BULTO X 12,00]"
+            },
+            {
+              "truthIndex": 4,
+              "rawText": "JUSTY 400ML [BULTO X 15,00]"
+            },
+            {
+              "truthIndex": 5,
+              "rawText": "COCA COLA 1L [BULTO X 6,00]"
+            }
+          ]
+        },
+        "exact": {
+          "ok": 0,
+          "total": 6,
+          "rate": 0,
+          "failures": [
+            {
+              "truthIndex": 0,
+              "fields": [
+                "lost"
+              ]
+            },
+            {
+              "truthIndex": 1,
+              "fields": [
+                "lost"
+              ]
+            },
+            {
+              "truthIndex": 2,
+              "fields": [
+                "lost"
+              ]
+            },
+            {
+              "truthIndex": 3,
+              "fields": [
+                "lost"
+              ]
+            },
+            {
+              "truthIndex": 4,
+              "fields": [
+                "lost"
+              ]
+            },
+            {
+              "truthIndex": 5,
+              "fields": [
+                "lost"
+              ]
+            }
+          ]
+        },
+        "matching": {
+          "perLine": [
+            {
+              "truthIndex": 0,
+              "predictedIndex": null,
+              "productKey": "glup-cola-2l",
+              "expectedProductId": "8ab45439-3016-426c-82df-1a66473e2996",
+              "outcome": "lost"
+            },
+            {
+              "truthIndex": 1,
+              "predictedIndex": null,
+              "productKey": "glup-sabores-2l",
+              "expectedProductId": "1c8f15c3-82a1-4dd8-a9bd-8a5e32a4efb4",
+              "outcome": "lost"
+            },
+            {
+              "truthIndex": 2,
+              "predictedIndex": null,
+              "productKey": "glup-sabores-1l",
+              "expectedProductId": "df456002-ebe3-44f6-94ff-78740aa8bc56",
+              "outcome": "lost"
+            },
+            {
+              "truthIndex": 3,
+              "predictedIndex": null,
+              "productKey": "justy-1.5l",
+              "expectedProductId": "c4cd2b2d-f982-4441-8f38-105efb5b7e93",
+              "outcome": "lost"
+            },
+            {
+              "truthIndex": 4,
+              "predictedIndex": null,
+              "productKey": "justy-400ml",
+              "expectedProductId": "dcefaf10-784e-4b9a-bf00-e54ad940005b",
+              "outcome": "lost"
+            },
+            {
+              "truthIndex": 5,
+              "predictedIndex": null,
+              "productKey": "coca-cola-1l",
+              "expectedProductId": "7b2a24c9-9b0c-44cf-81f7-7c708fbc65eb",
+              "outcome": "lost"
+            }
+          ],
+          "counts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 6,
+            "ok_none": 0
+          },
+          "inCatalog": 6,
+          "evaluated": 6,
+          "okRate": 0,
+          "confirmedWrongRate": 0
+        },
+        "duplicate": {
+          "expected": false,
+          "detected": false,
+          "correct": true,
+          "falsePositive": false
+        },
+        "usage": {
+          "costUsd": null
+        }
+      },
+      "error": {
+        "message": "El servicio de IA no está disponible en este momento. Intenta de nuevo en unos minutos.",
+        "code": "PROVIDER_ERROR"
+      },
+      "durationMs": null,
+      "tokens": {
+        "input": null,
+        "output": null
+      },
+      "costUsd": null,
+      "reusedExtraction": false,
+      "fewShotIds": [],
+      "fromCache": false,
+      "predicted": null,
+      "matched": null
+    }
+  ],
+  "global": {
+    "all": {
+      "total": {
+        "invoices": 1,
+        "headerFieldsOk": 0,
+        "headerFieldsEvaluated": 4,
+        "headerFieldRate": 0,
+        "headerAllOkCount": 0,
+        "headerAllOkRate": 0,
+        "linesTp": 0,
+        "linesFp": 0,
+        "linesFn": 6,
+        "linesDetectedRate": 0,
+        "exactOk": 0,
+        "exactTotal": 6,
+        "exactRate": 0,
+        "matchCounts": {
+          "confirmed_correct": 0,
+          "doubtful_correct": 0,
+          "confirmed_wrong": 0,
+          "doubtful_wrong": 0,
+          "unmatched": 0,
+          "lost": 6,
+          "ok_none": 0
+        },
+        "matchInCatalog": 6,
+        "matchEvaluated": 6,
+        "matchOkRate": 0,
+        "confirmedWrongRate": 0,
+        "duplicates": {
+          "expected": 0,
+          "detected": 0,
+          "truePositive": 0,
+          "falsePositive": 0,
+          "missed": 0
+        },
+        "p95DurationMs1Page": null,
+        "avgCostUsd": null,
+        "costedInvoices": 0,
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "byBucket": {
+        "sinAlias": {
+          "invoices": 1,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 4,
+          "headerFieldRate": 0,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": 0,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 6,
+          "linesDetectedRate": 0,
+          "exactOk": 0,
+          "exactTotal": 6,
+          "exactRate": 0,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 6,
+            "ok_none": 0
+          },
+          "matchInCatalog": 6,
+          "matchEvaluated": 6,
+          "matchOkRate": 0,
+          "confirmedWrongRate": 0,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "conAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        }
+      }
+    },
+    "real": {
+      "total": {
+        "invoices": 1,
+        "headerFieldsOk": 0,
+        "headerFieldsEvaluated": 4,
+        "headerFieldRate": 0,
+        "headerAllOkCount": 0,
+        "headerAllOkRate": 0,
+        "linesTp": 0,
+        "linesFp": 0,
+        "linesFn": 6,
+        "linesDetectedRate": 0,
+        "exactOk": 0,
+        "exactTotal": 6,
+        "exactRate": 0,
+        "matchCounts": {
+          "confirmed_correct": 0,
+          "doubtful_correct": 0,
+          "confirmed_wrong": 0,
+          "doubtful_wrong": 0,
+          "unmatched": 0,
+          "lost": 6,
+          "ok_none": 0
+        },
+        "matchInCatalog": 6,
+        "matchEvaluated": 6,
+        "matchOkRate": 0,
+        "confirmedWrongRate": 0,
+        "duplicates": {
+          "expected": 0,
+          "detected": 0,
+          "truePositive": 0,
+          "falsePositive": 0,
+          "missed": 0
+        },
+        "p95DurationMs1Page": null,
+        "avgCostUsd": null,
+        "costedInvoices": 0,
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "byBucket": {
+        "sinAlias": {
+          "invoices": 1,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 4,
+          "headerFieldRate": 0,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": 0,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 6,
+          "linesDetectedRate": 0,
+          "exactOk": 0,
+          "exactTotal": 6,
+          "exactRate": 0,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 6,
+            "ok_none": 0
+          },
+          "matchInCatalog": 6,
+          "matchEvaluated": 6,
+          "matchOkRate": 0,
+          "confirmedWrongRate": 0,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "conAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        }
+      }
+    },
+    "synthetic": {
+      "total": {
+        "invoices": 0,
+        "headerFieldsOk": 0,
+        "headerFieldsEvaluated": 0,
+        "headerFieldRate": null,
+        "headerAllOkCount": 0,
+        "headerAllOkRate": null,
+        "linesTp": 0,
+        "linesFp": 0,
+        "linesFn": 0,
+        "linesDetectedRate": null,
+        "exactOk": 0,
+        "exactTotal": 0,
+        "exactRate": null,
+        "matchCounts": {
+          "confirmed_correct": 0,
+          "doubtful_correct": 0,
+          "confirmed_wrong": 0,
+          "doubtful_wrong": 0,
+          "unmatched": 0,
+          "lost": 0,
+          "ok_none": 0
+        },
+        "matchInCatalog": 0,
+        "matchEvaluated": 0,
+        "matchOkRate": null,
+        "confirmedWrongRate": null,
+        "duplicates": {
+          "expected": 0,
+          "detected": 0,
+          "truePositive": 0,
+          "falsePositive": 0,
+          "missed": 0
+        },
+        "p95DurationMs1Page": null,
+        "avgCostUsd": null,
+        "costedInvoices": 0,
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "byBucket": {
+        "sinAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "conAlias": {
+          "invoices": 0,
+          "headerFieldsOk": 0,
+          "headerFieldsEvaluated": 0,
+          "headerFieldRate": null,
+          "headerAllOkCount": 0,
+          "headerAllOkRate": null,
+          "linesTp": 0,
+          "linesFp": 0,
+          "linesFn": 0,
+          "linesDetectedRate": null,
+          "exactOk": 0,
+          "exactTotal": 0,
+          "exactRate": null,
+          "matchCounts": {
+            "confirmed_correct": 0,
+            "doubtful_correct": 0,
+            "confirmed_wrong": 0,
+            "doubtful_wrong": 0,
+            "unmatched": 0,
+            "lost": 0,
+            "ok_none": 0
+          },
+          "matchInCatalog": 0,
+          "matchEvaluated": 0,
+          "matchOkRate": null,
+          "confirmedWrongRate": null,
+          "duplicates": {
+            "expected": 0,
+            "detected": 0,
+            "truePositive": 0,
+            "falsePositive": 0,
+            "missed": 0
+          },
+          "p95DurationMs1Page": null,
+          "avgCostUsd": null,
+          "costedInvoices": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        }
+      }
+    }
+  },
+  "pairs": [],
+  "targets": {
+    "ok": false,
+    "checks": [
+      {
+        "scope": "sinAlias",
+        "metric": "headerFieldRate",
+        "value": 0,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": false
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "linesDetectedRate",
+        "value": 0,
+        "target": 0.95,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": false
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "exactRate",
+        "value": 0,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": false
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "matchOkRate",
+        "value": 0,
+        "target": 0.7,
+        "comparator": ">=",
+        "skipped": false,
+        "ok": false
+      },
+      {
+        "scope": "sinAlias",
+        "metric": "confirmedWrongRate",
+        "value": 0,
+        "target": 0.02,
+        "comparator": "<=",
+        "skipped": false,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "headerFieldRate",
+        "value": null,
+        "target": 0.95,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "linesDetectedRate",
+        "value": null,
+        "target": 0.95,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "exactRate",
+        "value": null,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "matchOkRate",
+        "value": null,
+        "target": 0.9,
+        "comparator": ">=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "conAlias",
+        "metric": "confirmedWrongRate",
+        "value": null,
+        "target": 0.02,
+        "comparator": "<=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "total",
+        "metric": "p95DurationMs1Page",
+        "value": null,
+        "target": 15000,
+        "comparator": "<=",
+        "skipped": true,
+        "ok": true
+      },
+      {
+        "scope": "total",
+        "metric": "avgCostUsd",
+        "value": null,
+        "target": 0.01,
+        "comparator": "<=",
+        "skipped": true,
+        "ok": true
+      }
+    ]
+  }
+}

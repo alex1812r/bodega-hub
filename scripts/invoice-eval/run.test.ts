@@ -29,6 +29,12 @@ import {
   withQuotaCut,
   withResolvedModel,
   QUOTA_CUT_CODE,
+  QUOTA_RETRY_DELAYS_MS,
+  PROVIDER_RETRY_DELAYS_MS,
+  cacheLine,
+  pendingExtractions,
+  pendingMarkdown,
+  withRetry,
 } from "./run";
 import { ORACLE_BANNER } from "./report";
 import type { BenchExtractInput, BenchExtractResult, BenchExtractor, BenchResult } from "./runner";
@@ -227,6 +233,106 @@ describe("withQuotaCut", () => {
     const guard = withQuotaCut(inner);
     for (let i = 0; i < 8; i += 1) await guard.extractor(input).catch(() => undefined);
     expect(guard.state.cut).toBe(false);
+  });
+});
+
+describe("SCN-10n: --resume, --no-cache, reintentos y pendientes", () => {
+  const input: BenchExtractInput = { pages: [PAGE] };
+  const fail = (code: string) => Object.assign(new Error(code), { code });
+
+  it("parseArgs: caché por defecto; --resume y --no-cache solo con google/anthropic y no juntos", () => {
+    expect(parseArgs(["--provider", "google"])).toMatchObject({ cache: true, resume: false });
+    expect(parseArgs(["--provider", "google", "--model", "gemini-2.5-flash", "--resume"])).toMatchObject({ cache: true, resume: true });
+    expect(parseArgs(["--provider", "anthropic", "--no-cache"])).toMatchObject({ cache: false, resume: false });
+    expect(() => parseArgs(["--provider", "google", "--resume", "--no-cache"])).toThrow(/--resume necesita la caché/);
+    expect(() => parseArgs(["--provider", "mock", "--resume"])).toThrow(/solo valen con --provider google\|anthropic/);
+    expect(() => parseArgs(["--provider", "oracle", "--no-cache"])).toThrow(/solo valen/);
+    expect(() => parseArgs(["--replay", "r.json", "--resume"])).toThrow(/solo valen/);
+  });
+
+  it("withRetry: un 429 espera la ventana y reintenta; si sigue, sube como QUOTA", async () => {
+    const sleeps: number[] = [];
+    const sleep = async (ms: number) => void sleeps.push(ms);
+    const outcomes = ["QUOTA", "ok"];
+    const inner = jest.fn<ReturnType<BenchExtractor>, Parameters<BenchExtractor>>(async () => {
+      const next = outcomes.shift();
+      if (next === "ok") return result();
+      throw fail(next ?? "QUOTA");
+    });
+    await expect(withRetry(inner, { sleep })(input)).resolves.toMatchObject({ modelId: "m" });
+    expect(sleeps).toEqual([QUOTA_RETRY_DELAYS_MS[0]]);
+    expect(QUOTA_RETRY_DELAYS_MS[0]).toBeGreaterThanOrEqual(60_000);
+
+    const daily = jest.fn<ReturnType<BenchExtractor>, Parameters<BenchExtractor>>(async () => {
+      throw fail("QUOTA");
+    });
+    await expect(withRetry(daily, { sleep, quotaDelaysMs: [10, 20] })(input)).rejects.toMatchObject({ code: "QUOTA" });
+    expect(daily).toHaveBeenCalledTimes(3);
+  });
+
+  it("withRetry: PROVIDER_ERROR se reintenta; otros errores no", async () => {
+    const sleep = jest.fn(async () => undefined);
+    const outcomes = ["PROVIDER_ERROR", "ok"];
+    const inner: BenchExtractor = async () => {
+      const next = outcomes.shift();
+      if (next === "ok") return result();
+      throw fail(next ?? "x");
+    };
+    await expect(withRetry(inner, { sleep })(input)).resolves.toBeDefined();
+    expect(sleep).toHaveBeenCalledWith(PROVIDER_RETRY_DELAYS_MS[0]);
+    const invalid = jest.fn<ReturnType<BenchExtractor>, Parameters<BenchExtractor>>(async () => {
+      throw fail("INVALID_OUTPUT");
+    });
+    await expect(withRetry(invalid, { sleep })(input)).rejects.toMatchObject({ code: "INVALID_OUTPUT" });
+    expect(invalid).toHaveBeenCalledTimes(1);
+  });
+
+  it("corte por cuota tras reintentar: 3 QUOTA diarias seguidas cortan sin llamar más", async () => {
+    const inner = jest.fn<ReturnType<BenchExtractor>, Parameters<BenchExtractor>>(async () => {
+      throw fail("QUOTA");
+    });
+    const guard = withQuotaCut(withRetry(inner, { sleep: async () => undefined, quotaDelaysMs: [1] }));
+    for (let i = 0; i < 3; i += 1) await expect(guard.extractor(input)).rejects.toMatchObject({ code: "QUOTA" });
+    await expect(guard.extractor(input)).rejects.toMatchObject({ code: QUOTA_CUT_CODE });
+    expect(inner).toHaveBeenCalledTimes(6);
+  });
+
+  it("pendientes: lista (factura, pasada) sin extracción con su motivo; el informe y el resumen los muestran", () => {
+    const base = { predicted: null, reusedExtraction: false };
+    const perInvoice = [
+      { id: "f01", bucket: "sinAlias", predicted: EXTRACTION, reusedExtraction: false },
+      { ...base, id: "f02", bucket: "sinAlias", error: { message: "cuota", code: "QUOTA" } },
+      { ...base, id: "f03", bucket: "sinAlias", error: { message: "cortada", code: QUOTA_CUT_CODE } },
+      { ...base, id: "f04", bucket: "conAlias", error: { message: "503", code: "PROVIDER_ERROR" } },
+      { ...base, id: "f05", bucket: "conAlias", reusedExtraction: true, error: { message: "cuota", code: "QUOTA" } },
+    ] as unknown as BenchResult["perInvoice"];
+    const pending = pendingExtractions({ perInvoice });
+    expect(pending.map((p) => `${p.id}:${p.bucket}:${p.code}`)).toEqual([
+      "f02:sinAlias:QUOTA",
+      "f03:sinAlias:QUOTA_CUT",
+      "f04:conAlias:PROVIDER_ERROR",
+    ]);
+    expect(pending[1].reason).toMatch(/cortada/);
+    expect(pending[2].reason).toMatch(/503/);
+    expect(pendingMarkdown(pending, "google/m").join("\n")).toContain("| f03 | sinAlias | cuota: pasada cortada, no se intentó (QUOTA_CUT) |");
+    expect(pendingMarkdown([], "google/m").join("\n")).toMatch(/Ninguna/);
+
+    const cache = { enabled: true, hits: 5, calls: 2, errors: 3, invalid: 0, dir: "scripts/invoice-eval/cache" };
+    expect(cacheLine(cache)).toMatch(/5 de caché, 2 llamadas nuevas, 3 llamadas con error \(no cacheadas\)/);
+    const agg = { headerFieldRate: 1, linesDetectedRate: 1, exactRate: 1, matchOkRate: 1, confirmedWrongRate: 0 };
+    const bench = {
+      meta: { provider: "google", modelId: "m", date: "2026-10-15T15:00:00Z", fewShot: true, invoices: { real: 1, synthetic: 0 } },
+      perInvoice,
+      pairs: [],
+      global: {
+        all: { byBucket: { sinAlias: agg, conAlias: agg }, total: { p95DurationMs1Page: 1, avgCostUsd: 0.001, inputTokens: 1, outputTokens: 1 } },
+      },
+      targets: { ok: false, checks: [] },
+    } as unknown as BenchResult;
+    const meta: RunMeta = { mode: "model", requested: { provider: "google", model: "m" }, fewShot: true, quotaCut: true, quotaSkipped: 1, resume: true, cache, pending };
+    const lines = summaryLines(bench, meta, { markdownPath: "x.md" });
+    expect(lines.find((l) => l.startsWith("Caché"))).toContain("5 de caché, 2 nuevas, 3 con error");
+    expect(lines.find((l) => l.startsWith("Pendientes"))).toContain("3 (f02:sinAlias, f03:sinAlias, f04:conAlias)");
   });
 });
 

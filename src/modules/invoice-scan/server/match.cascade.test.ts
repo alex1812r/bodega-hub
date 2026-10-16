@@ -83,10 +83,10 @@ describe("matchInvoice · cascada de producto", () => {
     expect(line.candidates).toBeUndefined();
   });
 
-  it("código de barras: dudosa con candidato, nunca confirmada", () => {
+  it("código de barras único en línea por unidad: confirma con el candidato (D17; casos en match.d17.test.ts)", () => {
     const line = matchOne(buildLine({ description: "PRODUCTO RARO", barcode: "7591001000011" }));
 
-    expect(line.status).toBe("doubtful");
+    expect(line.status).toBe("confirmed");
     expect(line.productId).toBe("p-malta");
     expect(line.candidates?.[0]).toMatchObject({ productId: "p-malta", reason: "código de barras" });
   });

@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "key": "6c125f2ad11b85a1781bce7e50219292e8e77e5042a10e27cc841ce56580f23d",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s10",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA EL SAMAN 2024, C.A.",
+      "taxId": "J-41258736-0",
+      "phone": "0212-871.44.90",
+      "address": "AV. SUCRE, GALPON 12, ZONA INDUSTRIAL LOS FRAILES, CATIA, CARACAS"
+    },
+    "number": "00002371",
+    "date": "2026-09-16",
+    "currency": "VES",
+    "printedRate": 886.95,
+    "lines": [
+      {
+        "rawText": "SM-01045 REFRESCO GLUP COLA 2LT [BULTO X 6] 2 5.895,00 11.790,00",
+        "description": "REFRESCO GLUP COLA 2LT",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5895,
+        "lineTotal": 11790,
+        "supplierSku": "SM-01045",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-01046 REFRESCO GLUP SABORES 2LT [BULTO X 6] 3 4.681,80 14.045,40",
+        "description": "REFRESCO GLUP SABORES 2LT",
+        "quantity": 3,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4681.8,
+        "lineTotal": 14045.4,
+        "supplierSku": "SM-01046",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02001 HARINA PAN 1KG (E) [BULTO X 20] 1 18.819,00 18.819,00",
+        "description": "HARINA PAN 1KG (E)",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18819,
+        "lineTotal": 18819,
+        "taxHint": "exento",
+        "supplierSku": "SM-02001",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-02210 ARROZ PRIMOR 1KG (E) [BULTO X 24] 2 23.990,40 47.980,80",
+        "description": "ARROZ PRIMOR 1KG (E)",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23990.4,
+        "lineTotal": 47980.8,
+        "taxHint": "exento",
+        "supplierSku": "SM-02210",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-03410 ATUN MARGARITA EN ACEITE 140GR CAJA X24 1 30.844,80 30.844,80",
+        "description": "ATUN MARGARITA EN ACEITE 140GR",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 30844.8,
+        "lineTotal": 30844.8,
+        "supplierSku": "SM-03410",
+        "confidence": 1
+      },
+      {
+        "rawText": "SM-01210 MALTA POLAR 1.5LT [BULTO X 6] 1 10.077,60 10.077,60",
+        "description": "MALTA POLAR 1.5LT",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 10077.6,
+        "lineTotal": 10077.6,
+        "supplierSku": "SM-01210",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 133557.6,
+    "tax": 10681.25,
+    "total": 144238.85,
+    "confidence": 1,
+    "warnings": []
+  },
+  "inputTokens": 2747,
+  "outputTokens": 1194,
+  "durationMs": 3345,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:09:24.168Z"
+}

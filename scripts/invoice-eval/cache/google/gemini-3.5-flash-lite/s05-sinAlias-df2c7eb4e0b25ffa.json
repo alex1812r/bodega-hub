@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "key": "df2c7eb4e0b25ffa4fc0727984bb417bc50d4b47b1c34674ec30f7b5ca9c3c73",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "s05",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "a297383355b0fa7ce656b3596451d51e03ec7a35446305911443e67c3c6911a9",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6",
+      "phone": "0212-472.10.33",
+      "address": "AV. PRINCIPAL DE LA YAGUARA, GALPON 3, CARACAS"
+    },
+    "number": "0004587",
+    "date": "2026-09-11",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "7598456001502\nAGUA HELEAL 1.5 LTS (G) [BULTO X 12]\n2 x 5.904,00\t11.808,00",
+        "description": "AGUA HELEAL 1.5 LTS",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 5904,
+        "lineTotal": 11808,
+        "taxHint": "general",
+        "barcode": "7598456001502",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "7593102001011\nGLUP COLA 2 LTS (G) [BULTO X 6]\n1 x 5.754,00\t5.754,00",
+        "description": "GLUP COLA 2 LTS",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5754,
+        "lineTotal": 5754,
+        "taxHint": "general",
+        "barcode": "7593102001011",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "7594127009006\nAZUCAR MIMASA 900 GR (E) [BULTO X 20]\n1 x 19.480,00\t19.480,00",
+        "description": "AZUCAR MIMASA 900 GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19480,
+        "lineTotal": 19480,
+        "taxHint": "exento",
+        "barcode": "7594127009006",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "7596803017053\nSARDINAS LA GAVIOTA 170 GR (G) CAJA X24\n2 x 16.488,00\t32.976,00",
+        "description": "SARDINAS LA GAVIOTA 170 GR",
+        "quantity": 2,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 16488,
+        "lineTotal": 32976,
+        "taxHint": "general",
+        "barcode": "7596803017053",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "7591025030026\nJABON AZUL LAS LLAVES 300 GR (G) [BULTO X 25]\n1 x 15.125,00\t15.125,00",
+        "description": "JABON AZUL LAS LLAVES 300 GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 25,
+        "unitPrice": 15125,
+        "lineTotal": 15125,
+        "taxHint": "general",
+        "barcode": "7591025030026",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 85143,
+    "tax": 10506.08,
+    "total": 95649.08,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2639,
+  "outputTokens": 1146,
+  "durationMs": 3129,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:55:17.267Z"
+}

@@ -60,7 +60,7 @@ const LAST_LINE_SELECT = "id, purchase_items(unit_cost_ref, purchases!inner(crea
 const SUPPLIER_PRODUCT_SELECT =
   "id, product_id, supplier_sku, is_preferred, supplier_product_pack_units(id, label, units_per_pack, is_default, is_active)";
 const PREVIOUS_SCAN_SELECT =
-  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId";
+  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId, date:extracted->>date, total:extracted->>total";
 
 type CandidatesRpcResult = {
   suppliers?: Array<{
@@ -118,6 +118,8 @@ type PreviousScanRow = {
   number: string | null;
   supplier_tax_id: string | null;
   matched_contact_id: string | null;
+  date?: string | null;
+  total?: number | string | null;
 };
 
 const EMPTY_CATALOG: MatchSupplierCatalog = { supplierProducts: [], aliases: [], packUnits: [] };
@@ -214,7 +216,8 @@ async function loadSystemRate(supabase: MatchContextSupabaseClient, storeId: str
  * termina en el último (`%F%A%C%1%2%3%2%1`, sin distinguir mayúsculas; los
  * separadores y ceros sobrantes caen en los `%`) y aquí se filtra por igualdad
  * normalizada. `findDuplicateScan` decide después por proveedor/RIF. Los
- * descartados o fallidos no cuentan.
+ * descartados o fallidos no cuentan. Se suman los del posible duplicado
+ * (`loadPreviousScansByDateTotal`), con fecha y total leídos.
  */
 async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
@@ -222,6 +225,69 @@ async function loadPreviousScans(
   extraction: InvoiceExtraction,
   excludeScanId?: string,
 ): Promise<MatchPreviousScan[]> {
+  const [byNumber, byDateTotal] = await Promise.all([
+    loadPreviousScansByNumber(supabase, storeId, extraction, excludeScanId),
+    loadPreviousScansByDateTotal(supabase, storeId, extraction, excludeScanId),
+  ]);
+  const seen = new Set(byNumber.map((row) => row.id));
+  return [...byNumber, ...byDateTotal.filter((row) => !seen.has(row.id))].map((row) => ({
+    scanId: row.id,
+    supplierId: row.supplier_id ?? row.matched_contact_id ?? null,
+    supplierTaxId: row.supplier_tax_id ?? null,
+    number: row.number ?? null,
+    date: row.date ?? undefined,
+    total: toNumber(row.total),
+  }));
+}
+
+/**
+ * Posible duplicado (caos 5.4, `findDuplicateScan`): escaneos con el mismo
+ * total leído (±0,01) y, si se leyó, la misma fecha. Solo hace falta si el
+ * número falta o puede estar mal leído; con número y sin fecha no aplica.
+ * `extracted->>total` es el texto del número JSON (lo que da `String(n)` en
+ * JS), así que se piden las tres variantes al céntimo. El proveedor lo decide
+ * `findDuplicateScan`.
+ */
+async function loadPreviousScansByDateTotal(
+  supabase: MatchContextSupabaseClient,
+  storeId: string,
+  extraction: InvoiceExtraction,
+  excludeScanId?: string,
+): Promise<PreviousScanRow[]> {
+  const total = extraction.total;
+  const date = extraction.date?.trim();
+  if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
+    return [];
+  }
+  if (!date && normalizeInvoiceNumber(extraction.number)) {
+    return [];
+  }
+
+  const cents = Math.round(total * 100);
+  const totals = [cents - 1, cents, cents + 1].map((value) => String(value / 100));
+  let query = supabase
+    .from("invoice_scans")
+    .select(PREVIOUS_SCAN_SELECT)
+    .eq("store_id", storeId)
+    .not("status", "in", "(discarded,failed)")
+    .in("extracted->>total", totals);
+  if (date) {
+    query = query.eq("extracted->>date", date);
+  }
+  if (excludeScanId) {
+    query = query.neq("id", excludeScanId);
+  }
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(PREVIOUS_SCANS_LIMIT);
+  throwIfSupabaseError(error);
+  return (data ?? []) as unknown as PreviousScanRow[];
+}
+
+async function loadPreviousScansByNumber(
+  supabase: MatchContextSupabaseClient,
+  storeId: string,
+  extraction: InvoiceExtraction,
+  excludeScanId?: string,
+): Promise<PreviousScanRow[]> {
   const number = normalizeInvoiceNumber(extraction.number);
   if (!number) {
     return [];
@@ -242,15 +308,9 @@ async function loadPreviousScans(
     .limit(PREVIOUS_SCAN_CANDIDATES_LIMIT);
   throwIfSupabaseError(error);
 
-  const rows = ((data ?? []) as unknown as PreviousScanRow[])
+  return ((data ?? []) as unknown as PreviousScanRow[])
     .filter((row) => normalizeInvoiceNumber(row.number) === number)
     .slice(0, PREVIOUS_SCANS_LIMIT);
-  return rows.map((row) => ({
-    scanId: row.id,
-    supplierId: row.supplier_id ?? row.matched_contact_id ?? null,
-    supplierTaxId: row.supplier_tax_id ?? null,
-    number: row.number ?? null,
-  }));
 }
 
 async function loadProductsWhere(

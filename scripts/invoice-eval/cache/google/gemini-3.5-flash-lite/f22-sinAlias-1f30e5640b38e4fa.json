@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "key": "1f30e5640b38e4fa80ece35663ac46f652fa97d2624de5f7c164f1bbf6c2df30",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f22",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C.A.",
+      "taxId": "J-506040310",
+      "address": "CALLE 500 EDIF LIRIO PB LOCAL 1 Y 2 URB QTA CRESPO CARACAS DISTRITO CAPITAL"
+    },
+    "number": "180619",
+    "date": "2026-09-07",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 x Bs 23.460,01\nCAFE SAN DOMINGO 200G (E)\n[DOC X 12.0]",
+        "description": "CAFE SAN DOMINGO 200G",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 23460.01,
+        "lineTotal": 23460.01,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 5.022,72\nSARDINA MARBONITA 170G\n[DOC X 12.0]",
+        "description": "SARDINA MARBONITA 170G",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 5022.72,
+        "lineTotal": 5022.72,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 8.509,16\nSALSA ESPAGUETTIS GUT 34G\n[CRISTRA X 18.0]",
+        "description": "SALSA ESPAGUETTIS GUT 34G",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 8509.16,
+        "lineTotal": 8509.16,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 4.166,89\nCOLORANTE AMPARITO GUT 20G\n[CBLISTER X 18.0]",
+        "description": "COLORANTE AMPARITO GUT 20G",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 4166.89,
+        "lineTotal": 4166.89,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 5.247,20\nADOGO COMPLETO GUT 24G\n[CBLISTER X 18.0]",
+        "description": "ADOGO COMPLETO GUT 24G",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 5247.2,
+        "lineTotal": 5247.2,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 9.772,97\nAVENA EN HOJUELA EL MAIZALITO 400GR (E)\n[DOC X 12.0]",
+        "description": "AVENA EN HOJUELA EL MAIZALITO 400GR",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 9772.97,
+        "lineTotal": 9772.97,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 3.283,00\nAROMAX LAVANDA 100G\n[CAJT X 24.0]",
+        "description": "AROMAX LAVANDA 100G",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 3283,
+        "lineTotal": 3283,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 8.474,08\nTOALLA HUMEDA BABY FINGER 50UND\n[DOC X 12.0]",
+        "description": "TOALLA HUMEDA BABY FINGER 50UND",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 8474.08,
+        "lineTotal": 8474.08,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 4.293,16\nSUAVIZATEL ALIVE LAVANDA 200ML\n[DOC X 12.0]",
+        "description": "SUAVIZATEL ALIVE LAVANDA 200ML",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 4293.16,
+        "lineTotal": 4293.16,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 11.722,01\nCREMA D. COLGATE TRIPLE ACCION 60 CC\n[DOC X 12.0]",
+        "description": "CREMA D. COLGATE TRIPLE ACCION 60 CC",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 11722.01,
+        "lineTotal": 11722.01,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x Bs 6.032,87\nPROTECTOR DIARIO ALIVE 20PC\n[DOC X 12.0]",
+        "description": "PROTECTOR DIARIO ALIVE 20PC",
+        "quantity": 1,
+        "unit": "otro",
+        "unitPrice": 6032.87,
+        "lineTotal": 6032.87,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 89984.07,
+    "tax": 9080.17,
+    "total": 99064.24,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2391,
+  "outputTokens": 1707,
+  "durationMs": 5027,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:17:09.924Z"
+}

@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "key": "44632c1bcad5e4fb9bc9e0a993ca7e7ee4c6f4436407c1bce3bd0c4284e14df1",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f05",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MERCASEU 2030, C. A.",
+      "taxId": "J-506040310",
+      "address": "CALLE 500 EDIF LIRIO PISO PB LOCAL 1 Y 2 URB QTA CRESPO CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00005577",
+    "date": "2026-08-13",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "REFRESCO GLUP SABOR 2LT [CAJA X 6.0] Bs 3.140,16",
+        "description": "REFRESCO GLUP SABOR 2LT",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 6,
+        "unitPrice": 3140.16,
+        "lineTotal": 3140.16,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "HARINA PAN 1KG (E) [BULTO X 20.0] Bs 18.320,29",
+        "description": "HARINA PAN 1KG",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18320.29,
+        "lineTotal": 18320.29,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "HARINA DE MAIZ MARY 900GR (E) [BULTO X 20.0] Bs 14.823,41",
+        "description": "HARINA DE MAIZ MARY 900GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 14823.41,
+        "lineTotal": 14823.41,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "PASTA HORIZONTE CORTA ( TODAS) 1KG (E) [CAJA X 12.0] Bs 15.237,51",
+        "description": "PASTA HORIZONTE CORTA ( TODAS) 1KG",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 15237.51,
+        "lineTotal": 15237.51,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "AZUCAR MIMASA 900GR (E) [BULTO X 20.0] Bs 19.401,57",
+        "description": "AZUCAR MIMASA 900GR",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 19401.57,
+        "lineTotal": 19401.57,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "MANTEQUILLA MAVESA 250GR (E) [CAJA X 24.0] Bs 28.987,32",
+        "description": "MANTEQUILLA MAVESA 250GR",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 28987.32,
+        "lineTotal": 28987.32,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "ACEITE SOYA PAMPA 500ML (E) [CAJA X 12.0] Bs 16.050,39",
+        "description": "ACEITE SOYA PAMPA 500ML",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 12,
+        "unitPrice": 16050.39,
+        "lineTotal": 16050.39,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GALLETAS COQUI LUNA LIMON 150GR Bs 475,98",
+        "description": "GALLETAS COQUI LUNA LIMON 150GR",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 475.98,
+        "lineTotal": 475.98,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GUISANTES VERDES LAILA 400G Bs 628,03",
+        "description": "GUISANTES VERDES LAILA 400G",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 628.03,
+        "lineTotal": 628.03,
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 117064.66,
+    "tax": 679.07,
+    "total": 117743.73,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2783,
+  "outputTokens": 1434,
+  "durationMs": 3458,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:04:36.909Z"
+}

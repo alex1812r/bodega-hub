@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "key": "01802dc474c257f7db64944245c0bb1f4dce08de2a8b0a24d336414dc4c6e627",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "s09",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "s03",
+    "s05"
+  ],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "MAYORISTA LOS ANDES, C.A.",
+      "taxId": "J-50473921-6"
+    },
+    "currency": "VES",
+    "lines": [],
+    "confidence": 0.3,
+    "warnings": [
+      "La imagen está muy oscura y borrosa; no se pueden leer con certeza los valores de las líneas."
+    ]
+  },
+  "inputTokens": 5522,
+  "outputTokens": 71,
+  "durationMs": 1929,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:18:54.491Z"
+}

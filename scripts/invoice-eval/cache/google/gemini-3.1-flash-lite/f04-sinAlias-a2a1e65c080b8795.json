@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "key": "a2a1e65c080b87954faac003d220c2d924a9dd805b8291bd9c71720b6575add5",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f04",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "COMERCIAL HIPERCONFI 66, C.A.",
+      "taxId": "J-505295519",
+      "address": "CALLE ARGENTINA CASA PB LOCAL 2 NRO 54 URB NUEVA CARACAS D.C. ZP 1030"
+    },
+    "number": "07194842",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "001 MAYONESA MAVESA 445GR 0.50 x40,675.41 (E) #46.50 20337.71",
+        "description": "MAYONESA MAVESA 445GR",
+        "quantity": 0.5,
+        "unit": "unidad",
+        "unitPrice": 40675.41,
+        "lineTotal": 20337.71,
+        "taxHint": "exento",
+        "confidence": 0.9
+      },
+      {
+        "rawText": "002 PAMPERO KETCHUP 397GR 0.50 x1,474.74 T16.00% #55.00 20737.37",
+        "description": "PAMPERO KETCHUP 397GR",
+        "quantity": 0.5,
+        "unit": "unidad",
+        "unitPrice": 1474.74,
+        "lineTotal": 20737.37,
+        "taxHint": "general",
+        "confidence": 0.85
+      },
+      {
+        "rawText": "003 DE TODITO RESUELTO 110GR 1.00 x9,049.03 T16.00% #12.00 9049.03",
+        "description": "DE TODITO RESUELTO 110GR",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 9049.03,
+        "lineTotal": 9049.03,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "004 DORITOS FLAMIN HOT 140GR 1.00 x11,688.34 T16.00% #15.50 11688.34",
+        "description": "DORITOS FLAMIN HOT 140GR",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 11688.34,
+        "lineTotal": 11688.34,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "005 CHEESE TRIS 12X50GR. TIRA 1.00 x6,409.73 T16.00% #8.50 6409.73",
+        "description": "CHEESE TRIS 12X50GR. TIRA",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitsPerPack": 12,
+        "unitPrice": 6409.73,
+        "lineTotal": 6409.73,
+        "taxHint": "general",
+        "confidence": 0.9
+      }
+    ],
+    "subtotal": 68222.18,
+    "tax": 7661.52,
+    "total": 75883.7,
+    "confidence": 0.9,
+    "warnings": [
+      "La línea 002 tiene una discrepancia en el cálculo del total impreso vs el esperado por cantidad y precio unitario.",
+      "La línea 004 tiene una discrepancia en el cálculo del total impreso vs el esperado por cantidad y precio unitario."
+    ]
+  },
+  "inputTokens": 2761,
+  "outputTokens": 1024,
+  "durationMs": 3187,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:04:33.445Z"
+}

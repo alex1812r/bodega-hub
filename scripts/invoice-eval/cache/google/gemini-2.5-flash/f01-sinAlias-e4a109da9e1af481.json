@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "key": "e4a109da9e1af48126ba2c98fcc026993a25b97e7788f07b608f18eb3a1079c9",
+  "provider": "google",
+  "modelId": "gemini-2.5-flash",
+  "invoiceId": "f01",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A"
+    },
+    "number": "00006894",
+    "date": "2026-10-12",
+    "currency": "VES",
+    "printedRate": 875.65,
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2L 1,00 x 5.726,75 [BULTO X 6,00]",
+        "description": "GLUP COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5726.75,
+        "lineTotal": 5726.75,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 2L 2,00 x 4.562,14 [BULTO X 6,00]",
+        "description": "GLUP SABORES 2L",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4562.14,
+        "lineTotal": 9124.28,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "GLUP SABORES 1L 1,00 x 6.943,90 [BULTO X 12,00]",
+        "description": "GLUP SABORES 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6943.9,
+        "lineTotal": 6943.9,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 1.5 1,00 x 9.570,85 [BULTO X 12,00]",
+        "description": "JUSTY 1.5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9570.85,
+        "lineTotal": 9570.85,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "JUSTY 400ML 1,00 x 4.299,44 [BULTO X 15,00]",
+        "description": "JUSTY 400ML",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4299.44,
+        "lineTotal": 4299.44,
+        "taxHint": "unknown",
+        "confidence": 1
+      },
+      {
+        "rawText": "COCA COLA 1L 1,00 x 4.851,10 [BULTO X 6,00]",
+        "description": "COCA COLA 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4851.1,
+        "lineTotal": 4851.1,
+        "taxHint": "unknown",
+        "confidence": 1
+      }
+    ],
+    "subtotal": 40516.32,
+    "tax": 0,
+    "total": 40516.32,
+    "confidence": 1,
+    "warnings": [
+      "Supplier address not found.",
+      "Supplier phone not found.",
+      "Supplier tax ID (RIF) not found in the expected format.",
+      "No explicit tax breakdown found; tax is assumed to be 0."
+    ]
+  },
+  "inputTokens": 1585,
+  "outputTokens": 3195,
+  "durationMs": 14928,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:03:33.909Z"
+}

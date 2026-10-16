@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "key": "da90af89439553c71766d2411b659e65d6c2d3d52faf342d71e6c885181470eb",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f17",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "508357612"
+    },
+    "number": "00003199",
+    "date": "2026-09-04",
+    "currency": "VES",
+    "printedRate": 804.81,
+    "lines": [
+      {
+        "rawText": "GLUP COLA 2L\n1,00 x 5.158,83\n[BULTO X 6,00]",
+        "description": "GLUP COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5158.83,
+        "lineTotal": 5158.83,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "COCA COLA 2L\n1,00 x 7.082,33\n[BULTO X 6,00]",
+        "description": "COCA COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7082.33,
+        "lineTotal": 7082.33,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "JUSTY 1.5\n1,00 x 8.852,91\n[BULTO X 12,00]",
+        "description": "JUSTY 1.5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 8852.91,
+        "lineTotal": 8852.91,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 2L\n1,00 x 4.104,53\n[BULTO X 6,00]",
+        "description": "GLUP SABORES 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4104.53,
+        "lineTotal": 4104.53,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "FANTA 2L\n1,00 x 7.058,18\n[BULTO X 6,00]",
+        "description": "FANTA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 7058.18,
+        "lineTotal": 7058.18,
+        "taxHint": "unknown",
+        "confidence": 0.95
+      }
+    ],
+    "total": 32256.78,
+    "confidence": 0.95,
+    "warnings": [
+      "El documento es una orden de despacho."
+    ]
+  },
+  "inputTokens": 2783,
+  "outputTokens": 853,
+  "durationMs": 3430,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:00:15.623Z"
+}

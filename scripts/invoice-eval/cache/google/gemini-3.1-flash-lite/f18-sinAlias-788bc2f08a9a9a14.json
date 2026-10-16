@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "key": "788bc2f08a9a9a14f7ef369e340137b4a69e411a0f4e89572d809ea5215e4c0a",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f18",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "5c45cbdb1f38dcbefe1162b95a3c61eda51ecd20fc94fe7ec6b0c5b1cc688620",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "COMERCIAL COSAS PRINCIPALES, C.A.",
+      "taxId": "J-502495312",
+      "address": "Av Principal Del Cementerio General Del Sur Edif La Corteza Piso PB Local 1 Urb Las Luces Caracas Distrito Capital Zona Postal 1050"
+    },
+    "date": "2026-09-03",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 x CINTA TIRRO CORAL MATE 48MMX180M Bs 2.412,02",
+        "description": "CINTA TIRRO CORAL MATE 48MMX180M",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 2412.02,
+        "lineTotal": 2412.02,
+        "confidence": 0.5
+      }
+    ],
+    "subtotal": 2079.33,
+    "tax": 332.69,
+    "total": 2412.02,
+    "confidence": 0.5,
+    "warnings": [
+      "No se encontró un número de factura explícito en el documento.",
+      "El documento parece ser un ticket de caja o nota de entrega, no una factura fiscal completa.",
+      "La imagen tiene poca resolución; revisa cada línea con la factura en mano."
+    ]
+  },
+  "inputTokens": 2783,
+  "outputTokens": 346,
+  "durationMs": 33624,
+  "pages": 1,
+  "savedAt": "2026-10-16T04:07:15.427Z"
+}
