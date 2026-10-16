@@ -397,6 +397,21 @@ describe("scanInvoice · forma storagePaths", () => {
       scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths }),
     ).rejects.toMatchObject({ message: INVOICE_HASH_MISMATCH_MESSAGE, status: 400 });
   });
+
+  it("400 sin llamar al modelo ni crear fila si la página subida por URL firmada pasa de 1600 px (CIE-07)", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const big = jpegHeader(3600, 4600, "grande");
+    const sha = sha256OfPages([big]);
+    const path = `${ctx.storeId}/${sha}/p1.jpg`;
+    storage.objects.set(path, big);
+
+    await expect(
+      scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths: [path] }),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/^La imagen supera 1\.600 px/), status: 400 });
+    expect(extract).not.toHaveBeenCalled();
+    expect(mockRepo.listMockScansOfStore(ctx.storeId)).toHaveLength(0);
+  });
 });
 
 describe("scanInvoice · few-shot de la capa 2", () => {

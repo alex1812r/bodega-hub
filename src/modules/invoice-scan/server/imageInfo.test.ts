@@ -6,6 +6,7 @@ import sharp from "sharp";
 
 import { ApiError } from "@/lib/api/apiError";
 
+import { INVOICE_MAX_SIDE } from "../client/invoiceLimits";
 import { jpegHeader } from "./__fixtures__/images";
 import { INVOICE_LOW_RES_SIDE, INVOICE_MIN_SIDE, inspectInvoiceImage } from "./imageInfo";
 
@@ -237,9 +238,9 @@ describe("inspectInvoiceImage: estructura (N3)", () => {
     // Sin decodificar no se puede saber; solo perjudica a la propia tienda (severidad baja).
     const real = await bytes(canvas(1200, 1600).jpeg());
     const sof = Buffer.from(real).indexOf(Buffer.from([0xff, 0xc0]));
-    real.set([0x0a, 0x64, 0x07, 0xd0], sof + 5); // 2000×2660
+    real.set([0x06, 0x40, 0x05, 0xdc], sof + 5); // 1500×1600 (por encima de 1600 ya lo rechaza CIE-07)
 
-    expect(inspectInvoiceImage(real, "image/jpeg")).toMatchObject({ height: 2660, width: 2000 });
+    expect(inspectInvoiceImage(real, "image/jpeg")).toMatchObject({ height: 1600, width: 1500 });
   });
 });
 
@@ -266,9 +267,44 @@ describe("inspectInvoiceImage: proporciones degeneradas (N4)", () => {
     expect(inspectInvoiceImage(jpegHeader(200, 1600), "image/jpeg").width).toBe(200);
   });
 
-  it("accepts a 600×4000 thermal receipt strip", async () => {
-    const strip = await bytes(canvas(600, 4000).jpeg());
+  it("accepts a thermal receipt strip as the client sends it (600×4000 reduced to 240×1600)", async () => {
+    const strip = await bytes(canvas(240, 1600).jpeg());
 
-    expect(inspectInvoiceImage(strip, "image/jpeg")).toMatchObject({ height: 4000, width: 600 });
+    expect(inspectInvoiceImage(strip, "image/jpeg")).toMatchObject({ height: 1600, width: 240 });
+  });
+});
+
+describe("inspectInvoiceImage: lado máximo (CIE-07)", () => {
+  const TOO_LARGE =
+    "La imagen supera 1.600 px en su lado mayor. Vuelve a subirla desde la app para que se reduzca.";
+
+  it("uses the same 1600 px limit as the client", () => {
+    expect(INVOICE_MAX_SIDE).toBe(1600);
+  });
+
+  it("rejects a 3600×4600 JPEG (ev-06) with a 400 in Spanish", async () => {
+    const big = await bytes(canvas(3600, 4600).jpeg());
+
+    const error = caught(() => inspectInvoiceImage(big, "image/jpeg"));
+
+    expect(error.status).toBe(400);
+    expect(error.code).toBe("BAD_REQUEST");
+    expect(error.message).toBe(TOO_LARGE);
+  });
+
+  it.each([
+    ["PNG", "image/png", () => canvas(1601, 900).png()],
+    ["WebP", "image/webp", () => canvas(900, 1601).webp()],
+  ])("rejects a %s one pixel over the limit", async (_label, type, image) => {
+    const data = await bytes(image());
+
+    expect(caught(() => inspectInvoiceImage(data, type)).message).toBe(TOO_LARGE);
+  });
+
+  it("accepts exactly 1600 px on the longer side and rejects 1601", () => {
+    expect(inspectInvoiceImage(jpegHeader(1600, 1200), "image/jpeg")).toMatchObject({ height: 1200, width: 1600 });
+    expect(inspectInvoiceImage(jpegHeader(1200, 1600), "image/jpeg")).toMatchObject({ height: 1600, width: 1200 });
+    expect(caught(() => inspectInvoiceImage(jpegHeader(1601, 1200), "image/jpeg")).message).toBe(TOO_LARGE);
+    expect(caught(() => inspectInvoiceImage(jpegHeader(1200, 1601), "image/jpeg")).message).toBe(TOO_LARGE);
   });
 });

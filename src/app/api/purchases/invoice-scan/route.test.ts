@@ -346,6 +346,26 @@ describe("POST /api/purchases/invoice-scan", () => {
     expect(model.doGenerateCalls).toHaveLength(0);
   });
 
+  it("400 en español sin llamar al modelo si la página pasa de 1600 px (3600×4600, CIE-07)", async () => {
+    const { image, storeId } = fresh();
+    const big = jpegHeader(3600, 4600, image);
+    const form = new FormData();
+    form.append("page", new File([new Uint8Array(big)], "factura.jpg", { type: "image/jpeg" }));
+
+    const response = await POST(
+      new Request(URL_BASE, {
+        body: form,
+        headers: { "x-demo-role": "almacen", "x-demo-store-id": storeId },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.message).toMatch(/^La imagen supera 1\.600 px en su lado mayor/);
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(rowByHash(storeId, sha256OfPages([big]))).toBeNull();
+  });
+
   it("forma JSON: 400 con un cuerpo que no es JSON o sin rutas", async () => {
     const { storeId } = fresh();
 
