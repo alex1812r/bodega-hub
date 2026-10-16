@@ -20,8 +20,9 @@
  * 3. `finalizeInvoiceScan` DESPUÉS de crear la compra: `confirm_invoice_scan` con el
  *    JSON confirmado (la verdad de la capa 2), exige el reclamo del mismo intento y,
  *    solo si confirmó en esta llamada (devuelve `true`), UNA llamada a
- *    `learn_invoice_aliases` (cada llamada suma `hits`). El alias sale del `rawText`
- *    GUARDADO en el escaneo (`normalizeAlias`), nunca del cliente; un alias de más
+ *    `learn_invoice_aliases` (cada llamada suma `hits`). El alias sale de la línea
+ *    GUARDADA en el escaneo (`invoiceAliasKey`: descripción o rawText sin cantidades
+ *    ni importes, SCN-UI-Q2), nunca del cliente; un alias de más
  *    de 200 caracteres no se aprende (nunca coincidiría exacto al recortarlo y la
  *    RPC rechazaría la llamada entera), pero sigue en el JSON confirmado.
  *    Nunca lanza: la compra ya existe; un fallo se registra en el log y se informa
@@ -33,7 +34,7 @@
  *    Solo se aprenden las líneas cuyo producto está en los items de la compra, y el
  *    empaque se toma del item (SCN-06-F2 · M3; ver `buildLearnLines`).
  */
-import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey } from "@bodega/core/invoice";
 import { z } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
@@ -230,6 +231,8 @@ export type PrecheckedInvoiceScan = {
   extraction: InvoiceExtraction | null;
   /** `rawText` de cada línea de `extracted.lines`, por índice (`null` si falta). */
   rawTexts: (string | null)[];
+  /** Clave de alias (`invoiceAliasKey`) de cada línea guardada; sin ella, la del `rawText`. */
+  aliasKeys?: (string | null)[];
   /** `true`: reintento del mismo intento; ya confirmado con esta compra. */
   replay: boolean;
   purchaseId: string | null;
@@ -328,6 +331,26 @@ export function readExtractedRawTexts(extracted: unknown): (string | null)[] {
 }
 
 /**
+ * Clave de alias (`invoiceAliasKey`) por índice desde `extracted` guardado, con
+ * su `description` (SCN-UI-Q2); tolera un JSON incompleto (`null` sin `rawText`).
+ */
+export function readExtractedAliasKeys(extracted: unknown): (string | null)[] {
+  const lines = (extracted as { lines?: unknown } | null)?.lines;
+
+  if (!Array.isArray(lines)) {
+    return [];
+  }
+
+  return lines.map((line) => {
+    const { rawText, description } = (line ?? {}) as { rawText?: unknown; description?: unknown };
+    if (typeof rawText !== "string") {
+      return null;
+    }
+    return invoiceAliasKey({ rawText, description: typeof description === "string" ? description : null });
+  });
+}
+
+/**
  * Enriquecer las líneas del cliente con el texto guardado. Se omiten las que
  * apuntan fuera de `extracted.lines` (o a una línea sin `rawText`): no describen
  * ninguna línea de la factura.
@@ -335,6 +358,7 @@ export function readExtractedRawTexts(extracted: unknown): (string | null)[] {
 export function buildConfirmedLines(
   rawTexts: (string | null)[],
   lines: InvoiceScanLineInput[],
+  aliasKeys: readonly (string | null)[] = [],
 ): ConfirmedInvoiceScanLine[] {
   return lines.flatMap((line) => {
     const rawText = rawTexts[line.lineIndex];
@@ -349,7 +373,7 @@ export function buildConfirmedLines(
         productId: line.productId,
         ...(line.packLabel != null ? { packLabel: line.packLabel } : {}),
         ...(line.unitsPerPack != null ? { unitsPerPack: line.unitsPerPack } : {}),
-        aliasNorm: normalizeAlias(rawText),
+        aliasNorm: aliasKeys[line.lineIndex] ?? invoiceAliasKey({ rawText }),
         rawText,
       },
     ];
@@ -359,7 +383,7 @@ export function buildConfirmedLines(
 /**
  * Líneas para `learn_invoice_aliases`: sin las que normalizan a "" ni las de más de
  * 200 caracteres (la RPC rechazaría la llamada entera; recortar daría un alias que
- * nunca coincide exacto con `normalizeAlias(rawText)`).
+ * nunca coincide exacto con su clave).
  */
 export function buildLearnLines(
   confirmedLines: ConfirmedInvoiceScanLine[],
@@ -463,14 +487,14 @@ export function buildScanPackUnits(
 }
 
 export function buildConfirmedPayload(
-  scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts">,
+  scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts" | "aliasKeys">,
   input: FinalizeInvoiceScanInput,
   now = new Date(),
 ): ConfirmedInvoiceScan {
   return {
     confirmedAt: now.toISOString(),
     extraction: input.extraction ?? scan.extraction,
-    lines: buildConfirmedLines(scan.rawTexts, input.lines),
+    lines: buildConfirmedLines(scan.rawTexts, input.lines, scan.aliasKeys),
     purchaseId: input.purchaseId,
     supplierId: input.supplierId,
   };
@@ -586,6 +610,7 @@ export async function precheckInvoiceScan(
     id: row.id,
     purchaseId: row.purchase_id,
     rawTexts: readExtractedRawTexts(row.extracted),
+    aliasKeys: readExtractedAliasKeys(row.extracted),
     replay: claim === "replay",
   };
 }

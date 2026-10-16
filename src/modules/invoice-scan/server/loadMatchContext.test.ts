@@ -271,7 +271,8 @@ describe("loadMatchContext", () => {
     expect(stub.rpc).toHaveBeenCalledWith(MATCH_CANDIDATES_RPC, {
       p_supplier_name: "distribuidora nandu c a",
       p_supplier_tax_id: "J-12345678-9",
-      p_texts: ["harina pan 1kg x20 g", "malta polar 355ml"],
+      // SCN-UI-Q2: los alias difusos se comparan con la clave de alias (invoiceAliasKey), no con el rawText entero.
+      p_texts: ["harina pan 1kg", "malta polar 355ml"],
       p_descriptions: ["harina pan 1kg", "malta polar 355ml"],
       p_limit: 5,
     });

@@ -7,7 +7,8 @@
  *   `matchInvoice` usa únicamente el del proveedor que resuelve), con sus
  *   empaques activos y los alias aprendidos en `confirmScan.mock-server.ts`;
  * - difusos por línea: productos activos con nombre parecido (≥ 0,6) a la
- *   descripción y alias del proveedor más probable parecidos al `rawText`;
+ *   descripción y alias del proveedor más probable parecidos a la clave de
+ *   alias de la línea (`invoiceAliasKey`, SCN-UI-Q2);
  *   a las líneas sin ninguno, segunda pasada con los textos limpios de
  *   `searchTextVariants` (como `loadVariantFuzzy`, SCN-11-it1);
  * - alícuotas activas de la tienda, tasa vigente y escaneos previos con el
@@ -17,7 +18,7 @@
  * (no la de trigramas de pg_trgm) y el último costo es `currentCostRef` del
  * producto (no la última línea recibida).
  */
-import { normalizeAlias } from "@bodega/core/invoice";
+import { invoiceAliasKey, normalizeAlias } from "@bodega/core/invoice";
 
 import { mockTaxRatesForStore } from "@/modules/settings/services/taxRates.mock-server";
 import {
@@ -185,7 +186,7 @@ function fuzzyCandidates(
   const fuzzy: Record<number, MatchFuzzyCandidate[]> = {};
 
   extraction.lines.forEach((line, index) => {
-    const text = normalizeAlias(line.rawText);
+    const text = invoiceAliasKey(line);
     const description = normalizeAlias(line.description || line.rawText);
     const list = candidatesFor(text, description, catalog, storeProducts);
     if (list.length > 0) {
