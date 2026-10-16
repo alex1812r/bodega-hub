@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "key": "8bc0541018380c2138894e65c761365a475b33be59728520e9b16c7ba949c426",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "s10",
+  "bucket": "conAlias",
+  "fewShotIds": [
+    "s01",
+    "s02",
+    "s07"
+  ],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "DISTRIBUIDORA EL SAMAN 2024, C.A.",
+      "taxId": "J-41258736-0"
+    },
+    "number": "00002371",
+    "date": "2026-09-16",
+    "currency": "VES",
+    "printedRate": 886.95,
+    "lines": [
+      {
+        "rawText": "REFRESCO GLUP COLA 2LT [BULTO X 6]",
+        "description": "REFRESCO GLUP COLA 2LT",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5895,
+        "lineTotal": 11790,
+        "confidence": 1
+      },
+      {
+        "rawText": "REFRESCO GLUP SABORES 2LT [BULTO X 6]",
+        "description": "REFRESCO GLUP SABORES 2LT",
+        "quantity": 3,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4681.8,
+        "lineTotal": 14045.4,
+        "confidence": 1
+      },
+      {
+        "rawText": "HARINA PAN 1KG (E) [BULTO X 20]",
+        "description": "HARINA PAN 1KG",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 20,
+        "unitPrice": 18819,
+        "lineTotal": 18819,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "ARROZ PRIMOR 1KG (E) [BULTO X 24]",
+        "description": "ARROZ PRIMOR 1KG",
+        "quantity": 2,
+        "unit": "bulto",
+        "unitsPerPack": 24,
+        "unitPrice": 23990.4,
+        "lineTotal": 47980.8,
+        "taxHint": "exento",
+        "confidence": 1
+      },
+      {
+        "rawText": "ATUN MARGARITA EN ACEITE 140GR CAJA X24",
+        "description": "ATUN MARGARITA EN ACEITE 140GR",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 24,
+        "unitPrice": 30844.8,
+        "lineTotal": 30844.8,
+        "confidence": 1
+      },
+      {
+        "rawText": "MALTA POLAR 1.5LT [BULTO X 6]",
+        "description": "MALTA POLAR 1.5LT",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 10077.6,
+        "lineTotal": 10077.6,
+        "confidence": 1
+      }
+    ],
+    "subtotal": 133557.6,
+    "tax": 10681.25,
+    "total": 144238.85,
+    "confidence": 1,
+    "warnings": []
+  },
+  "inputTokens": 5481,
+  "outputTokens": 870,
+  "durationMs": 2665,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:12:53.614Z"
+}

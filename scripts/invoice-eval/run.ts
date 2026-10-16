@@ -5,6 +5,7 @@
  *   npm run invoice-eval -- --provider google|anthropic|mock [--model <id>]
  *     [--only f01,f02] [--no-fewshot] [--concurrency 2]
  *     [--out scripts/invoice-eval/runs] [--label texto] [--keys-env <ruta>]
+ *     [--resume] [--no-cache]
  *   npm run invoice-eval -- --provider oracle [...]
  *   npm run invoice-eval -- --replay <run.json> [--fill-missing --provider p --model m] [...]
  *
@@ -29,6 +30,17 @@
  *   Oráculo y replay sin --fill-missing no leen el archivo.
  * - Cerrojo `.notes/factura-escaneo/lab.lock` mientras corre.
  * - 3 errores de cuota seguidos cortan la pasada (aviso en el informe).
+ *
+ * Caché y reanudación (SCN-10n):
+ * - Toda extracción real (google/anthropic) que termina bien se guarda en
+ *   `scripts/invoice-eval/cache/<provider>/<modelId>/` (ver
+ *   `cache/extractionCache.ts`); antes de llamar se busca allí. `--no-cache`
+ *   fuerza la llamada (y sobrescribe la entrada). Los errores no se cachean.
+ * - Un 429 se reintenta tras 65 s (ventana por minuto); si sigue, cuenta para
+ *   la racha de cuota (diaria). Un PROVIDER_ERROR (503) se reintenta una vez.
+ * - `--resume`: extrae reales antes que sintéticas en cada pasada; con la
+ *   caché, repetir la corrida solo llama por lo que falta. El informe lista
+ *   las facturas/pasadas que quedan por medir y por qué.
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
@@ -37,7 +49,6 @@ import { createClient } from "@supabase/supabase-js";
 
 import type { InvoiceExtraction } from "../../src/modules/invoice-scan/contracts";
 import { extractInvoice, type InvoiceFewShotExample } from "../../src/modules/invoice-scan/server/extract";
-import { toFewShotFormat } from "../../src/modules/invoice-scan/server/fewShot";
 import {
   loadMatchContext,
   type MatchContextSupabaseClient,
@@ -45,7 +56,13 @@ import {
 import { createInvoiceScanModel } from "../../src/modules/invoice-scan/server/provider";
 import { parseEnvFile } from "../stock-lab/env";
 
-import { TARGETS, type AggregateMetrics } from "./metrics";
+import {
+  CACHE_DIR,
+  productionFewShot,
+  withExtractionCache,
+  type ExtractionCacheState,
+} from "./cache/extractionCache";
+import { aggregate, TARGETS, type AggregateMetrics, type Bucket, type GlobalMetrics } from "./metrics";
 import { FROM_ORIGINAL, ORACLE_BANNER, ORACLE_NA, modeTargetsOk, renderMarkdown, toJson, type ReportMode } from "./report";
 import { runBench, type BenchExtractor, type BenchPage, type BenchResult } from "./runner";
 import { SCENARIO_USER_EMAIL, SCENARIO_USER_PASSWORD } from "./scenario/catalog";
@@ -79,11 +96,14 @@ export type CliOptions = {
   /** Ruta absoluta del run.json de origen. */
   replay?: string;
   fillMissing: boolean;
+  /** false con `--no-cache`. */
+  cache: boolean;
+  resume: boolean;
 };
 
 const USAGE =
   "Uso: npm run invoice-eval -- --provider google|anthropic|mock|oracle [--model <id>] [--only f01,f02] " +
-  "[--no-fewshot] [--concurrency n] [--out <dir>] [--label <texto>] [--keys-env <ruta>] " +
+  "[--no-fewshot] [--concurrency n] [--out <dir>] [--label <texto>] [--keys-env <ruta>] [--resume] [--no-cache] " +
   "| --replay <run.json> [--fill-missing --provider <p> --model <m>]";
 
 export function parseArgs(argv: readonly string[], cwd: string = process.cwd()): CliOptions {
@@ -91,8 +111,18 @@ export function parseArgs(argv: readonly string[], cwd: string = process.cwd()):
   let fewShot = true;
   let noFewShotFlag = false;
   let fillMissing = false;
+  let cache = true;
+  let resume = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--no-cache") {
+      cache = false;
+      continue;
+    }
+    if (arg === "--resume") {
+      resume = true;
+      continue;
+    }
     if (arg === "--no-fewshot") {
       fewShot = false;
       noFewShotFlag = true;
@@ -132,6 +162,10 @@ export function parseArgs(argv: readonly string[], cwd: string = process.cwd()):
     throw new Error(`--provider es obligatorio. ${USAGE}`);
   }
   if (provider === "oracle" && values.get("--model")) throw new Error("--provider oracle no usa --model.");
+  if (resume && !cache) throw new Error("--resume necesita la caché: quita --no-cache.");
+  if ((resume || !cache) && (replay || (provider !== "google" && provider !== "anthropic"))) {
+    throw new Error("--resume y --no-cache solo valen con --provider google|anthropic (sin --replay).");
+  }
   const concurrencyRaw = values.get("--concurrency") ?? "2";
   const concurrency = Number(concurrencyRaw);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
@@ -159,6 +193,8 @@ export function parseArgs(argv: readonly string[], cwd: string = process.cwd()):
     keysEnv: toAbsolute(values.get("--keys-env") ?? DEFAULT_KEYS_ENV),
     ...(replay ? { replay: toAbsolute(replay) } : {}),
     fillMissing,
+    cache,
+    resume,
   };
 }
 
@@ -324,12 +360,8 @@ export function toProductionExtractor(
   model: Parameters<typeof extractInvoice>[0]["model"],
 ): BenchExtractor {
   return async (input) => {
-    const fewShot: InvoiceFewShotExample[] = [];
-    for (const example of input.fewShot ?? []) {
-      const reduced = toFewShotFormat(example.confirmed);
-      if (!reduced.ok) continue; // producción también lo omite
-      fewShot.push({ format: reduced.format, ...(example.page ? { page: example.page } : {}) });
-    }
+    // Formato saneado; los inválidos se omiten como en producción (la caché usa la misma función).
+    const fewShot: InvoiceFewShotExample[] = productionFewShot(input.fewShot);
     const result = await extract({
       pages: input.pages,
       ...(fewShot.length > 0 ? { fewShot } : {}),
@@ -494,6 +526,123 @@ export function withQuotaCut(extractor: BenchExtractor, limit: number = QUOTA_ST
   return { extractor: guarded, state };
 }
 
+/** Espera antes de reintentar un 429: más que la ventana por minuto (RPM). */
+export const QUOTA_RETRY_DELAYS_MS: readonly number[] = [65_000];
+/** Espera antes de reintentar un PROVIDER_ERROR (503 de sobrecarga, sobre todo). */
+export const PROVIDER_RETRY_DELAYS_MS: readonly number[] = [20_000];
+
+export type RetryOptions = {
+  quotaDelaysMs?: readonly number[];
+  providerDelaysMs?: readonly number[];
+  sleep?: (ms: number) => Promise<void>;
+  onRetry?: (event: { code: string; delayMs: number; id?: string }) => void;
+};
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * Reintenta con espera: un 429 por minuto se resuelve esperando la ventana; si
+ * tras las esperas sigue el 429, es la cuota diaria y el error sube (lo cuenta
+ * `withQuotaCut`). Un PROVIDER_ERROR se reintenta también (503 transitorio).
+ */
+export function withRetry(extractor: BenchExtractor, options: RetryOptions = {}): BenchExtractor {
+  const quotaDelays = options.quotaDelaysMs ?? QUOTA_RETRY_DELAYS_MS;
+  const providerDelays = options.providerDelaysMs ?? PROVIDER_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  return async (input) => {
+    let quotaTries = 0;
+    let providerTries = 0;
+    for (;;) {
+      try {
+        return await extractor(input);
+      } catch (error) {
+        const quota = isQuotaError(error);
+        const provider = !quota && errorCode(error) === "PROVIDER_ERROR";
+        const delay = quota ? quotaDelays[quotaTries] : provider ? providerDelays[providerTries] : undefined;
+        if (delay === undefined) throw error;
+        if (quota) quotaTries += 1;
+        else providerTries += 1;
+        options.onRetry?.({ code: quota ? "QUOTA" : "PROVIDER_ERROR", delayMs: delay, ...(input.invoice ? { id: input.invoice.id } : {}) });
+        await sleep(delay);
+      }
+    }
+  };
+}
+
+// ───────────────────────── pendientes (SCN-10n) ─────────────────────────
+
+export type PendingExtraction = { id: string; bucket: Bucket; code: string; reason: string };
+
+const PENDING_REASONS: Record<string, string> = {
+  QUOTA: "cuota agotada (429 tras reintentar)",
+  [QUOTA_CUT_CODE]: "cuota: pasada cortada, no se intentó",
+  PROVIDER_ERROR: "proveedor no disponible (503/otro)",
+  TIMEOUT: "timeout del modelo",
+  INVALID_OUTPUT: "salida inválida del modelo (no se cachea; se reintenta)",
+};
+
+/**
+ * Facturas/pasadas sin extracción medida: las que el runner intentó extraer y
+ * fallaron. Las de conAlias que reutilizan la de sinAlias no cuentan aparte.
+ */
+export function pendingExtractions(result: Pick<BenchResult, "perInvoice">): PendingExtraction[] {
+  return result.perInvoice
+    .filter((entry) => !entry.reusedExtraction && entry.predicted === null && entry.error)
+    .map((entry) => {
+      const code = entry.error?.code ?? "?";
+      return { id: entry.id, bucket: entry.bucket, code, reason: PENDING_REASONS[code] ?? entry.error?.message ?? "error" };
+    });
+}
+
+export type MeasuredMetrics = { entries: number; of: number; global: GlobalMetrics };
+
+/**
+ * Métricas SOLO sobre las entradas con extracción (sin las pendientes, que el
+ * agregado normal cuenta como fallo total). Las de conAlias pueden haber
+ * aprendido menos alias si una anterior del proveedor quedó pendiente.
+ */
+export function measuredMetrics(result: Pick<BenchResult, "perInvoice">): MeasuredMetrics {
+  const measured = result.perInvoice.filter((entry) => entry.predicted !== null);
+  return { entries: measured.length, of: result.perInvoice.length, global: aggregate(measured.map((entry) => entry.metrics)) };
+}
+
+function pct1(value: number | null): string {
+  return value === null ? "–" : `${(value * 100).toFixed(1)}%`;
+}
+
+export function measuredMarkdown(measured: MeasuredMetrics): string[] {
+  const row = (name: string, m: AggregateMetrics) =>
+    `| ${name} | ${m.invoices} | ${pct1(m.headerFieldRate)} | ${pct1(m.linesDetectedRate)} | ${pct1(m.exactRate)} | ${pct1(m.matchOkRate)} | ${pct1(m.confirmedWrongRate)} | ${m.p95DurationMs1Page ?? "–"} | ${m.avgCostUsd === null ? "–" : `$${m.avgCostUsd.toFixed(5)}`} |`;
+  return [
+    `## Métricas solo sobre lo medido (${measured.entries} de ${measured.of} entradas)`,
+    "",
+    "Sin las pendientes (que arriba cuentan como fallo). En conAlias, una anterior pendiente del mismo proveedor deja menos alias aprendidos.",
+    "",
+    "| Pasada | Facturas | Cabecera | Líneas detectadas | Exactitud | Emparejadas OK | Confirmadas mal | p95 1 pág. (ms) | $/factura |",
+    "|---|---|---|---|---|---|---|---|---|",
+    row("sin alias", measured.global.byBucket.sinAlias),
+    row("con alias", measured.global.byBucket.conAlias),
+    row("total", measured.global.total),
+  ];
+}
+
+export function pendingMarkdown(pending: readonly PendingExtraction[], model: string): string[] {
+  if (pending.length === 0) {
+    return [`## Pendientes por medir (${model})`, "", "Ninguna: todas las extracciones de la corrida están medidas."];
+  }
+  return [
+    `## Pendientes por medir (${model}): ${pending.length}`,
+    "",
+    "| Factura | Pasada | Motivo |",
+    "|---|---|---|",
+    ...pending.map((entry) => `| ${entry.id} | ${entry.bucket} | ${entry.reason} (${entry.code}) |`),
+  ];
+}
+
 // ───────────────────────── salida ─────────────────────────
 
 function caracasDate(now: Date): string {
@@ -535,6 +684,14 @@ export type RunMeta = {
   only?: string[];
   quotaCut: boolean;
   quotaSkipped: number;
+  /** --resume: reales primero; el informe lista lo pendiente. */
+  resume?: boolean;
+  /** Caché de extracciones (solo google/anthropic). Tokens y duración de los hits son de la llamada original. */
+  cache?: ExtractionCacheState & { dir: string };
+  /** Facturas/pasadas que quedan por medir (solo corridas con modelo). */
+  pending?: PendingExtraction[];
+  /** Con pendientes: métricas solo sobre lo medido. */
+  measured?: MeasuredMetrics;
   replay?: {
     /** Corrida de origen (relativa al worktree si cae dentro). */
     source: string;
@@ -589,7 +746,21 @@ export function renderRunMarkdown(result: BenchResult, meta: RunMeta): string {
       `> **AVISO: pasada cortada por cuota** (${QUOTA_STREAK_LIMIT} errores QUOTA seguidos; ${meta.quotaSkipped} extracciones no se intentaron). Las métricas de esta corrida están incompletas.`,
     );
   }
-  return `${lines.join("\n")}\n\n${renderMarkdown(result, reportModeOf(meta))}`;
+  if (meta.cache) lines.push(`> ${cacheLine(meta.cache)}`);
+  const tailLines = [
+    ...(meta.pending ? pendingMarkdown(meta.pending, `${result.meta.provider}/${result.meta.modelId}`) : []),
+    ...(meta.measured ? ["", ...measuredMarkdown(meta.measured)] : []),
+  ];
+  const tail = tailLines.length > 0 ? `\n\n${tailLines.join("\n")}\n` : "";
+  return `${lines.join("\n")}\n\n${renderMarkdown(result, reportModeOf(meta))}${tail}`;
+}
+
+export function cacheLine(cache: NonNullable<RunMeta["cache"]>): string {
+  return (
+    `Caché de extracciones (${cache.dir}${cache.enabled ? "" : ", --no-cache: no se leyó"}): ${cache.hits} de caché, ` +
+    `${cache.calls} llamadas nuevas, ${cache.errors} llamadas con error (no cacheadas)${cache.invalid > 0 ? `, ${cache.invalid} entradas inválidas ignoradas` : ""}. ` +
+    "Tokens y duración de las de caché son los de su llamada original."
+  );
 }
 
 /** `<dir>/<fecha>-<provider>-<model>[-label][-n].md|.json`; nunca sobrescribe. */
@@ -657,6 +828,8 @@ export function summaryLines(result: BenchResult, meta: RunMeta, files: { markdo
     oracle
       ? `$/factura              ${ORACLE_NA}`
       : `$/factura              ${total.avgCostUsd === null ? "–" : `$${total.avgCostUsd.toFixed(5)}`} (${mark(total.avgCostUsd, TARGETS.avgCostUsdMax, "<=")} <=$${TARGETS.avgCostUsdMax}) tokens in=${total.inputTokens} out=${total.outputTokens}${fromOriginal}`,
+    ...(meta.cache ? [`Caché                  ${meta.cache.hits} de caché, ${meta.cache.calls} nuevas, ${meta.cache.errors} con error`] : []),
+    ...(meta.pending ? [`Pendientes             ${meta.pending.length}${meta.pending.length > 0 ? ` (${meta.pending.map((p) => `${p.id}:${p.bucket}`).join(", ")})` : ""}`] : []),
     `Errores                ${errors.length}${codes.size > 0 ? ` (${[...codes].map(([code, n]) => `${code}×${n}`).join(", ")})` : ""}; metas${oracle ? " de emparejamiento" : ""} ${modeTargetsOk(result, mode) ? "CUMPLIDAS" : "NO cumplidas"}`,
     `Informe                ${files.markdownPath}`,
   ];
@@ -733,9 +906,27 @@ async function main(): Promise<void> {
     }
     const matchClient = client as unknown as MatchContextSupabaseClient;
     // Extractor según el modo; la cuota solo vigila llamadas reales.
-    const guard = model ? withQuotaCut(toProductionExtractor(extractInvoice, model)) : null;
-    const replay = source ? createReplayExtractor(source, options.fillMissing ? guard?.extractor : undefined) : null;
-    const extractor = mode === "oracle" ? createOracleExtractor() : replay ? replay.extractor : (guard as NonNullable<typeof guard>).extractor;
+    // Orden: caché → corte por cuota → reintentos con espera → producción (un hit no gasta cuota ni lo bloquea el corte).
+    const guard = model
+      ? withQuotaCut(
+          withRetry(toProductionExtractor(extractInvoice, model), {
+            onRetry: (event) => console.log(`  reintento ${event.id ?? ""} tras ${event.code}: espera ${Math.round(event.delayMs / 1000)} s`),
+          }),
+        )
+      : null;
+    const realModel = model && keyNameFor(model.provider as CliProvider) !== null ? model : null;
+    const cache =
+      guard && realModel
+        ? withExtractionCache(guard.extractor, {
+            root: CACHE_DIR,
+            provider: realModel.provider,
+            modelId: realModel.modelId,
+            enabled: options.cache,
+          })
+        : null;
+    const modelExtractor = cache?.extractor ?? guard?.extractor;
+    const replay = source ? createReplayExtractor(source, options.fillMissing ? modelExtractor : undefined) : null;
+    const extractor = mode === "oracle" ? createOracleExtractor() : replay ? replay.extractor : (modelExtractor as BenchExtractor);
     const modeTag = mode === "oracle" ? " [ORÁCULO: solo emparejamiento]" : source ? ` [REPLAY de ${source.path}]` : "";
     console.log(`[invoice-eval] ${resolved.provider}/${resolved.modelId}${modeTag}: ${truths.length} facturas, few-shot ${fewShot ? "sí" : "no"}`);
 
@@ -748,6 +939,7 @@ async function main(): Promise<void> {
       readPage: (path) => readBenchPage(path),
       fewShot,
       concurrency: options.concurrency,
+      ...(options.resume ? { extractOrder: "realFirst" as const } : {}),
       now: () => now,
       onProgress: (event) => {
         if (event.phase === "extract") {
@@ -768,6 +960,10 @@ async function main(): Promise<void> {
       ...(options.only ? { only: options.only } : {}),
       quotaCut: guard?.state.cut ?? false,
       quotaSkipped: guard?.state.skipped ?? 0,
+      ...(options.resume ? { resume: true } : {}),
+      ...(cache ? { cache: { ...cache.state, dir: displayPath(CACHE_DIR) } } : {}),
+      ...(mode === "model" ? { pending: pendingExtractions(raw) } : {}),
+      ...(mode === "model" && pendingExtractions(raw).length > 0 ? { measured: measuredMetrics(raw) } : {}),
       ...(source && replay
         ? {
             replay: {

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "key": "1b88cb536e053d5572cfb5c7ba62cafa0b922fa4167556ca603ddce8ec5cb875",
+  "provider": "google",
+  "modelId": "gemini-3.6-flash",
+  "invoiceId": "f07",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "CHEVERE DEPOT, C.A",
+      "taxId": "J-508357612"
+    },
+    "number": "00002450",
+    "date": "2026-08-26",
+    "currency": "VES",
+    "printedRate": 787.52,
+    "lines": [
+      {
+        "rawText": "JUSTY 400ML\n1,00 x 4.102,98\n[BULTO X 15,00]",
+        "description": "JUSTY 400ML",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 15,
+        "unitPrice": 4102.98,
+        "lineTotal": 4102.98,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "COCA COLA 2L\n1,00 x 6.930,18\n[BULTO X 6,00]",
+        "description": "COCA COLA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 6930.18,
+        "lineTotal": 6930.18,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "JUSTY 1.5\n1,00 x 9.040,73\n[BULTO X 12,00]",
+        "description": "JUSTY 1.5",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 9040.73,
+        "lineTotal": 9040.73,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "GLUP SABORES 1L\n1,00 x 6.079,65\n[BULTO X 12,00]",
+        "description": "GLUP SABORES 1L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 12,
+        "unitPrice": 6079.65,
+        "lineTotal": 6079.65,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "LUP SABORES 2L\n1,00 x 4.016,35\n[BULTO X 6,00]",
+        "description": "LUP SABORES 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 4016.35,
+        "lineTotal": 4016.35,
+        "confidence": 0.75
+      },
+      {
+        "rawText": "LA 2L\n1,00 x 5.048,00\n[BULTO X 6,00]",
+        "description": "LA 2L",
+        "quantity": 1,
+        "unit": "bulto",
+        "unitsPerPack": 6,
+        "unitPrice": 5048,
+        "lineTotal": 5048,
+        "confidence": 0.65
+      }
+    ],
+    "total": 35217.89,
+    "confidence": 0.85,
+    "warnings": [
+      "Parte de las descripciones de las ultimas dos lineas esta parcialmente oculta por un dedo."
+    ]
+  },
+  "inputTokens": 2427,
+  "outputTokens": 2867,
+  "durationMs": 14278,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:27:04.345Z"
+}

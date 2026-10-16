@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "key": "46a96813dbd52353e5de953f8debb3187ab2e6c5758ca08e8c959615c7749c4d",
+  "provider": "google",
+  "modelId": "gemini-3.5-flash-lite",
+  "invoiceId": "f19",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "FARMATODO",
+      "taxId": "",
+      "phone": "0800-FARMATODO",
+      "address": "Sabana Grande, Casanova/Recreo, Ed Rupi (Sector Piedra Azul), Caracas"
+    },
+    "number": "00362952",
+    "date": "2026-03-03",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "111103216 Azucar Montalban Refinada 1 (E) Bs 1.750,00",
+        "description": "Azucar Montalban Refinada",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 1750,
+        "lineTotal": 1750,
+        "taxHint": "exento",
+        "barcode": "111103216",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 1750,
+    "tax": 0,
+    "total": 1750,
+    "confidence": 0.9,
+    "warnings": [
+      "El RIF del proveedor no está explícitamente visible en la cabecera."
+    ]
+  },
+  "inputTokens": 2405,
+  "outputTokens": 344,
+  "durationMs": 1693,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:17:00.362Z"
+}

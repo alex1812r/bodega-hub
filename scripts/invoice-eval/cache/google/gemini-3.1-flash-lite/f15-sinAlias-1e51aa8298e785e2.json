@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "key": "1e51aa8298e785e2ad8f50e782e7d1b3b37c35c90e4e6dd76af5d6339866d145",
+  "provider": "google",
+  "modelId": "gemini-3.1-flash-lite",
+  "invoiceId": "f15",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "ABASTOS Y FRUTERIA LAS ACACIAS, S.R.L",
+      "taxId": "J-002658118",
+      "address": "AV GRAN COLOMBIA CON CALLE AMERICA EDIF SALON PISO PB LOCAL A URB LAS ACACIAS CARACAS DISTRITO CAPITAL"
+    },
+    "number": "00016223",
+    "date": "2026-08-15",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 ANIS CARTUJ 12U Bs 54077.80",
+        "description": "ANIS CARTUJ",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitsPerPack": 12,
+        "unitPrice": 54077.8,
+        "lineTotal": 54077.8,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 MALPORT T 6X1.75 Bs 33991.76",
+        "description": "MALPORT T",
+        "quantity": 2,
+        "unit": "unidad",
+        "unitsPerPack": 6,
+        "unitPrice": 16995.88,
+        "lineTotal": 33991.76,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 GRAN RESERVA 6x0,70L Bs 36695.65",
+        "description": "GRAN RESERVA",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitsPerPack": 6,
+        "unitPrice": 36695.65,
+        "lineTotal": 36695.65,
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 CHAR DULA DEMI Bs 6566.59",
+        "description": "CHAR DULA DEMI",
+        "quantity": 1,
+        "unit": "unidad",
+        "unitPrice": 6566.59,
+        "lineTotal": 6566.59,
+        "confidence": 0.95
+      }
+    ],
+    "total": 132876.88,
+    "confidence": 0.9,
+    "warnings": [
+      "La línea 'ENVIO' no es un producto y ha sido excluida del desglose de líneas.",
+      "El documento no indica alícuota de IVA explícita."
+    ]
+  },
+  "inputTokens": 2427,
+  "outputTokens": 654,
+  "durationMs": 3379,
+  "pages": 1,
+  "savedAt": "2026-10-16T03:09:03.125Z"
+}

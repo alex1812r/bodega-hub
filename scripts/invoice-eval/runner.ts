@@ -69,6 +69,8 @@ export type BenchExtractInput = {
   fewShot?: BenchFewShotExample[];
   signal?: AbortSignal;
   invoice?: BenchInvoiceRef;
+  /** Ids de las facturas usadas como few-shot (parte de la clave de la caché, SCN-10n). */
+  fewShotIds?: string[];
 };
 
 export type BenchExtractResult = {
@@ -79,6 +81,8 @@ export type BenchExtractResult = {
   outputTokens: number | null;
   durationMs: number;
   pages: number;
+  /** true si vino de la caché de extracciones (tokens y duración son los de la llamada original). */
+  cached?: boolean;
 };
 
 /** Misma forma que `extractInvoice` (rama de Extracción): se conecta tal cual en el CLI. */
@@ -116,6 +120,12 @@ export type BenchOptions = {
   signal?: AbortSignal;
   /** Reloj inyectable para tests. */
   now?: () => Date;
+  /**
+   * Orden de las EXTRACCIONES dentro de cada pasada (el emparejamiento siempre
+   * va por id). "realFirst": reales antes que sintéticas, para que un corte por
+   * cuota deje medidas las reales. Default "id".
+   */
+  extractOrder?: "id" | "realFirst";
 };
 
 export type BenchError = { message: string; code?: string };
@@ -133,6 +143,8 @@ export type BenchInvoiceResult = {
   reusedExtraction: boolean;
   /** Ids de las facturas usadas como few-shot. */
   fewShotIds: string[];
+  /** La extracción contada vino de la caché (SCN-10n). */
+  fromCache: boolean;
   /** Id (de la verdad) del escaneo previo que el emparejamiento marcó como duplicado. */
   duplicateOfScanId?: string;
   predicted: InvoiceExtraction | null;
@@ -309,6 +321,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
         ...(fewShot.length > 0 ? { fewShot } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
         invoice: { id: truth.id, bucket, truth },
+        ...(fewShotIds.length > 0 ? { fewShotIds } : {}),
       });
       provider ??= result.provider;
       modelId ??= result.modelId;
@@ -384,6 +397,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       costUsd: metrics.usage.costUsd,
       reusedExtraction: !input.countUsage,
       fewShotIds: extracted.fewShotIds,
+      fromCache: input.countUsage && extracted.result?.cached === true,
       ...(matched?.duplicateOfScanId ? { duplicateOfScanId: matched.duplicateOfScanId } : {}),
       predicted: extraction,
       matched,
@@ -391,9 +405,15 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     return { state: { truth, extraction, matched }, entry };
   };
 
+  const extractionOrder = <T>(items: readonly T[], truthOf: (item: T) => InvoiceTruth): T[] =>
+    opts.extractOrder === "realFirst"
+      ? [...items].sort((a, b) => Number(truthOf(a).synthetic) - Number(truthOf(b).synthetic) || byId(truthOf(a), truthOf(b)))
+      : [...items];
+
   // a) sinAlias
   let extractedCount = 0;
-  const passA = await mapPool(truths, concurrency, async (truth) => {
+  const orderA = extractionOrder(truths, (truth) => truth);
+  const passA = await mapPool(orderA, concurrency, async (truth) => {
     const extracted = await extract(truth, "sinAlias", []);
     extractedCount += 1;
     opts.onProgress?.({
@@ -406,7 +426,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
     });
     return extracted;
   });
-  const extractedA = new Map(truths.map((truth, index) => [truth.id, passA[index]]));
+  const extractedA = new Map(orderA.map((truth, index) => [truth.id, passA[index]]));
   const stateA = new Map<string, ScanState>();
   const scansA: MatchPreviousScan[] = [];
   for (const [index, truth] of truths.entries()) {
@@ -444,7 +464,8 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
   const extractedB = new Map<string, Extracted>();
   if (opts.fewShot) {
     let done = 0;
-    const results = await mapPool(targetsB, concurrency, async ({ truth, previous }) => {
+    const orderB = extractionOrder(targetsB, (target) => target.truth);
+    const results = await mapPool(orderB, concurrency, async ({ truth, previous }) => {
       const root = duplicateRoot(truth);
       const examples = previous.filter((p) => duplicateRoot(p) !== root).slice(-3);
       const extracted = await extract(truth, "conAlias", examples);
@@ -459,7 +480,7 @@ export async function runBench(opts: BenchOptions): Promise<BenchResult> {
       });
       return extracted;
     });
-    targetsB.forEach(({ truth }, index) => extractedB.set(truth.id, results[index]));
+    orderB.forEach(({ truth }, index) => extractedB.set(truth.id, results[index]));
   }
 
   // Estado por factura en conAlias: las primeras de cada proveedor quedan con su estado de sinAlias.

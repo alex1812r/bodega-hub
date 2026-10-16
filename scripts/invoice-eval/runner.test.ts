@@ -21,7 +21,10 @@ import { ORACLE_BANNER, PAIR_NA, pairSummary, renderMarkdown, toJson, writeRunFi
 import {
   createOracleExtractor,
   createReplayExtractor,
+  measuredMarkdown,
+  measuredMetrics,
   parseReplaySource,
+  pendingExtractions,
   REPLAY_MISSING_CODE,
   REPLAY_MISSING_MESSAGE,
   renderRunMarkdown,
@@ -304,6 +307,32 @@ describe("runBench", () => {
     expect(progress).toContain("extract:sinAlias:f02!");
     expect(progress).toContain("match:sinAlias:s01");
   });
+
+  it("SCN-10n: pendientes y métricas solo sobre lo medido (la pendiente no cuenta como fallo)", async () => {
+    const quota = Object.assign(new Error("Se agotó la cuota"), { code: "QUOTA" });
+    const result = await runBench(options({ extractor: fakeExtractor({ failFor: "f02", error: quota }) }));
+    // Sin few-shot la conAlias de f02 reutiliza la de sinAlias: solo cuenta una vez como pendiente.
+    expect(pendingExtractions(result).map((p) => `${p.id}:${p.bucket}`)).toEqual(["f02:sinAlias"]);
+    expect(result.global.all.byBucket.sinAlias.linesDetectedRate).toBeLessThan(1);
+    const measured = measuredMetrics(result);
+    expect(measured.of).toBe(result.perInvoice.length);
+    expect(measured.entries).toBe(result.perInvoice.length - 2);
+    expect(measured.global.byBucket.sinAlias.invoices).toBe(TRUTHS.length - 1);
+    expect(measured.global.byBucket.sinAlias.linesDetectedRate).toBe(1);
+    expect(measuredMarkdown(measured).join("\n")).toContain(`(${measured.entries} de ${measured.of} entradas)`);
+    const markdown = renderRunMarkdown(result, {
+      mode: "model",
+      requested: { provider: "google", model: "m" },
+      fewShot: false,
+      quotaCut: false,
+      quotaSkipped: 0,
+      pending: pendingExtractions(result),
+      measured,
+    });
+    expect(markdown).toContain("## Pendientes por medir (fake/gemini-2.5-flash-lite): 1");
+    expect(markdown).toContain("| f02 | sinAlias | cuota agotada (429 tras reintentar) (QUOTA) |");
+    expect(markdown).toContain("## Métricas solo sobre lo medido");
+  });
 });
 
 describe("learnAliases", () => {
@@ -389,6 +418,44 @@ describe("modos sin modelo (SCN-10l)", () => {
     expect(refs).toContain("f01:sinAlias");
     expect(refs).toContain("f02:conAlias");
     expect(calls.every((call) => call.invoice?.truth.id === truthOfPage(call.pages[0]).id)).toBe(true);
+  });
+
+  it("SCN-10n: pasa los ids de few-shot al extractor y marca fromCache solo en la extracción contada", async () => {
+    const calls: BenchExtractInput[] = [];
+    const inner = fakeExtractor({ calls });
+    const cachedFor = new Set(["f01:sinAlias", "f02:conAlias"]);
+    const extractor: BenchExtractor = async (input) => ({
+      ...(await inner(input)),
+      cached: cachedFor.has(`${input.invoice?.id}:${input.invoice?.bucket}`),
+    });
+    const withFewShot = await runBench(options({ fewShot: true, extractor }));
+    const f02con = calls.find((call) => call.invoice?.id === "f02" && call.invoice.bucket === "conAlias");
+    expect(f02con?.fewShotIds).toEqual(["f01"]);
+    expect(calls.find((call) => call.invoice?.id === "f01")?.fewShotIds).toBeUndefined();
+    expect(entry(withFewShot, "f01", "sinAlias").fromCache).toBe(true);
+    expect(entry(withFewShot, "f02", "conAlias").fromCache).toBe(true);
+    expect(entry(withFewShot, "f02", "sinAlias").fromCache).toBe(false);
+    // Sin few-shot, conAlias reutiliza la de sinAlias: no cuenta como de caché otra vez.
+    const reused = await runBench(options({ fewShot: false, extractor }));
+    expect(entry(reused, "f02", "conAlias").fromCache).toBe(false);
+  });
+
+  it("SCN-10n: extractOrder realFirst extrae reales antes que sintéticas en cada pasada; resultados por id", async () => {
+    const calls: BenchExtractInput[] = [];
+    // f02 marcada como sintética para que el orden "reales primero" difiera del orden por id.
+    const truths = TRUTHS.map((t) => (t.id === "f02" ? { ...t, synthetic: true } : t));
+    const result = await runBench(options({ truths, fewShot: true, extractOrder: "realFirst", extractor: fakeExtractor({ calls }) }));
+    const sin = calls.filter((call) => call.invoice?.bucket === "sinAlias").map((call) => call.invoice?.id);
+    expect(sin).toEqual(["f01", "f03", "f07", "f11", "f14", "f16", "f02", "s01"]);
+    const con = calls.filter((call) => call.invoice?.bucket === "conAlias").map((call) => call.invoice?.id);
+    expect(con[con.length - 1]).toBe("f02");
+    const firstCon = calls.findIndex((call) => call.invoice?.bucket === "conAlias");
+    expect(calls.slice(firstCon).every((call) => call.invoice?.bucket === "conAlias")).toBe(true);
+    // El emparejamiento y el informe siguen en orden de id.
+    expect(result.perInvoice.filter((e) => e.bucket === "sinAlias").map((e) => e.id)).toEqual(FIXTURE_IDS);
+    const byDefault: BenchExtractInput[] = [];
+    await runBench(options({ extractor: fakeExtractor({ calls: byDefault }) }));
+    expect(byDefault.map((call) => call.invoice?.id)).toEqual(FIXTURE_IDS);
   });
 
   /** run.json mínimo: f01/f02 sinAlias con extracción; f02 conAlias con otra (few-shot); f03 sin nada (error). */
