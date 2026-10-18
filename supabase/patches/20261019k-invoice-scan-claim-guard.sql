@@ -47,6 +47,13 @@
 -- descarte y el reescaneo (reserve limpia el reclamo) dejaban confirmar la misma
 -- factura en otra compra. Sin 19b las columnas son null y no aplica.
 --
+-- REP2-03c (caos N5, D25-c): un escaneo confirmed cuya compra ligada está
+-- 'cancelado' (terminal) deja de bloquear la factura: reserve_invoice_scan (el
+-- reescaneo) lo devuelve a extracted y discard_invoice_scan lo descarta, en ambos
+-- casos con purchase_id, confirmed y confirmed_at a null (reserve también
+-- learned_at si existe). Misma regla que claim_invoice_scan de 19b. 'devuelto'
+-- sigue bloqueando; los alias aprendidos con la compra anulada no se tocan.
+--
 -- No toca complete/fail_invoice_scan ni las RPC de Emparejamiento.
 --
 -- Reaplicación: si se reaplica 20261019i (o la cadena 19a → 19g → 19i), hay
@@ -117,6 +124,27 @@ begin
   where s.store_id = p_store_id and s.image_sha256 = p_sha256
   for update;
   v_exists := found;
+
+  -- REP2-03c (D25-c): confirmado en una compra anulada → se libera (extracted, sin
+  -- compra ni confirmación) y el reescaneo la sirve como lectura sin compra ligada.
+  if v_exists and v_row.status = 'confirmed' and exists (
+    select 1 from public.purchases p
+    where p.id = v_row.purchase_id and p.store_id = p_store_id and p.status = 'cancelado'
+  ) then
+    update public.invoice_scans s
+    set status = 'extracted', purchase_id = null, confirmed = null, confirmed_at = null
+    where s.id = v_row.id and s.status = 'confirmed';
+
+    if exists (
+      select 1 from pg_catalog.pg_attribute a
+      where a.attrelid = 'public.invoice_scans'::regclass
+        and a.attname = 'learned_at' and a.attnum > 0 and not a.attisdropped
+    ) then
+      execute 'update public.invoice_scans s set learned_at = null where s.id = $1' using v_row.id;
+    end if;
+
+    v_row.status := 'extracted';
+  end if;
 
   if v_exists and v_row.status in ('extracted', 'confirmed') then
     return jsonb_build_object('outcome', 'cached', 'id', v_row.id);
@@ -194,7 +222,7 @@ end;
 $$;
 
 comment on function public.reserve_invoice_scan(uuid, uuid, text, text, integer, integer, text, text) is
-  'Reserva atómica (lock por tienda) de un escaneo de factura con intento nuevo; páginas 1..10, límite 0..10000; 42501 si el usuario no es de la tienda; al reusar la fila limpia el reclamo de Emparejamiento; solo service_role (SCN-03h, SCN-03l, SCN-03n, SCN-03o).';
+  'Reserva atómica (lock por tienda) de un escaneo de factura con intento nuevo; páginas 1..10, límite 0..10000; 42501 si el usuario no es de la tienda; al reusar la fila limpia el reclamo de Emparejamiento; libera el confirmed con compra cancelado (REP2-03c); solo service_role (SCN-03h, SCN-03l, SCN-03n, SCN-03o).';
 
 -- 2. discard_invoice_scan ---------------------------------------------------------------
 
@@ -219,6 +247,23 @@ begin
   for update;
 
   if not found then
+    return;
+  end if;
+
+  -- REP2-03c (D25-c): confirmado en una compra anulada → se descarta liberándolo
+  -- (sin compra ni confirmación). 'devuelto' sigue en PT409.
+  if v_row.status = 'confirmed' and exists (
+    select 1 from public.purchases p
+    where p.id = v_row.purchase_id and p.store_id = v_row.store_id and p.status = 'cancelado'
+  ) then
+    return query
+    with done as (
+      update public.invoice_scans s
+      set status = 'discarded', purchase_id = null, confirmed = null, confirmed_at = null
+      where s.id = p_id and s.store_id = p_store_id and s.status = 'confirmed'
+      returning s.*
+    )
+    select * from done;
     return;
   end if;
 
@@ -276,7 +321,7 @@ end;
 $$;
 
 comment on function public.discard_invoice_scan(uuid, uuid) is
-  'Descarta un escaneo extracted de la tienda; PT409 con mensaje por estado, o si hay un reclamo activo de Emparejamiento, purchase_id, confirmed o la clave del reclamo ya creó su compra; solo service_role (SCN-03l, SCN-03n, SCN-03o, CIE-06).';
+  'Descarta un escaneo extracted (o confirmed con su compra cancelado, REP2-03c) de la tienda; PT409 con mensaje por estado, o si hay un reclamo activo de Emparejamiento, purchase_id, confirmed o la clave del reclamo ya creó su compra; solo service_role (SCN-03l, SCN-03n, SCN-03o, CIE-06).';
 
 -- 3. Solo service_role ------------------------------------------------------------------
 

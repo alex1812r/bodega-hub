@@ -152,6 +152,14 @@
 --   * release_invoice_scan_claim: no suelta un reclamo ligado a su compra.
 --   * discard_invoice_scan (20261019k) no descarta el escaneo ligado.
 --
+-- REP2-03c (caos N5, D25-c): un escaneo confirmed cuya compra ligada esta
+-- 'cancelado' (estado terminal) ya no bloquea la factura: claim_invoice_scan lo
+-- reclama para la nueva clave y en el MISMO UPDATE condicional lo devuelve a
+-- extracted con purchase_id, confirmed, confirmed_at y learned_at a null (la
+-- nueva compra vuelve a confirmar y a aprender). 'devuelto' sigue bloqueando.
+-- Los alias aprendidos con la compra anulada no se tocan. Reserve y discard
+-- (20261019k) aplican la misma regla.
+--
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
 
@@ -301,23 +309,45 @@ begin
       claim_started_at = case
         when s.claim_request_id = p_client_request_id and s.claim_started_at is not null then s.claim_started_at
         else now()
-      end
+      end,
+      -- REP2-03c (D25-c): un escaneo confirmado en una compra ANULADA se libera
+      -- en este mismo UPDATE (vuelve a extracted sin compra ni confirmacion).
+      status = 'extracted',
+      purchase_id = case when s.status = 'confirmed' then null else s.purchase_id end,
+      confirmed = case when s.status = 'confirmed' then null else s.confirmed end,
+      confirmed_at = case when s.status = 'confirmed' then null else s.confirmed_at end,
+      learned_at = case when s.status = 'confirmed' then null else s.learned_at end
   where s.id = p_scan_id
     and s.store_id = v_store_id
-    and s.status = 'extracted'
     and (
-      s.claim_request_id is null
-      or s.claim_request_id = p_client_request_id
+      (
+        s.status = 'extracted'
+        and (
+          s.claim_request_id is null
+          or s.claim_request_id = p_client_request_id
+          or (
+            (s.claimed_at is null or s.claimed_at < now() - interval '5 minutes')
+            -- CIE-06: el reclamo cuya clave ya creo su compra no caduca nunca.
+            and not exists (
+              select 1
+              from public.purchases p
+              where p.store_id = s.store_id
+                and p.client_request_id = s.claim_request_id
+                and s.claim_started_at is not null
+                and p.created_at >= s.claim_started_at - interval '1 second'
+            )
+          )
+        )
+      )
+      -- REP2-03c: solo 'cancelado' (terminal); 'devuelto' sigue bloqueando.
       or (
-        (s.claimed_at is null or s.claimed_at < now() - interval '5 minutes')
-        -- CIE-06: el reclamo cuya clave ya creo su compra no caduca nunca.
-        and not exists (
+        s.status = 'confirmed'
+        and exists (
           select 1
           from public.purchases p
-          where p.store_id = s.store_id
-            and p.client_request_id = s.claim_request_id
-            and s.claim_started_at is not null
-            and p.created_at >= s.claim_started_at - interval '1 second'
+          where p.id = s.purchase_id
+            and p.store_id = s.store_id
+            and p.status = 'cancelado'
         )
       )
     );

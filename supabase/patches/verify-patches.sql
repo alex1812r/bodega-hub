@@ -2910,6 +2910,29 @@ select
   )
 union all
 select
+  'claim_invoice_scan: un escaneo confirmed con su compra cancelado se reclama y se libera en el mismo UPDATE (extracted, sin purchase_id/confirmed/learned_at) (20261019b, REP2-03c)',
+  coalesce((
+    select p.prosrc ilike '%status = ''extracted'',%purchase_id = case when s.status = ''confirmed'' then null%confirmed = case when s.status = ''confirmed'' then null%learned_at = case when s.status = ''confirmed'' then null%s.status = ''confirmed''%p.id = s.purchase_id%p.status = ''cancelado''%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'reserve_invoice_scan / discard_invoice_scan: confirmed con su compra cancelado se libera (extracted) o se descarta, con purchase_id y confirmed a null (20261019k, REP2-03c)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'reserve_invoice_scan'
+      and p.prosrc ilike '%v_row.status = ''confirmed''%p.status = ''cancelado''%set status = ''extracted'', purchase_id = null, confirmed = null%'
+  )
+  and exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'discard_invoice_scan'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid, p_id uuid'
+      and p.prosrc ilike '%v_row.status = ''confirmed''%p.status = ''cancelado''%set status = ''discarded'', purchase_id = null, confirmed = null%'
+  )
+union all
+select
   'remove_supplier_product_alias(uuid) uuid existe, security definer y search_path=public (20261020a)',
   exists (
     select 1 from pg_proc p

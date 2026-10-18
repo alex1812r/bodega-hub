@@ -674,6 +674,18 @@ export async function precheckInvoiceScan(
     throw toClaimRejection(claimError);
   }
 
+  // REP2-03c (D25-c): leído `confirmed` pero reclamado → su compra estaba anulada y
+  // el reclamo lo liberó; las líneas se validan ahora y, si no valen, se suelta.
+  if (row.status === "confirmed" && claim === "claimed") {
+    try {
+      assertScanLinesInStoredExtraction(readExtractedRawTexts(row.extracted), input.lines);
+      assertConfirmedScanFits(row.extracted, input);
+    } catch (error) {
+      await releaseInvoiceScanClaim(input, storeId);
+      throw error;
+    }
+  }
+
   return {
     extraction: readStoredExtraction(row.extracted),
     id: row.id,
