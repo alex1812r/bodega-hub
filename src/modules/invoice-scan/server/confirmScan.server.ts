@@ -49,9 +49,12 @@ import { createSupplierProductPackUnit } from "@/modules/contacts/services/suppl
 import {
   correctedInvoiceExtractionSchema,
   hasForbiddenInvoiceChar,
+  INVOICE_CONFIRMED_MAX_BYTES,
+  INVOICE_CONFIRMED_TOO_LARGE_MESSAGE,
   INVOICE_MAX_LINES,
   INVOICE_TEXT_INVALID_MESSAGE,
   invoiceExtractionSchema,
+  jsonbSizeUpperBound,
   type InvoiceExtraction,
 } from "../contracts";
 
@@ -517,7 +520,7 @@ export function buildScanPackUnits(
 
 export function buildConfirmedPayload(
   scan: Pick<PrecheckedInvoiceScan, "extraction" | "rawTexts" | "aliasKeys">,
-  input: FinalizeInvoiceScanInput,
+  input: Pick<FinalizeInvoiceScanInput, "extraction" | "lines" | "purchaseId" | "supplierId">,
   now = new Date(),
 ): ConfirmedInvoiceScan {
   return {
@@ -527,6 +530,35 @@ export function buildConfirmedPayload(
     purchaseId: input.purchaseId,
     supplierId: input.supplierId,
   };
+}
+
+/** UUID de relleno: la compra aún no existe; sus ids miden lo mismo (36 caracteres). */
+const CONFIRMED_SIZE_PROBE_ID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * REP2-02 (caos C2-M1 · auditoría B11): el `confirmed` que se guardaría (extracción
+ * corregida o guardada + líneas con el rawText GUARDADO, aliasNorm y packLabel) debe
+ * caber en el tope de `confirm_invoice_scan`; si no, 400 ANTES de reclamar y de
+ * crear la compra (antes la RPC lo rechazaba con la compra ya creada).
+ */
+export function assertConfirmedScanFits(extracted: unknown, input: InvoiceScanPrecheckInput): void {
+  const confirmed = buildConfirmedPayload(
+    {
+      aliasKeys: readExtractedAliasKeys(extracted),
+      extraction: readStoredExtraction(extracted),
+      rawTexts: readExtractedRawTexts(extracted),
+    },
+    {
+      extraction: input.extraction,
+      lines: [...(input.lines ?? [])],
+      purchaseId: CONFIRMED_SIZE_PROBE_ID,
+      supplierId: CONFIRMED_SIZE_PROBE_ID,
+    },
+  );
+
+  if (jsonbSizeUpperBound(confirmed) > INVOICE_CONFIRMED_MAX_BYTES) {
+    throw new ApiError(400, "BAD_REQUEST", INVOICE_CONFIRMED_TOO_LARGE_MESSAGE);
+  }
 }
 
 /** Log sin datos de la factura: solo ids y el código/mensaje del rechazo. */
@@ -581,8 +613,14 @@ type DbInvoiceScanRow = {
 /** Clave del reclamo: el escaneo y el intento de compra que lo confirma. */
 export type InvoiceScanClaimInput = { clientRequestId: string; scanId: string };
 
-/** Entrada del pre-check: el reclamo y las líneas del cliente, validadas antes de reclamar. */
-export type InvoiceScanPrecheckInput = InvoiceScanClaimInput & { lines?: readonly InvoiceScanLineInput[] };
+/**
+ * Entrada del pre-check: el reclamo, las líneas del cliente y su lectura corregida
+ * (ya normalizada), validadas antes de reclamar.
+ */
+export type InvoiceScanPrecheckInput = InvoiceScanClaimInput & {
+  extraction?: InvoiceExtraction;
+  lines?: readonly InvoiceScanLineInput[];
+};
 
 /**
  * Rechazos del reclamo en la respuesta: PT404 / PT409 → 400 (contrato de caos
@@ -622,6 +660,7 @@ export async function precheckInvoiceScan(
 
   if (row.status === "extracted") {
     assertScanLinesInStoredExtraction(readExtractedRawTexts(row.extracted), input.lines);
+    assertConfirmedScanFits(row.extracted, input);
   }
 
   // Reclamo atómico ANTES de create_purchase (SCN-06-F1): la RPC filtra por la
