@@ -277,8 +277,16 @@ export async function precheckInvoiceScan(
   input: InvoiceScanPrecheckInput,
   storeId: string,
 ): Promise<PrecheckedInvoiceScan> {
-  const scan = ownRow(input.scanId, storeId);
+  let scan = ownRow(input.scanId, storeId);
   const claim = scan ? mockScanClaim(scan.id) : null;
+
+  // REP2-03c (D25-c), espejo de claim_invoice_scan: confirmado en una compra
+  // `cancelado` → se libera (extracted, sin compra ni confirmación). `devuelto` no.
+  if (scan?.status === "confirmed" && scan.purchaseId && findMockPurchase(scan.purchaseId)?.status === "cancelado") {
+    scan = putMockScanRow({ ...scan, confirmed: null, confirmedAt: null, purchaseId: null, status: "extracted" });
+    (claim as NonNullable<typeof claim>).confirmedClientRequestId = null;
+  }
+
   const replayPurchaseId =
     scan?.status === "confirmed" && claim?.confirmedClientRequestId === input.clientRequestId
       ? scan.purchaseId
