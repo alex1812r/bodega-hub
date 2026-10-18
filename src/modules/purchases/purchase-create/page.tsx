@@ -163,6 +163,16 @@ function requestErrorMessage(error: unknown) {
     : errorMessage(error);
 }
 
+/**
+ * CIE-06 (auditoría M1): la compra se creó pero el escaneo no quedó confirmado con
+ * ella (`invoiceScan.confirmed: false`). La factura sigue ligada a esa compra en el
+ * servidor y no puede registrar otra.
+ * CIE-09 (R2): la instrucción va en la descripción del toast; en móvil el título se
+ * recorta a 2 líneas y la cortaba en «No la vuelvas a…».
+ */
+export const INVOICE_SCAN_NOT_LINKED_MESSAGE = "La compra se registró pero no se pudo vincular la factura.";
+export const INVOICE_SCAN_NOT_LINKED_INSTRUCTION = "No la vuelvas a registrar.";
+
 export function PurchaseCreatePage() {
   const router = useRouter();
   const exchangeRate = useCurrentExchangeRate();
@@ -1139,10 +1149,15 @@ export function PurchaseCreatePage() {
     try {
       const nextSupplierId = reviewDraft.supplier.contactId;
       // Nombre, SKU, empaques y % de categoría del catálogo actual, como al restaurar.
-      const products = await resolvePurchaseProducts(
-        nextSupplierId,
-        reviewDraft.lines.map((line) => line.productId),
-      );
+      // BAJO-N3 (CIE-03a): el modal muestra el contacto elegido, no el nombre leído en la
+      // factura; si no se puede leer el contacto queda el de la revisión.
+      const [products, supplier] = await Promise.all([
+        resolvePurchaseProducts(
+          nextSupplierId,
+          reviewDraft.lines.map((line) => line.productId),
+        ),
+        fetchPurchaseSupplier(nextSupplierId).catch(() => null),
+      ]);
       const applied = applyInvoiceReviewDraft(reviewDraft, {
         current: { ...(disassemble ? { disassemble } : {}), items, locks, review, taxState },
         currentCurrency: costCurrency,
@@ -1165,7 +1180,7 @@ export function PurchaseCreatePage() {
 
       setNotes(keptNotes.trim() || !invoiceNote ? keptNotes : invoiceNote);
       setSupplierId(nextSupplierId);
-      setSupplierName(reviewDraft.supplier.name);
+      setSupplierName(supplier?.name ?? reviewDraft.supplier.name);
       setProductSearch("");
       setCostCurrency(applied.costCurrency);
       setLineMetaByProductId((prev) => {
@@ -1305,7 +1320,13 @@ export function PurchaseCreatePage() {
 
       const learned = purchase.invoiceScan?.learned;
 
-      if (learned) {
+      if (purchase.invoiceScan?.confirmed === false) {
+        showToast({
+          description: INVOICE_SCAN_NOT_LINKED_INSTRUCTION,
+          title: INVOICE_SCAN_NOT_LINKED_MESSAGE,
+          tone: "error",
+        });
+      } else if (learned) {
         showToast({ title: describeLearnedAliases(learned) });
       }
 

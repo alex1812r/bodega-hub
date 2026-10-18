@@ -16,7 +16,11 @@
  *    caos 6.14; PT403 sigue siendo 403.
  * 2. Si `create_purchase` se RECHAZA (4xx, la compra no existe),
  *    `releaseInvoiceScanClaim` suelta el reclamo para reintentar con otra clave.
- *    Con resultado incierto (5xx, red) el reclamo se queda: caduca a los 5 min.
+ *    Con resultado incierto (5xx, red) el reclamo se queda: caduca a los 5 min,
+ *    SALVO que la clave ya haya creado su compra (CIE-06): entonces el reclamo
+ *    queda ligado a esa compra, no caduca ni se suelta, otra clave recibe 400
+ *    (`INVOICE_SCAN_PURCHASE_BOUND_MESSAGE`) y solo el mismo intento puede
+ *    reintentar el confirm (y, en replay con `learned_at` null, el aprendizaje).
  * 3. `finalizeInvoiceScan` DESPUÉS de crear la compra: `confirm_invoice_scan` con el
  *    JSON confirmado (la verdad de la capa 2), exige el reclamo del mismo intento y,
  *    solo si confirmó en esta llamada (devuelve `true`), UNA llamada a
@@ -42,7 +46,12 @@ import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { createSupplierProductPackUnit } from "@/modules/contacts/services/supplierProducts.server";
 
-import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import {
+  hasForbiddenInvoiceChar,
+  INVOICE_TEXT_INVALID_MESSAGE,
+  invoiceExtractionSchema,
+  type InvoiceExtraction,
+} from "../contracts";
 
 /** Máximo de líneas confirmadas por escaneo (mismo tope que `learn_invoice_aliases`). */
 export const MAX_INVOICE_SCAN_LINES = 500;
@@ -66,7 +75,15 @@ export const invoiceScanLineInputSchema = z.object({
   /** Índice de la línea en `extraction.lines` del escaneo guardado. */
   lineIndex: z.number().int().min(0),
   productId: z.string().uuid(),
-  packLabel: z.string().trim().max(100).nullable().optional(),
+  // CIE-09 (R1): mismo veto de caracteres que la extracción (CIE-06); un U+0000
+  // fallaba en confirm_invoice_scan (22P05) DESPUÉS de crear la compra.
+  packLabel: z
+    .string()
+    .trim()
+    .max(100)
+    .refine((value) => !hasForbiddenInvoiceChar(value), INVOICE_TEXT_INVALID_MESSAGE)
+    .nullable()
+    .optional(),
   unitsPerPack: z.number().int().positive().max(100000).nullable().optional(),
 });
 
@@ -200,6 +217,13 @@ export const INVOICE_SCAN_UNAVAILABLE_MESSAGE = "El escaneo no está disponible"
 export const INVOICE_SCAN_CLAIMED_MESSAGE = "El escaneo se está confirmando en otra compra";
 
 /**
+ * CIE-06 (auditoría M1): la clave que tiene el reclamo ya creó su compra (aunque el
+ * confirm o el aprendizaje fallaran). El reclamo queda ligado a esa compra: no
+ * caduca ni se suelta y otra clave no puede usar el escaneo (`claim_invoice_scan`).
+ */
+export const INVOICE_SCAN_PURCHASE_BOUND_MESSAGE = "Esta factura ya se registró en otra compra";
+
+/**
  * SCN-06-F2 · M1: la clave del intento ya creó otra compra (ligada a otro escaneo o
  * de otra clave). `create_purchase` devolvió esa compra vieja; el escaneo no se
  * confirma, se suelta su reclamo y la respuesta es 400 (no se creó nada nuevo).
@@ -236,6 +260,11 @@ export type PrecheckedInvoiceScan = {
   /** `true`: reintento del mismo intento; ya confirmado con esta compra. */
   replay: boolean;
   purchaseId: string | null;
+  /**
+   * `false`: `learned_at` sigue null (el aprendizaje falló). CIE-06: el replay del
+   * mismo intento lo reintenta sobre la misma compra. Ausente = no se reintenta.
+   */
+  learned?: boolean;
 };
 
 /** Resultado del hook que viaja en la respuesta como `invoiceScan`. */
@@ -544,6 +573,7 @@ export function assertScanUsable(
 type DbInvoiceScanRow = {
   extracted: unknown;
   id: string;
+  learned_at: string | null;
   purchase_id: string | null;
   status: string;
 };
@@ -577,7 +607,7 @@ export async function precheckInvoiceScan(
   // `extracted` ya no cambia; el estado lo sigue decidiendo el reclamo.
   const { data, error } = await supabase
     .from("invoice_scans")
-    .select("id, status, purchase_id, extracted")
+    .select("id, status, purchase_id, extracted, learned_at")
     .eq("id", input.scanId)
     .eq("store_id", storeId)
     .maybeSingle();
@@ -611,6 +641,7 @@ export async function precheckInvoiceScan(
     purchaseId: row.purchase_id,
     rawTexts: readExtractedRawTexts(row.extracted),
     aliasKeys: readExtractedAliasKeys(row.extracted),
+    learned: row.learned_at != null,
     replay: claim === "replay",
   };
 }
@@ -703,7 +734,7 @@ export async function finalizeInvoiceScan(
   input: FinalizeInvoiceScanInput,
   storeId: string,
 ): Promise<InvoiceScanOutcome> {
-  if (scan.replay) {
+  if (scan.replay && (scan.learned !== false || scan.purchaseId !== input.purchaseId)) {
     return { confirmed: scan.purchaseId === input.purchaseId, learned: null };
   }
 
@@ -713,7 +744,21 @@ export async function finalizeInvoiceScan(
     supabase = await createRouteSupabaseClient();
   } catch (error) {
     logInvoiceScanFailure("confirm", scan.id, error);
-    return { confirmed: false, learned: null };
+    return { confirmed: scan.replay, learned: null };
+  }
+
+  // CIE-06: replay de un escaneo ya confirmado con ESTA compra cuyo aprendizaje
+  // falló: se reintenta UNA llamada (la RPC aprende una vez por escaneo y solo las
+  // líneas guardadas en el confirmado).
+  if (scan.replay) {
+    return {
+      confirmed: true,
+      learned: await learnInvoiceAliases(
+        supabase,
+        scan.id,
+        buildLearnLines(buildConfirmedLines(scan.rawTexts, input.lines, scan.aliasKeys), input.items),
+      ),
+    };
   }
 
   const confirmed = buildConfirmedPayload(scan, input);
@@ -765,25 +810,36 @@ export async function finalizeInvoiceScan(
 
   await ensureScanPackUnits(supabase, scan.id, input.supplierId, buildScanPackUnits(confirmed.lines, input.items), storeId);
 
-  const learnLines = buildLearnLines(confirmed.lines, input.items);
+  return {
+    confirmed: true,
+    learned: await learnInvoiceAliases(supabase, scan.id, buildLearnLines(confirmed.lines, input.items)),
+  };
+}
 
+/**
+ * UNA llamada a `learn_invoice_aliases`: cada llamada suma hits. Se hace aunque no
+ * haya líneas (SCN-06-F4 · M-n2): fija `learned_at` y cierra el aprendizaje del
+ * escaneo, para que nadie lo use después por PostgREST. Nunca lanza: `null` si falla.
+ */
+async function learnInvoiceAliases(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  scanId: string,
+  learnLines: LearnAliasLine[],
+): Promise<number | null> {
   try {
-    // UNA sola llamada por confirmación: cada llamada suma hits. Se hace aunque no
-    // haya líneas (SCN-06-F4 · M-n2): fija `learned_at` y cierra el aprendizaje del
-    // escaneo, para que nadie lo use después por PostgREST.
     const { data, error } = await supabase.rpc("learn_invoice_aliases", {
       p_lines: learnLines,
-      p_scan_id: scan.id,
+      p_scan_id: scanId,
     });
 
     if (error) {
-      logInvoiceScanFailure("learn", scan.id, error);
-      return { confirmed: true, learned: null };
+      logInvoiceScanFailure("learn", scanId, error);
+      return null;
     }
 
-    return { confirmed: true, learned: typeof data === "number" ? data : Number(data ?? 0) };
+    return typeof data === "number" ? data : Number(data ?? 0);
   } catch (error) {
-    logInvoiceScanFailure("learn", scan.id, error);
-    return { confirmed: true, learned: null };
+    logInvoiceScanFailure("learn", scanId, error);
+    return null;
   }
 }

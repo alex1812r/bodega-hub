@@ -215,6 +215,16 @@ describe("buildTuningExample (puro)", () => {
     expect(mimeTypeFromHeader(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe("image/png");
   });
 
+  it("CIE-08 B3: omite la fila cuyo storage_path no está bajo la tienda exportada", () => {
+    const other = "99999999-0000-4000-8000-000000000000";
+    const foreign = buildTuningExample(row({ storage_path: `${other}/${SHA}/p1.jpg` }), { gcsPrefix: PREFIX, storeId: STORE });
+    expect(foreign).toEqual({ ok: false, reason: expect.stringMatching(/fuera de la tienda/) });
+    // Prefijo parecido pero de otra tienda (sin la barra): también fuera.
+    const lookalike = buildTuningExample(row({ storage_path: `${STORE}x/${SHA}/p1.jpg` }), { gcsPrefix: PREFIX, storeId: STORE });
+    expect(lookalike.ok).toBe(false);
+    expect(buildTuningExample(row(), { gcsPrefix: PREFIX, storeId: STORE }).ok).toBe(true);
+  });
+
   it("omite un ejemplo que supera 131.072 tokens estimados", () => {
     const ext = extraction();
     ext.warnings = ["x".repeat(400_000)];

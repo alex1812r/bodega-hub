@@ -2572,6 +2572,16 @@ select
   ), false)
 union all
 select
+  'invoice_match_candidates: tax_id_match como sameTaxId, mismos digitos y misma letra de tipo si ambos la traen; J-123 no casa con V-123 (20261019d, CIE-03b)',
+  coalesce((
+    select p.prosrc ilike '%v_tax_letter := coalesce(substring(v_tax_id from ''^[JVEGPC]''), '''')%'
+      and p.prosrc ilike '%regexp_replace(t.cmp, ''^[JVEGPC]'', '''') = v_tax_id%'
+      and p.prosrc ilike '%v_tax_letter = ''''%or coalesce(substring(t.cmp from ''^[JVEGPC]''), '''') in ('''', v_tax_letter)%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_candidates(text, text, text[], text[], uuid, integer)')
+  ), false)
+union all
+select
   'invoice_match_norm(text): immutable, translate + regexp_replace, execute authenticated, no anon (20261019d)',
   coalesce((
     select p.provolatile = 'i'
@@ -2649,21 +2659,18 @@ select
   )
 union all
 select
-  'storage invoice-scans: lectura e insercion por carpeta de tienda, sin update/delete (20261019a)',
+  'storage invoice-scans: solo lectura por carpeta de tienda, sin insert/update/delete (20261019a, CIE-08)',
   (
-    select count(*) = 2 from pg_policies pol
+    select count(*) = 1 from pg_policies pol
     where pol.schemaname = 'storage' and pol.tablename = 'objects'
-      and pol.policyname in (
-        'Purchase viewers read invoice scan images',
-        'Purchase creators upload invoice scan images'
-      )
+      and pol.policyname = 'Purchase viewers read invoice scan images'
       and coalesce(pol.qual, pol.with_check) ilike '%foldername%'
   )
   and not exists (
     select 1 from pg_policies pol
     where pol.schemaname = 'storage' and pol.tablename = 'objects'
       and coalesce(pol.qual, pol.with_check) ilike '%invoice-scans%'
-      and pol.cmd in ('UPDATE', 'DELETE', 'ALL')
+      and pol.cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
   )
 union all
 select
@@ -2873,6 +2880,33 @@ select
       and p.prosrc ilike '%->>''claim_request_id'' is not null%'
       and p.prosrc ilike '%interval ''5 minutes''%'
       and p.prosrc ilike '%se está confirmando en una compra%'
+  )
+union all
+select
+  'claim_invoice_scan: el reclamo cuya clave ya creo su compra no caduca para otra clave y responde PT409 Esta factura ya se registró en otra compra (20261019b, CIE-06)',
+  coalesce((
+    select p.prosrc ilike '%s.claimed_at < now() - interval ''5 minutes'')%and not exists%p.client_request_id = s.claim_request_id%p.created_at >= s.claim_started_at - interval ''1 second''%'
+      and p.prosrc ilike '%Esta factura ya se registró en otra compra%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'release_invoice_scan_claim no suelta un reclamo ligado a la compra de su clave (20261019b, CIE-06)',
+  coalesce((
+    select p.prosrc ilike '%and not exists%p.client_request_id = s.claim_request_id%p.created_at >= s.claim_started_at - interval ''1 second''%'
+    from pg_proc p where p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)')
+  ), false)
+union all
+select
+  'discard_invoice_scan: PT409 si la clave del reclamo ya creo su compra, aunque el reclamo haya caducado (20261019k, CIE-06)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'discard_invoice_scan'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid, p_id uuid'
+      and p.prosrc ilike '%p.client_request_id = (v_fields->>''claim_request_id'')::uuid%'
+      and p.prosrc ilike '%(v_fields->>''claim_started_at'')::timestamptz - interval ''1 second''%'
+      and p.prosrc ilike '%ya tiene una compra registrada y no se puede descartar%'
   )
 union all
 select

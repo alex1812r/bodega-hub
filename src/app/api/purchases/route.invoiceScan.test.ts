@@ -19,7 +19,11 @@ import {
   registerMockInvoiceScan,
   resetMockInvoiceScans,
 } from "@/modules/invoice-scan/server/confirmScan.mock-server";
-import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
+import {
+  INVOICE_TEXT_INVALID_MESSAGE,
+  INVOICE_TEXT_MAX_LENGTH,
+  type InvoiceExtraction,
+} from "@/modules/invoice-scan/contracts";
 import {
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
   type ConfirmedInvoiceScan,
@@ -135,6 +139,8 @@ type FakeScan = {
   claim_started_at?: number | null;
   extracted: unknown;
   id: string;
+  /** Reloj lógico de `learned_at` (CIE-06: el replay reintenta learn si sigue null). */
+  learned_at?: number | null;
   purchase_id: string | null;
   status: string;
   store_id: string;
@@ -283,12 +289,25 @@ function createFake(state: FakeState) {
       const lines = args.p_lines as { pack_label?: string | null }[];
       const tooLong = lines.findIndex((line) => Array.from(line.pack_label?.trim() ?? "").length > 100);
 
-      return tooLong >= 0
-        ? {
-            data: null,
-            error: { code: "PT400", message: `Etiqueta de empaque inválida en la línea ${tooLong + 1}` },
-          }
-        : { data: lines.length, error: null };
+      if (tooLong >= 0) {
+        return {
+          data: null,
+          error: { code: "PT400", message: `Etiqueta de empaque inválida en la línea ${tooLong + 1}` },
+        };
+      }
+
+      // Como la RPC (SCN-06-F2 M2): aprende una sola vez por escaneo (learned_at).
+      const learnedScan = state.scans.find((row) => row.id === args.p_scan_id);
+
+      if (learnedScan?.learned_at != null) {
+        return { data: 0, error: null };
+      }
+
+      if (learnedScan) {
+        learnedScan.learned_at = ++clock;
+      }
+
+      return { data: lines.length, error: null };
     }
 
     throw new Error(`RPC inesperada ${name}`);
@@ -587,6 +606,81 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(fake.rpc).not.toHaveBeenCalled();
     });
 
+    it("CIE-06 (M1): invoiceScanExtraction con U+0000 → 400 en español, sin reclamar ni crear la compra", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanExtraction: { ...corrected, supplier: { name: "X\u0000" } },
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: scanLines,
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(payload.error.issues[0].message).toBe(INVOICE_TEXT_INVALID_MESSAGE);
+      expect(fake.rpc).not.toHaveBeenCalled();
+      expect(state.purchases).toEqual([]);
+      expect(state.scans[0]).toMatchObject({ status: "extracted" });
+      expect(state.scans[0].claim_request_id ?? null).toBeNull();
+    });
+
+    it.each([
+      ["U+0000", "caja\u0000"],
+      ["carácter de control C1", "caja\u0085"],
+      ["surrogate suelto", "caja\ud800"],
+    ])("CIE-09 (R1): invoiceScanLines[].packLabel con %s → 400 en español, sin reclamar ni crear la compra", async (_caso, packLabel) => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: [{ ...scanLines[0], packLabel }, scanLines[1], scanLines[2]],
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(payload.error.issues[0].message).toBe(INVOICE_TEXT_INVALID_MESSAGE);
+      expect(payload.error.issues[0].path).toEqual(["invoiceScanLines", 0, "packLabel"]);
+      expect(fake.rpc).not.toHaveBeenCalled();
+      expect(state.purchases).toEqual([]);
+      expect(state.scans[0]).toMatchObject({ status: "extracted" });
+      expect(state.scans[0].claim_request_id ?? null).toBeNull();
+    });
+
+    it("CIE-06 (M1): si confirm falla, el mismo intento reintenta y confirma la MISMA compra", async () => {
+      const body = { ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines };
+      state.failConfirm = true;
+      const first = await (await post(body)).json();
+      expect(first.data.invoiceScan).toEqual({ confirmed: false, learned: null });
+
+      state.failConfirm = false;
+      const second = await (await post(body)).json();
+
+      expect(second.data.id).toBe(first.data.id);
+      expect(second.data.invoiceScan).toEqual({ confirmed: true, learned: 2 });
+      expect(state.purchases).toHaveLength(1);
+      expect(state.scans[0]).toMatchObject({ purchase_id: first.data.id, status: "confirmed" });
+    });
+
+    it("CIE-06 (M1): si learn falla, el replay del mismo intento reintenta UN learn sobre la misma compra", async () => {
+      const body = { ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID, invoiceScanLines: scanLines };
+      state.failLearn = true;
+      const first = await (await post(body)).json();
+      expect(first.data.invoiceScan).toEqual({ confirmed: true, learned: null });
+
+      state.failLearn = false;
+      fake.rpc.mockClear();
+      const second = await (await post(body)).json();
+
+      expect(second.data.id).toBe(first.data.id);
+      expect(second.data.invoiceScan).toEqual({ confirmed: true, learned: 2 });
+      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase", "learn_invoice_aliases"]);
+
+      fake.rpc.mockClear();
+      const third = await (await post(body)).json();
+      expect(third.data.invoiceScan).toEqual({ confirmed: true, learned: null });
+      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase"]);
+    });
+
     it("rawText cuyo alias normalizado pasa de 200 caracteres: se omite del aprendizaje y el resto se aprende", async () => {
       state.scans[0].extracted = {
         lines: [...extracted.lines, { rawText: Array.from({ length: 60 }, (_, index) => `palabra${index}`).join(" ") }],
@@ -785,6 +879,29 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
         {
           clientRequestId: PURCHASE_KEY,
           invoiceScanExtraction: { ...corrected, lines: Array.from({ length: 501 }, () => extracted.lines[0]) },
+          invoiceScanId: SCAN_ID,
+        },
+      ],
+      [
+        "CIE-06 · U+0000 en supplier.name de invoiceScanExtraction",
+        { clientRequestId: PURCHASE_KEY, invoiceScanExtraction: { ...corrected, supplier: { name: "X\u0000" } }, invoiceScanId: SCAN_ID },
+      ],
+      [
+        "CIE-06 · carácter de control en una descripción de invoiceScanExtraction",
+        {
+          clientRequestId: PURCHASE_KEY,
+          invoiceScanExtraction: { ...corrected, lines: [{ ...extracted.lines[0]!, description: "a\u0007b" }] },
+          invoiceScanId: SCAN_ID,
+        },
+      ],
+      [
+        "CIE-06 · texto desmesurado en invoiceScanExtraction",
+        {
+          clientRequestId: PURCHASE_KEY,
+          invoiceScanExtraction: {
+            ...corrected,
+            lines: [{ ...extracted.lines[0]!, rawText: "x".repeat(INVOICE_TEXT_MAX_LENGTH + 1) }],
+          },
           invoiceScanId: SCAN_ID,
         },
       ],

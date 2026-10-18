@@ -26,9 +26,11 @@
 --    Las excepciones por usuario (granted / denied) las aplica el BFF con
 --    requireStorePermission antes de tocar la tabla. anon sin privilegios.
 -- 3. Bucket Storage `invoice-scans` privado (1 MB, jpeg/png/webp). La ruta de
---    cada objeto empieza por el store_id: `<store_id>/<archivo>`. Lectura e
---    insercion solo en la carpeta de la tienda de la sesion; sin update ni
---    delete para authenticated (el borrado lo hace el cron con service role).
+--    cada objeto empieza por el store_id: `<store_id>/<archivo>`. Lectura solo
+--    en la carpeta de la tienda de la sesion. CIE-08 B1: sin insert, update ni
+--    delete para authenticated; el BFF sube con service role o con URL firmada
+--    (que no pasa por RLS) y el borrado lo hace el cron con service role. La
+--    politica de insert que creaban versiones anteriores se borra.
 --
 -- Idempotente: se puede aplicar varias veces seguidas. No toca stock ni dinero.
 -- =============================================================================
@@ -117,14 +119,6 @@ using (
 );
 
 drop policy if exists "Purchase creators upload invoice scan images" on storage.objects;
-create policy "Purchase creators upload invoice scan images"
-on storage.objects for insert
-to authenticated
-with check (
-  bucket_id = 'invoice-scans'
-  and (storage.foldername(name))[1] = public.current_user_store_id()::text
-  and public.current_user_role() in ('admin', 'almacen')
-);
 
 commit;
 

@@ -1,0 +1,427 @@
+{
+  "version": 1,
+  "key": "abe0568a9e10d21374c45e81c974af767651c2069484a4cb3b13fd92262666cf",
+  "provider": "google",
+  "modelId": "gemini-3.6-flash",
+  "invoiceId": "f12",
+  "bucket": "sinAlias",
+  "fewShotIds": [],
+  "systemPromptHash": "ddc61820fe9fd5be6ec5ad8b16d6cd04c405be4c1c6d6b04386f157dbef6c074",
+  "contractHash": "acbe8cff893f68bb3a84b3840d7015b9be81629982bd66c0c36ffc2091109137",
+  "extraction": {
+    "supplier": {
+      "name": "INVERSIONES MARKET CATIA, C.A.",
+      "taxId": "J-500244150",
+      "phone": "",
+      "address": "Calle Argentina Entre 3ra y 4ta Avenida Local PB Nro 78 Perez Bonalde Catia Caracas D.C. Z.P. 1030"
+    },
+    "number": "00001028",
+    "date": "2026-10-08",
+    "currency": "VES",
+    "lines": [
+      {
+        "rawText": "1 x B 3.128,28\n[MAYOR] DETERGENTE ALIVE FLORAL 500G",
+        "description": "[MAYOR] DETERGENTE ALIVE FLORAL 500G",
+        "quantity": 1,
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.128,28\n[MAYOR] DETERGENTE ALIVE SUAVIZANTE ROSADO 500G",
+        "description": "[MAYOR] DETERGENTE ALIVE SUAVIZANTE ROSADO 500G",
+        "quantity": 1,
+        "unitPrice": 3128.28,
+        "lineTotal": 3128.28,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.166,59\n[MAYOR] DESINFECTANTE OSO BLANCO 1LITRO",
+        "description": "[MAYOR] DESINFECTANTE OSO BLANCO 1LITRO",
+        "quantity": 1,
+        "unitPrice": 3166.59,
+        "lineTotal": 3166.59,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.893,53\n[MAYOR BSS] CLORO OSO BLANCO 1L",
+        "description": "[MAYOR BSS] CLORO OSO BLANCO 1L",
+        "quantity": 1,
+        "unitPrice": 2893.53,
+        "lineTotal": 2893.53,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.726,75\n[MAYOR] LAVAPLATO AXION EN CREMA 235GR",
+        "description": "[MAYOR] LAVAPLATO AXION EN CREMA 235GR",
+        "quantity": 1,
+        "unitPrice": 3726.75,
+        "lineTotal": 3726.75,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 1.056,03\nBOLSA MARACAY 5KG",
+        "description": "BOLSA MARACAY 5KG",
+        "quantity": 1,
+        "unitPrice": 1056.03,
+        "lineTotal": 1056.03,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 1.410,56\nBOLSA MARACAY 10KG",
+        "description": "BOLSA MARACAY 10KG",
+        "quantity": 1,
+        "unitPrice": 1410.56,
+        "lineTotal": 1410.56,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.013,84\n[MAYOR] FLIPS BOLSA CHOCOLATE 120G",
+        "description": "[MAYOR] FLIPS BOLSA CHOCOLATE 120G",
+        "quantity": 1,
+        "unitPrice": 4013.84,
+        "lineTotal": 4013.84,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.053,66\n[MAYOR] FLIPS BOLSA DULCE LECHE 120G",
+        "description": "[MAYOR] FLIPS BOLSA DULCE LECHE 120G",
+        "quantity": 1,
+        "unitPrice": 4053.66,
+        "lineTotal": 4053.66,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.545,65\nFLIPS LONCHERA CHOCOLATE 6UND*28GRS",
+        "description": "FLIPS LONCHERA CHOCOLATE",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 6,
+        "unitPrice": 2545.65,
+        "lineTotal": 2545.65,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.534,49\nFLIPS LONCHERA DULCE LECHE 6UND*28GRS",
+        "description": "FLIPS LONCHERA DULCE LECHE",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 6,
+        "unitPrice": 2534.49,
+        "lineTotal": 2534.49,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 5.566,81\nPALITO CHOCO DISPLAY*18UND",
+        "description": "PALITO CHOCO",
+        "quantity": 1,
+        "unit": "display",
+        "unitsPerPack": 18,
+        "unitPrice": 5566.81,
+        "lineTotal": 5566.81,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 2.029,85\nCARAMELOS MENTA HELADA SUPER 380GRS 100U",
+        "description": "CARAMELOS MENTA HELADA SUPER 380GRS",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 100,
+        "unitPrice": 2029.85,
+        "lineTotal": 2029.85,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.588,36\n[MAYOR] CHEESE TRIS 150G",
+        "description": "[MAYOR] CHEESE TRIS 150G",
+        "quantity": 1,
+        "unitPrice": 7588.36,
+        "lineTotal": 7588.36,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 5.159,48\n[MAYOR] PAPAS RIZADAS YUPI POLLO130GR",
+        "description": "[MAYOR] PAPAS RIZADAS YUPI POLLO130GR",
+        "quantity": 1,
+        "unitPrice": 5159.48,
+        "lineTotal": 5159.48,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.331,90\n[MAYOR] RUFFLES CREMA CEBOLLA 122G",
+        "description": "[MAYOR] RUFFLES CREMA CEBOLLA 122G",
+        "quantity": 1,
+        "unitPrice": 7331.9,
+        "lineTotal": 7331.9,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.316,81\n[MAYOR] RUFFLES QUESO 125G",
+        "description": "[MAYOR] RUFFLES QUESO 125G",
+        "quantity": 1,
+        "unitPrice": 7316.81,
+        "lineTotal": 7316.81,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 5.431,03\nTOSTON TOM TIRA 80G*8UND",
+        "description": "TOSTON TOM TIRA 80G",
+        "quantity": 2,
+        "unit": "paquete",
+        "unitsPerPack": 8,
+        "unitPrice": 5431.03,
+        "lineTotal": 10862.07,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 8.961,21\nDORITOS DINAMITA FLAMIN TIRA 40G*12",
+        "description": "DORITOS DINAMITA FLAMIN TIRA 40G",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 12,
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 8.961,21\nDORITO COOL RANCH 42G*12U",
+        "description": "DORITO COOL RANCH 42G",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 12,
+        "unitPrice": 8961.21,
+        "lineTotal": 8961.21,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.480,60\n[MAYOR] PAPA RAYADA BBQ 105G",
+        "description": "[MAYOR] PAPA RAYADA BBQ 105G",
+        "quantity": 1,
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.480,60\n[MAYOR] PAPA RAYADA POLLO 105G",
+        "description": "[MAYOR] PAPA RAYADA POLLO 105G",
+        "quantity": 1,
+        "unitPrice": 4480.6,
+        "lineTotal": 4480.6,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 5.883,62\n[MAYOR] DORITOS 150GR",
+        "description": "[MAYOR] DORITOS 150GR",
+        "quantity": 2,
+        "unitPrice": 5883.62,
+        "lineTotal": 11767.24,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 8.768,86\n[MAYOR] GALLETA MAXCOCO 460GR",
+        "description": "[MAYOR] GALLETA MAXCOCO 460GR",
+        "quantity": 1,
+        "unitPrice": 8768.86,
+        "lineTotal": 8768.86,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.457,97\n[MANGA] MUNCHY RINGOS 62GRS",
+        "description": "[MANGA] MUNCHY RINGOS 62GRS",
+        "quantity": 1,
+        "unitPrice": 4457.97,
+        "lineTotal": 4457.97,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 3.771,55\nSAMY 264G*24UND",
+        "description": "SAMY 264G",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 24,
+        "unitPrice": 3771.55,
+        "lineTotal": 3771.55,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.836,50\n[MAYOR] LECHE CONDENSADA CREMOR 395GR(E)",
+        "description": "[MAYOR] LECHE CONDENSADA CREMOR 395GR",
+        "quantity": 1,
+        "unitPrice": 7836.5,
+        "lineTotal": 7836.5,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 2.462,07\n[MAYOR] GALLETAS CRAKENAS 192G*8UND",
+        "description": "[MAYOR] GALLETAS CRAKENAS 192G",
+        "quantity": 2,
+        "unit": "paquete",
+        "unitsPerPack": 8,
+        "unitPrice": 2462.07,
+        "lineTotal": 4924.14,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 8.478,75\n[MAYOR] MANTEQUILLA MAVESA 500GR(E)",
+        "description": "[MAYOR] MANTEQUILLA MAVESA 500GR",
+        "quantity": 2,
+        "unitPrice": 8478.75,
+        "lineTotal": 16957.5,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.211,38\n[MAYOR] ACEITE SOYA LA PAMPA 500ML(E)",
+        "description": "[MAYOR] ACEITE SOYA LA PAMPA 500ML",
+        "quantity": 1,
+        "unitPrice": 4211.38,
+        "lineTotal": 4211.38,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 5.892,25\n[MAYOR] ACEITE SOYA LA PAMPA 700ML(E)",
+        "description": "[MAYOR] ACEITE SOYA LA PAMPA 700ML",
+        "quantity": 1,
+        "unitPrice": 5892.25,
+        "lineTotal": 5892.25,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 3.771,55\n[MAYOR] ATUN WILLINGER EN ACEITE 170GR",
+        "description": "[MAYOR] ATUN WILLINGER EN ACEITE 170GR",
+        "quantity": 2,
+        "unitPrice": 3771.55,
+        "lineTotal": 7543.1,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 4.725,00\n[MAYOR] MANTEQUILLA MAVESA 250GR(E)",
+        "description": "[MAYOR] MANTEQUILLA MAVESA 250GR",
+        "quantity": 2,
+        "unitPrice": 4725,
+        "lineTotal": 9450,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 2.338,88\n[MAYOR] SARDINA WILLINGER 155GR(E)",
+        "description": "[MAYOR] SARDINA WILLINGER 155GR",
+        "quantity": 2,
+        "unitPrice": 2338.88,
+        "lineTotal": 4677.76,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "3 x B 4.042,51\n[MAYOR] HARINA PAN 1KG(E)",
+        "description": "[MAYOR] HARINA PAN 1KG",
+        "quantity": 3,
+        "unitPrice": 4042.51,
+        "lineTotal": 12127.52,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "2 x B 6.918,63\n[MAYOR] ARROZ MARY PREMIUN 900GR(E)",
+        "description": "[MAYOR] ARROZ MARY PREMIUN 900GR",
+        "quantity": 2,
+        "unitPrice": 6918.63,
+        "lineTotal": 13837.26,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "4 x B 6.428,63\n[MAYOR] LECHE DOBON 200GR(E)",
+        "description": "[MAYOR] LECHE DOBON 200GR",
+        "quantity": 4,
+        "unitPrice": 6428.63,
+        "lineTotal": 25714.52,
+        "taxHint": "exento",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 7.494,83\n[MAYOR] CHIMO TIGRITO AMARILLO *6UND",
+        "description": "[MAYOR] CHIMO TIGRITO AMARILLO",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 6,
+        "unitPrice": 7494.83,
+        "lineTotal": 7494.83,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 13.954,74\nMINI SAMBA FRESA BOLSA 16G*35UND",
+        "description": "MINI SAMBA FRESA BOLSA",
+        "quantity": 1,
+        "unit": "paquete",
+        "unitsPerPack": 35,
+        "unitPrice": 13954.74,
+        "lineTotal": 13954.74,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 4.827,59\nMINI SAVOY LECHE BOLSA 150GRS",
+        "description": "MINI SAVOY LECHE BOLSA 150GRS",
+        "quantity": 1,
+        "unitPrice": 4827.59,
+        "lineTotal": 4827.59,
+        "taxHint": "general",
+        "confidence": 0.95
+      },
+      {
+        "rawText": "1 x B 13.441,81\nCAJA SAMBA FRESA 32G*20UND",
+        "description": "SAMBA FRESA 32G",
+        "quantity": 1,
+        "unit": "caja",
+        "unitsPerPack": 20,
+        "unitPrice": 13441.81,
+        "lineTotal": 13441.81,
+        "taxHint": "general",
+        "confidence": 0.95
+      }
+    ],
+    "subtotal": 185348.4,
+    "tax": 29655.74,
+    "total": 315708.83,
+    "confidence": 0.95,
+    "warnings": []
+  },
+  "inputTokens": 2391,
+  "outputTokens": 9572,
+  "durationMs": 44412,
+  "pages": 1,
+  "savedAt": "2026-10-16T14:02:23.762Z"
+}

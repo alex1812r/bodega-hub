@@ -7,6 +7,7 @@
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "@bodega/core/purchases";
 
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
+import { DECIMAL_QUANTITY_ISSUE } from "@/modules/invoice-scan/server/match/money";
 import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
 import { roundMoney } from "@/shared/utils/currency";
 
@@ -18,6 +19,8 @@ import { buildInvoiceReviewDraft } from "./reviewDraft";
 import {
   createInvoiceReviewState,
   getInvoiceReviewTotals,
+  getLineBasePrice,
+  getLineIssues,
   getLineNeeds,
   getRateOptions,
   getTaxInclusion,
@@ -62,7 +65,7 @@ describe.each([
     const totals = getInvoiceReviewTotals(state);
 
     expect(getTaxInclusion(state)).toEqual({ suggested: true, included: true });
-    expect(Math.abs(registeredTotalVes(state) - readTotal)).toBeLessThanOrEqual(0.1);
+    expect(registeredTotalVes(state)).toBe(readTotal);
     // El pie enseña lo que se va a registrar, no "el calculado más cercano".
     expect(totals.registered).toBe(registeredTotalVes(state));
     expect(totals.mismatch).toBe(false);
@@ -77,7 +80,7 @@ describe.each([
     expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: inflatedTotal, mismatch: true });
 
     state = reviewReducer(state, { type: "setPricesIncludeTax", included: true });
-    expect(Math.abs(registeredTotalVes(state) - readTotal)).toBeLessThanOrEqual(0.1);
+    expect(registeredTotalVes(state)).toBe(readTotal);
   });
 
   it("D10: la extracción corregida conserva los precios leídos (con IVA), no la base convertida", () => {
@@ -115,6 +118,28 @@ describe.each([
   });
 });
 
+describe("BAJO-N1 (CIE-03a) · f02: el residuo de quitar el IVA línea a línea", () => {
+  // Dos bultos a 4.163,12 y 4.032,77: la base por bulto redondeada × 2 se pasa un céntimo cada una.
+  it("se reparte en las bases y la compra registra 33.150,15, no 33.150,17", () => {
+    const state = acceptAll(createInvoiceReviewState(response(f02), ctx));
+    const plain = state.lines.map((line) => roundMoney(line.unitPrice / 1.16));
+    const bases = state.lines.map((line) => getLineBasePrice(state, line));
+
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: 33150.15, mismatch: false });
+    expect(registeredTotalVes(state)).toBe(33150.15);
+    // Un céntimo menos en la base del último bulto doble (2 × 3.476,52) absorbe los 0,02.
+    expect(bases.map((base, index) => roundMoney(base - plain[index]))).toEqual([0, 0, 0, 0, -0.01]);
+  });
+
+  it("descartar una línea vuelve a cuadrar con lo que queda", () => {
+    let state = acceptAll(createInvoiceReviewState(response(f02), ctx));
+    state = reviewReducer(state, { type: "discardLine", index: 2 });
+
+    expect(getInvoiceReviewTotals(state).registered).toBe(roundMoney(33150.15 - 7226.39));
+    expect(registeredTotalVes(state)).toBe(roundMoney(33150.15 - 7226.39));
+  });
+});
+
 describe("ALTO-1 · f04 con IVA desglosado", () => {
   it("no sugiere precios con IVA y el pie da el total con IVA leído", () => {
     let state = createInvoiceReviewState(response(f04), ctx);
@@ -147,6 +172,23 @@ describe("MEDIO-3 · f04 media caja (0,50)", () => {
 
     expect(state.lines[0]).toMatchObject({ entryMode: "unit", quantity: 6, unitPrice: 3389.62, status: "resolved" });
     expect(getLineNeeds(state.lines[0])).toEqual([]);
+  });
+
+  it("BAJO-N2 (CIE-03a): convertida a unidades, ya no avisa de la cantidad con decimales", () => {
+    let state = createInvoiceReviewState(response(f04), ctx);
+    expect(getLineIssues(state.lines[0])).toEqual([DECIMAL_QUANTITY_ISSUE]);
+
+    state = reviewReducer(state, { type: "acceptMarked", index: 0 });
+    state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "pack" });
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 12 });
+    state = reviewReducer(state, { type: "convertPackToUnits", index: 0 });
+
+    expect(getLineIssues(state.lines[0])).toEqual([]);
+    // Los demás avisos del servidor siguen; corregida a mano a entero, también se va.
+    state = reviewReducer(state, { type: "editQuantity", index: 1, quantity: 1 });
+    expect(getLineIssues(state.lines[1])).toEqual([
+      "El precio unitario no cuadra con el total de la línea: revísalo.",
+    ]);
   });
 
   it("si cajas × unidades no da entero no convierte y lo explica", () => {

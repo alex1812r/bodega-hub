@@ -46,6 +46,8 @@
 --   PT409 'El escaneo ya fue confirmado'   (claim: confirmado con la compra de otra clave)
 --   PT409 'El escaneo se está confirmando en otra compra' (claim: reclamo vigente de
 --         otra clave; confirm sin el reclamo de su clave)
+--   PT409 'Esta factura ya se registró en otra compra' (claim: la clave del reclamo
+--         ya creo su compra; CIE-06)
 --   PT400 'Falta la clave del intento de compra' (claim sin p_client_request_id)
 --   PT409 'El escaneo no está confirmado'  (learn sobre escaneo sin confirmar)
 --   PT409 'La compra no corresponde a este intento' (confirm: purchases.client_request_id
@@ -134,6 +136,21 @@
 --     momento por delante de su propia compra). release y confirm la limpian.
 --   * D10: p_confirmed debe ser { extraction: objeto con lines array, lines:
 --     array }; la forma vieja (array suelto) es PT400 'Confirmación inválida'.
+--
+-- CIE-06 (auditoria pasada 1, M1): si confirm_invoice_scan fallaba DESPUES de
+-- create_purchase (p. ej. 22P05 por un U+0000 en el jsonb), a los 5 min el
+-- reclamo caducaba y el mismo escaneo confirmaba una SEGUNDA compra con otra
+-- clave. Ahora el reclamo queda LIGADO a la compra en cuanto la clave que lo
+-- tiene crea su compra (purchases.client_request_id = claim_request_id y
+-- purchases.created_at >= claim_started_at - 1 s, la misma regla de SCN-06-F3;
+-- no hace falta otra escritura: el vinculo existe desde el commit de
+-- create_purchase):
+--   * claim_invoice_scan: ese reclamo no caduca para otra clave -> PT409
+--     'Esta factura ya se registró en otra compra'. La misma clave sigue
+--     reclamando ('claimed') y reintenta confirm sobre la MISMA compra
+--     (create_purchase la devuelve por idempotencia).
+--   * release_invoice_scan_claim: no suelta un reclamo ligado a su compra.
+--   * discard_invoice_scan (20261019k) no descarta el escaneo ligado.
 --
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
@@ -291,8 +308,18 @@ begin
     and (
       s.claim_request_id is null
       or s.claim_request_id = p_client_request_id
-      or s.claimed_at is null
-      or s.claimed_at < now() - interval '5 minutes'
+      or (
+        (s.claimed_at is null or s.claimed_at < now() - interval '5 minutes')
+        -- CIE-06: el reclamo cuya clave ya creo su compra no caduca nunca.
+        and not exists (
+          select 1
+          from public.purchases p
+          where p.store_id = s.store_id
+            and p.client_request_id = s.claim_request_id
+            and s.claim_started_at is not null
+            and p.created_at >= s.claim_started_at - interval '1 second'
+        )
+      )
     );
 
   get diagnostics v_rows = row_count;
@@ -328,6 +355,18 @@ begin
     raise exception using errcode = 'PT409', message = 'El escaneo no está disponible';
   end if;
 
+  -- CIE-06: la clave del reclamo ya creo su compra; el escaneo es de esa compra.
+  if exists (
+    select 1
+    from public.purchases p
+    where p.store_id = v_store_id
+      and p.client_request_id = v_scan.claim_request_id
+      and v_scan.claim_started_at is not null
+      and p.created_at >= v_scan.claim_started_at - interval '1 second'
+  ) then
+    raise exception using errcode = 'PT409', message = 'Esta factura ya se registró en otra compra';
+  end if;
+
   raise exception using errcode = 'PT409', message = 'El escaneo se está confirmando en otra compra';
 end;
 $$;
@@ -336,7 +375,8 @@ revoke all on function public.claim_invoice_scan(uuid, uuid) from public, anon;
 grant execute on function public.claim_invoice_scan(uuid, uuid) to authenticated, service_role;
 
 -- Suelta el reclamo del mismo intento si create_purchase fue rechazada. No-op si
--- el escaneo ya no esta reclamado por esa clave (otro intento o confirmado).
+-- el escaneo ya no esta reclamado por esa clave (otro intento o confirmado) o si
+-- esa clave ya creo su compra (CIE-06: el reclamo queda ligado a ella).
 create or replace function public.release_invoice_scan_claim(
   p_scan_id uuid,
   p_client_request_id uuid
@@ -362,7 +402,16 @@ begin
   where s.id = p_scan_id
     and s.store_id = v_store_id
     and s.status = 'extracted'
-    and s.claim_request_id = p_client_request_id;
+    and s.claim_request_id = p_client_request_id
+    -- CIE-06: un reclamo ligado a la compra de su clave no se suelta.
+    and not exists (
+      select 1
+      from public.purchases p
+      where p.store_id = s.store_id
+        and p.client_request_id = s.claim_request_id
+        and s.claim_started_at is not null
+        and p.created_at >= s.claim_started_at - interval '1 second'
+    );
 end;
 $$;
 

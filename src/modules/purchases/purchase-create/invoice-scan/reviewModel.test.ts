@@ -196,6 +196,20 @@ describe("canLoad y pendingCount", () => {
     expect(getInvoiceReviewBlockers(state)).toEqual(["No queda ninguna línea para cargar."]);
   });
 
+  it("BAJO-N3 (CIE-03a): el proveedor confirmado lleva el nombre del contacto, no el leído", () => {
+    const state = stateOf([confirmed], {
+      extraction: { supplier: { name: "PROVEEDOR UNO, C.A" } },
+      matched: {
+        supplier: {
+          contactId: "c1",
+          candidates: [{ contactId: "c1", name: "Chevere Depot", score: 0.95, reason: "RIF igual" }],
+        },
+      },
+    });
+
+    expect(state.header.supplier).toMatchObject({ contactId: "c1", name: "Chevere Depot", readName: "PROVEEDOR UNO, C.A" });
+  });
+
   it("buscador: chooseProduct resuelve una sin emparejar sin candidatos", () => {
     let state = stateOf([unmatchedLine(1, false)]);
     state = reviewReducer(state, {

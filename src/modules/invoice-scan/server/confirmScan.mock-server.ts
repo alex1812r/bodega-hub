@@ -21,6 +21,15 @@
  * rechaza (SCN-06-F3) una compra creada antes del reclamo (la clave ya había
  * creado una compra vieja sin escaneo).
  *
+ * CIE-06 (auditoría M1): en cuanto `finalizeInvoiceScan` recibe la compra creada
+ * por la clave que tiene el reclamo, el reclamo queda ligado a ella
+ * (`purchaseBoundClaims`): no caduca para otra clave (400
+ * `INVOICE_SCAN_PURCHASE_BOUND_MESSAGE`), `releaseInvoiceScanClaim` no lo suelta y
+ * el mismo intento puede reintentar el confirm. En la base el vínculo se deduce de
+ * `purchases.client_request_id` (existe desde que `create_purchase` hace commit);
+ * aquí se registra al llegar la compra a finalize, que en el mock va justo detrás.
+ * El aprendizaje del mock no falla, así que el replay no lo reintenta.
+ *
  * Almacén (SCN-13a): las filas son las de `scans.mock-server.ts`, el mismo almacén
  * donde `POST /api/purchases/invoice-scan` guarda el escaneo en modo mock (con su
  * caché por hash y su descarte), así que una compra mock confirma el escaneo que
@@ -47,6 +56,7 @@ import {
   INVOICE_SCAN_CLAIM_TTL_MS,
   INVOICE_SCAN_CLAIMED_MESSAGE,
   INVOICE_SCAN_KEY_REUSED_MESSAGE,
+  INVOICE_SCAN_PURCHASE_BOUND_MESSAGE,
   logInvoiceScanFailure,
   readExtractedAliasKeys,
   readExtractedRawTexts,
@@ -103,6 +113,18 @@ export type MockLearnedAlias = {
 
 function aliases() {
   return mockState("invoice-scan:confirm:aliases", () => new Map<string, MockLearnedAlias>());
+}
+
+/** CIE-06: escaneo → clave del reclamo que ya creó su compra (reclamo ligado a la compra). */
+function purchaseBoundClaims() {
+  return mockState("invoice-scan:confirm:purchase-bound", () => new Map<string, string>());
+}
+
+/** El reclamo vigente del escaneo es de una clave que ya creó su compra. */
+function isPurchaseBound(id: string): boolean {
+  const boundKey = purchaseBoundClaims().get(id);
+
+  return boundKey !== undefined && boundKey === mockScanClaim(id).claimRequestId;
 }
 
 function aliasKey(storeId: string, supplierId: string, aliasNorm: string) {
@@ -187,6 +209,7 @@ export function registerMockInvoiceScan(scan: {
     usagePages: 0,
   });
   clearClaim(id);
+  purchaseBoundClaims().delete(id);
   mockScanClaim(id).confirmedClientRequestId = null;
 
   return toView(id) as MockInvoiceScan;
@@ -246,6 +269,7 @@ export function removeMockLearnedAlias(storeId: string, aliasId: string): boolea
 export function resetMockInvoiceScans() {
   resetMockScanStore();
   aliases().clear();
+  purchaseBoundClaims().clear();
 }
 
 export async function precheckInvoiceScan(
@@ -269,6 +293,11 @@ export async function precheckInvoiceScan(
 
   // Espejo del UPDATE condicional de claim_invoice_scan (sin await en medio: atómico).
   if (!replay) {
+    // CIE-06: el reclamo ligado a una compra no caduca para otra clave.
+    if (isPurchaseBound(usable.id) && usableClaim.claimRequestId !== input.clientRequestId) {
+      throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_PURCHASE_BOUND_MESSAGE);
+    }
+
     const now = Date.now();
     const claimFree =
       usableClaim.claimRequestId === null ||
@@ -299,14 +328,18 @@ export async function precheckInvoiceScan(
   };
 }
 
-/** Espejo de `release_invoice_scan_claim`: no-op si el reclamo no es de esa clave. */
+/** Espejo de `release_invoice_scan_claim`: no-op si el reclamo no es de esa clave o ya tiene compra (CIE-06). */
 export async function releaseInvoiceScanClaim(
   input: InvoiceScanClaimInput,
   storeId: string,
 ): Promise<void> {
   const stored = ownRow(input.scanId, storeId);
 
-  if (stored?.status === "extracted" && mockScanClaim(stored.id).claimRequestId === input.clientRequestId) {
+  if (
+    stored?.status === "extracted" &&
+    mockScanClaim(stored.id).claimRequestId === input.clientRequestId &&
+    !isPurchaseBound(stored.id)
+  ) {
     clearClaim(stored.id);
   }
 }
@@ -416,6 +449,10 @@ export async function finalizeInvoiceScan(
     throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_KEY_REUSED_MESSAGE);
   }
 
+  // CIE-06: la compra es de este intento; desde aquí el reclamo queda ligado a ella
+  // aunque el confirm falle.
+  purchaseBoundClaims().set(stored.id, input.clientRequestId);
+
   const confirmed = buildConfirmedPayload(
     {
       extraction: readStoredExtraction(stored.extracted),
@@ -441,6 +478,7 @@ export async function finalizeInvoiceScan(
     supplierId: input.supplierId,
   });
   clearClaim(stored.id);
+  purchaseBoundClaims().delete(stored.id);
   claim.confirmedClientRequestId = input.clientRequestId;
   ensureMockScanPackUnits(scan.id, input.supplierId, buildScanPackUnits(confirmed.lines, input.items), storeId);
 

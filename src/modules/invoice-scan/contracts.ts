@@ -27,32 +27,81 @@ export const invoiceCurrencies = ["VES", "USD", "unknown"] as const;
 
 const confidence = z.number().min(0).max(1);
 
+/** CIE-06 · Largo máximo (unidades UTF-16) de cada texto de la factura. */
+export const INVOICE_TEXT_MAX_LENGTH = 1000;
+/** CIE-06 · Máximo de avisos por factura. */
+export const INVOICE_WARNINGS_MAX = 50;
+export const INVOICE_TEXT_INVALID_MESSAGE = "Un texto de la factura tiene caracteres no permitidos.";
+export const INVOICE_TEXT_TOO_LONG_MESSAGE = `Cada texto de la factura puede tener como máximo ${INVOICE_TEXT_MAX_LENGTH} caracteres.`;
+
+/**
+ * CIE-06 (auditoría M1): U+0000, caracteres de control C0/C1 (salvo tabulador,
+ * salto de línea y retorno de carro) o un surrogate UTF-16 suelto. Postgres
+ * rechaza el U+0000 y los surrogates sueltos en `jsonb` (22P05), y el fallo
+ * llegaba al confirmar el escaneo, DESPUÉS de crear la compra.
+ */
+export function hasForbiddenInvoiceChar(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+
+    if ((code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) || (code >= 0x7f && code <= 0x9f)) {
+      return true;
+    }
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        return true;
+      }
+
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Texto de la factura que acaba en `jsonb`. Solo refinamientos (sin `max`/`regex`):
+ * el JSON Schema que recibe el modelo (`Output.object`) no cambia, y una salida
+ * del modelo que no cumpla falla la extracción (INVALID_OUTPUT) antes de guardarse.
+ */
+function invoiceText() {
+  return z
+    .string()
+    .refine((value) => !hasForbiddenInvoiceChar(value), INVOICE_TEXT_INVALID_MESSAGE)
+    .refine((value) => value.length <= INVOICE_TEXT_MAX_LENGTH, INVOICE_TEXT_TOO_LONG_MESSAGE);
+}
+
 export const invoiceExtractionLineSchema = z.object({
   /** Texto literal de la línea tal como aparece en la factura (obligatorio). */
-  rawText: z.string(),
-  description: z.string(),
+  rawText: invoiceText(),
+  description: invoiceText(),
   quantity: z.number(),
   unit: z.enum(invoiceLineUnits).optional(),
   unitsPerPack: z.number().int().positive().optional(),
   unitPrice: z.number(),
   lineTotal: z.number(),
   taxHint: z.enum(invoiceTaxHints).optional(),
-  barcode: z.string().optional(),
+  barcode: invoiceText().optional(),
   /** Código del proveedor leído en la línea, si lo hay (cascada paso 1). */
-  supplierSku: z.string().optional(),
+  supplierSku: invoiceText().optional(),
   confidence,
 });
 
 export const invoiceExtractionSchema = z.object({
   supplier: z.object({
-    name: z.string(),
-    taxId: z.string().optional(),
-    phone: z.string().optional(),
-    address: z.string().optional(),
+    name: invoiceText(),
+    taxId: invoiceText().optional(),
+    phone: invoiceText().optional(),
+    address: invoiceText().optional(),
   }),
-  number: z.string().optional(),
+  number: invoiceText().optional(),
   /** ISO `YYYY-MM-DD`. */
-  date: z.string().optional(),
+  date: invoiceText().optional(),
   currency: z.enum(invoiceCurrencies),
   /** Tasa Bs/USD impresa al pie, si la hay (caos 6.20). */
   printedRate: z.number().positive().optional(),
@@ -62,7 +111,12 @@ export const invoiceExtractionSchema = z.object({
   total: z.number().optional(),
   confidence,
   /** Avisos en español para el usuario. */
-  warnings: z.array(z.string()),
+  warnings: z
+    .array(invoiceText())
+    .refine(
+      (warnings) => warnings.length <= INVOICE_WARNINGS_MAX,
+      `La factura puede tener como máximo ${INVOICE_WARNINGS_MAX} avisos.`,
+    ),
 });
 
 export type InvoiceExtractionLine = z.infer<typeof invoiceExtractionLineSchema>;

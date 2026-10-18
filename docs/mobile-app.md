@@ -284,3 +284,26 @@ Para cuando se implemente, el diseño previsto:
    dejado el inventario en negativo.
 
 Sin el paso 2 la cola es insegura, así que no se implementa antes.
+
+## Backlog: escaneo de facturas con la cámara
+
+Fase 5 del plan [`factura-escaneo-gtm.md`](agent-prompts/factura-escaneo-gtm.md). El backend y la web están hechos ([`factura-escaneo.md`](factura-escaneo.md)); falta la pantalla en la app. Va en la tab de compras y solo con `purchases.create` (admin y almacén). Todos los endpoints aceptan `Authorization: Bearer` y exigen una sesión real, no la demo.
+
+Endpoints que usa la cámara (contrato en `public/openapi.yml`):
+
+| Paso | Endpoint |
+|------|----------|
+| Cuota antes de abrir la cámara («Escaneos hoy: X de Y») | GET `/api/purchases/invoice-scan/limits` |
+| Escanear, si el total de las páginas cabe en 4 MB | POST `/api/purchases/invoice-scan` multipart: `page` (1–10 imágenes JPG/PNG/WebP de ≤ 1 MB, todas del mismo formato), `sha256?`, `supplierId?` |
+| Si no cabe: URLs firmadas, subida de cada página con PUT y escaneo por rutas | GET `/api/purchases/invoice-scan/upload-url?sha256=&pages=&types=` y POST `/api/purchases/invoice-scan` JSON `{ sha256, storagePaths, supplierId? }` |
+| Descartar un escaneo sin confirmar | POST `/api/purchases/invoice-scan/{id}/discard` |
+| Reabrir un escaneo | GET `/api/purchases/invoice-scan/{id}` |
+| Confirmar la compra y aprender los alias | POST `/api/purchases` con `clientRequestId`, `invoiceScanId`, `invoiceScanLines` e `invoiceScanExtraction` (lectura corregida) |
+| Ver la factura de una compra | GET `/api/purchases/{id}/invoice-scan?images=0` |
+
+Pendiente en la app:
+
+- Preparar cada página con `expo-image-manipulator`, que ya está: rotación, lado mayor ≤ 1600 px y JPEG de ≤ 1 MB. El sha256 se calcula sobre los bytes ya preparados, concatenados en orden. Si no coincide con el del servidor, responde 400.
+- Errores en español del BFF: 409 (ya se está leyendo, reintentar), 413, 429 `INVOICE_SCAN_LIMIT_REACHED` (`details.limit` / `details.used`) y 502 `INVOICE_SCAN_PROVIDER_ERROR`. En todos los casos queda abierta la compra manual.
+- Revisión por línea: confirmada, dudosa o sin emparejar, con los avisos de `matched.rate` y de duplicado, reutilizando las reglas puras de `src/modules/purchases/purchase-create/invoice-scan/reviewModel.ts` si se mueven a `@bodega/core`.
+- Sin cola offline: escanear exige red.

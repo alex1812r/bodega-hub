@@ -1,11 +1,14 @@
 import { ApiError } from "@/lib/api/apiError";
 
+import { INVOICE_MAX_SIDE } from "../client/invoiceLimits";
+
 /** Por debajo de este lado mayor (px) la factura no se puede leer: 400 sin llamar al modelo. */
 export const INVOICE_MIN_SIDE = 400;
 
 /**
  * Por debajo de este lado menor (px) la imagen no tiene proporciones de factura
- * (p. ej. 1×10000): 400 sin llamar al modelo. Una tira térmica de 600×4000 pasa.
+ * (p. ej. 1×10000): 400 sin llamar al modelo. Una tira térmica de 600×4000,
+ * reducida por el cliente a 240×1600, pasa.
  */
 export const INVOICE_MIN_SHORT_SIDE = 200;
 
@@ -28,6 +31,10 @@ const TOO_SMALL =
 
 const BAD_PROPORTIONS =
   "La imagen tiene proporciones que no corresponden a una factura. Sube una foto de la factura completa.";
+
+/** Texto ligado a `INVOICE_MAX_SIDE` (1600); el test fija ambos. */
+const TOO_LARGE =
+  "La imagen supera 1.600 px en su lado mayor. Vuelve a subirla desde la app para que se reduzca.";
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -324,7 +331,9 @@ function webpSize(data: Uint8Array, view: DataView): Size | null {
  * archivo no es una imagen válida, si el tipo no coincide, si la estructura
  * no es coherente (segmentos JPEG hasta SOS + EOI, chunks PNG con CRC hasta
  * IEND, tamaños RIFF/VP8* de WebP), si el lado mayor es menor que
- * `INVOICE_MIN_SIDE` o si el lado menor es menor que `INVOICE_MIN_SHORT_SIDE`.
+ * `INVOICE_MIN_SIDE`, si el lado menor es menor que `INVOICE_MIN_SHORT_SIDE`
+ * o si el lado mayor supera `INVOICE_MAX_SIDE` (sin sharp no se redimensiona
+ * en el servidor: el cliente ya reduce a 1600 px y al modelo no llega más).
  *
  * Límite conocido (severidad baja): unas dimensiones reescritas en un archivo
  * estructuralmente válido (SOF, IHDR con CRC recalculado o frame VP8) no se
@@ -359,6 +368,10 @@ export function inspectInvoiceImage(data: Uint8Array, declaredType: string): Inv
 
   if (Math.min(size.width, size.height) < INVOICE_MIN_SHORT_SIDE) {
     throw badRequest(BAD_PROPORTIONS);
+  }
+
+  if (Math.max(size.width, size.height) > INVOICE_MAX_SIDE) {
+    throw badRequest(TOO_LARGE);
   }
 
   return { height: size.height, mediaType, width: size.width };

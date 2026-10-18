@@ -11,8 +11,9 @@
  *   alias de la línea (`invoiceAliasKey`, SCN-UI-Q2);
  *   a las líneas sin ninguno, segunda pasada con los textos limpios de
  *   `searchTextVariants` (como `loadVariantFuzzy`, SCN-11-it1);
- * - alícuotas activas de la tienda, tasa vigente y escaneos previos con el
- *   mismo número normalizado.
+ * - alícuotas activas de la tienda, tasa del día (`getCurrentExchangeRate`
+ *   mock, la del formulario de compra) y escaneos previos con el mismo número
+ *   normalizado.
  *
  * Diferencias asumidas: la similitud es la de bigramas de `textSimilarity`
  * (no la de trigramas de pg_trgm) y el último costo es `currentCostRef` del
@@ -21,12 +22,12 @@
 import { normalizeAlias } from "@bodega/core/invoice";
 import { invoiceAliasKey } from "../invoiceAliasKey";
 
+import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.mock-server";
 import { mockTaxRatesForStore } from "@/modules/settings/services/taxRates.mock-server";
 import {
   mockAppSettings,
   mockCategories,
   mockContacts,
-  mockExchangeRates,
   mockProductPackConversions,
   mockProducts,
   mockSupplierProducts,
@@ -52,7 +53,7 @@ import type {
   MatchSupplierCatalog,
 } from "./match.types";
 import { searchTextVariants } from "./match/searchText";
-import { normalizeInvoiceNumber, normalizeTaxId, textSimilarity } from "./match/text";
+import { normalizeInvoiceNumber, sameTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
 
 /** Mismos umbrales que `invoice_match_candidates` (20261019d). */
@@ -63,7 +64,6 @@ const FUZZY_MIN_SCORE = 0.6;
 const ofStore = (rowStoreId: string | null | undefined, storeId: string) => (rowStoreId ?? DEFAULT_STORE_ID) === storeId;
 
 function supplierCandidates(storeId: string, extraction: InvoiceExtraction): MatchSupplierCandidate[] {
-  const readTaxId = normalizeTaxId(extraction.supplier.taxId);
   const name = extraction.supplier.name ?? "";
 
   return mockContacts
@@ -73,7 +73,7 @@ function supplierCandidates(storeId: string, extraction: InvoiceExtraction): Mat
       name: contact.name,
       taxId: contact.taxId || null,
       score: textSimilarity(contact.name, name),
-      taxIdMatch: readTaxId !== "" && normalizeTaxId(contact.taxId) === readTaxId,
+      taxIdMatch: sameTaxId(extraction.supplier.taxId, contact.taxId),
     }))
     .filter((row) => row.taxIdMatch || row.score >= SUPPLIER_MIN_SCORE)
     .sort((a, b) => Number(b.taxIdMatch) - Number(a.taxIdMatch) || b.score - a.score)
@@ -223,12 +223,11 @@ function fuzzyCandidates(
   return fuzzy;
 }
 
+/** Paridad con `loadMatchContext`: la tasa del día del formulario de compra en mock (CIE-02). */
 function systemRate(storeId: string): number | undefined {
-  const latest = mockExchangeRates
-    .filter((rate) => ofStore(rate.storeId, storeId))
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  const { rateVes } = getCurrentExchangeRate(storeId);
 
-  return latest && latest.rateVes > 0 ? latest.rateVes : undefined;
+  return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
 }
 
 function previousScans(storeId: string, extraction: InvoiceExtraction, excludeScanId?: string): MatchPreviousScan[] {

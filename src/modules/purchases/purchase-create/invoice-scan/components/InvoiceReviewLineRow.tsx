@@ -14,6 +14,7 @@ import { cn } from "@/shared/utils/cn";
 import {
   enterTargetProductId,
   getLineAmount,
+  getLineIssues,
   getTaxInclusion,
   getUnitConversion,
   isPendingStatus,
@@ -91,6 +92,7 @@ export function InvoiceReviewLineRow({
   const marked = pending ? enterTargetProductId(line) : undefined;
   const chips = pending ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
+  const issues = getLineIssues(line);
   const needs = line.discarded ? [] : lineNeedMessages(line);
   const amount = getLineAmount(line);
 
@@ -299,9 +301,9 @@ export function InvoiceReviewLineRow({
             </div>
           ) : null}
 
-          {line.issues.length > 0 || needs.length > 0 ? (
+          {issues.length > 0 || needs.length > 0 ? (
             <ul className="flex flex-col gap-1 text-xs">
-              {line.issues.map((issue) => (
+              {issues.map((issue) => (
                 <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue}`}>
                   <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
                   {issue}

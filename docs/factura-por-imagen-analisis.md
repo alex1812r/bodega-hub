@@ -79,6 +79,29 @@ El free tier de Gemini permite a Google usar los datos para mejorar sus modelos;
 
 Dependencias ya resueltas en `main`: proveedor de IA por entorno, `tax_rates`, vínculo automático proveedor–producto al confirmar (COM-02), "Nuevo producto" desde la compra (COM-03), empaques y recetas, borrador de compra y `ProcessGuard`.
 
+## 7. Estado de implementación
+
+Implementado (oct 2026) en la rama `feat/invoice-scan` según el plan [`agent-prompts/factura-escaneo-gtm.md`](agent-prompts/factura-escaneo-gtm.md). Todavía no está desplegado en producción. Detalle en [`factura-escaneo.md`](factura-escaneo.md).
+
+**Hecho (fases 1 a 4):**
+
+- **Escaneo**: `POST /api/purchases/invoice-scan` (foto JPG/PNG/WebP o PDF de hasta 10 páginas, ≤ 1600 px y ≤ 1 MB por página), subida firmada para las facturas grandes, idempotencia por sha256 y tienda, cuota diaria por páginas (`INVOICE_SCAN_DAILY_LIMIT`, 50) y bucket privado `invoice-scans` con purga a 90 días.
+- **Modelo**: proveedor por entorno, reutilizando la factory del asistente (`INVOICE_SCAN_PROVIDER`, `INVOICE_SCAN_MODEL`); por defecto `gemini-3.5-flash-lite`, elegido con el banco (D19/D22).
+- **Emparejamiento**: determinista en cascada (SKU, alias, código de barras, difuso), con empaques y recetas, coherencia de precio y alícuota. La tasa es la del día del formulario de compra; la impresa se compara (aviso > 2 %). Detecta duplicados.
+- **UI**: botón «Escanear factura», modal con avisos de calidad y cuota, pantalla de revisión por línea que precarga el formulario existente, factura visible en el detalle de la compra y alias del proveedor que se pueden quitar.
+- **Aprendizaje**: alias por proveedor (`supplier_product_aliases`) y few-shot con los escaneos confirmados (`invoice_scans.confirmed`, lectura corregida por el usuario, D10).
+- **Banco**: `npm run invoice-eval` con 22 facturas reales y 10 sintéticas, oráculo, replay y caché. Con `gemini-3.5-flash-lite` cumple todas las metas del plan (§10): cabecera 98,4 %, líneas 99,5 %, emparejamiento 88,6 % sin alias y 96,1 % con alias, 0 % confirmadas mal, p95 6,8 s y $0,0036 por factura.
+- **Dataset de fine-tuning**: `npm run invoice-eval:export-finetune` exporta JSONL para Vertex AI.
+
+**No hecho (fuera del MVP o pendiente):**
+
+- Fase 5, app móvil con la cámara: queda en el backlog de [`mobile-app.md`](mobile-app.md#backlog-escaneo-de-facturas-con-la-cámara). Los endpoints ya aceptan Bearer.
+- Fine-tuning: el dataset está listo, pero no se entrena. Hoy no se justifica y faltan 100–500 escaneos confirmados.
+- Claude Haiku sin medir (la key estaba vacía). Gemini 3.6 y 3.8 Flash, y 2.5 Flash, solo tienen medición parcial por la cuota free.
+- Recorte manual de la foto en la app web: solo se reduce y se rota.
+- Facturas de venta, notas de crédito, varias facturas en una foto y OCR local offline (excluidos en el plan).
+- Despliegue: parches `20261019a`…`20261020a`, variables y el secret `CRON_SECRET` en GitHub (ver [`factura-escaneo.md` § Despliegue](factura-escaneo.md#despliegue)).
+
 ## Fuentes
 
 - [Gemini Developer API pricing](https://ai.google.dev/gemini-api/docs/pricing) · [Gemini: tokens por imagen](https://ai.google.dev/gemini-api/docs/tokens)

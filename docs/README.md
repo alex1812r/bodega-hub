@@ -46,7 +46,8 @@
 | [web-app-build-checklist.md](web-app-build-checklist.md) | Plan histórico de construcción (MVP ya hecho) |
 | [multi-store-options.md](multi-store-options.md) | Multitienda vigente: superadmin, `stores`, aislamiento API/RLS |
 | [chat-ia-analisis.md](chat-ia-analisis.md) | Chat IA de consultas: alcance, arquitectura (tools sobre servicios), proveedor, costo y estado de implementacion (§9) |
-| [factura-por-imagen-analisis.md](factura-por-imagen-analisis.md) | Precarga de compras desde la foto de la factura: opciones (sin entrenar modelo), costo, diseño de emparejamiento y MVP |
+| [factura-escaneo.md](factura-escaneo.md) | **Escaneo de facturas de compra:** cómo funciona, capas de aprendizaje (alias y few-shot), banco `npm run invoice-eval` con resultados por modelo, dataset de fine-tuning y despliegue (orden de parches `20261019*`/`20261020a`, variables `INVOICE_SCAN_*`, bucket y cron de purga) |
+| [factura-por-imagen-analisis.md](factura-por-imagen-analisis.md) | Precarga de compras desde la foto de la factura: opciones (sin entrenar modelo), costo, diseño de emparejamiento, MVP y estado de implementación (§7) |
 | [agent-prompts/chat-ia-gtm.md](agent-prompts/chat-ia-gtm.md) | Plan de ejecucion del asistente IA hasta GTM |
 | [agent-prompts/mobile-app-gtm.md](agent-prompts/mobile-app-gtm.md) | Plan de ejecucion de la app movil (Expo) hasta GTM |
 | [agent-prompts/nomina-gtm.md](agent-prompts/nomina-gtm.md) | Plan de ejecucion de la nomina de cajeros hasta GTM |

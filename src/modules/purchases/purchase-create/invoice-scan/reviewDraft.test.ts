@@ -224,6 +224,11 @@ describe("buildCorrectedExtraction", () => {
     if (!draft) return;
 
     expect("number" in draft.body.invoiceScanExtraction).toBe(false);
+    // CIE-03a: el cliente ya no los manda como "" (viajan ausentes).
+    expect(draft.body.invoiceScanExtraction.supplier).toEqual({ name: "Chevere Depot" });
+    expect(
+      draft.body.invoiceScanExtraction.lines.every((line) => !("barcode" in line) && !("supplierSku" in line)),
+    ).toBe(true);
     const parsed = purchaseBodySchema.safeParse(bodyOf(draft));
     expect(parsed.error?.issues).toBeUndefined();
 

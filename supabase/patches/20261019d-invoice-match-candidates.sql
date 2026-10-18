@@ -26,7 +26,10 @@
 --      p_texts, p_descriptions, p_supplier_id, p_limit) -> jsonb. En UNA
 --      llamada, para la tienda del llamante:
 --        a. suppliers: contactos activos tipo proveedor / ambos con RIF
---           normalizado igual al leido o similarity(nombre normalizado,
+--           igual al leido (como sameTaxId de match/text.ts: mismos digitos
+--           sin la letra de tipo J/V/E/G/P/C y, si ambos traen letra, la
+--           misma letra; J-123 no casa con V-123, 123 sin letra casa con
+--           los dos; CIE-03b) o similarity(nombre normalizado,
 --           p_supplier_name) >= 0,3; maximo 5, RIF igual primero y luego por
 --           score. { contact_id, name, tax_id, score, tax_id_match }.
 --        b. supplier_id: proveedor cuyos alias se usaron. p_supplier_id si es
@@ -117,6 +120,7 @@ declare
   v_store_id uuid;
   v_name text := btrim(coalesce(p_supplier_name, ''));
   v_tax_id text;
+  v_tax_letter text;
   v_limit integer := least(greatest(coalesce(p_limit, 5), 1), 5);
   v_texts text[] := coalesce(p_texts, '{}'::text[]);
   v_suppliers jsonb;
@@ -135,11 +139,11 @@ begin
     raise exception using errcode = 'PT400', message = 'Líneas de factura inválidas';
   end if;
 
-  -- RIF comparable: como normalizeTaxId (match/text.ts).
-  v_tax_id := regexp_replace(
-    regexp_replace(upper(coalesce(p_supplier_tax_id, '')), '[^A-Z0-9]', '', 'g'),
-    '^[JVEGPC]', ''
-  );
+  -- RIF comparable: como sameTaxId (match/text.ts). v_tax_id = digitos sin la
+  -- letra de tipo (normalizeTaxId); v_tax_letter = esa letra o ''.
+  v_tax_id := regexp_replace(upper(coalesce(p_supplier_tax_id, '')), '[^A-Z0-9]', '', 'g');
+  v_tax_letter := coalesce(substring(v_tax_id from '^[JVEGPC]'), '');
+  v_tax_id := regexp_replace(v_tax_id, '^[JVEGPC]', '');
 
   -- a. Candidatos de proveedor.
   with scored as (
@@ -149,11 +153,15 @@ begin
       c.tax_id,
       case when v_name = '' then 0::real
            else similarity(public.invoice_match_norm(c.name), v_name) end as score,
-      v_tax_id <> '' and regexp_replace(
-        regexp_replace(upper(coalesce(c.tax_id, '')), '[^A-Z0-9]', '', 'g'),
-        '^[JVEGPC]', ''
-      ) = v_tax_id as tax_id_match
+      v_tax_id <> ''
+        and regexp_replace(t.cmp, '^[JVEGPC]', '') = v_tax_id
+        and (v_tax_letter = ''
+             or coalesce(substring(t.cmp from '^[JVEGPC]'), '') in ('', v_tax_letter))
+        as tax_id_match
     from public.contacts c
+    cross join lateral (
+      select regexp_replace(upper(coalesce(c.tax_id, '')), '[^A-Z0-9]', '', 'g') as cmp
+    ) t
     where c.store_id = v_store_id
       and c.is_active
       and c.type in ('proveedor', 'ambos')

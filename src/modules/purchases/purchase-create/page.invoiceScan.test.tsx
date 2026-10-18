@@ -239,7 +239,7 @@ import {
   REVIEW_TAX_RATES,
 } from "./invoice-scan/reviewFixtures";
 import { createInvoiceReviewState, reviewReducer } from "./invoice-scan/reviewModel";
-import { PurchaseCreatePage } from "./page";
+import { INVOICE_SCAN_NOT_LINKED_MESSAGE, PurchaseCreatePage } from "./page";
 import { purchaseDraftStorageKey } from "./utils/purchaseDraftStorage";
 
 const draftKey = purchaseDraftStorageKey({ storeId: "store-1", userId: "user-1" });
@@ -536,6 +536,40 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     expect(lineTexts()[0]).toBe(HARINA_LOCKED);
   });
 
+  it("BAJO-N3 (CIE-03a): el modal «Confirmar compra» muestra el contacto elegido, no el nombre leído", async () => {
+    mockReviewDraft = makeLoadedReviewDraft({
+      supplier: { contactId: REVIEW_SUPPLIER_ID, name: "PROVEEDOR UNO, C.A" },
+    });
+    renderPage();
+
+    await scanAndLoad();
+    click(/Confirmar Compra/);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Confirmar compra" })).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Chevere Depot");
+    expect(dialog).not.toHaveTextContent("PROVEEDOR UNO");
+  });
+
+  it("BAJO-N3 (CIE-03a): si el contacto no se puede leer, el modal usa el nombre de la revisión", async () => {
+    mockReviewDraft = makeLoadedReviewDraft({
+      supplier: { contactId: REVIEW_SUPPLIER_ID, name: "Nombre de la revisión" },
+    });
+    installApi();
+    const baseFetch = global.fetch;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("/api/purchases/suppliers?")
+        ? jsonResponse({ error: { code: "INTERNAL", message: "Falló." } }, 500)
+        : baseFetch(input, init),
+    ) as unknown as typeof fetch;
+    renderPage();
+
+    await scanAndLoad();
+    click(/Confirmar Compra/);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Nombre de la revisión");
+  });
+
   it("las notas que ya había no se pisan con el número de la factura", async () => {
     renderPage();
 
@@ -651,6 +685,43 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     expect((body.items as unknown[]).length).toBe(2);
     expect(await screen.findByText("Se aprendieron 2 alias de este proveedor")).toBeInTheDocument();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
+  });
+
+  it("CIE-06 (M1): si la compra se crea pero la factura no se vincula (confirmed:false) lo avisa y abre la compra", async () => {
+    const api = installApi({
+      purchase: {
+        payload: { data: { id: "purchase-nueva", invoiceScan: { confirmed: false, learned: null } } },
+        status: 201,
+      },
+    });
+    renderPage();
+
+    await scanAndLoad();
+    await confirmPurchase(api);
+
+    expect(await screen.findByText(INVOICE_SCAN_NOT_LINKED_MESSAGE)).toBeInTheDocument();
+    expect(INVOICE_SCAN_NOT_LINKED_MESSAGE).toMatch(/^La compra se registró pero no se pudo vincular la factura/);
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
+  });
+
+  it("CIE-09 (R2): la instrucción «No la vuelvas a registrar.» va en su propia línea del toast, para que el recorte móvil del título no la oculte", async () => {
+    const api = installApi({
+      purchase: {
+        payload: { data: { id: "purchase-nueva", invoiceScan: { confirmed: false, learned: null } } },
+        status: 201,
+      },
+    });
+    renderPage();
+
+    await scanAndLoad();
+    await confirmPurchase(api);
+
+    const title = await screen.findByText("La compra se registró pero no se pudo vincular la factura.");
+    const instruction = screen.getByText("No la vuelvas a registrar.");
+
+    expect(title).not.toBe(instruction);
+    expect(title).not.toContainElement(instruction);
+    expect(title.textContent).not.toMatch(/vuelvas/);
   });
 
   it("una línea de la factura quitada del formulario no viaja en invoiceScanLines", async () => {
