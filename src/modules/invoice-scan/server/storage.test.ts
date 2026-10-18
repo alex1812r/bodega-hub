@@ -125,6 +125,31 @@ describe("invoice-scan storage", () => {
       ]);
     });
 
+    it("una página que ya existe (Duplicate 409 al firmar) vuelve marcada como existente, sin URL (REP-03-F1)", async () => {
+      // Forma real de @supabase/storage-js: StorageApiError con status HTTP 400 y statusCode "409".
+      const duplicate = Object.assign(new Error("The resource already exists"), {
+        code: "KeyAlreadyExists",
+        status: 400,
+        statusCode: "409",
+      });
+      const createSignedUploadUrl = jest.fn(async (path: string) =>
+        path.endsWith("p1.jpg")
+          ? { data: null, error: duplicate }
+          : { data: { path, signedUrl: `https://firma/${path}`, token: "tok" }, error: null },
+      );
+      const { client } = clientWith({ createSignedUploadUrl });
+
+      const uploads = await createInvoiceUploadUrls(client, STORE, HASH, [
+        { mediaType: "image/jpeg", page: 1 },
+        { mediaType: "image/jpeg", page: 2 },
+      ]);
+
+      expect(uploads).toEqual([
+        { alreadyExists: true, page: 1, path: PATH },
+        { page: 2, path: `${STORE}/${HASH}/p2.jpg`, signedUrl: `https://firma/${STORE}/${HASH}/p2.jpg`, token: "tok" },
+      ]);
+    });
+
     it("traduce el error de Storage a 503 sin el detalle interno", async () => {
       const { client } = clientWith({
         createSignedUploadUrl: jest.fn(async () => ({ data: null, error: { message: "Bucket not found" } })),

@@ -17,11 +17,20 @@ import { GET } from "./route";
 const HASH = "a".repeat(64);
 
 /** Cliente service role falso: `from("invoice_scans")` devuelve `liveScan` y `storage` firma subidas. */
-function adminClient(liveScan: Record<string, unknown> | null = null) {
-  const createSignedUploadUrl = jest.fn(async (path: string) => ({
-    data: { path, signedUrl: `https://firma/${path}`, token: `t-${path}` },
-    error: null,
-  }));
+function adminClient(liveScan: Record<string, unknown> | null = null, existing: readonly string[] = []) {
+  const createSignedUploadUrl = jest.fn(async (path: string) =>
+    existing.includes(path)
+      ? {
+          data: null,
+          // Lo que devuelve Storage al firmar una ruta que ya existe sin upsert.
+          error: Object.assign(new Error("The resource already exists"), {
+            code: "KeyAlreadyExists",
+            status: 400,
+            statusCode: "409",
+          }),
+        }
+      : { data: { path, signedUrl: `https://firma/${path}`, token: `t-${path}` }, error: null },
+  );
   const storageFrom = jest.fn(() => ({ createSignedUploadUrl }));
   const query = {
     eq: () => query,
@@ -202,6 +211,36 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
     expect(createSignedUploadUrl).toHaveBeenCalledTimes(1);
     expect(body.data.alreadyUploaded).toBe(false);
     expect(body.data.uploads).toHaveLength(1);
+  });
+
+  it("en supabase sin escaneo vivo pero con todas las páginas en el bucket: alreadyUploaded, no 503 (REP-03-F1)", async () => {
+    process.env.API_DATA_SOURCE = "supabase";
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue(ALMACEN_PROFILE);
+    const paths = [`${DEFAULT_STORE_ID}/${HASH}/p1.jpg`, `${DEFAULT_STORE_ID}/${HASH}/p2.jpg`];
+    adminClient(null, paths);
+
+    const response = await GET(request(`sha256=${HASH}&pages=2&types=image/jpeg`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual({ alreadyUploaded: true, storagePaths: paths, uploads: [] });
+  });
+
+  it("en supabase con solo algunas páginas en el bucket firma las que faltan y devuelve todas las rutas (REP-03-F1)", async () => {
+    process.env.API_DATA_SOURCE = "supabase";
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue(ALMACEN_PROFILE);
+    const paths = [`${DEFAULT_STORE_ID}/${HASH}/p1.jpg`, `${DEFAULT_STORE_ID}/${HASH}/p2.jpg`];
+    adminClient(null, [paths[0]!]);
+
+    const response = await GET(request(`sha256=${HASH}&pages=2&types=image/jpeg`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual({
+      alreadyUploaded: false,
+      storagePaths: paths,
+      uploads: [{ page: 2, path: paths[1], signedUrl: `https://firma/${paths[1]}`, token: `t-${paths[1]}` }],
+    });
   });
 
   it("en mock tampoco firma si ya hay un escaneo vivo con ese hash en la tienda (M3)", async () => {

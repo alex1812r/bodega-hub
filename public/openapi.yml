@@ -2954,7 +2954,14 @@ paths:
         trata como ya subida. Si la tienda ya tiene un escaneo `processing`,
         `extracted` o `confirmed` con ese hash no firma nada y responde
         `alreadyUploaded: true` con las rutas de ese escaneo en `storagePaths`
-        y `uploads` vacio; el cliente las manda al POST sin subir.
+        y `uploads` vacio; el cliente las manda al POST sin subir. Storage
+        tampoco firma una ruta que ya existe: si sin escaneo vivo todas las
+        paginas ya estan en el bucket (POST cortado tras subir, o reescaneo de
+        un escaneo descartado/fallido) responde igual `alreadyUploaded: true`
+        con las rutas p1..pN en `storagePaths`; si solo algunas, responde
+        `alreadyUploaded: false`, firma solo las que faltan en `uploads` y
+        trae todas las rutas en `storagePaths`. El POST recalcula el hash sobre
+        los bytes guardados.
       x-permission: purchases.create
       parameters:
         - name: sha256
@@ -2996,7 +3003,10 @@ paths:
                         type: boolean
                       storagePaths:
                         type: array
-                        description: Solo con `alreadyUploaded`; rutas p1..pN del escaneo existente.
+                        description: >-
+                          Rutas p1..pN para el POST cuando alguna pagina ya existe
+                          (con `alreadyUploaded`, o sin el si solo faltan algunas).
+                          Ausente si se firman todas.
                         items:
                           type: string
                       uploads:
