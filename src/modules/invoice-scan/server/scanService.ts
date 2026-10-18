@@ -70,6 +70,7 @@ export type InvoiceScanRepo = Pick<
   | "findConfirmedScanByPurchase"
   | "getDailyUsage"
   | "getProductNames"
+  | "getPurchaseNumber"
   | "getScan"
   | "listFewShotExamples"
   | "reserveScan"
@@ -448,9 +449,11 @@ export type ScanInvoiceOptions = {
 
 /**
  * La lectura guardada de un `cached`, solo si `extracted` cumple el contrato;
- * null si no (caos-3 C4: no se sirve). Si el `matched` guardado no cumple el
- * schema de `InvoiceMatch` (o falta), se vuelve a emparejar la lectura válida
- * sin llamar al modelo ni cobrar (caos-4 B1). 409 si la fila ya no está.
+ * null si no (caos-3 C4: no se sirve). El `matched` guardado nunca se sirve:
+ * la lectura válida se vuelve a emparejar con los alias actuales (los que se
+ * aprendieron al confirmar), sin llamar al modelo ni cobrar (caos-4 B1, REP-01);
+ * si no cumplía el contrato solo se registra el código. Si el escaneo ya está
+ * `confirmed`, la respuesta lleva la compra ligada (REP-01). 409 si la fila ya no está.
  */
 async function rematchCachedScan(
   deps: InvoiceScanDeps,
@@ -458,9 +461,21 @@ async function rematchCachedScan(
   scanId: string,
   extraction: InvoiceExtraction,
 ): Promise<InvoiceMatch> {
-  console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
-
   return deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
+}
+
+async function readConfirmedPurchase(
+  deps: InvoiceScanDeps,
+  ctx: InvoiceScanContext,
+  row: { status: InvoiceScanStatus; purchaseId: string | null },
+): Promise<Pick<InvoiceScanResponse, "confirmedPurchase">> {
+  if (row.status !== "confirmed" || row.purchaseId === null) {
+    return {};
+  }
+
+  return {
+    confirmedPurchase: { id: row.purchaseId, purchaseNumber: await deps.repo.getPurchaseNumber(ctx, row.purchaseId) },
+  };
 }
 
 async function readCachedScan(
@@ -482,9 +497,11 @@ async function readCachedScan(
 
   // Una fila guardada antes de SCN-13a puede traer textos opcionales vacíos.
   const extraction = normalizeExtractionForMatch(parsed.data);
-  const matched = invoiceMatchSchema.safeParse(cached.matched).success && cached.matched
-    ? cached.matched
-    : await rematchCachedScan(deps, ctx, cached.id, extraction);
+  if (!cached.matched || !invoiceMatchSchema.safeParse(cached.matched).success) {
+    console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
+  }
+
+  const matched = await rematchCachedScan(deps, ctx, cached.id, extraction);
 
   return {
     cached: true,
@@ -492,6 +509,7 @@ async function readCachedScan(
     limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
     matched,
     scanId: cached.id,
+    ...(await readConfirmedPurchase(deps, ctx, cached)),
   };
 }
 

@@ -282,4 +282,16 @@ export type InvoiceScanResponse = {
   limits: InvoiceScanLimits;
   /** true si vino del caché por hash (0 llamadas al modelo). */
   cached: boolean;
+  /**
+   * Solo si la misma foto ya se confirmó en una compra (REP-01): la compra ligada.
+   * La revisión avisa con el enlace y no deja cargarla otra vez. `purchaseNumber`
+   * es null si la compra no se pudo leer.
+   */
+  confirmedPurchase?: InvoiceScanConfirmedPurchase;
+};
+
+/** Compra en la que ya se confirmó el escaneo (REP-01). */
+export type InvoiceScanConfirmedPurchase = {
+  id: string;
+  purchaseNumber: string | null;
 };
