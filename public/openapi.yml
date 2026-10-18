@@ -2608,13 +2608,19 @@ paths:
         confirmado"), descartado o fallido ("El escaneo no está disponible") o
         reclamado por otro intento vigente ("El escaneo se está confirmando en
         otra compra") responde 400 y no crea la compra. Los textos de
-        `invoiceScanExtraction` y de `invoiceScanLines` (`packLabel`, CIE-09)
-        no admiten U+0000, caracteres de control C0/C1 (salvo tabulador, salto
-        de linea y retorno de carro) ni surrogates sueltos, y tienen como maximo
-        1000 caracteres (50 avisos como maximo): si no cumplen responde 400 ("Un
-        texto de la factura tiene caracteres no permitidos." o "Cada texto de la
-        factura puede tener como máximo 1000 caracteres.") antes de reclamar el
-        escaneo y de crear la compra (CIE-06). Si la creacion se rechaza (4xx) el
+        `invoiceScanExtraction` no admiten U+0000, caracteres de control C0/C1
+        (salvo tabulador, salto de linea y retorno de carro) ni surrogates
+        sueltos, y tienen como maximo 1000 caracteres (50 avisos como maximo):
+        si no cumplen responde 400 ("Un texto de la factura tiene caracteres no
+        permitidos." o "Cada texto de la factura puede tener como máximo 1000
+        caracteres.") antes de reclamar el escaneo y de crear la compra
+        (CIE-06). `invoiceScanLines[].packLabel` (CIE-09) se recorta de
+        espacios, tiene el mismo veto de caracteres ("Un texto de la factura
+        tiene caracteres no permitidos.") y como maximo 100 caracteres (mensaje
+        por defecto de zod: "Too big: expected string to have <=100
+        characters"); si no cumple responde 400 en el mismo punto. En todos
+        estos casos `error.message` es "La solicitud no tiene un formato
+        válido." y el texto concreto viaja en `error.issues[].message`. Si la creacion se rechaza (4xx) el
         reclamo se suelta; con un resultado incierto (5xx, red) caduca a los 5
         minutos, salvo que la clave ya haya creado su compra: entonces el
         reclamo queda ligado a esa compra, no caduca ni se suelta, y otra clave
