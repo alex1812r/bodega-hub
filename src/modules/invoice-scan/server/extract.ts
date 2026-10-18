@@ -13,7 +13,7 @@ import { ApiError } from "@/lib/api/apiError";
 
 import { invoiceExtractionSchema, isImpossibleIsoDate, type InvoiceExtraction } from "../contracts";
 import type { FewShotFormat } from "./fewShot";
-import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, type InvoiceImageInfo } from "./imageInfo";
+import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, stripImageMetadata, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
 
@@ -50,11 +50,18 @@ export type ExtractInvoiceInput = {
 const INVOICE_EXTRACTION_TIMEOUT_MS = 45_000;
 const MAX_RETRIES = 1;
 
-export type InvoiceExtractionErrorCode = "PROVIDER_ERROR" | "TIMEOUT" | "INVALID_OUTPUT" | "QUOTA";
+export type InvoiceExtractionErrorCode =
+  | "PROVIDER_ERROR"
+  | "PROVIDER_CONFIG"
+  | "TIMEOUT"
+  | "INVALID_OUTPUT"
+  | "QUOTA";
 
 const ERROR_MESSAGES: Record<InvoiceExtractionErrorCode, string> = {
   INVALID_OUTPUT:
     "No pudimos leer la factura. Intenta con una foto más nítida y bien encuadrada.",
+  PROVIDER_CONFIG:
+    "El escaneo de facturas no está disponible por un problema de configuración. Avisa al administrador y, mientras tanto, registra la compra a mano.",
   PROVIDER_ERROR:
     "El servicio de IA no está disponible en este momento. Intenta de nuevo en unos minutos.",
   QUOTA:
@@ -64,11 +71,35 @@ const ERROR_MESSAGES: Record<InvoiceExtractionErrorCode, string> = {
 };
 
 /**
- * Respuestas con las que el proveedor rechaza la petición sin procesarla (key
- * inválida o sin permiso, servicio no disponible, límite de peticiones): no
- * llegó a facturar, así que el intento no cuenta en la cuota (D24-a).
+ * Respuestas con las que el proveedor rechaza la petición sin procesarla
+ * (servicio no disponible, límite de peticiones): no llegó a facturar, así que
+ * el intento no cuenta en la cuota (D24-a). La key inválida o sin permiso
+ * tampoco factura: la detecta `isInvalidKey`.
  */
-const NOT_BILLED_STATUS_CODES: ReadonlySet<number> = new Set([401, 403, 429, 503]);
+const NOT_BILLED_STATUS_CODES: ReadonlySet<number> = new Set([429, 503]);
+
+/**
+ * Google responde a una key inválida con HTTP 400, no 401/403: `reason`
+ * API_KEY_INVALID en el cuerpo y "API key not valid" en el mensaje. Un 400 sin
+ * esas marcas es una petición mala que pudo facturar: sigue como PROVIDER_ERROR.
+ */
+const INVALID_KEY_PATTERN = /API_KEY_INVALID|API key not valid/i;
+
+/**
+ * Caos N1 / D25-d: key inválida o sin permiso (401, 403, o 400 con
+ * `INVALID_KEY_PATTERN` en el mensaje o el cuerpo). Reintentar no sirve.
+ */
+function isInvalidKey(cause: unknown): boolean {
+  if (!APICallError.isInstance(cause)) {
+    return false;
+  }
+
+  return (
+    cause.statusCode === 401 ||
+    cause.statusCode === 403 ||
+    (cause.statusCode === 400 && INVALID_KEY_PATTERN.test(`${cause.message}\n${cause.responseBody ?? ""}`))
+  );
+}
 
 export class InvoiceExtractionError extends Error {
   /**
@@ -99,6 +130,10 @@ function classify(error: unknown, signal: AbortSignal): InvoiceExtractionErrorCo
     return "QUOTA";
   }
 
+  if (isInvalidKey(cause)) {
+    return "PROVIDER_CONFIG";
+  }
+
   if (
     NoObjectGeneratedError.isInstance(cause) ||
     NoOutputGeneratedError.isInstance(cause) ||
@@ -119,7 +154,7 @@ function isBilled(error: unknown, signal: AbortSignal): boolean {
     signal.aborted ||
     !APICallError.isInstance(cause) ||
     cause.statusCode === undefined ||
-    !NOT_BILLED_STATUS_CODES.has(cause.statusCode)
+    (!NOT_BILLED_STATUS_CODES.has(cause.statusCode) && !isInvalidKey(cause))
   );
 }
 
@@ -137,11 +172,16 @@ function logFailure(code: InvoiceExtractionErrorCode, error: unknown) {
   });
 }
 
-/** 502 en español para el BFF; la causa queda en `details.reason`. */
+/**
+ * 502 en español para el BFF; la causa queda en `details.reason`. Una key
+ * inválida (PROVIDER_CONFIG) responde 503: el cliente lo trata como "no
+ * disponible" y no ofrece reintentar.
+ */
 export function toInvoiceScanApiError(error: unknown): ApiError {
   const code = error instanceof InvoiceExtractionError ? error.code : "PROVIDER_ERROR";
+  const status = code === "PROVIDER_CONFIG" ? 503 : 502;
 
-  return new ApiError(502, "INVOICE_SCAN_PROVIDER_ERROR", ERROR_MESSAGES[code], { reason: code });
+  return new ApiError(status, "INVOICE_SCAN_PROVIDER_ERROR", ERROR_MESSAGES[code], { reason: code });
 }
 
 type PageResult = {
@@ -302,13 +342,20 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
   }
 
   const images = input.pages.map((page) => inspectInvoiceImage(page.data, page.mediaType));
+  // Auditoría B13: al modelo van copias sin metadatos; `input` (lo guardado) no cambia.
+  const toSend = (page: InvoicePage): InvoicePage => ({ ...page, data: stripImageMetadata(page.data, page.mediaType) });
+  const sent: ExtractInvoiceInput = {
+    ...input,
+    fewShot: input.fewShot?.map((example) => (example.page ? { ...example, page: toSend(example.page) } : example)),
+    pages: input.pages.map(toSend),
+  };
   const startedAt = Date.now();
   const info = input.model ?? createInvoiceScanModel();
   const results: PageResult[] = [];
 
   for (let index = 0; index < input.pages.length; index += 1) {
     try {
-      results.push(await extractPage(info, input, index));
+      results.push(await extractPage(info, sent, index));
     } catch (error) {
       // Las páginas ya leídas se facturaron aunque esta no.
       if (index > 0 && error instanceof InvoiceExtractionError && !error.billable) {
