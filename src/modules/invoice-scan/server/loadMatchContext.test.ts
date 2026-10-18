@@ -759,3 +759,37 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
     expect(ctx.systemRate).toBeUndefined();
   });
 });
+
+describe("loadMatchContext · coherencia de precio sin compras recibidas (D24-c, caos B4)", () => {
+  function tablesWithCostRef(costs: Record<string, unknown>): Record<string, TableHandler> {
+    const tables = fullTables();
+    const products = tables.products!;
+    return {
+      ...tables,
+      products: (query) => {
+        const result = products(query);
+        const select = String(argsOf(query, "select")[0]?.[0] ?? "");
+        if (select.startsWith("id, purchase_items")) {
+          return result;
+        }
+        const rows = result.data as Array<{ id: string }>;
+        return { ...result, data: rows.map((row) => ({ ...row, current_cost_ref: costs[row.id] ?? null })) };
+      },
+    };
+  }
+
+  it("sin último costo recibido usa products.current_cost_ref; el recibido sigue ganando", async () => {
+    const stub = createSupabaseStub({
+      candidates,
+      tables: tablesWithCostRef({ [ARROZ_ID]: "0.8", [CAJA_ID]: 0, [HARINA_ID]: 5 }),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+    const byId = new Map(ctx.products.map((product) => [product.id, product]));
+
+    expect(byId.get(ARROZ_ID)?.lastUnitCostRef).toBe(0.8);
+    expect(byId.get(CAJA_ID)?.lastUnitCostRef).toBeNull(); // 0 no es un costo
+    expect(byId.get(HARINA_ID)?.lastUnitCostRef).toBe(0.95); // recibido del proveedor
+  });
+});

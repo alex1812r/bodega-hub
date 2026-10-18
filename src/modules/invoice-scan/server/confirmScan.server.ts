@@ -47,14 +47,19 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { createSupplierProductPackUnit } from "@/modules/contacts/services/supplierProducts.server";
 
 import {
+  correctedInvoiceExtractionSchema,
   hasForbiddenInvoiceChar,
+  INVOICE_MAX_LINES,
   INVOICE_TEXT_INVALID_MESSAGE,
   invoiceExtractionSchema,
   type InvoiceExtraction,
 } from "../contracts";
 
-/** Máximo de líneas confirmadas por escaneo (mismo tope que `learn_invoice_aliases`). */
-export const MAX_INVOICE_SCAN_LINES = 500;
+/**
+ * Máximo de líneas confirmadas por escaneo: el de la factura (REP-05, auditoría
+ * B10), por debajo del de `learn_invoice_aliases` y `confirm_invoice_scan` (500).
+ */
+export const MAX_INVOICE_SCAN_LINES = INVOICE_MAX_LINES;
 
 /** Largo máximo de `alias_norm` que acepta `learn_invoice_aliases`. */
 export const MAX_ALIAS_NORM_LENGTH = 200;
@@ -96,12 +101,7 @@ export type InvoiceScanLineInput = z.infer<typeof invoiceScanLineInputSchema>;
  * por el usuario (D10): va a `confirmed.extraction`; sin ella se guarda la del escaneo.
  */
 export const invoiceScanBodyFields = {
-  invoiceScanExtraction: invoiceExtractionSchema
-    .refine((extraction) => extraction.lines.length <= MAX_INVOICE_SCAN_LINES, {
-      message: `La factura puede tener como máximo ${MAX_INVOICE_SCAN_LINES} líneas.`,
-      path: ["lines"],
-    })
-    .optional(),
+  invoiceScanExtraction: correctedInvoiceExtractionSchema.optional(),
   invoiceScanId: z.string().uuid().optional(),
   invoiceScanLines: z.array(invoiceScanLineInputSchema).max(MAX_INVOICE_SCAN_LINES).optional(),
 };

@@ -10,6 +10,11 @@
 import { z } from "zod";
 
 import {
+  correctedInvoiceExtractionSchema,
+  INVOICE_CORRECTED_TOO_LARGE_MESSAGE,
+  INVOICE_IMPOSSIBLE_DATE_MESSAGE,
+  INVOICE_MAX_LINES,
+  INVOICE_TEXT_INVALID_MESSAGE,
   INVOICE_TEXT_MAX_LENGTH,
   INVOICE_WARNINGS_MAX,
   invoiceExtractionSchema,
@@ -101,5 +106,66 @@ describe("invoiceExtractionSchema · textos seguros para jsonb (CIE-06)", () => 
     const json = JSON.stringify(z.toJSONSchema(invoiceExtractionSchema));
 
     expect(json).not.toMatch(/maxLength|pattern|maxItems/);
+  });
+});
+
+describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", () => {
+  const invisibles = ["\u202a", "\u202e", "\u2066", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"];
+
+  it.each(textFields.flatMap(([field, set]) => invisibles.map((char): [string, string, typeof set] => [field, char, set])))(
+    "rechaza en %s el carácter %s (bidi o ancho cero, caos B5)",
+    (_field, escaped, set) => {
+      const char = JSON.parse(`"${escaped}"`) as string;
+      const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => set(draft, `AVILA${char}X`)));
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toBe(INVOICE_TEXT_INVALID_MESSAGE);
+    },
+  );
+
+  it("acepta emoji, también los unidos con U+200D", () => {
+    const family = JSON.parse('"\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67"') as string;
+    const heart = JSON.parse('"\u2764\ufe0f\u200d\ud83d\udd25"') as string;
+
+    expect(
+      correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.supplier.name = `AVILA 😀 ${family} ${heart}`))).success,
+    ).toBe(true);
+  });
+
+  it("rechaza una fecha ISO imposible con mensaje en español; acepta 29 de febrero bisiesto y otros formatos (caos B8)", () => {
+    const impossible = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = "2026-02-31")));
+
+    expect(impossible.success).toBe(false);
+    expect(impossible.error?.issues[0]).toMatchObject({ message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
+    expect(INVOICE_IMPOSSIBLE_DATE_MESSAGE).toMatch(/^La fecha de la factura no existe/);
+    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = "2026-13-01"))).success).toBe(false);
+    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = "2024-02-29"))).success).toBe(true);
+    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = "14/10/2026"))).success).toBe(true);
+    // La lectura del modelo no la rechaza: se descarta con aviso en extractInvoice.
+    expect(invoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = "2026-02-31"))).success).toBe(true);
+  });
+
+  it(`tope de ${INVOICE_MAX_LINES} líneas en invoiceExtractionSchema (auditoría B10)`, () => {
+    const lines = (count: number) => mutate((draft) => (draft.lines = Array.from({ length: count }, () => valid.lines[0]!)));
+
+    expect(invoiceExtractionSchema.safeParse(lines(INVOICE_MAX_LINES)).success).toBe(true);
+    expect(invoiceExtractionSchema.safeParse(lines(INVOICE_MAX_LINES + 1)).error?.issues[0]).toMatchObject({
+      message: `La factura puede tener como máximo ${INVOICE_MAX_LINES} líneas.`,
+      path: ["lines"],
+    });
+  });
+
+  it("rechaza una corrección que confirm_invoice_scan no aceptaría por tamaño (200 líneas × 2×1000)", () => {
+    const big = mutate(
+      (draft) =>
+        (draft.lines = Array.from({ length: 200 }, () => ({
+          ...valid.lines[0]!,
+          description: "d".repeat(INVOICE_TEXT_MAX_LENGTH),
+          rawText: "r".repeat(INVOICE_TEXT_MAX_LENGTH),
+        }))),
+    );
+
+    expect(invoiceExtractionSchema.safeParse(big).success).toBe(true);
+    expect(correctedInvoiceExtractionSchema.safeParse(big).error?.issues[0]?.message).toBe(INVOICE_CORRECTED_TOO_LARGE_MESSAGE);
   });
 });

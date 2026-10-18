@@ -17,6 +17,7 @@ import {
 import { jpegHeader } from "./__fixtures__/images";
 import {
   extractInvoice,
+  IMPOSSIBLE_DATE_WARNING,
   INCOHERENT_CONFIDENCE_WARNING,
   InvoiceExtractionError,
   toInvoiceScanApiError,
@@ -322,6 +323,20 @@ describe("extractInvoice: legibilidad (plan §6.1)", () => {
     expect(model.doGenerateCalls).toHaveLength(0);
   });
 
+  it("tolera la cola MPF tras el EOI (vista previa de cámara): lee la página sin 400 (REP-05, B8 solo en el BFF)", async () => {
+    const model = modelReturning(overconfident);
+    const first = page("mpf").data;
+    const preview = jpegHeader(160, 120, "preview");
+    const mpf = new Uint8Array(first.length + preview.length);
+    mpf.set(first);
+    mpf.set(preview, first.length);
+
+    await expect(
+      extractInvoice({ model: info(model), pages: [{ data: mpf, mediaType: "image/jpeg" }] }),
+    ).resolves.toMatchObject({ pages: 1 });
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
   it("warns and caps every confidence at 0.5 when a page is low resolution", async () => {
     const result = await extractInvoice({
       model: info(modelReturning(overconfident)),
@@ -402,5 +417,109 @@ describe("toInvoiceScanApiError", () => {
       details: { reason: "PROVIDER_ERROR" },
       status: 502,
     });
+  });
+});
+
+describe("extractInvoice: ¿el proveedor pudo facturar? (D24-a, caos B3)", () => {
+  let consoleError: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  function failingWith(statusCode: number) {
+    return new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new APICallError({
+          isRetryable: false,
+          message: "rechazo del proveedor",
+          requestBodyValues: {},
+          statusCode,
+          url: "https://example.test",
+        });
+      },
+    });
+  }
+
+  it.each([401, 403, 503, 429])("un %i del proveedor no se factura (billable=false)", async (statusCode) => {
+    const error = await extractInvoice({ model: info(failingWith(statusCode)), pages: [page()] }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(InvoiceExtractionError);
+    expect((error as InvoiceExtractionError).billable).toBe(false);
+  });
+
+  it("un 500 del proveedor, una salida inválida y un timeout sí cuentan (billable=true)", async () => {
+    const server = await extractInvoice({ model: info(failingWith(500)), pages: [page()] }).catch((e: unknown) => e);
+    const invalid = await expectCode(extractInvoice({ model: mockInfo("invalid").info, pages: [page()] }), "INVALID_OUTPUT");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10);
+    const timeout = await expectCode(
+      extractInvoice({ model: mockInfo("timeout").info, pages: [page()], signal: controller.signal }),
+      "TIMEOUT",
+    );
+
+    expect((server as InvoiceExtractionError).billable).toBe(true);
+    expect(invalid.billable).toBe(true);
+    expect(timeout.billable).toBe(true);
+  });
+
+  it("si la página 1 ya se leyó y la 2 da 503, el intento cuenta (la página 1 se facturó)", async () => {
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        calls += 1;
+
+        if (calls === 1) {
+          return generated(firstPageExtraction, 10, 10);
+        }
+
+        throw new APICallError({
+          isRetryable: false,
+          message: "caído",
+          requestBodyValues: {},
+          statusCode: 503,
+          url: "https://example.test",
+        });
+      },
+    });
+
+    const error = await extractInvoice({ model: info(model), pages: [page("p1"), page("p2")] }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect((error as InvoiceExtractionError).billable).toBe(true);
+  });
+});
+
+describe("extractInvoice: fecha imposible leída por el modelo (caos B8)", () => {
+  it("descarta la fecha y avisa en vez de fallar", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [generated({ ...singlePageExtraction, date: "2026-02-31" }, 10, 10)],
+    });
+
+    const result = await extractInvoice({ model: info(model), pages: [page()] });
+
+    expect(result.extraction.date).toBeUndefined();
+    expect(result.extraction.warnings).toContain(IMPOSSIBLE_DATE_WARNING);
+    expect(IMPOSSIBLE_DATE_WARNING).toBe("La fecha leída no existe en el calendario; revísala en la factura.");
+  });
+
+  it("si la página 1 trae una fecha imposible, usa la válida de la página 2", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        generated({ ...firstPageExtraction, date: "2026-02-31" }, 10, 10),
+        generated({ ...secondPageExtraction, date: "2026-02-28" }, 10, 10),
+      ],
+    });
+
+    const result = await extractInvoice({ model: info(model), pages: [page("p1"), page("p2")] });
+
+    expect(result.extraction.date).toBe("2026-02-28");
   });
 });
