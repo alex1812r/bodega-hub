@@ -65,6 +65,49 @@ export function hasForbiddenInvoiceChar(value: string): boolean {
 }
 
 /**
+ * REP-05 (caos B5): marcas bidi (U+202A–U+202E, U+2066–U+2069, U+200E/U+200F,
+ * U+061C) y caracteres de ancho cero (U+200B–U+200D, U+2060, U+FEFF). Permiten
+ * suplantar visualmente un nombre en el detalle o en los few-shot. Los emoji
+ * siguen pasando, también las secuencias unidas con U+200D (p. ej. una familia).
+ */
+const INVISIBLE_INVOICE_CHARS = /[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b\u200c\u2060\ufeff]/;
+/** U+200D fuera de una secuencia de emoji (entre un emoji, o su U+FE0F, y otro emoji). */
+const LOOSE_ZERO_WIDTH_JOINER = /(?<![\udc00-\udfff\ufe0f])\u200d|\u200d(?![\ud800-\udbff])/;
+
+export function hasInvisibleInvoiceChar(value: string): boolean {
+  return INVISIBLE_INVOICE_CHARS.test(value) || LOOSE_ZERO_WIDTH_JOINER.test(value);
+}
+
+/** REP-05 (caos B8): una fecha con forma ISO `YYYY-MM-DD` que no existe en el calendario (2026-02-31). */
+export function isImpossibleIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+
+  if (!match) {
+    return false;
+  }
+
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day;
+}
+
+/** REP-05 (auditoría B10): tope de líneas de una factura (lectura y corrección). */
+export const INVOICE_MAX_LINES = 300;
+export const INVOICE_TOO_MANY_LINES_MESSAGE = `La factura puede tener como máximo ${INVOICE_MAX_LINES} líneas.`;
+
+/**
+ * REP-05 (auditoría B10): tope del JSON (UTF-8) de la extracción corregida.
+ * `confirm_invoice_scan` rechaza un `confirmed` de más de 256 KB DESPUÉS de crear
+ * la compra; con 128 KB para la extracción queda sitio para las líneas confirmadas.
+ */
+export const INVOICE_CORRECTED_MAX_BYTES = 128 * 1024;
+export const INVOICE_CORRECTED_TOO_LARGE_MESSAGE =
+  "La factura corregida es demasiado grande. Acorta los textos o divide la compra.";
+export const INVOICE_IMPOSSIBLE_DATE_MESSAGE =
+  "La fecha de la factura no existe. Corrígela (AAAA-MM-DD) o déjala vacía.";
+
+/**
  * Texto de la factura que acaba en `jsonb`. Solo refinamientos (sin `max`/`regex`):
  * el JSON Schema que recibe el modelo (`Output.object`) no cambia, y una salida
  * del modelo que no cumpla falla la extracción (INVALID_OUTPUT) antes de guardarse.
@@ -105,7 +148,9 @@ export const invoiceExtractionSchema = z.object({
   currency: z.enum(invoiceCurrencies),
   /** Tasa Bs/USD impresa al pie, si la hay (caos 6.20). */
   printedRate: z.number().positive().optional(),
-  lines: z.array(invoiceExtractionLineSchema),
+  lines: z
+    .array(invoiceExtractionLineSchema)
+    .refine((lines) => lines.length <= INVOICE_MAX_LINES, INVOICE_TOO_MANY_LINES_MESSAGE),
   subtotal: z.number().optional(),
   tax: z.number().optional(),
   total: z.number().optional(),
@@ -121,6 +166,60 @@ export const invoiceExtractionSchema = z.object({
 
 export type InvoiceExtractionLine = z.infer<typeof invoiceExtractionLineSchema>;
 export type InvoiceExtraction = z.infer<typeof invoiceExtractionSchema>;
+
+/** Bytes UTF-8 de un texto sin `TextEncoder` (el schema también corre en el cliente y en jsdom). */
+function utf8Length(value: string): number {
+  let bytes = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    // Un par de surrogates suma 4 en total (2 + 2); uno suelto no pasa el contrato.
+    bytes += code < 0x80 ? 1 : code < 0x800 || (code >= 0xd800 && code <= 0xdfff) ? 2 : 3;
+  }
+
+  return bytes;
+}
+
+/** Cada texto de la extracción con su ruta, para los vetos de la extracción corregida. */
+function invoiceTexts(extraction: InvoiceExtraction): Array<[(string | number)[], string | undefined]> {
+  return [
+    [["supplier", "name"], extraction.supplier.name],
+    [["supplier", "taxId"], extraction.supplier.taxId],
+    [["supplier", "phone"], extraction.supplier.phone],
+    [["supplier", "address"], extraction.supplier.address],
+    [["number"], extraction.number],
+    [["date"], extraction.date],
+    ...extraction.lines.flatMap((line, index): Array<[(string | number)[], string | undefined]> => [
+      [["lines", index, "rawText"], line.rawText],
+      [["lines", index, "description"], line.description],
+      [["lines", index, "barcode"], line.barcode],
+      [["lines", index, "supplierSku"], line.supplierSku],
+    ]),
+    ...extraction.warnings.map((warning, index): [(string | number)[], string] => [["warnings", index], warning]),
+  ];
+}
+
+/**
+ * Extracción corregida por el usuario (`invoiceScanExtraction` de `POST /api/purchases`,
+ * D10): además del contrato, sin bidi ni ancho cero (caos B5), sin fechas ISO
+ * imposibles (caos B8) y con un tamaño que `confirm_invoice_scan` acepta
+ * (auditoría B10). Todo se valida antes de crear la compra (400).
+ */
+export const correctedInvoiceExtractionSchema = invoiceExtractionSchema.superRefine((extraction, context) => {
+  for (const [path, value] of invoiceTexts(extraction)) {
+    if (value !== undefined && hasInvisibleInvoiceChar(value)) {
+      context.addIssue({ code: "custom", message: INVOICE_TEXT_INVALID_MESSAGE, path });
+    }
+  }
+
+  if (extraction.date !== undefined && isImpossibleIsoDate(extraction.date)) {
+    context.addIssue({ code: "custom", message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
+  }
+
+  if (utf8Length(JSON.stringify(extraction)) > INVOICE_CORRECTED_MAX_BYTES) {
+    context.addIssue({ code: "custom", message: INVOICE_CORRECTED_TOO_LARGE_MESSAGE, path: [] });
+  }
+});
 
 export const invoiceMatchStatuses = [
   "confirmed",

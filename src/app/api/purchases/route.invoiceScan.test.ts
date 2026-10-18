@@ -916,6 +916,86 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
     });
   });
 
+  describe("REP-05 · extracción corregida validada antes de crear la compra", () => {
+    beforeEach(() => {
+      process.env.API_DATA_SOURCE = "mock";
+      resetMockInvoiceScans();
+      registerMockInvoiceScan({ extracted, id: SCAN_ID });
+    });
+
+    it.each([
+      ...["\u202e", "\u202a", "\u2066", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200d", "\u2060", "\ufeff"].map(
+        (char): [string, Record<string, unknown>] => [
+          `REP-05 · U+${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")} (bidi/ancho cero) en invoiceScanExtraction`,
+          {
+            clientRequestId: PURCHASE_KEY,
+            invoiceScanExtraction: { ...corrected, lines: [{ ...extracted.lines[0]!, description: `AVILA${char}X` }] },
+            invoiceScanId: SCAN_ID,
+          },
+        ],
+      ),
+      [
+        "REP-05 · invoiceScanExtraction con más de 300 líneas",
+        {
+          clientRequestId: PURCHASE_KEY,
+          invoiceScanExtraction: { ...corrected, lines: Array.from({ length: 301 }, () => extracted.lines[0]) },
+          invoiceScanId: SCAN_ID,
+        },
+      ],
+      [
+        "REP-05 · invoiceScanExtraction de 200 líneas × 2×1000 caracteres (supera el tope de confirm_invoice_scan)",
+        {
+          clientRequestId: PURCHASE_KEY,
+          invoiceScanExtraction: {
+            ...corrected,
+            lines: Array.from({ length: 200 }, () => ({
+              ...extracted.lines[0]!,
+              description: "d".repeat(INVOICE_TEXT_MAX_LENGTH),
+              rawText: "r".repeat(INVOICE_TEXT_MAX_LENGTH),
+            })),
+          },
+          invoiceScanId: SCAN_ID,
+        },
+      ],
+    ])("400 con %s y sin compra", async (_caso, extra) => {
+      const response = await post({ ...purchase, ...extra });
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(payload.error.message).not.toBe("Escaneo no encontrado");
+      expect(getMockInvoiceScan(SCAN_ID)?.purchaseId ?? null).toBeNull();
+    });
+
+    it("fecha imposible → 400 con mensaje en español y sin compra", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanExtraction: { ...corrected, date: "2026-02-31" },
+        invoiceScanId: SCAN_ID,
+      });
+
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(await response.json())).toContain("La fecha de la factura no existe");
+      expect(getMockInvoiceScan(SCAN_ID)?.purchaseId ?? null).toBeNull();
+    });
+
+    it("emoji y fecha real siguen aceptándose (201)", async () => {
+      const response = await post({
+        ...purchase,
+        clientRequestId: PURCHASE_KEY,
+        invoiceScanExtraction: {
+          ...corrected,
+          date: "2024-02-29",
+          lines: [{ ...corrected.lines[0]!, description: "AVILA 😀" }, ...corrected.lines.slice(1)],
+        },
+        invoiceScanId: SCAN_ID,
+        invoiceScanLines: scanLines,
+      });
+
+      expect(response.status).toBe(201);
+    });
+  });
+
   describe("mock", () => {
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "mock";

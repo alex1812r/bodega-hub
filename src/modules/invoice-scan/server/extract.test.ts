@@ -17,6 +17,7 @@ import {
 import { jpegHeader } from "./__fixtures__/images";
 import {
   extractInvoice,
+  IMPOSSIBLE_DATE_WARNING,
   INCOHERENT_CONFIDENCE_WARNING,
   InvoiceExtractionError,
   toInvoiceScanApiError,
@@ -479,5 +480,32 @@ describe("extractInvoice: ¿el proveedor pudo facturar? (D24-a, caos B3)", () =>
     );
 
     expect((error as InvoiceExtractionError).billable).toBe(true);
+  });
+});
+
+describe("extractInvoice: fecha imposible leída por el modelo (caos B8)", () => {
+  it("descarta la fecha y avisa en vez de fallar", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [generated({ ...singlePageExtraction, date: "2026-02-31" }, 10, 10)],
+    });
+
+    const result = await extractInvoice({ model: info(model), pages: [page()] });
+
+    expect(result.extraction.date).toBeUndefined();
+    expect(result.extraction.warnings).toContain(IMPOSSIBLE_DATE_WARNING);
+    expect(IMPOSSIBLE_DATE_WARNING).toBe("La fecha leída no existe en el calendario; revísala en la factura.");
+  });
+
+  it("si la página 1 trae una fecha imposible, usa la válida de la página 2", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        generated({ ...firstPageExtraction, date: "2026-02-31" }, 10, 10),
+        generated({ ...secondPageExtraction, date: "2026-02-28" }, 10, 10),
+      ],
+    });
+
+    const result = await extractInvoice({ model: info(model), pages: [page("p1"), page("p2")] });
+
+    expect(result.extraction.date).toBe("2026-02-28");
   });
 });

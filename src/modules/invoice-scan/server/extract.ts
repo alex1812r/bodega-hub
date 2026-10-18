@@ -11,7 +11,7 @@ import { ZodError } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
 
-import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import { invoiceExtractionSchema, isImpossibleIsoDate, type InvoiceExtraction } from "../contracts";
 import type { FewShotFormat } from "./fewShot";
 import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
@@ -231,6 +231,23 @@ export const LOW_RES_WARNING = "La imagen tiene poca resolución; revisa cada l�
 export const INCOHERENT_CONFIDENCE_WARNING =
   "La lectura no es fiable; revisa cada línea con la factura en mano.";
 
+export const IMPOSSIBLE_DATE_WARNING = "La fecha leída no existe en el calendario; revísala en la factura.";
+
+/** Caos B8: una fecha ISO imposible (2026-02-31) leída por el modelo se descarta con aviso; no falla la lectura. */
+function guardDate(extraction: InvoiceExtraction): InvoiceExtraction {
+  if (extraction.date === undefined || !isImpossibleIsoDate(extraction.date)) {
+    return extraction;
+  }
+
+  const guarded: InvoiceExtraction = {
+    ...extraction,
+    warnings: [...new Set([...extraction.warnings, IMPOSSIBLE_DATE_WARNING])],
+  };
+  delete guarded.date;
+
+  return guarded;
+}
+
 /**
  * Plan §6.1: el modelo no siempre admite que no lee. Si alguna página tiene
  * poca resolución, o si dice confianza 1 en todas las líneas pero baja en lo
@@ -300,7 +317,7 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
 
   return {
     durationMs: Date.now() - startedAt,
-    extraction: guardReadability(mergePages(results.map((result) => result.extraction)), images),
+    extraction: guardReadability(mergePages(results.map((result) => guardDate(result.extraction))), images),
     inputTokens: sumTokens(results.map((result) => result.inputTokens)),
     modelId: info.modelId,
     outputTokens: sumTokens(results.map((result) => result.outputTokens)),
