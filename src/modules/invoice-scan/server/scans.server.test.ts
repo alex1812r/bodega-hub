@@ -13,6 +13,7 @@ import {
   discardScan,
   failScan,
   findConfirmedScanByPurchase,
+  findLiveScanByHash,
   getDailyUsage,
   getProductNames,
   getScan,
@@ -523,5 +524,47 @@ describe("scans.server · escaneo de una compra (SCN-09a)", () => {
     );
     expect(await getProductNames(ctx, ["no-uuid"])).toEqual({});
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("scans.server · findLiveScanByHash (upload-url, M3)", () => {
+  const hash = "c".repeat(64);
+  const firstPage = `${ctx.storeId}/${hash}/p1.jpg`;
+
+  function useAdminClient(results: Result[]) {
+    const fake = fakeClient(results);
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue(fake.client);
+    return fake;
+  }
+
+  it("busca con service role el escaneo vivo de la tienda con ese hash y devuelve sus rutas", async () => {
+    const { calls } = useAdminClient([ok({ id: scanId, pages: 2, status: "confirmed", storage_path: firstPage })]);
+
+    expect(await findLiveScanByHash(ctx, hash)).toEqual({
+      id: scanId,
+      status: "confirmed",
+      storagePaths: [firstPage, `${ctx.storeId}/${hash}/p2.jpg`],
+    });
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([
+        ["from", "invoice_scans"],
+        ["eq", "store_id", ctx.storeId],
+        ["eq", "image_sha256", hash],
+        ["in", "status", ["processing", "extracted", "confirmed"]],
+      ]),
+    );
+    expect(createRouteSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("null si no hay escaneo vivo", async () => {
+    useAdminClient([ok(null)]);
+
+    expect(await findLiveScanByHash(ctx, hash)).toBeNull();
+  });
+
+  it("propaga el error de la consulta", async () => {
+    useAdminClient([{ data: null, error: { message: "boom" } }]);
+
+    await expect(findLiveScanByHash(ctx, hash)).rejects.toBeDefined();
   });
 });

@@ -20,6 +20,8 @@ import type { InvoiceExtraction, InvoiceMatch, InvoiceScanLimits } from "../cont
 import {
   type ExpiredScan,
   invoiceScanPagePaths,
+  LIVE_INVOICE_SCAN_STATUSES,
+  type LiveInvoiceScan,
   MAX_FEW_SHOT_EXAMPLES,
   parseConfirmedScan,
   type StoredFewShotExample,
@@ -212,6 +214,28 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
 }
 
 /**
+ * Número de la compra `purchaseId` de la tienda de la sesión (REP-01: enlace del
+ * reescaneo de una factura ya confirmada); null si no es de la tienda o no se ve.
+ */
+export async function getPurchaseNumber(ctx: InvoiceScanContext, purchaseId: string): Promise<string | null> {
+  if (!UUID_PATTERN.test(purchaseId)) {
+    return null;
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("purchases")
+    .select("purchase_number")
+    .eq("id", purchaseId)
+    .eq("store_id", ctx.storeId)
+    .maybeSingle<{ purchase_number: string | null }>();
+
+  throwIfSupabaseError(error);
+
+  return data?.purchase_number ?? null;
+}
+
+/**
  * Escaneo confirmado de la compra `purchaseId` (SCN-09a). `purchaseFound` es
  * false si la compra no es de la tienda de la sesión (la ruta responde 404);
  * `scan` es null si la compra no salió de un escaneo confirmado. Ambas
@@ -252,6 +276,32 @@ export async function findConfirmedScanByPurchase(
   throwIfSupabaseError(error);
 
   return { purchaseFound: true, scan: data ? mapScan(data) : null };
+}
+
+/**
+ * Escaneo `processing`/`extracted`/`confirmed` de la tienda de la sesión con
+ * ese hash (unique tienda + hash), o null. Va con service role para no depender
+ * de `purchases.view`: `upload-url` la usa para no firmar subidas sobre los
+ * objetos de un escaneo vivo (M3); solo devuelve id, estado y rutas.
+ */
+export async function findLiveScanByHash(
+  ctx: InvoiceScanContext,
+  sha256: string,
+): Promise<LiveInvoiceScan | null> {
+  const { data, error } = await createAdminSupabaseClient()
+    .from("invoice_scans")
+    .select("id, status, storage_path, pages")
+    .eq("store_id", ctx.storeId)
+    .eq("image_sha256", sha256)
+    .in("status", [...LIVE_INVOICE_SCAN_STATUSES])
+    .limit(1)
+    .maybeSingle<{ id: string; status: LiveInvoiceScan["status"]; storage_path: string; pages: number }>();
+
+  throwIfSupabaseError(error);
+
+  return data
+    ? { id: data.id, status: data.status, storagePaths: invoiceScanPagePaths(data.storage_path, data.pages) }
+    : null;
 }
 
 /** Nombre de cada producto de la tienda de la sesión por id; los ajenos o borrados no salen. */

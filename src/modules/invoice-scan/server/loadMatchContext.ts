@@ -15,14 +15,14 @@
  *    líneas que no trajeron ningún candidato difuso.
  * 3. Detalle de los productos referenciados (candidatos + catálogo + alias +
  *    barcode): alícuota de la categoría, receta activa, tamaños de las recetas
- *    de las que es componente y último costo recibido.
+ *    de las que es componente y último costo recibido (o `current_cost_ref`, D24-c).
  */
 import { normalizeAlias } from "@bodega/core/invoice";
 import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { createRouteSupabaseClient } from "@/lib/supabase/route-client";
-import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
+import { readCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
 
 import type { InvoiceExtraction } from "../contracts";
 
@@ -56,7 +56,8 @@ export const PREVIOUS_SCANS_LIMIT = 50;
 /** Candidatos que se piden a la base antes de filtrar por número normalizado. */
 export const PREVIOUS_SCAN_CANDIDATES_LIMIT = 200;
 
-const PRODUCT_SELECT = "id, name, sku, barcode, is_active, category:categories(tax_rate:tax_rates(code))";
+const PRODUCT_SELECT =
+  "id, name, sku, barcode, is_active, current_cost_ref, category:categories(tax_rate:tax_rates(code))";
 /** Igual que `purchaseLastCosts.server.ts`: la última línea recibida de cada producto. */
 const LAST_LINE_SELECT = "id, purchase_items(unit_cost_ref, purchases!inner(created_at))";
 const SUPPLIER_PRODUCT_SELECT =
@@ -84,6 +85,7 @@ type ProductRow = {
   sku: string | null;
   barcode: string | null;
   is_active: boolean;
+  current_cost_ref?: number | string | null;
   category: { tax_rate: { code: string } | null } | null;
 };
 
@@ -133,6 +135,11 @@ function toNumber(value: number | string | null | undefined): number | undefined
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function positiveCost(value: number | string | null | undefined): number | undefined {
+  const cost = toNumber(value);
+  return cost !== undefined && cost > 0 ? cost : undefined;
 }
 
 /** Clasifica la alícuota para leer el `taxHint`: por código semilla (20261007a) y, si no, por porcentaje. */
@@ -203,13 +210,15 @@ async function loadTaxRates(supabase: MatchContextSupabaseClient, storeId: strin
  * Bs<->REF (`useCurrentExchangeRate` -> `/api/exchange-rates/current` ->
  * `getCurrentExchangeRate`: DolarAPI oficial con caché de proceso), para que la
  * coherencia de precio y el costo precargado cuadren con el formulario (CIE-02).
+ * El escaneo solo la LEE (`readCurrentExchangeRate`, D24-b): no inserta en
+ * `exchange_rates`; persistirla queda en el flujo del formulario.
  * Si DolarAPI falla, el formulario se queda sin tasa del día (la ruta responde
  * error, no cae a la última guardada); aquí igual: `undefined`, y `matchInvoice`
  * aplica 6.7 (tasa impresa con aviso o, sin ella, sin costos REF y con aviso).
  */
-async function loadSystemRate(storeId: string): Promise<number | undefined> {
+async function loadSystemRate(): Promise<number | undefined> {
   try {
-    const { rateVes } = await getCurrentExchangeRate(storeId);
+    const { rateVes } = await readCurrentExchangeRate();
     return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
   } catch {
     return undefined;
@@ -598,7 +607,7 @@ export async function loadMatchContext(
   const [candidates, taxRates, systemRate, previousScans, barcodeRows] = await Promise.all([
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
-    loadSystemRate(storeId),
+    loadSystemRate(),
     loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
     loadProductsWhere(supabase, storeId, "barcode", barcodeVariants(extraction)),
   ]);
@@ -644,7 +653,8 @@ export async function loadMatchContext(
       barcode: row.barcode,
       active: row.is_active,
       taxRateCode: row.category?.tax_rate?.code ?? null,
-      lastUnitCostRef: supplierCosts.get(row.id) ?? anyCosts.get(row.id) ?? null,
+      // D24-c: último costo recibido (del proveedor o de cualquiera) y, si no hay, el costo de referencia del producto.
+      lastUnitCostRef: supplierCosts.get(row.id) ?? anyCosts.get(row.id) ?? positiveCost(row.current_cost_ref) ?? null,
       linkedToSupplier: linkedIds.has(row.id),
       hasRecipe: recipes.has(row.id),
       ...(recipeUnitsPerPack !== undefined ? { recipeUnitsPerPack } : {}),

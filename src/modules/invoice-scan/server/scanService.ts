@@ -31,7 +31,7 @@ import {
 } from "./extract";
 import { readExtractedRawTexts } from "./confirmScan.server";
 import { toFewShotFormat } from "./fewShot";
-import { inspectInvoiceImage } from "./imageInfo";
+import { assertNoTrailingData, inspectInvoiceImage } from "./imageInfo";
 import { invoiceMatchSchema } from "./invoiceMatchSchema";
 import { matchScan, normalizeExtractionForMatch, type InvoiceScanMatcher } from "./matchScan";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
@@ -70,6 +70,7 @@ export type InvoiceScanRepo = Pick<
   | "findConfirmedScanByPurchase"
   | "getDailyUsage"
   | "getProductNames"
+  | "getPurchaseNumber"
   | "getScan"
   | "listFewShotExamples"
   | "reserveScan"
@@ -290,10 +291,10 @@ function assertSameMediaType(mediaTypes: readonly InvoiceScanMediaType[]) {
   }
 }
 
-/** Bytes mágicos, tipo declarado y tamaño: antes de subir, de cobrar y de reservar. */
+/** Bytes mágicos, tipo declarado, tamaño y sin cola tras el final (B8): antes de subir, de cobrar y de reservar. */
 function assertImages(pages: readonly InvoicePage[]) {
   for (const page of pages) {
-    inspectInvoiceImage(page.data, page.mediaType);
+    assertNoTrailingData(inspectInvoiceImage(page.data, page.mediaType));
   }
 }
 
@@ -301,6 +302,27 @@ function assertHash(expected: string | undefined, actual: string) {
   if (expected !== undefined && expected !== actual) {
     badRequest(INVOICE_HASH_MISMATCH_MESSAGE);
   }
+}
+
+/** Caos B9: sin páginas repetidas (mismo sha256), en el orden de su primera aparición. */
+function uniquePages(pages: readonly InvoicePage[]): InvoicePage[] {
+  const seen = new Set<string>();
+
+  return pages.filter((page) => {
+    const hash = sha256OfPages([page.data]);
+
+    if (seen.has(hash)) {
+      return false;
+    }
+
+    seen.add(hash);
+    return true;
+  });
+}
+
+/** Las páginas únicas bajo su propio hash: p1..pN que hay que subir. */
+function uploadsOf(ctx: InvoiceScanContext, sha256: string, pages: readonly InvoicePage[]) {
+  return pages.map((page, index) => ({ page, path: invoiceScanPath(ctx.storeId, sha256, index + 1, page.mediaType) }));
 }
 
 async function loadScan(
@@ -313,15 +335,14 @@ async function loadScan(
     assertSameMediaType(mediaTypes);
     assertImages(input.pages);
 
-    const sha256 = sha256OfPages(input.pages.map((page) => page.data));
-    assertHash(input.sha256, sha256);
+    // El hash declarado es el de lo enviado; la fila y las rutas usan el de las páginas únicas.
+    assertHash(input.sha256, sha256OfPages(input.pages.map((page) => page.data)));
 
-    const pendingUploads = input.pages.map((page, index) => ({
-      page,
-      path: invoiceScanPath(ctx.storeId, sha256, index + 1, page.mediaType),
-    }));
+    const pages = uniquePages(input.pages);
+    const sha256 = sha256OfPages(pages.map((page) => page.data));
+    const pendingUploads = uploadsOf(ctx, sha256, pages);
 
-    return { pages: input.pages, pendingUploads, sha256, storagePath: pendingUploads[0]!.path };
+    return { pages, pendingUploads, sha256, storagePath: pendingUploads[0]!.path };
   }
 
   for (const path of input.storagePaths) {
@@ -350,6 +371,17 @@ async function loadScan(
 
   assertHash(input.sha256, sha256OfPages(pages.map((page) => page.data)));
   assertImages(pages);
+
+  const unique = uniquePages(pages);
+
+  if (unique.length < pages.length) {
+    // Caos B9: las rutas p1..pN del hash declarado incluyen repetidas; las únicas
+    // se suben bajo su propio hash (las otras las borra la purga por antigüedad).
+    const sha256 = sha256OfPages(unique.map((page) => page.data));
+    const pendingUploads = uploadsOf(ctx, sha256, unique);
+
+    return { pages: unique, pendingUploads, sha256, storagePath: pendingUploads[0]!.path };
+  }
 
   return { pages, pendingUploads: [], sha256: input.sha256, storagePath: input.storagePaths[0]! };
 }
@@ -417,25 +449,48 @@ export type ScanInvoiceOptions = {
 
 /**
  * La lectura guardada de un `cached`, solo si `extracted` cumple el contrato;
- * null si no (caos-3 C4: no se sirve). Si el `matched` guardado no cumple el
- * schema de `InvoiceMatch` (o falta), se vuelve a emparejar la lectura válida
- * sin llamar al modelo ni cobrar (caos-4 B1). 409 si la fila ya no está.
+ * null si no (caos-3 C4: no se sirve). El `matched` guardado nunca se sirve:
+ * la lectura válida se vuelve a emparejar con los alias actuales (los que se
+ * aprendieron al confirmar), sin llamar al modelo ni cobrar (caos-4 B1, REP-01);
+ * si no cumplía el contrato solo se registra el código. Si el escaneo ya está
+ * `confirmed`, la respuesta lleva la compra ligada (REP-01). 409 si la fila ya no está.
+ * Se reempareja con el `supplierId` del POST o, si no viene, con el proveedor
+ * con que se confirmó (`invoice_scans.supplier_id`, REP-01-F1).
  */
 async function rematchCachedScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
   scanId: string,
   extraction: InvoiceExtraction,
+  supplierId: string | undefined,
 ): Promise<InvoiceMatch> {
-  console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
+  return deps.matcher(extraction, {
+    dataSource: deps.dataSource,
+    scanId,
+    storeId: ctx.storeId,
+    ...(supplierId ? { supplierId } : {}),
+  });
+}
 
-  return deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
+async function readConfirmedPurchase(
+  deps: InvoiceScanDeps,
+  ctx: InvoiceScanContext,
+  row: { status: InvoiceScanStatus; purchaseId: string | null },
+): Promise<Pick<InvoiceScanResponse, "confirmedPurchase">> {
+  if (row.status !== "confirmed" || row.purchaseId === null) {
+    return {};
+  }
+
+  return {
+    confirmedPurchase: { id: row.purchaseId, purchaseNumber: await deps.repo.getPurchaseNumber(ctx, row.purchaseId) },
+  };
 }
 
 async function readCachedScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
   id: string,
+  supplierId: string | undefined,
 ): Promise<InvoiceScanResponse | null> {
   const cached = await deps.repo.getScan(ctx, id);
 
@@ -451,9 +506,12 @@ async function readCachedScan(
 
   // Una fila guardada antes de SCN-13a puede traer textos opcionales vacíos.
   const extraction = normalizeExtractionForMatch(parsed.data);
-  const matched = invoiceMatchSchema.safeParse(cached.matched).success && cached.matched
-    ? cached.matched
-    : await rematchCachedScan(deps, ctx, cached.id, extraction);
+  if (!cached.matched || !invoiceMatchSchema.safeParse(cached.matched).success) {
+    console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
+  }
+
+  const chosenSupplierId = supplierId ?? (cached.status === "confirmed" ? (cached.supplierId ?? undefined) : undefined);
+  const matched = await rematchCachedScan(deps, ctx, cached.id, extraction, chosenSupplierId);
 
   return {
     cached: true,
@@ -461,6 +519,7 @@ async function readCachedScan(
     limits: await deps.repo.getDailyUsage(ctx, deps.dailyLimit, deps.now()),
     matched,
     scanId: cached.id,
+    ...(await readConfirmedPurchase(deps, ctx, cached)),
   };
 }
 
@@ -474,7 +533,8 @@ async function readCachedScan(
  * - `reserved` (páginas ya cobradas): subida → few-shot → extracción →
  *   emparejamiento → `extracted`. Un fallo deja la fila `failed` con el código
  *   (nunca el contenido); si es del modelo responde 502. Si falla la subida
- *   (antes de llamar al modelo) se devuelven las páginas cobradas; un corte del
+ *   o el few-shot (antes de llamar al modelo), o el proveedor rechaza sin
+ *   procesar (401/403/429/503, D24-a), se devuelven las páginas cobradas; un corte del
  *   cliente durante la lectura queda como `CLIENT_ABORTED`. El cierre lleva el
  *   `attemptId` de la reserva: si otra reserva tomó la fila, 409.
  * Un escaneo `failed` o `discarded` se vuelve a leer y cobra otra vez.
@@ -500,7 +560,7 @@ export async function scanInvoice(
   let reservation = await reserve();
 
   if (reservation.outcome === "cached") {
-    const cached = await readCachedScan(deps, ctx, reservation.id);
+    const cached = await readCachedScan(deps, ctx, reservation.id, input.supplierId);
 
     if (cached) {
       return cached;
@@ -540,17 +600,35 @@ export async function scanInvoice(
     throw error;
   }
 
-  const fewShot = await loadFewShot(deps, ctx, input.supplierId);
+  let fewShot: InvoiceFewShotExample[];
+
+  try {
+    fewShot = await loadFewShot(deps, ctx, input.supplierId);
+  } catch (error) {
+    // Antes de llamar al modelo: se devuelven las páginas (D24-a).
+    await fail("FEW_SHOT_ERROR", true);
+    throw error;
+  }
 
   try {
     result = await deps.extract({ fewShot, model, pages: scan.pages, signal: options.signal });
   } catch (error) {
+    if (error instanceof ApiError) {
+      // Rechazo propio antes de enviar (bytes, configuración): ni modelo ni cobro.
+      await fail("PRE_SEND_ERROR", true);
+      throw error;
+    }
+
+    const aborted = options.signal?.aborted === true;
+    // D24-a: un rechazo del proveedor sin procesar (401/403/429/503) no cobra.
+    const notBilled = !aborted && error instanceof InvoiceExtractionError && !error.billable;
     await fail(
-      options.signal?.aborted
+      aborted
         ? INVOICE_SCAN_CLIENT_ABORTED
         : error instanceof InvoiceExtractionError
           ? error.code
           : "PROVIDER_ERROR",
+      notBilled,
     );
     throw toInvoiceScanApiError(error);
   }

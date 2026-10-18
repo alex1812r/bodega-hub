@@ -146,6 +146,23 @@ export async function getCurrentExchangeRate(storeId: string) {
   return rate;
 }
 
+/**
+ * Variante de solo lectura de `getCurrentExchangeRate` (D24-b): misma tasa
+ * oficial (caché de proceso o DolarAPI), pero sin insertar en `exchange_rates`
+ * ni llenar la caché, para que el flujo que persiste (formulario) no cambie.
+ * La tasa oficial es la misma para todas las tiendas (no recibe `storeId`).
+ * Si DolarAPI falla, propaga el error.
+ */
+export async function readCurrentExchangeRate(): Promise<ExchangeRateMock> {
+  const cached = getCachedOfficialRate();
+
+  if (cached) {
+    return cached;
+  }
+
+  return toLiveExchangeRate(await fetchOfficialDollarRate());
+}
+
 export async function createExchangeRate(
   input: { rateVes: number; source?: string },
   storeId: string,

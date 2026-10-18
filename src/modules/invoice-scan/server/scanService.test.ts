@@ -1,13 +1,17 @@
 /**
  * @jest-environment node
  */
+import { APICallError } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+
 import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
 import { notAnInvoiceExtraction, singlePageExtraction } from "./__fixtures__/extractions";
 import { jpegHeader } from "./__fixtures__/images";
-import { InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } from "./extract";
+import { extractInvoice, InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } from "./extract";
 import { toFewShotFormat } from "./fewShot";
 import { matchScan } from "./matchScan";
 import { createMockInvoiceScanModel } from "./mockModel";
@@ -737,6 +741,34 @@ describe("scanInvoice · reserva atómica (SCN-03h)", () => {
     expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
   });
 
+  it("un JPEG con cola MPF tras el EOI: 400 en multipart y en storagePaths, sin subir, leer ni cobrar (B8)", async () => {
+    const TRAILING = "La imagen trae datos extra después del final del archivo. Vuelve a subirla desde la app.";
+    const first = jpegHeader(1600, 1200, "mpf");
+    const preview = jpegHeader(160, 120, "preview");
+    const mpf = new Uint8Array(first.length + preview.length);
+    mpf.set(first);
+    mpf.set(preview, first.length);
+
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+
+    await expect(
+      scanInvoice(built, ctx, { pages: [{ data: mpf, mediaType: "image/jpeg" }], source: "upload" }),
+    ).rejects.toMatchObject({ message: TRAILING, status: 400 });
+    expect(storage.upload).not.toHaveBeenCalled();
+
+    const sha = sha256OfPages([mpf]);
+    const path = `${ctx.storeId}/${sha}/p1.jpg`;
+    storage.objects.set(path, mpf);
+
+    await expect(
+      scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths: [path] }),
+    ).rejects.toMatchObject({ message: TRAILING, status: 400 });
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
   it("pasa la señal de cancelación del cliente a la extracción", async () => {
     const { built, extract } = deps();
     const controller = new AbortController();
@@ -923,7 +955,8 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     warn.mockRestore();
   });
 
-  it("un emparejamiento en caché válido se sirve tal cual, sin volver a emparejar", async () => {
+  it("un emparejamiento en caché válido tampoco se sirve: se vuelve a emparejar sin aviso (REP-01)", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const ctx = newContext();
     const { built, matcher } = deps();
     const pages = [page("matched válido")];
@@ -931,7 +964,9 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
 
     await scanInvoice(built, ctx, { pages, source: "upload" });
 
-    expect(matcher).toHaveBeenCalledTimes(1);
+    expect(matcher).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalledWith("[invoice-scan] emparejamiento en caché fuera del contrato", expect.anything());
+    warn.mockRestore();
   });
 
   it("una lectura vieja no pisa la nueva: si otra reserva tomó la fila, complete responde 409 y la fila sigue con el intento nuevo (C1/C2)", async () => {
@@ -1036,5 +1071,229 @@ describe("scanInvoice · textos opcionales vacíos (SCN-13a)", () => {
     expect(response.cached).toBe(true);
     expect(extract).not.toHaveBeenCalled();
     expectNoBlankOptionals(response.extraction);
+  });
+});
+
+describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B3)", () => {
+  let consoleError: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  function providerFailing(statusCode: number) {
+    return new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new APICallError({
+          isRetryable: false,
+          message: "rechazo",
+          requestBodyValues: {},
+          statusCode,
+          url: "https://example.test",
+        });
+      },
+    });
+  }
+
+  it.each([401, 403, 503])("un %i del proveedor deja la fila failed sin cobrar la página", async (statusCode) => {
+    const ctx = newContext();
+    const model = providerFailing(statusCode);
+    const { built } = deps({
+      extract: extractInvoice,
+      model: () => ({ model, modelId: "gemini-x", provider: "google" }),
+    });
+    const pages = [page(`rechazo ${statusCode}`)];
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 502 });
+
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      error: "PROVIDER_ERROR",
+      status: "failed",
+      usagePages: 0,
+    });
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
+  it("INVALID_OUTPUT y TIMEOUT sí cobran la página", async () => {
+    const ctx = newContext();
+    const invalid = deps({
+      extract: extractInvoice,
+      model: () => ({ model: createMockInvoiceScanModel("invalid"), modelId: "m", provider: "mock" }),
+    });
+    const timeout = deps({ extract: jest.fn(async () => Promise.reject(new InvoiceExtractionError("TIMEOUT"))) });
+
+    await expect(scanInvoice(invalid.built, ctx, { pages: [page("ilegible")], source: "upload" })).rejects.toMatchObject({
+      details: { reason: "INVALID_OUTPUT" },
+    });
+    await expect(scanInvoice(timeout.built, ctx, { pages: [page("lenta")], source: "upload" })).rejects.toMatchObject({
+      details: { reason: "TIMEOUT" },
+    });
+
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 2 });
+  });
+
+  it("un fallo antes de enviar (few-shot) deja la fila failed y devuelve la página", async () => {
+    const ctx = newContext();
+    const listFewShotExamples = jest.fn(async () => Promise.reject(new Error("base caída")));
+    const { built, extract } = deps({ repo: { ...mockRepo, listFewShotExamples } });
+    const pages = [page("few caído")];
+
+    await expect(
+      scanInvoice(built, ctx, { pages, source: "upload", supplierId: SUPPLIER_ID }),
+    ).rejects.toThrow("base caída");
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      status: "failed",
+      usagePages: 0,
+    });
+  });
+});
+
+describe("scanInvoice · página repetida en multipágina (caos B9)", () => {
+  it("multipart: deduplica antes de reservar, cobra solo las páginas únicas y no duplica líneas", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const a = page("misma");
+    const b = page("otra");
+    const pages = [a, { ...a, data: a.data.slice() }, b, a];
+    const declared = sha256OfPages(pages.map((item) => item.data));
+    const unique = sha256OfPages([a.data, b.data]);
+
+    const response = await scanInvoice(built, ctx, { pages, sha256: declared, source: "upload" });
+
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect((extract.mock.calls[0] as unknown as [{ pages: InvoicePage[] }])[0].pages.map((item) => item.data)).toEqual([
+      a.data,
+      b.data,
+    ]);
+    expect(response.limits).toMatchObject({ used: 2 });
+    expect(await mockRepo.getScan(ctx, response.scanId)).toMatchObject({
+      imageSha256: unique,
+      pages: 2,
+      storagePath: `${ctx.storeId}/${unique}/p1.jpg`,
+    });
+    expect([...storage.objects.keys()].sort()).toEqual([
+      `${ctx.storeId}/${unique}/p1.jpg`,
+      `${ctx.storeId}/${unique}/p2.jpg`,
+    ]);
+  });
+
+  it("storagePaths: deduplica, sube las únicas bajo su hash y cobra solo esas", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const a = jpegHeader(1600, 1200, "a");
+    const b = jpegHeader(1600, 1200, "b");
+    const all = [a, a, b];
+    const declared = sha256OfPages(all);
+    const storagePaths = all.map((data, index) => {
+      const path = `${ctx.storeId}/${declared}/p${index + 1}.jpg`;
+      storage.objects.set(path, data);
+      return path;
+    });
+    const unique = sha256OfPages([a, b]);
+
+    const response = await scanInvoice(built, ctx, { sha256: declared, source: "storage", storagePaths });
+
+    expect((extract.mock.calls[0] as unknown as [{ pages: InvoicePage[] }])[0].pages).toHaveLength(2);
+    expect(response.limits).toMatchObject({ used: 2 });
+    const row = await mockRepo.getScan(ctx, response.scanId);
+    expect(row).toMatchObject({ imageSha256: unique, pages: 2 });
+    expect(invoiceScanPagePaths(row!.storagePath, row!.pages).map((path) => storage.objects.get(path))).toEqual([a, b]);
+  });
+});
+
+describe("scanInvoice · reescaneo en caché (REP-01, QA M1)", () => {
+  function rows() {
+    return mockState("invoice-scan:scans", () => new Map<string, InvoiceScanRow>());
+  }
+
+  function tamper(id: string, patch: Partial<InvoiceScanRow>) {
+    rows().set(id, { ...(rows().get(id) as InvoiceScanRow), ...patch });
+  }
+
+  it("la misma foto de una factura ya confirmada responde con la compra ligada", async () => {
+    // La compra mock `purchase-001` es de la tienda por defecto.
+    const ctx = { storeId: DEFAULT_STORE_ID, userId: "user-1" };
+    const { built } = deps();
+    const pages = [page(`confirmada ${Date.now()}`)];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    tamper(first.scanId, { confirmedAt: new Date().toISOString(), purchaseId: "purchase-001", status: "confirmed" });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again).toMatchObject({
+      cached: true,
+      confirmedPurchase: { id: "purchase-001", purchaseNumber: "C-000001" },
+      scanId: first.scanId,
+    });
+  });
+
+  it("REP-01-F1: reempareja una factura confirmada con el proveedor que se eligió al confirmarla", async () => {
+    const ctx = { storeId: DEFAULT_STORE_ID, userId: "user-1" };
+    const { built, matcher } = deps();
+    const pages = [page(`proveedor elegido ${Date.now()}`)];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    tamper(first.scanId, {
+      confirmedAt: new Date().toISOString(),
+      purchaseId: "purchase-001",
+      status: "confirmed",
+      supplierId: "sup-elegido",
+    });
+
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(matcher).toHaveBeenLastCalledWith(singlePageExtraction, {
+      dataSource: "mock",
+      scanId: first.scanId,
+      storeId: ctx.storeId,
+      supplierId: "sup-elegido",
+    });
+
+    // Un supplierId explícito en el POST manda sobre el guardado.
+    await scanInvoice(built, ctx, { pages, source: "upload", supplierId: "sup-post" });
+
+    expect(matcher).toHaveBeenLastCalledWith(singlePageExtraction, expect.objectContaining({ supplierId: "sup-post" }));
+  });
+
+  it("un escaneo en caché sin confirmar no trae compra ligada", async () => {
+    const ctx = newContext();
+    const { built } = deps();
+    const pages = [page("sin confirmar")];
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again.cached).toBe(true);
+    expect(again).not.toHaveProperty("confirmedPurchase");
+  });
+
+  it("no sirve el `matched` guardado: vuelve a emparejar con los alias actuales, sin modelo ni cuota", async () => {
+    const ctx = newContext();
+    // El segundo emparejamiento ya ve el alias aprendido al confirmar: la línea sale confirmada.
+    let calls = 0;
+    const matcher = jest.fn(async (...args: Parameters<typeof matchScan>) => {
+      calls += 1;
+      const fresh = await matchScan(...args);
+      return calls === 1
+        ? fresh
+        : { ...fresh, lines: fresh.lines.map((line) => ({ ...line, productId: "prod-alias", status: "confirmed" as const })) };
+    });
+    const { built, extract } = deps({ matcher });
+    const pages = [page("alias aprendido")];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(first.matched.lines.every((line) => line.status === "unmatched")).toBe(true);
+    expect(again.cached).toBe(true);
+    expect(again.matched.lines.every((line) => line.status === "confirmed" && line.productId === "prod-alias")).toBe(true);
+    expect(matcher).toHaveBeenCalledTimes(2);
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(again.limits.used).toBe(1);
   });
 });

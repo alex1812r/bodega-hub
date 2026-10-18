@@ -8,7 +8,7 @@
 import { roundMoney } from "@bodega/core/currency";
 
 import { DOLAR_API_OFFICIAL_SOURCE } from "@/lib/exchange-rates/constants";
-import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
+import { getCurrentExchangeRate, readCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
 
 import type { InvoiceExtraction } from "../contracts";
 
@@ -16,10 +16,15 @@ import { loadMatchContext, MATCH_CANDIDATES_RPC, taxRateKind, type MatchContextS
 import { matchInvoice } from "./match";
 import { MISSING_RATE_WARNING, NO_RATE_PRICE_ISSUE } from "./match/money";
 
-// CIE-02: la tasa del día es la del formulario de compra (getCurrentExchangeRate), no la última fila de exchange_rates.
-jest.mock("../../settings/services/exchangeRates.server", () => ({ getCurrentExchangeRate: jest.fn() }));
+// CIE-02: la tasa del día es la del formulario de compra (DolarAPI oficial), no la última fila de exchange_rates.
+// D24-b: el escaneo solo LEE esa tasa (readCurrentExchangeRate); nunca la persiste (getCurrentExchangeRate).
+jest.mock("../../settings/services/exchangeRates.server", () => ({
+  getCurrentExchangeRate: jest.fn(),
+  readCurrentExchangeRate: jest.fn(),
+}));
 
-const getCurrentExchangeRateMock = jest.mocked(getCurrentExchangeRate);
+const readExchangeRateMock = jest.mocked(readCurrentExchangeRate);
+const persistingExchangeRateMock = jest.mocked(getCurrentExchangeRate);
 
 const STORE_ID = "00000000-0000-4000-8000-000000000001";
 const SUPPLIER_ID = "11111111-1111-4111-8111-111111111111";
@@ -209,8 +214,8 @@ const taxRateRows = [
 ];
 
 beforeEach(() => {
-  getCurrentExchangeRateMock.mockReset();
-  getCurrentExchangeRateMock.mockResolvedValue({
+  readExchangeRateMock.mockReset();
+  readExchangeRateMock.mockResolvedValue({
     id: "live-official",
     rateVes: 45.5,
     source: DOLAR_API_OFFICIAL_SOURCE,
@@ -338,7 +343,7 @@ describe("loadMatchContext", () => {
     const stub = createSupabaseStub({
       candidates: { suppliers: [], supplier_id: null, lines: [] },
     });
-    getCurrentExchangeRateMock.mockRejectedValueOnce(new Error("DolarAPI caída"));
+    readExchangeRateMock.mockRejectedValueOnce(new Error("DolarAPI caída"));
     const bare: InvoiceExtraction = {
       ...extraction,
       number: undefined,
@@ -699,8 +704,8 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
     return { ctx, match: matchInvoice(scanned, ctx), stub };
   };
 
-  it("usa getCurrentExchangeRate de la tienda del servidor y no lee exchange_rates", async () => {
-    getCurrentExchangeRateMock.mockResolvedValue({
+  it("D24-b: lee la tasa oficial sin persistirla ni consultar exchange_rates", async () => {
+    readExchangeRateMock.mockResolvedValue({
       id: "live-official",
       rateVes: 52.25,
       source: DOLAR_API_OFFICIAL_SOURCE,
@@ -709,7 +714,8 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
 
     const { ctx, match, stub } = await loadWith();
 
-    expect(getCurrentExchangeRateMock).toHaveBeenCalledWith(STORE_ID);
+    expect(readExchangeRateMock).toHaveBeenCalledTimes(1);
+    expect(persistingExchangeRateMock).not.toHaveBeenCalled();
     expect(stub.queries.map((query) => query.table)).not.toContain("exchange_rates");
     expect(ctx.systemRate).toBe(52.25);
     expect(match.rate).toEqual({ system: 52.25 });
@@ -718,7 +724,7 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
   });
 
   it("DolarAPI caída y factura con tasa impresa: convierte con la impresa y lo avisa", async () => {
-    getCurrentExchangeRateMock.mockRejectedValue(new Error("DolarAPI caída"));
+    readExchangeRateMock.mockRejectedValue(new Error("DolarAPI caída"));
 
     const { ctx, match } = await loadWith(45);
 
@@ -732,7 +738,7 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
   });
 
   it("DolarAPI caída y sin tasa impresa: no precarga costos REF, pide la tasa y no confirma en silencio", async () => {
-    getCurrentExchangeRateMock.mockRejectedValue(new Error("DolarAPI caída"));
+    readExchangeRateMock.mockRejectedValue(new Error("DolarAPI caída"));
 
     const { ctx, match } = await loadWith();
 
@@ -747,7 +753,7 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
   });
 
   it("tasa no positiva del servicio se trata como ausente", async () => {
-    getCurrentExchangeRateMock.mockResolvedValue({
+    readExchangeRateMock.mockResolvedValue({
       id: "live-official",
       rateVes: 0,
       source: DOLAR_API_OFFICIAL_SOURCE,
@@ -757,5 +763,39 @@ describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, ca
     const { ctx } = await loadWith();
 
     expect(ctx.systemRate).toBeUndefined();
+  });
+});
+
+describe("loadMatchContext · coherencia de precio sin compras recibidas (D24-c, caos B4)", () => {
+  function tablesWithCostRef(costs: Record<string, unknown>): Record<string, TableHandler> {
+    const tables = fullTables();
+    const products = tables.products!;
+    return {
+      ...tables,
+      products: (query) => {
+        const result = products(query);
+        const select = String(argsOf(query, "select")[0]?.[0] ?? "");
+        if (select.startsWith("id, purchase_items")) {
+          return result;
+        }
+        const rows = result.data as Array<{ id: string }>;
+        return { ...result, data: rows.map((row) => ({ ...row, current_cost_ref: costs[row.id] ?? null })) };
+      },
+    };
+  }
+
+  it("sin último costo recibido usa products.current_cost_ref; el recibido sigue ganando", async () => {
+    const stub = createSupabaseStub({
+      candidates,
+      tables: tablesWithCostRef({ [ARROZ_ID]: "0.8", [CAJA_ID]: 0, [HARINA_ID]: 5 }),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+    const byId = new Map(ctx.products.map((product) => [product.id, product]));
+
+    expect(byId.get(ARROZ_ID)?.lastUnitCostRef).toBe(0.8);
+    expect(byId.get(CAJA_ID)?.lastUnitCostRef).toBeNull(); // 0 no es un costo
+    expect(byId.get(HARINA_ID)?.lastUnitCostRef).toBe(0.95); // recibido del proveedor
   });
 });

@@ -34,6 +34,8 @@ import {
   invoiceScanProcessingWindowMs,
   isReserveInputInRange,
   isScanStoragePathInScope,
+  LIVE_INVOICE_SCAN_STATUSES,
+  type LiveInvoiceScan,
   MAX_FEW_SHOT_EXAMPLES,
   parseConfirmedScan,
   type StoredFewShotExample,
@@ -330,6 +332,13 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
   return scan ? { ...scan } : null;
 }
 
+/** Paridad con `scans.server.ts` (REP-01): número de la compra de la tienda, o null. */
+export async function getPurchaseNumber(ctx: InvoiceScanContext, purchaseId: string): Promise<string | null> {
+  const purchase = findMockPurchase(purchaseId);
+
+  return purchase && mockEntityStoreId(purchase) === ctx.storeId ? purchase.purchaseNumber : null;
+}
+
 /** Paridad con `scans.server.ts` (SCN-09a): compra de la tienda y su escaneo confirmado más reciente. */
 export async function findConfirmedScanByPurchase(
   ctx: InvoiceScanContext,
@@ -347,6 +356,19 @@ export async function findConfirmedScanByPurchase(
       .sort((a, b) => (b.confirmedAt ?? "").localeCompare(a.confirmedAt ?? ""))[0] ?? null;
 
   return { purchaseFound: true, scan: scan ? { ...scan } : null };
+}
+
+/** Paridad con `scans.server.ts`: escaneo vivo de la tienda con ese hash y sus rutas (M3). */
+export async function findLiveScanByHash(
+  ctx: InvoiceScanContext,
+  sha256: string,
+): Promise<LiveInvoiceScan | null> {
+  const scan = selectByHash(ctx, sha256);
+  const status = LIVE_INVOICE_SCAN_STATUSES.find((live) => live === scan?.status);
+
+  return scan && status
+    ? { id: scan.id, status, storagePaths: invoiceScanPagePaths(scan.storagePath, scan.pages) }
+    : null;
 }
 
 /** Paridad con `scans.server.ts`: nombres de los productos de la tienda por id. */

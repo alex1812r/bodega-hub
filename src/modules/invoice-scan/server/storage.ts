@@ -115,22 +115,53 @@ export type InvoiceUploadUrl = {
 
 export type InvoiceUploadRequestPage = { page: number; mediaType: InvoiceScanMediaType };
 
-/** URLs firmadas de subida, una por página, bajo `<storeId>/<sha256>/`. */
+/** Página que ya está en el bucket: no se firma (no se puede reemplazar). */
+export type InvoiceExistingUpload = { alreadyExists: true; page: number; path: string };
+
+/**
+ * Storage niega la firma de una ruta que ya existe sin upsert: StorageApiError
+ * con `status` HTTP 400, `statusCode` "409" y `code` "KeyAlreadyExists".
+ */
+function isAlreadyExistsError(error: { status?: number; statusCode?: string; code?: string } | null) {
+  return error?.statusCode === "409" || error?.status === 409 || error?.code === "KeyAlreadyExists";
+}
+
+/**
+ * URLs firmadas de subida, una por página, bajo `<storeId>/<sha256>/`.
+ *
+ * Sin upsert (auditoría M3): con upsert cualquiera con `purchases.create`
+ * podía pedir la URL del hash de un escaneo ajeno (el sha se ve en
+ * `invoice_scans`) y reemplazar su imagen, incluso confirmada. El token lo emite
+ * Storage con vida fija de 2 h: `createSignedUploadUrl` de
+ * @supabase/storage-js 2.115 solo acepta `{ upsert }`, no una expiración. La
+ * protección es por tanto `upsert: false`: un PUT sobre un objeto que ya
+ * existe falla (409 "Duplicate"), sea el segundo PUT del mismo token o uno
+ * sobre la página de otro escaneo. Para un reintento legítimo eso equivale a
+ * "ya subido": el POST rehace el hash sobre los bytes guardados.
+ *
+ * Storage tampoco firma una ruta que ya existe (Duplicate 409): esa página se
+ * devuelve como `{ alreadyExists: true }` sin URL en vez de 503, para que el
+ * reintento tras un POST cortado o el reescaneo de un escaneo descartado con
+ * el objeto aún en el bucket lleguen al POST (REP-03-F1).
+ */
 export async function createInvoiceUploadUrls(
   client: StorageClient,
   storeId: string,
   sha256: string,
   pages: readonly InvoiceUploadRequestPage[],
-): Promise<InvoiceUploadUrl[]> {
+): Promise<Array<InvoiceUploadUrl | InvoiceExistingUpload>> {
   const bucket = client.storage.from(INVOICE_SCANS_BUCKET);
 
   return Promise.all(
     pages.map(async ({ mediaType, page }) => {
       const path = invoiceScanPath(storeId, sha256, page, mediaType);
-      // Upsert: reintentar la subida del mismo escaneo (mismo hash) no debe fallar.
       const result = await bucket
-        .createSignedUploadUrl(path, { upsert: true })
+        .createSignedUploadUrl(path, { upsert: false })
         .catch(() => storageUnavailable());
+
+      if (result.error && isAlreadyExistsError(result.error)) {
+        return { alreadyExists: true as const, page, path };
+      }
 
       if (result.error || !result.data?.signedUrl) {
         storageUnavailable();

@@ -1225,9 +1225,15 @@ export function PurchaseCreatePage() {
     void loadInvoiceDraft(reviewDraft, false);
   }
 
-  /** Descarta el escaneo en el servidor y vuelve al formulario tal como estaba. */
+  /**
+   * Descarta el escaneo en el servidor y vuelve al formulario tal como estaba. Uno ya
+   * confirmado en una compra (REP-01) no se descarta: solo se cierra la revisión.
+   */
   function discardScannedInvoice(response: InvoiceScanResponse) {
     setScannedInvoice(null);
+    if (response.confirmedPurchase) {
+      return;
+    }
     void apiFetch(`/api/purchases/invoice-scan/${encodeURIComponent(response.scanId)}/discard`, {
       method: "POST",
     }).catch((error: unknown) => {

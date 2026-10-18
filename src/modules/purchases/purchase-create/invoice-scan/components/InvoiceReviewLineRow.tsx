@@ -119,7 +119,7 @@ export function InvoiceReviewLineRow({
               {title}
             </span>
           </div>
-          <p className="mt-1 truncate text-xs text-on-surface-variant" title={line.rawText}>
+          <p className="mt-1 break-words text-xs text-on-surface-variant" title={line.rawText}>
             {line.rawText || line.description}
           </p>
         </div>

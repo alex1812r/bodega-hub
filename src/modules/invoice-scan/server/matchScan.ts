@@ -4,6 +4,7 @@ import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
 
 import { loadMatchContext, type MatchContextSupabaseClient } from "./loadMatchContext";
 import { matchInvoice } from "./match";
+import type { MatchContext, MatchProduct } from "./match.types";
 import { loadMockMatchContext } from "./matchContext.mock-server";
 
 export type MatchScanContext = {
@@ -11,6 +12,11 @@ export type MatchScanContext = {
   dataSource: "supabase" | "mock";
   /** Escaneo ya reservado que se empareja: se excluye de su propia detección de duplicados. */
   scanId: string;
+  /**
+   * Proveedor elegido por el usuario (REP-01-F1: el de un escaneo ya confirmado).
+   * Si está entre los candidatos del contexto se da por resuelto; si no, no cambia nada.
+   */
+  supplierId?: string;
 };
 
 export type InvoiceScanMatcher = (
@@ -73,21 +79,75 @@ export function normalizeExtractionForMatch(extraction: InvoiceExtraction): Invo
 }
 
 /**
+ * Contexto con el proveedor elegido como único candidato (score 1, sin RIF que
+ * contradiga la lectura): `resolveSupplier` lo da por resuelto y la cascada usa
+ * su catálogo y alias aprendidos. Sin elección, o si no es un candidato, el mismo contexto.
+ */
+function withChosenSupplier(context: MatchContext, supplierId: string | undefined): MatchContext {
+  const chosen = supplierId ? context.supplierCandidates.find((candidate) => candidate.contactId === supplierId) : undefined;
+
+  if (!chosen) {
+    return context;
+  }
+
+  return { ...context, supplierCandidates: [{ contactId: chosen.contactId, name: chosen.name, score: 1, taxId: null }] };
+}
+
+/**
  * Empareja la lectura con el catálogo de la tienda de la sesión (`ctx.storeId`):
  * en Supabase, `matchInvoice(extraction, await loadMatchContext(supabase, storeId, extraction, { excludeScanId: scanId }))`;
  * en mock, el mismo `matchInvoice` con `loadMockMatchContext`.
  */
 export function createMatchScan(deps: MatchScanDeps = defaultDeps): InvoiceScanMatcher {
-  return async (raw, { dataSource, scanId, storeId }) => {
+  return async (raw, { dataSource, scanId, storeId, supplierId }) => {
     const extraction = normalizeExtractionForMatch(raw);
 
     if (dataSource === "mock") {
-      return matchInvoice(extraction, deps.loadMockContext(storeId, extraction, { excludeScanId: scanId }));
+      const context = withChosenSupplier(deps.loadMockContext(storeId, extraction, { excludeScanId: scanId }), supplierId);
+      return withCandidateSkus(matchInvoice(extraction, context), context.products);
     }
 
     const supabase = await deps.createClient();
+    const context = withChosenSupplier(
+      await deps.loadContext(supabase, storeId, extraction, { excludeScanId: scanId }),
+      supplierId,
+    );
 
-    return matchInvoice(extraction, await deps.loadContext(supabase, storeId, extraction, { excludeScanId: scanId }));
+    return withCandidateSkus(matchInvoice(extraction, context), context.products);
+  };
+}
+
+/**
+ * D24-d (caos B2): cada candidato lleva el `sku` del producto del contexto ya
+ * cargado, para que la revisión distinga candidatos de igual nombre. Sin SKU no
+ * se añade nada; las líneas sin candidatos quedan igual.
+ */
+export function withCandidateSkus(match: InvoiceMatch, products: readonly MatchProduct[]): InvoiceMatch {
+  const skus = new Map<string, string>();
+  for (const product of products) {
+    const sku = product.sku?.trim();
+    if (sku) {
+      skus.set(product.id, sku);
+    }
+  }
+
+  if (skus.size === 0) {
+    return match;
+  }
+
+  return {
+    ...match,
+    lines: match.lines.map((line) =>
+      line.candidates
+        ? {
+            ...line,
+            candidates: line.candidates.map((candidate) => {
+              const sku = skus.get(candidate.productId);
+              return sku ? { ...candidate, sku } : candidate;
+            }),
+          }
+        : line,
+    ),
   };
 }
 

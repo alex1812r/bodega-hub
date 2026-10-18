@@ -19,6 +19,7 @@ import { INVOICE_SCAN_REAL_SESSION_MESSAGE } from "@/modules/invoice-scan/server
 import type { InvoiceScanRow } from "@/modules/invoice-scan/server/scans.types";
 import { sha256OfPages } from "@/modules/invoice-scan/server/storage";
 import { mockState } from "@/shared/mocks/mockStore";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { POST } from "./route";
 
@@ -143,6 +144,26 @@ describe("POST /api/purchases/invoice-scan", () => {
     expect(response.status).toBe(200);
     expect(body.data).toEqual({ ...first.data, cached: true });
     expect(model.doGenerateCalls.length - callsAfterFirst).toBe(0);
+  });
+
+  it("la misma foto de una factura ya confirmada responde con la compra ligada (REP-01)", async () => {
+    // La compra mock `purchase-001` es de la tienda por defecto.
+    const storeId = DEFAULT_STORE_ID;
+    const { image } = fresh();
+    const first = await (await POST(multipart(storeId, [image]))).json();
+    const row = rowByHash(storeId, sha256OfPages([bytes(image)]));
+    const rows = mockState("invoice-scan:scans", () => new Map<string, InvoiceScanRow>());
+    rows.set(first.data.scanId, { ...(row as InvoiceScanRow), purchaseId: "purchase-001", status: "confirmed" });
+
+    const response = await POST(multipart(storeId, [image]));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      cached: true,
+      confirmedPurchase: { id: "purchase-001", purchaseNumber: "C-000001" },
+      scanId: first.data.scanId,
+    });
   });
 
   it("429 en español con límite 2 y 3 páginas", async () => {

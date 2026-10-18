@@ -11,7 +11,7 @@ import { ZodError } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
 
-import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import { invoiceExtractionSchema, isImpossibleIsoDate, type InvoiceExtraction } from "../contracts";
 import type { FewShotFormat } from "./fewShot";
 import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
@@ -63,8 +63,22 @@ const ERROR_MESSAGES: Record<InvoiceExtractionErrorCode, string> = {
     "La lectura de la factura tardó demasiado. Intenta de nuevo; si se repite, registra la compra a mano.",
 };
 
+/**
+ * Respuestas con las que el proveedor rechaza la petición sin procesarla (key
+ * inválida o sin permiso, servicio no disponible, límite de peticiones): no
+ * llegó a facturar, así que el intento no cuenta en la cuota (D24-a).
+ */
+const NOT_BILLED_STATUS_CODES: ReadonlySet<number> = new Set([401, 403, 429, 503]);
+
 export class InvoiceExtractionError extends Error {
-  constructor(public readonly code: InvoiceExtractionErrorCode) {
+  /**
+   * `billable`: el proveedor pudo facturar el intento (timeout, salida
+   * inválida, error desconocido). Si es false, quien llama devuelve la cuota.
+   */
+  constructor(
+    public readonly code: InvoiceExtractionErrorCode,
+    public readonly billable = true,
+  ) {
     super(ERROR_MESSAGES[code]);
     this.name = "InvoiceExtractionError";
   }
@@ -95,6 +109,18 @@ function classify(error: unknown, signal: AbortSignal): InvoiceExtractionErrorCo
   }
 
   return "PROVIDER_ERROR";
+}
+
+/** ¿Pudo facturar el proveedor? Solo no si respondió con un rechazo sin procesar. */
+function isBilled(error: unknown, signal: AbortSignal): boolean {
+  const cause = RetryError.isInstance(error) ? error.lastError : error;
+
+  return (
+    signal.aborted ||
+    !APICallError.isInstance(cause) ||
+    cause.statusCode === undefined ||
+    !NOT_BILLED_STATUS_CODES.has(cause.statusCode)
+  );
 }
 
 /**
@@ -192,7 +218,7 @@ async function extractPage(
   } catch (error) {
     const code = classify(error, signal);
     logFailure(code, error);
-    throw new InvoiceExtractionError(code);
+    throw new InvoiceExtractionError(code, isBilled(error, signal));
   }
 }
 
@@ -204,6 +230,23 @@ const INCOHERENT_GLOBAL_CONFIDENCE = 0.6;
 export const LOW_RES_WARNING = "La imagen tiene poca resolución; revisa cada línea con la factura en mano.";
 export const INCOHERENT_CONFIDENCE_WARNING =
   "La lectura no es fiable; revisa cada línea con la factura en mano.";
+
+export const IMPOSSIBLE_DATE_WARNING = "La fecha leída no existe en el calendario; revísala en la factura.";
+
+/** Caos B8: una fecha ISO imposible (2026-02-31) leída por el modelo se descarta con aviso; no falla la lectura. */
+function guardDate(extraction: InvoiceExtraction): InvoiceExtraction {
+  if (extraction.date === undefined || !isImpossibleIsoDate(extraction.date)) {
+    return extraction;
+  }
+
+  const guarded: InvoiceExtraction = {
+    ...extraction,
+    warnings: [...new Set([...extraction.warnings, IMPOSSIBLE_DATE_WARNING])],
+  };
+  delete guarded.date;
+
+  return guarded;
+}
 
 /**
  * Plan §6.1: el modelo no siempre admite que no lee. Si alguna página tiene
@@ -248,6 +291,10 @@ function guardReadability(
  * Se valida aquí, y no en quien llama, para que ningún camino llegue al modelo
  * sin esa comprobación; quien llama puede usar `inspectInvoiceImage` antes
  * (p. ej. antes de subir al bucket) sin que cambie el resultado.
+ *
+ * Los bytes tras el final de la imagen (`trailingBytes`) se toleran aquí, sin
+ * tope: un JPEG MPF de cámara (f09/f12/f21/f22 de invoice-eval) trae su vista
+ * previa tras el primer EOI. Solo la entrada del BFF (`assertImages`) los rechaza.
  */
 export async function extractInvoice(input: ExtractInvoiceInput): Promise<ExtractInvoiceResult> {
   if (input.pages.length === 0) {
@@ -260,12 +307,21 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
   const results: PageResult[] = [];
 
   for (let index = 0; index < input.pages.length; index += 1) {
-    results.push(await extractPage(info, input, index));
+    try {
+      results.push(await extractPage(info, input, index));
+    } catch (error) {
+      // Las páginas ya leídas se facturaron aunque esta no.
+      if (index > 0 && error instanceof InvoiceExtractionError && !error.billable) {
+        throw new InvoiceExtractionError(error.code, true);
+      }
+
+      throw error;
+    }
   }
 
   return {
     durationMs: Date.now() - startedAt,
-    extraction: guardReadability(mergePages(results.map((result) => result.extraction)), images),
+    extraction: guardReadability(mergePages(results.map((result) => guardDate(result.extraction))), images),
     inputTokens: sumTokens(results.map((result) => result.inputTokens)),
     modelId: info.modelId,
     outputTokens: sumTokens(results.map((result) => result.outputTokens)),

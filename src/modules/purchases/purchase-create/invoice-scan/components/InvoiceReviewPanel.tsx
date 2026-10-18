@@ -30,6 +30,7 @@ import {
   type InvoiceReviewState,
 } from "../reviewModel";
 import { useInvoiceReview } from "../useInvoiceReview";
+import { InvoiceReviewConfirmedNotice } from "./InvoiceReviewConfirmedNotice";
 import { InvoiceReviewFooter } from "./InvoiceReviewFooter";
 import { InvoiceReviewHeader } from "./InvoiceReviewHeader";
 import { InvoiceReviewLineRow } from "./InvoiceReviewLineRow";
@@ -313,6 +314,8 @@ export function InvoiceReviewPanel({
         </Button>
       </div>
 
+      <InvoiceReviewConfirmedNotice state={state} />
+
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-4">
           <InvoiceReviewHeader
@@ -337,7 +340,7 @@ export function InvoiceReviewPanel({
               <ul aria-label="Líneas por revisar" className="divide-y divide-border dark:divide-slate-800">
                 {sections.review.map((line) => renderRow(line.index))}
               </ul>
-            ) : state.lines.length > 0 ? (
+            ) : state.lines.length > 0 && !state.confirmedPurchase ? (
               <p className="px-4 py-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
                 Todas las líneas quedaron emparejadas con tus productos. Revisa los totales y carga la compra.
               </p>

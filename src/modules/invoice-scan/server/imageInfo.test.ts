@@ -8,7 +8,7 @@ import { ApiError } from "@/lib/api/apiError";
 
 import { INVOICE_MAX_SIDE } from "../client/invoiceLimits";
 import { jpegHeader } from "./__fixtures__/images";
-import { INVOICE_LOW_RES_SIDE, INVOICE_MIN_SIDE, inspectInvoiceImage } from "./imageInfo";
+import { assertNoTrailingData, INVOICE_LOW_RES_SIDE, INVOICE_MIN_SIDE, inspectInvoiceImage } from "./imageInfo";
 
 function canvas(width: number, height: number, alpha = false) {
   return sharp({
@@ -49,6 +49,7 @@ describe("inspectInvoiceImage", () => {
     expect(inspectInvoiceImage(baseline, "image/jpeg")).toEqual({
       height: 900,
       mediaType: "image/jpeg",
+      trailingBytes: 0,
       width: 1200,
     });
     expect(inspectInvoiceImage(progressive, "image/jpeg")).toMatchObject({ height: 1600, width: 640 });
@@ -64,7 +65,7 @@ describe("inspectInvoiceImage", () => {
   it("reads a real PNG (IHDR)", async () => {
     const png = await bytes(canvas(800, 450).png());
 
-    expect(inspectInvoiceImage(png, "image/png")).toEqual({ height: 450, mediaType: "image/png", width: 800 });
+    expect(inspectInvoiceImage(png, "image/png")).toEqual({ height: 450, mediaType: "image/png", trailingBytes: 0, width: 800 });
   });
 
   it.each([
@@ -75,7 +76,7 @@ describe("inspectInvoiceImage", () => {
     const webp = await bytes(image());
 
     expect(new TextDecoder().decode(webp.subarray(12, 16)).trim()).toBe(chunk);
-    expect(inspectInvoiceImage(webp, "image/webp")).toEqual({ height, mediaType: "image/webp", width });
+    expect(inspectInvoiceImage(webp, "image/webp")).toEqual({ height, mediaType: "image/webp", trailingBytes: 0, width });
   });
 
   it("rejects a renamed .exe (MZ) with a 400 in Spanish", () => {
@@ -173,17 +174,6 @@ describe("inspectInvoiceImage: estructura (N3)", () => {
     expect(caught(() => inspectInvoiceImage(data, "image/jpeg")).message).toMatch(STRUCTURE);
   });
 
-  it("accepts trailing padding after EOI up to 64 KB, but not more", async () => {
-    const real = await bytes(canvas(1200, 1600).jpeg());
-    const padded = (extra: number) => {
-      const out = new Uint8Array(real.length + extra);
-      out.set(real);
-      return out;
-    };
-
-    expect(inspectInvoiceImage(padded(1024), "image/jpeg").width).toBe(1200);
-    expect(caught(() => inspectInvoiceImage(padded(200 * 1024), "image/jpeg")).message).toMatch(STRUCTURE);
-  });
 
   it("rejects a PNG whose IHDR was rewritten without fixing the CRC", async () => {
     const png = await bytes(canvas(800, 600).png());
@@ -306,5 +296,82 @@ describe("inspectInvoiceImage: lado máximo (CIE-07)", () => {
     expect(inspectInvoiceImage(jpegHeader(1200, 1600), "image/jpeg")).toMatchObject({ height: 1600, width: 1200 });
     expect(caught(() => inspectInvoiceImage(jpegHeader(1601, 1200), "image/jpeg")).message).toBe(TOO_LARGE);
     expect(caught(() => inspectInvoiceImage(jpegHeader(1200, 1601), "image/jpeg")).message).toBe(TOO_LARGE);
+  });
+});
+
+describe("inspectInvoiceImage y assertNoTrailingData: bytes tras el final (auditoría B8)", () => {
+  const TRAILING = "La imagen trae datos extra después del final del archivo. Vuelve a subirla desde la app.";
+
+  function concat(...parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+    let offset = 0;
+    for (const part of parts) {
+      out.set(part, offset);
+      offset += part.length;
+    }
+    return out;
+  }
+
+  /** La entrada del BFF: inspecciona y rechaza la cola. */
+  function strict(data: Uint8Array, type: string) {
+    return () => assertNoTrailingData(inspectInvoiceImage(data, type));
+  }
+
+  it("el parser tolera una cola MPF (otro JPEG tras el EOI) y la cuenta; la entrada estricta la rechaza (ev-14)", async () => {
+    const page = await bytes(canvas(1200, 1600).jpeg());
+    const hidden = await bytes(canvas(3600, 4600).jpeg());
+    const mpf = concat(page, hidden);
+
+    expect(inspectInvoiceImage(mpf, "image/jpeg")).toEqual({
+      height: 1600,
+      mediaType: "image/jpeg",
+      trailingBytes: hidden.length,
+      width: 1200,
+    });
+    expect(caught(strict(mpf, "image/jpeg")).message).toBe(TRAILING);
+  });
+
+  it("700 KB de basura, un solo byte o ceros tras el EOI: tolerados al leer, 400 en la entrada estricta", async () => {
+    const page = await bytes(canvas(1200, 1600).jpeg());
+    const garbage = new Uint8Array(700 * 1024).map((_, index) => (index * 31 + 7) & 0xff);
+
+    for (const tail of [garbage, new Uint8Array([0x41]), new Uint8Array(1024)]) {
+      expect(inspectInvoiceImage(concat(page, tail), "image/jpeg").trailingBytes).toBe(tail.length);
+      expect(caught(strict(concat(page, tail), "image/jpeg")).message).toBe(TRAILING);
+    }
+
+    expect(caught(strict(concat(jpegHeader(1600, 1200), new Uint8Array([0xff, 0xd9])), "image/jpeg")).message).toBe(
+      TRAILING,
+    );
+  });
+
+  it("JPEG baseline y progresivo sin cola: trailingBytes 0 y pasan la entrada estricta", async () => {
+    for (const jpeg of [
+      await bytes(canvas(1200, 1600).jpeg({ quality: 70 })),
+      await bytes(canvas(1200, 1600).jpeg({ progressive: true })),
+    ]) {
+      expect(inspectInvoiceImage(jpeg, "image/jpeg")).toMatchObject({ trailingBytes: 0, width: 1200 });
+      expect(strict(jpeg, "image/jpeg")).not.toThrow();
+    }
+  });
+
+  it("bytes tras el IEND de un PNG", async () => {
+    const png = await bytes(canvas(800, 600).png());
+    const tailed = concat(png, new Uint8Array([0x41]));
+
+    expect(strict(png, "image/png")).not.toThrow();
+    expect(inspectInvoiceImage(tailed, "image/png")).toMatchObject({ trailingBytes: 1, width: 800 });
+    expect(caught(strict(tailed, "image/png")).message).toBe(TRAILING);
+  });
+
+  it("bytes tras el final del RIFF de un WebP", async () => {
+    const webp = await bytes(canvas(1000, 700).webp());
+
+    expect(strict(webp, "image/webp")).not.toThrow();
+
+    for (const tail of [new Uint8Array([0x41]), new Uint8Array(4096)]) {
+      expect(inspectInvoiceImage(concat(webp, tail), "image/webp")).toMatchObject({ trailingBytes: tail.length, width: 1000 });
+      expect(caught(strict(concat(webp, tail), "image/webp")).message).toBe(TRAILING);
+    }
   });
 });

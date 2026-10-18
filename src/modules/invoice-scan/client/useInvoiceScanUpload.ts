@@ -33,6 +33,7 @@ export type InvoiceScanUploadErrorKind =
   | "in-progress"
   | "quota"
   | "provider"
+  | "unavailable"
   | "network"
   | "request";
 
@@ -48,6 +49,12 @@ export const INVOICE_SCAN_QUOTA_FALLBACK =
   "Se agotó la cuota de escaneos de hoy. Vuelve a intentarlo mañana o registra la compra a mano.";
 export const INVOICE_SCAN_PROVIDER_FALLBACK =
   "El servicio de lectura no respondió. Intenta de nuevo en unos segundos o registra la compra a mano.";
+/**
+ * 503: el escaneo no puede funcionar ahora (sin key del proveedor, almacenamiento
+ * caído). El texto del servidor habla de configuración; al usuario se le dice qué
+ * hacer, sin jerga, y el modal no ofrece "Reintentar" (QA global B3).
+ */
+export const INVOICE_SCAN_UNAVAILABLE_MESSAGE = "El escaneo no está disponible ahora; registra la compra a mano.";
 export const INVOICE_SCAN_NETWORK_MESSAGE =
   "No hay conexión con el servidor. Revisa tu internet y vuelve a intentarlo.";
 export const INVOICE_SCAN_GENERIC_MESSAGE = "No pudimos escanear la factura. Vuelve a intentarlo.";
@@ -55,6 +62,29 @@ export const INVOICE_SCAN_PREPARE_FALLBACK = "No se pudo preparar la factura. Pr
 const STORAGE_UPLOAD_FAILED_MESSAGE = "No se pudo subir la factura. Revisa tu conexión y vuelve a intentarlo.";
 
 type UploadUrl = { page: number; path: string; signedUrl: string; token: string };
+
+/**
+ * Respuesta de `upload-url`: con `alreadyUploaded` la tienda ya tiene un escaneo
+ * vivo con ese hash, no hay URLs y el POST va con `storagePaths` (auditoría M3).
+ * Sin `alreadyUploaded` pero con `storagePaths`, algunas páginas ya estaban en
+ * el bucket: no traen URL y el POST lleva igualmente todas las rutas (REP-03-F1).
+ */
+type UploadUrlResponse = { alreadyUploaded?: boolean; storagePaths?: string[]; uploads: UploadUrl[] };
+
+/**
+ * Las URLs firmadas no llevan upsert: si el objeto ya existe (reintento tras un
+ * corte), Storage responde 409 o un 400 con "Duplicate"/"already exists" en el
+ * cuerpo. Es la misma página ya subida: el POST rehace el hash sobre los bytes.
+ */
+async function isAlreadyUploaded(response: Response) {
+  if (response.status === 409) {
+    return true;
+  }
+
+  const body = await response.text().catch(() => "");
+
+  return /duplicate|already exists/i.test(body);
+}
 
 type QuotaDetails = { limit?: unknown; used?: unknown };
 
@@ -78,7 +108,11 @@ export function describeInvoiceScanError(error: unknown): InvoiceScanUploadError
       return { kind: "quota", message: serverMessage ?? INVOICE_SCAN_QUOTA_FALLBACK, status: 429 };
     }
 
-    if (error.status === 502 || error.status === 503 || error.status === 504) {
+    if (error.status === 503) {
+      return { kind: "unavailable", message: INVOICE_SCAN_UNAVAILABLE_MESSAGE, status: 503 };
+    }
+
+    if (error.status === 502 || error.status === 504) {
       return { kind: "provider", message: serverMessage ?? INVOICE_SCAN_PROVIDER_FALLBACK, status: error.status };
     }
 
@@ -281,14 +315,19 @@ export function useInvoiceScanUpload({
   const sendByStorage = useCallback(
     async (invoice: PreparedInvoice, signal: AbortSignal) => {
       const types = invoice.pages[0]?.mediaType ?? "image/jpeg";
-      const { uploads } = await apiFetch<{ uploads: UploadUrl[] }>(INVOICE_SCAN_UPLOAD_URL_ENDPOINT, {
-        query: { pages: invoice.pages.length, sha256: invoice.sha256, types },
-        signal,
-      });
+      const { alreadyUploaded, storagePaths, uploads } = await apiFetch<UploadUrlResponse>(
+        INVOICE_SCAN_UPLOAD_URL_ENDPOINT,
+        { query: { pages: invoice.pages.length, sha256: invoice.sha256, types }, signal },
+      );
 
       await Promise.all(
-        invoice.pages.map(async (page, index) => {
+        (alreadyUploaded ? [] : invoice.pages).map(async (page, index) => {
           const target = uploads.find((upload) => upload.page === index + 1);
+
+          // Página ya en el bucket (viene en `storagePaths` sin URL): no se sube.
+          if (!target && storagePaths?.[index]) {
+            return;
+          }
 
           if (!target) {
             throw new Error(STORAGE_UPLOAD_FAILED_MESSAGE);
@@ -297,12 +336,12 @@ export function useInvoiceScanUpload({
           // URL firmada de Storage (otro origen): `fetch` directo, sin cabeceras de la app.
           const response = await fetch(target.signedUrl, {
             body: page.blob,
-            headers: { "content-type": page.mediaType, "x-upsert": "true" },
+            headers: { "content-type": page.mediaType },
             method: "PUT",
             signal,
           });
 
-          if (!response.ok) {
+          if (!response.ok && !(await isAlreadyUploaded(response))) {
             throw new ClientApiError(response.status, "STORAGE_UPLOAD_FAILED", STORAGE_UPLOAD_FAILED_MESSAGE);
           }
         }),
@@ -313,7 +352,8 @@ export function useInvoiceScanUpload({
       return apiFetch<InvoiceScanResponse>(INVOICE_SCAN_ENDPOINT, {
         body: {
           sha256: invoice.sha256,
-          storagePaths: [...uploads].sort((a, b) => a.page - b.page).map((upload) => upload.path),
+          storagePaths:
+            storagePaths ?? [...uploads].sort((a, b) => a.page - b.page).map((upload) => upload.path),
           ...(supplierId ? { supplierId } : {}),
         },
         method: "POST",

@@ -12,8 +12,10 @@ import {
   discardScan,
   failScan,
   findConfirmedScanByPurchase,
+  findLiveScanByHash,
   getDailyUsage,
   getProductNames,
+  getPurchaseNumber,
   getScan,
   listFewShotExamples,
   deleteScansByIds,
@@ -499,5 +501,47 @@ describe("scans.mock-server · escaneo de una compra (paridad SCN-09a)", () => {
   it("getProductNames solo nombra productos de la tienda", async () => {
     expect(await getProductNames(defaultStore, ["prod-drill", "prod-nope"])).toEqual({ "prod-drill": "Taladro percutor" });
     expect(await getProductNames(storeB, ["prod-drill"])).toEqual({});
+  });
+});
+
+describe("scans.mock-server · findLiveScanByHash (upload-url, M3)", () => {
+  const hash = "c".repeat(64);
+  const firstPage = `store-a/${hash}/p1.jpg`;
+
+  it.each(["processing", "extracted", "confirmed"] as const)(
+    "devuelve las rutas de un escaneo %s de la tienda con ese hash",
+    async (status) => {
+      const scan = await seedScanForTest(storeA, input({ imageSha256: hash, pages: 2, storagePath: firstPage }));
+      store().set(scan.id, { ...(store().get(scan.id) as InvoiceScanRow), status });
+
+      expect(await findLiveScanByHash(storeA, hash)).toEqual({
+        id: scan.id,
+        status,
+        storagePaths: [firstPage, `store-a/${hash}/p2.jpg`],
+      });
+    },
+  );
+
+  it.each(["failed", "discarded"] as const)("ignora un escaneo %s", async (status) => {
+    const scan = await seedScanForTest(storeA, input({ imageSha256: hash, storagePath: firstPage }));
+    store().set(scan.id, { ...(store().get(scan.id) as InvoiceScanRow), status });
+
+    expect(await findLiveScanByHash(storeA, hash)).toBeNull();
+  });
+
+  it("no ve el escaneo de otra tienda", async () => {
+    await seedScanForTest(storeB, input({ imageSha256: hash, storagePath: `store-b/${hash}/p1.jpg` }));
+
+    expect(await findLiveScanByHash(storeA, hash)).toBeNull();
+  });
+});
+
+describe("getPurchaseNumber (REP-01)", () => {
+  it("devuelve el número de una compra de la tienda y null para otra tienda o un id desconocido", async () => {
+    const defaultStore = { storeId: DEFAULT_STORE_ID, userId: "user-a" };
+
+    expect(await getPurchaseNumber(defaultStore, "purchase-001")).toBe("C-000001");
+    expect(await getPurchaseNumber(storeA, "purchase-001")).toBeNull();
+    expect(await getPurchaseNumber(defaultStore, "no-existe")).toBeNull();
   });
 });

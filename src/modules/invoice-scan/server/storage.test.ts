@@ -100,7 +100,7 @@ describe("invoice-scan storage", () => {
   });
 
   describe("createInvoiceUploadUrls", () => {
-    it("firma cada página con upsert en el bucket de facturas", async () => {
+    it("firma cada página sin upsert: un objeto existente no se puede reemplazar (M3)", async () => {
       const createSignedUploadUrl = jest.fn(async (path: string) => ({
         data: { path, signedUrl: `https://firma/${path}`, token: "tok" },
         error: null,
@@ -113,7 +113,7 @@ describe("invoice-scan storage", () => {
       ]);
 
       expect(from).toHaveBeenCalledWith(INVOICE_SCANS_BUCKET);
-      expect(createSignedUploadUrl).toHaveBeenCalledWith(PATH, { upsert: true });
+      expect(createSignedUploadUrl).toHaveBeenCalledWith(PATH, { upsert: false });
       expect(uploads).toEqual([
         { page: 1, path: PATH, signedUrl: `https://firma/${PATH}`, token: "tok" },
         {
@@ -122,6 +122,31 @@ describe("invoice-scan storage", () => {
           signedUrl: `https://firma/${STORE}/${HASH}/p2.webp`,
           token: "tok",
         },
+      ]);
+    });
+
+    it("una página que ya existe (Duplicate 409 al firmar) vuelve marcada como existente, sin URL (REP-03-F1)", async () => {
+      // Forma real de @supabase/storage-js: StorageApiError con status HTTP 400 y statusCode "409".
+      const duplicate = Object.assign(new Error("The resource already exists"), {
+        code: "KeyAlreadyExists",
+        status: 400,
+        statusCode: "409",
+      });
+      const createSignedUploadUrl = jest.fn(async (path: string) =>
+        path.endsWith("p1.jpg")
+          ? { data: null, error: duplicate }
+          : { data: { path, signedUrl: `https://firma/${path}`, token: "tok" }, error: null },
+      );
+      const { client } = clientWith({ createSignedUploadUrl });
+
+      const uploads = await createInvoiceUploadUrls(client, STORE, HASH, [
+        { mediaType: "image/jpeg", page: 1 },
+        { mediaType: "image/jpeg", page: 2 },
+      ]);
+
+      expect(uploads).toEqual([
+        { alreadyExists: true, page: 1, path: PATH },
+        { page: 2, path: `${STORE}/${HASH}/p2.jpg`, signedUrl: `https://firma/${STORE}/${HASH}/p2.jpg`, token: "tok" },
       ]);
     });
 
