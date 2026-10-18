@@ -235,6 +235,8 @@ export type InvoiceMatchCandidate = {
   score: number;
   /** Motivo legible en español: "SKU del proveedor", "alias visto 4 veces", "nombre parecido 0,72". */
   reason: string;
+  /** `products.sku` del candidato, si tiene: distingue candidatos de igual nombre en la revisión (D24-d). */
+  sku?: string;
 };
 
 export type InvoiceLineMatch = {

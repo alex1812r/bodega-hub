@@ -540,9 +540,26 @@ function candidateProduct(line: InvoiceReviewLine, productId: string): InvoiceRe
   return undefined;
 }
 
-/** Producto que acepta Enter: el marcado, o el primer candidato, o el propuesto. */
+/**
+ * Producto que acepta Enter: el marcado, o el primer candidato, o el propuesto.
+ * D24-d: si los dos primeros candidatos empatan sin desempate (mismo motivo y
+ * mismo score a la vista) y el emparejamiento no propuso ninguno, no se
+ * premarca nada: Enter elegiría al azar sin información.
+ */
 export function enterTargetProductId(line: InvoiceReviewLine): string | undefined {
-  return line.markedProductId ?? line.candidates[0]?.productId ?? line.productId;
+  if (line.markedProductId) {
+    return line.markedProductId;
+  }
+  const [first, second] = line.candidates;
+  const tied =
+    first !== undefined &&
+    second !== undefined &&
+    first.reason === second.reason &&
+    Math.round(first.score * 100) === Math.round(second.score * 100);
+  if (tied) {
+    return line.productId;
+  }
+  return first?.productId ?? line.productId;
 }
 
 function updateLine(

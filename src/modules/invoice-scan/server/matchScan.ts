@@ -4,6 +4,7 @@ import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
 
 import { loadMatchContext, type MatchContextSupabaseClient } from "./loadMatchContext";
 import { matchInvoice } from "./match";
+import type { MatchProduct } from "./match.types";
 import { loadMockMatchContext } from "./matchContext.mock-server";
 
 export type MatchScanContext = {
@@ -82,12 +83,48 @@ export function createMatchScan(deps: MatchScanDeps = defaultDeps): InvoiceScanM
     const extraction = normalizeExtractionForMatch(raw);
 
     if (dataSource === "mock") {
-      return matchInvoice(extraction, deps.loadMockContext(storeId, extraction, { excludeScanId: scanId }));
+      const context = deps.loadMockContext(storeId, extraction, { excludeScanId: scanId });
+      return withCandidateSkus(matchInvoice(extraction, context), context.products);
     }
 
     const supabase = await deps.createClient();
+    const context = await deps.loadContext(supabase, storeId, extraction, { excludeScanId: scanId });
 
-    return matchInvoice(extraction, await deps.loadContext(supabase, storeId, extraction, { excludeScanId: scanId }));
+    return withCandidateSkus(matchInvoice(extraction, context), context.products);
+  };
+}
+
+/**
+ * D24-d (caos B2): cada candidato lleva el `sku` del producto del contexto ya
+ * cargado, para que la revisión distinga candidatos de igual nombre. Sin SKU no
+ * se añade nada; las líneas sin candidatos quedan igual.
+ */
+export function withCandidateSkus(match: InvoiceMatch, products: readonly MatchProduct[]): InvoiceMatch {
+  const skus = new Map<string, string>();
+  for (const product of products) {
+    const sku = product.sku?.trim();
+    if (sku) {
+      skus.set(product.id, sku);
+    }
+  }
+
+  if (skus.size === 0) {
+    return match;
+  }
+
+  return {
+    ...match,
+    lines: match.lines.map((line) =>
+      line.candidates
+        ? {
+            ...line,
+            candidates: line.candidates.map((candidate) => {
+              const sku = skus.get(candidate.productId);
+              return sku ? { ...candidate, sku } : candidate;
+            }),
+          }
+        : line,
+    ),
   };
 }
 

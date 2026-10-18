@@ -19,7 +19,13 @@ import { singlePageExtraction } from "./__fixtures__/extractions";
 import { resetMockInvoiceScans } from "./confirmScan.mock-server";
 import type { MatchContextSupabaseClient } from "./loadMatchContext";
 import { matchInvoice } from "./match";
-import { createMatchScan, matchScan, normalizeExtractionForMatch, type MatchScanDeps } from "./matchScan";
+import {
+  createMatchScan,
+  matchScan,
+  normalizeExtractionForMatch,
+  withCandidateSkus,
+  type MatchScanDeps,
+} from "./matchScan";
 import { loadMockMatchContext } from "./matchContext.mock-server";
 import { seedScanForTest } from "./scans.mock-server";
 
@@ -48,7 +54,8 @@ describe("matchScan (Supabase)", () => {
     expect(injected.createClient).toHaveBeenCalledTimes(1);
     expect(injected.loadContext).toHaveBeenCalledWith(supabase, "store-1", polarExtraction, { excludeScanId: "scan-9" });
     expect(injected.loadMockContext).not.toHaveBeenCalled();
-    expect(result).toEqual(matchInvoice(polarExtraction, buildContext()));
+    // REP-04: los candidatos llevan además el sku del producto del contexto.
+    expect(result).toEqual(withCandidateSkus(matchInvoice(polarExtraction, buildContext()), buildContext().products));
     // No es el stub: el proveedor se resuelve y la línea sale emparejada.
     expect(result.supplier.contactId).toBe(SUPPLIER_POLAR);
     expect(result.lines[0]?.status).not.toBe("unmatched");
@@ -83,7 +90,8 @@ describe("matchScan (Supabase)", () => {
 
     expect(source).not.toContain("PUNTO DE INTEGRACIÓN");
     expect(source).toContain("loadContext: loadMatchContext");
-    expect(source).toContain("matchInvoice(extraction, await deps.loadContext(supabase, storeId, extraction, { excludeScanId: scanId }))");
+    expect(source).toContain("await deps.loadContext(supabase, storeId, extraction, { excludeScanId: scanId })");
+    expect(source).toContain("withCandidateSkus(matchInvoice(extraction, context), context.products)");
   });
 });
 
@@ -209,5 +217,35 @@ describe("matchScan (mock)", () => {
 
     expect(context.previousScans.map((scan) => scan.scanId)).toEqual([previous.id]);
     expect(matchInvoice(singlePageExtraction, context).duplicateOfScanId).toBe(previous.id);
+  });
+});
+
+describe("matchScan · SKU de los candidatos (REP-04 · D24-d, caos B2)", () => {
+  it("cada candidato lleva el sku del producto del contexto; sin sku no se añade", async () => {
+    const base = buildContext();
+    const context = {
+      ...base,
+      products: [
+        ...base.products,
+        { id: "p-jab-1", name: "Jabon Azul 250g", sku: "JAB-01", barcode: null, active: true, taxRateCode: "general", hasRecipe: false },
+        { id: "p-jab-2", name: "Jabon Azul 250g", sku: null, barcode: null, active: true, taxRateCode: "general", hasRecipe: false },
+      ],
+      fuzzy: {
+        0: [
+          { productId: "p-jab-1", score: 0.73, via: "name" as const },
+          { productId: "p-jab-2", score: 0.73, via: "name" as const },
+        ],
+      },
+    };
+    const extraction = buildExtraction({ lines: [buildLine({ rawText: "JABON AZUL 250", description: "Jabon azul 250" })] });
+    const matcher = createMatchScan(deps({ loadContext: jest.fn(async () => context) }));
+
+    const result = await matcher(extraction, { dataSource: "supabase", scanId: "s", storeId: "t" });
+
+    const candidates = result.lines[0]?.candidates ?? [];
+    expect(candidates.find((candidate) => candidate.productId === "p-jab-1")?.sku).toBe("JAB-01");
+    const noSku = candidates.find((candidate) => candidate.productId === "p-jab-2");
+    expect(noSku).toBeDefined();
+    expect(noSku && "sku" in noSku).toBe(false);
   });
 });

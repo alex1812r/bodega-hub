@@ -134,7 +134,9 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
           ) : null}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 rounded-xl border border-border bg-surface-container-lowest p-4 sm:grid-cols-2 dark:border-slate-800">
+        {/* Desde lg la columna de datos es estrecha (~260 px a 1280): número y fecha se apilan para que
+            la fecha no se corte ni la etiqueta parta en dos líneas (QA global B1). */}
+        <div className="grid grid-cols-1 gap-4 rounded-xl border border-border bg-surface-container-lowest p-4 sm:grid-cols-2 lg:grid-cols-1 dark:border-slate-800">
           <Input
             defaultValue={header.number ?? ""}
             label="Número de factura"
@@ -146,7 +148,7 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
             type="date"
             value={header.date ?? ""}
           />
-          <div className="flex flex-col gap-2 sm:col-span-2">
+          <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-1">
             <span className="text-xs font-medium text-on-surface-variant">Moneda de la factura</span>
             <span>
               <Badge variant={header.currency === "VES" ? "default" : "warning"}>

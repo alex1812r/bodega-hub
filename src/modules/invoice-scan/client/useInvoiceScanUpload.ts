@@ -33,6 +33,7 @@ export type InvoiceScanUploadErrorKind =
   | "in-progress"
   | "quota"
   | "provider"
+  | "unavailable"
   | "network"
   | "request";
 
@@ -48,6 +49,12 @@ export const INVOICE_SCAN_QUOTA_FALLBACK =
   "Se agotó la cuota de escaneos de hoy. Vuelve a intentarlo mañana o registra la compra a mano.";
 export const INVOICE_SCAN_PROVIDER_FALLBACK =
   "El servicio de lectura no respondió. Intenta de nuevo en unos segundos o registra la compra a mano.";
+/**
+ * 503: el escaneo no puede funcionar ahora (sin key del proveedor, almacenamiento
+ * caído). El texto del servidor habla de configuración; al usuario se le dice qué
+ * hacer, sin jerga, y el modal no ofrece "Reintentar" (QA global B3).
+ */
+export const INVOICE_SCAN_UNAVAILABLE_MESSAGE = "El escaneo no está disponible ahora; registra la compra a mano.";
 export const INVOICE_SCAN_NETWORK_MESSAGE =
   "No hay conexión con el servidor. Revisa tu internet y vuelve a intentarlo.";
 export const INVOICE_SCAN_GENERIC_MESSAGE = "No pudimos escanear la factura. Vuelve a intentarlo.";
@@ -101,7 +108,11 @@ export function describeInvoiceScanError(error: unknown): InvoiceScanUploadError
       return { kind: "quota", message: serverMessage ?? INVOICE_SCAN_QUOTA_FALLBACK, status: 429 };
     }
 
-    if (error.status === 502 || error.status === 503 || error.status === 504) {
+    if (error.status === 503) {
+      return { kind: "unavailable", message: INVOICE_SCAN_UNAVAILABLE_MESSAGE, status: 503 };
+    }
+
+    if (error.status === 502 || error.status === 504) {
       return { kind: "provider", message: serverMessage ?? INVOICE_SCAN_PROVIDER_FALLBACK, status: error.status };
     }
 

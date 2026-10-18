@@ -274,6 +274,50 @@ describe("InvoiceScanModal", () => {
     expect(await screen.findByText("Escaneos hoy: 3 de 50")).toBeInTheDocument();
   });
 
+  it("un 503 (sin key) dice que el escaneo no está disponible, sin jerga ni «Reintentar», y deja seguir a mano (REP-04)", async () => {
+    postResponses = [
+      async () =>
+        jsonResponse(
+          {
+            error: {
+              code: "INTERNAL_ERROR",
+              message: "El escaneo de facturas no está configurado: falta la key del proveedor de IA.",
+            },
+          },
+          503,
+        ),
+    ];
+    const handlers = renderModal();
+    await screen.findByText("Escaneos hoy: 2 de 50");
+
+    await selectFile();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("El escaneo no está disponible ahora; registra la compra a mano.");
+    expect(alert.textContent).not.toMatch(/key/i);
+    expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Registrar a mano" }));
+    expect(handlers.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("un 502 del proveedor sigue ofreciendo «Reintentar» (REP-04)", async () => {
+    postResponses = [
+      async () =>
+        jsonResponse(
+          { error: { code: "INVOICE_SCAN_PROVIDER_ERROR", message: "El servicio de IA no está disponible." } },
+          502,
+        ),
+    ];
+    renderModal();
+    await screen.findByText("Escaneos hoy: 2 de 50");
+
+    await selectFile();
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeEnabled();
+  });
+
   it("con el uso por encima del límite no muestra números incoherentes (SCN-07-F1)", async () => {
     limitsPayload = { limit: 5, remaining: 0, used: 32 };
     renderModal();

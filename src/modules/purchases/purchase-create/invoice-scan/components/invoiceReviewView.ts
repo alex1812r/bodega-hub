@@ -71,7 +71,8 @@ export type ChoiceChip = { productId: string; name: string; detail: string };
  */
 export function getChoiceChips(line: InvoiceReviewLine): ChoiceChip[] {
   const chips = line.candidates.map((candidate) => ({
-    detail: `${candidate.reason} · ${formatScore(candidate.score)}`,
+    // D24-d: el SKU distingue candidatos de igual nombre.
+    detail: `${candidate.sku ? `SKU ${candidate.sku} · ` : ""}${candidate.reason} · ${formatScore(candidate.score)}`,
     name: candidate.name,
     productId: candidate.productId,
   }));
