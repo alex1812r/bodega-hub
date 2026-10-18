@@ -734,8 +734,10 @@ export async function finalizeInvoiceScan(
   input: FinalizeInvoiceScanInput,
   storeId: string,
 ): Promise<InvoiceScanOutcome> {
-  if (scan.replay && (scan.learned !== false || scan.purchaseId !== input.purchaseId)) {
-    return { confirmed: scan.purchaseId === input.purchaseId, learned: null };
+  const replayOfThisPurchase = scan.replay && scan.purchaseId === input.purchaseId;
+
+  if (replayOfThisPurchase && scan.learned !== false) {
+    return { confirmed: true, learned: null };
   }
 
   let supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>;
@@ -744,7 +746,15 @@ export async function finalizeInvoiceScan(
     supabase = await createRouteSupabaseClient();
   } catch (error) {
     logInvoiceScanFailure("confirm", scan.id, error);
-    return { confirmed: scan.replay, learned: null };
+    return { confirmed: replayOfThisPurchase, learned: null };
+  }
+
+  // REP-04 · caos B1: el pre-check lee la fila ANTES del reclamo; si otra petición
+  // del mismo intento confirmó entre medias, el reclamo da `replay` con la lectura
+  // vieja (`purchaseId` null). El resultado sale del estado real; no se reaprende
+  // (lo hizo la petición que confirmó).
+  if (scan.replay && !replayOfThisPurchase) {
+    return { confirmed: await isScanConfirmedWith(supabase, scan.id, input.purchaseId, storeId), learned: null };
   }
 
   // CIE-06: replay de un escaneo ya confirmado con ESTA compra cuyo aprendizaje
@@ -776,7 +786,8 @@ export async function finalizeInvoiceScan(
       keyReused = true;
     } else if (error) {
       logInvoiceScanFailure("confirm", scan.id, error);
-      return { confirmed: false, learned: null };
+      // Caos B1: otra petición del mismo intento pudo confirmar con esta compra.
+      return { confirmed: await isScanConfirmedWith(supabase, scan.id, input.purchaseId, storeId), learned: null };
     }
 
     // `false`: ya estaba confirmado con esta compra (otra llamada del mismo
@@ -786,7 +797,7 @@ export async function finalizeInvoiceScan(
     }
   } catch (error) {
     logInvoiceScanFailure("confirm", scan.id, error);
-    return { confirmed: false, learned: null };
+    return { confirmed: await isScanConfirmedWith(supabase, scan.id, input.purchaseId, storeId), learned: null };
   }
 
   // M1: la compra devuelta no es de este intento (la clave ya creó otra compra);
@@ -814,6 +825,35 @@ export async function finalizeInvoiceScan(
     confirmed: true,
     learned: await learnInvoiceAliases(supabase, scan.id, buildLearnLines(confirmed.lines, input.items)),
   };
+}
+
+/**
+ * Estado real del escaneo tras un confirm que falló o compitió (caos B1): `true`
+ * solo si está `confirmed` con ESTA compra. Nunca lanza: si la lectura falla se
+ * registra y se informa `false` (no se sabe).
+ */
+async function isScanConfirmedWith(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  scanId: string,
+  purchaseId: string,
+  storeId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from("invoice_scans")
+      .select("status, purchase_id")
+      .eq("id", scanId)
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    throwIfSupabaseError(error);
+
+    const row = (data as Pick<DbInvoiceScanRow, "purchase_id" | "status"> | null) ?? null;
+    return row?.status === "confirmed" && row.purchase_id === purchaseId;
+  } catch (error) {
+    logInvoiceScanFailure("confirm", scanId, error);
+    return false;
+  }
 }
 
 /**
