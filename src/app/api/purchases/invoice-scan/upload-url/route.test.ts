@@ -9,11 +9,41 @@ jest.mock("../../../../../lib/supabase/admin-client", () => ({
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
 import { INVOICE_SCAN_REAL_SESSION_MESSAGE } from "@/modules/invoice-scan/server/requireScanSession";
+import { resetMockScanStore, seedScanForTest } from "@/modules/invoice-scan/server/scans.mock-server";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { GET } from "./route";
 
 const HASH = "a".repeat(64);
+
+/** Cliente service role falso: `from("invoice_scans")` devuelve `liveScan` y `storage` firma subidas. */
+function adminClient(liveScan: Record<string, unknown> | null = null) {
+  const createSignedUploadUrl = jest.fn(async (path: string) => ({
+    data: { path, signedUrl: `https://firma/${path}`, token: `t-${path}` },
+    error: null,
+  }));
+  const storageFrom = jest.fn(() => ({ createSignedUploadUrl }));
+  const query = {
+    eq: () => query,
+    in: () => query,
+    limit: () => query,
+    maybeSingle: async () => ({ data: liveScan, error: null }),
+    select: () => query,
+  };
+  const client = { from: jest.fn(() => query), storage: { from: storageFrom } };
+  (createAdminSupabaseClient as jest.Mock).mockReturnValue(client);
+  return { client, createSignedUploadUrl, storageFrom };
+}
+
+const ALMACEN_PROFILE = {
+  deniedPermissions: [],
+  grantedPermissions: [],
+  id: "f2120000-0000-4000-8000-000000000001",
+  isActive: true,
+  name: "Almacén",
+  role: "almacen",
+  storeId: DEFAULT_STORE_ID,
+};
 
 function request(query: string, headers: Record<string, string> = { "x-demo-role": "almacen" }) {
   return new Request(`http://localhost/api/purchases/invoice-scan/upload-url?${query}`, { headers });
@@ -24,6 +54,7 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
   const originalDemoAuth = process.env.ALLOW_DEMO_AUTH;
 
   afterEach(() => {
+    resetMockScanStore();
     process.env.API_DATA_SOURCE = originalDataSource;
     process.env.ALLOW_DEMO_AUTH = originalDemoAuth;
   });
@@ -117,21 +148,8 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
 
   it("en supabase firma una URL por página con un solo tipo para todas", async () => {
     process.env.API_DATA_SOURCE = "supabase";
-    (getAuthProfileFromSession as jest.Mock).mockResolvedValue({
-      deniedPermissions: [],
-      grantedPermissions: [],
-      id: "f2120000-0000-4000-8000-000000000001",
-      isActive: true,
-      name: "Almacén",
-      role: "almacen",
-      storeId: DEFAULT_STORE_ID,
-    });
-    const createSignedUploadUrl = jest.fn(async (path: string) => ({
-      data: { path, signedUrl: `https://firma/${path}`, token: `t-${path}` },
-      error: null,
-    }));
-    const from = jest.fn(() => ({ createSignedUploadUrl }));
-    (createAdminSupabaseClient as jest.Mock).mockReturnValue({ storage: { from } });
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue(ALMACEN_PROFILE);
+    const { storageFrom: from } = adminClient();
 
     const response = await GET(request(`sha256=${HASH}&pages=2&types=image/jpeg`));
     const body = await response.json();
@@ -146,5 +164,55 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
       signedUrl: `https://firma/${DEFAULT_STORE_ID}/${HASH}/p1.jpg`,
       token: `t-${DEFAULT_STORE_ID}/${HASH}/p1.jpg`,
     });
+  });
+
+  it.each(["processing", "extracted", "confirmed"])(
+    "en supabase no firma si ya hay un escaneo %s de la tienda con ese hash: alreadyUploaded con sus rutas (M3)",
+    async (status) => {
+      process.env.API_DATA_SOURCE = "supabase";
+      (getAuthProfileFromSession as jest.Mock).mockResolvedValue(ALMACEN_PROFILE);
+      const firstPage = `${DEFAULT_STORE_ID}/${HASH}/p1.jpg`;
+      const { createSignedUploadUrl } = adminClient({
+        id: "11111111-1111-4111-8111-111111111111",
+        pages: 2,
+        status,
+        storage_path: firstPage,
+      });
+
+      const response = await GET(request(`sha256=${HASH}&pages=2&types=image/jpeg`));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(createSignedUploadUrl).not.toHaveBeenCalled();
+      expect(body.data).toEqual({
+        alreadyUploaded: true,
+        storagePaths: [firstPage, `${DEFAULT_STORE_ID}/${HASH}/p2.jpg`],
+        uploads: [],
+      });
+    },
+  );
+
+  it("en supabase sin escaneo vivo firma y marca alreadyUploaded false", async () => {
+    process.env.API_DATA_SOURCE = "supabase";
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue(ALMACEN_PROFILE);
+    const { createSignedUploadUrl } = adminClient(null);
+
+    const body = await (await GET(request(`sha256=${HASH}&pages=1&types=image/jpeg`))).json();
+
+    expect(createSignedUploadUrl).toHaveBeenCalledTimes(1);
+    expect(body.data.alreadyUploaded).toBe(false);
+    expect(body.data.uploads).toHaveLength(1);
+  });
+
+  it("en mock tampoco firma si ya hay un escaneo vivo con ese hash en la tienda (M3)", async () => {
+    const firstPage = `${DEFAULT_STORE_ID}/${HASH}/p1.jpg`;
+    await seedScanForTest(
+      { storeId: DEFAULT_STORE_ID, userId: "otro-usuario" },
+      { imageSha256: HASH, model: "m", provider: "mock", storagePath: firstPage },
+    );
+
+    const body = await (await GET(request(`sha256=${HASH}&pages=1&types=image/jpeg`))).json();
+
+    expect(body.data).toEqual({ alreadyUploaded: true, storagePaths: [firstPage], uploads: [] });
   });
 });

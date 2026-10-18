@@ -100,7 +100,7 @@ describe("invoice-scan storage", () => {
   });
 
   describe("createInvoiceUploadUrls", () => {
-    it("firma cada página con upsert en el bucket de facturas", async () => {
+    it("firma cada página sin upsert: un objeto existente no se puede reemplazar (M3)", async () => {
       const createSignedUploadUrl = jest.fn(async (path: string) => ({
         data: { path, signedUrl: `https://firma/${path}`, token: "tok" },
         error: null,
@@ -113,7 +113,7 @@ describe("invoice-scan storage", () => {
       ]);
 
       expect(from).toHaveBeenCalledWith(INVOICE_SCANS_BUCKET);
-      expect(createSignedUploadUrl).toHaveBeenCalledWith(PATH, { upsert: true });
+      expect(createSignedUploadUrl).toHaveBeenCalledWith(PATH, { upsert: false });
       expect(uploads).toEqual([
         { page: 1, path: PATH, signedUrl: `https://firma/${PATH}`, token: "tok" },
         {

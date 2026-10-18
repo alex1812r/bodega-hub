@@ -56,6 +56,27 @@ const STORAGE_UPLOAD_FAILED_MESSAGE = "No se pudo subir la factura. Revisa tu co
 
 type UploadUrl = { page: number; path: string; signedUrl: string; token: string };
 
+/**
+ * Respuesta de `upload-url`: con `alreadyUploaded` la tienda ya tiene un escaneo
+ * vivo con ese hash, no hay URLs y el POST va con `storagePaths` (auditoría M3).
+ */
+type UploadUrlResponse = { alreadyUploaded?: boolean; storagePaths?: string[]; uploads: UploadUrl[] };
+
+/**
+ * Las URLs firmadas no llevan upsert: si el objeto ya existe (reintento tras un
+ * corte), Storage responde 409 o un 400 con "Duplicate"/"already exists" en el
+ * cuerpo. Es la misma página ya subida: el POST rehace el hash sobre los bytes.
+ */
+async function isAlreadyUploaded(response: Response) {
+  if (response.status === 409) {
+    return true;
+  }
+
+  const body = await response.text().catch(() => "");
+
+  return /duplicate|already exists/i.test(body);
+}
+
 type QuotaDetails = { limit?: unknown; used?: unknown };
 
 function isAbortError(error: unknown) {
@@ -281,13 +302,13 @@ export function useInvoiceScanUpload({
   const sendByStorage = useCallback(
     async (invoice: PreparedInvoice, signal: AbortSignal) => {
       const types = invoice.pages[0]?.mediaType ?? "image/jpeg";
-      const { uploads } = await apiFetch<{ uploads: UploadUrl[] }>(INVOICE_SCAN_UPLOAD_URL_ENDPOINT, {
-        query: { pages: invoice.pages.length, sha256: invoice.sha256, types },
-        signal,
-      });
+      const { alreadyUploaded, storagePaths, uploads } = await apiFetch<UploadUrlResponse>(
+        INVOICE_SCAN_UPLOAD_URL_ENDPOINT,
+        { query: { pages: invoice.pages.length, sha256: invoice.sha256, types }, signal },
+      );
 
       await Promise.all(
-        invoice.pages.map(async (page, index) => {
+        (alreadyUploaded ? [] : invoice.pages).map(async (page, index) => {
           const target = uploads.find((upload) => upload.page === index + 1);
 
           if (!target) {
@@ -297,12 +318,12 @@ export function useInvoiceScanUpload({
           // URL firmada de Storage (otro origen): `fetch` directo, sin cabeceras de la app.
           const response = await fetch(target.signedUrl, {
             body: page.blob,
-            headers: { "content-type": page.mediaType, "x-upsert": "true" },
+            headers: { "content-type": page.mediaType },
             method: "PUT",
             signal,
           });
 
-          if (!response.ok) {
+          if (!response.ok && !(await isAlreadyUploaded(response))) {
             throw new ClientApiError(response.status, "STORAGE_UPLOAD_FAILED", STORAGE_UPLOAD_FAILED_MESSAGE);
           }
         }),
@@ -313,7 +334,10 @@ export function useInvoiceScanUpload({
       return apiFetch<InvoiceScanResponse>(INVOICE_SCAN_ENDPOINT, {
         body: {
           sha256: invoice.sha256,
-          storagePaths: [...uploads].sort((a, b) => a.page - b.page).map((upload) => upload.path),
+          storagePaths:
+            alreadyUploaded && storagePaths
+              ? storagePaths
+              : [...uploads].sort((a, b) => a.page - b.page).map((upload) => upload.path),
           ...(supplierId ? { supplierId } : {}),
         },
         method: "POST",

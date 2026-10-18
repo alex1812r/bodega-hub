@@ -115,7 +115,19 @@ export type InvoiceUploadUrl = {
 
 export type InvoiceUploadRequestPage = { page: number; mediaType: InvoiceScanMediaType };
 
-/** URLs firmadas de subida, una por página, bajo `<storeId>/<sha256>/`. */
+/**
+ * URLs firmadas de subida, una por página, bajo `<storeId>/<sha256>/`.
+ *
+ * Sin upsert (auditoría M3): con upsert cualquiera con `purchases.create`
+ * podía pedir la URL del hash de un escaneo ajeno (el sha se ve en
+ * `invoice_scans`) y reemplazar su imagen, incluso confirmada. El token lo emite
+ * Storage con vida fija de 2 h: `createSignedUploadUrl` de
+ * @supabase/storage-js 2.115 solo acepta `{ upsert }`, no una expiración. La
+ * protección es por tanto `upsert: false`: un PUT sobre un objeto que ya
+ * existe falla (409 "Duplicate"), sea el segundo PUT del mismo token o uno
+ * sobre la página de otro escaneo. Para un reintento legítimo eso equivale a
+ * "ya subido": el POST rehace el hash sobre los bytes guardados.
+ */
 export async function createInvoiceUploadUrls(
   client: StorageClient,
   storeId: string,
@@ -127,9 +139,8 @@ export async function createInvoiceUploadUrls(
   return Promise.all(
     pages.map(async ({ mediaType, page }) => {
       const path = invoiceScanPath(storeId, sha256, page, mediaType);
-      // Upsert: reintentar la subida del mismo escaneo (mismo hash) no debe fallar.
       const result = await bucket
-        .createSignedUploadUrl(path, { upsert: true })
+        .createSignedUploadUrl(path, { upsert: false })
         .catch(() => storageUnavailable());
 
       if (result.error || !result.data?.signedUrl) {

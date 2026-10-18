@@ -2948,7 +2948,13 @@ paths:
         Una URL de subida por pagina al bucket privado `invoice-scans`, siempre
         bajo `<storeId>/<sha256>/p<n>.<ext>` de la tienda de la sesion. Las rutas
         devueltas se mandan despues a `POST /api/purchases/invoice-scan`. En modo
-        mock devuelve URLs falsas deterministas.
+        mock devuelve URLs falsas deterministas. Las URLs no permiten reemplazar
+        un objeto existente (sin upsert; el token de Storage dura 2 h): un PUT
+        sobre una pagina ya subida falla con 409 "Duplicate", que el cliente
+        trata como ya subida. Si la tienda ya tiene un escaneo `processing`,
+        `extracted` o `confirmed` con ese hash no firma nada y responde
+        `alreadyUploaded: true` con las rutas de ese escaneo en `storagePaths`
+        y `uploads` vacio; el cliente las manda al POST sin subir.
       x-permission: purchases.create
       parameters:
         - name: sha256
@@ -2975,7 +2981,7 @@ paths:
             type: string
       responses:
         "200":
-          description: URLs de subida, una por pagina.
+          description: URLs de subida, una por pagina, o las rutas del escaneo vivo con ese hash.
           content:
             application/json:
               schema:
@@ -2984,8 +2990,15 @@ paths:
                 properties:
                   data:
                     type: object
-                    required: [uploads]
+                    required: [alreadyUploaded, uploads]
                     properties:
+                      alreadyUploaded:
+                        type: boolean
+                      storagePaths:
+                        type: array
+                        description: Solo con `alreadyUploaded`; rutas p1..pN del escaneo existente.
+                        items:
+                          type: string
                       uploads:
                         type: array
                         items:
