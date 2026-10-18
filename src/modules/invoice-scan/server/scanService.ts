@@ -303,6 +303,27 @@ function assertHash(expected: string | undefined, actual: string) {
   }
 }
 
+/** Caos B9: sin páginas repetidas (mismo sha256), en el orden de su primera aparición. */
+function uniquePages(pages: readonly InvoicePage[]): InvoicePage[] {
+  const seen = new Set<string>();
+
+  return pages.filter((page) => {
+    const hash = sha256OfPages([page.data]);
+
+    if (seen.has(hash)) {
+      return false;
+    }
+
+    seen.add(hash);
+    return true;
+  });
+}
+
+/** Las páginas únicas bajo su propio hash: p1..pN que hay que subir. */
+function uploadsOf(ctx: InvoiceScanContext, sha256: string, pages: readonly InvoicePage[]) {
+  return pages.map((page, index) => ({ page, path: invoiceScanPath(ctx.storeId, sha256, index + 1, page.mediaType) }));
+}
+
 async function loadScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
@@ -313,15 +334,14 @@ async function loadScan(
     assertSameMediaType(mediaTypes);
     assertImages(input.pages);
 
-    const sha256 = sha256OfPages(input.pages.map((page) => page.data));
-    assertHash(input.sha256, sha256);
+    // El hash declarado es el de lo enviado; la fila y las rutas usan el de las páginas únicas.
+    assertHash(input.sha256, sha256OfPages(input.pages.map((page) => page.data)));
 
-    const pendingUploads = input.pages.map((page, index) => ({
-      page,
-      path: invoiceScanPath(ctx.storeId, sha256, index + 1, page.mediaType),
-    }));
+    const pages = uniquePages(input.pages);
+    const sha256 = sha256OfPages(pages.map((page) => page.data));
+    const pendingUploads = uploadsOf(ctx, sha256, pages);
 
-    return { pages: input.pages, pendingUploads, sha256, storagePath: pendingUploads[0]!.path };
+    return { pages, pendingUploads, sha256, storagePath: pendingUploads[0]!.path };
   }
 
   for (const path of input.storagePaths) {
@@ -350,6 +370,17 @@ async function loadScan(
 
   assertHash(input.sha256, sha256OfPages(pages.map((page) => page.data)));
   assertImages(pages);
+
+  const unique = uniquePages(pages);
+
+  if (unique.length < pages.length) {
+    // Caos B9: las rutas p1..pN del hash declarado incluyen repetidas; las únicas
+    // se suben bajo su propio hash (las otras las borra la purga por antigüedad).
+    const sha256 = sha256OfPages(unique.map((page) => page.data));
+    const pendingUploads = uploadsOf(ctx, sha256, unique);
+
+    return { pages: unique, pendingUploads, sha256, storagePath: pendingUploads[0]!.path };
+  }
 
   return { pages, pendingUploads: [], sha256: input.sha256, storagePath: input.storagePaths[0]! };
 }

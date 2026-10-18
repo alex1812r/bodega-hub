@@ -1121,3 +1121,56 @@ describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B
     });
   });
 });
+
+describe("scanInvoice · página repetida en multipágina (caos B9)", () => {
+  it("multipart: deduplica antes de reservar, cobra solo las páginas únicas y no duplica líneas", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const a = page("misma");
+    const b = page("otra");
+    const pages = [a, { ...a, data: a.data.slice() }, b, a];
+    const declared = sha256OfPages(pages.map((item) => item.data));
+    const unique = sha256OfPages([a.data, b.data]);
+
+    const response = await scanInvoice(built, ctx, { pages, sha256: declared, source: "upload" });
+
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect((extract.mock.calls[0] as unknown as [{ pages: InvoicePage[] }])[0].pages.map((item) => item.data)).toEqual([
+      a.data,
+      b.data,
+    ]);
+    expect(response.limits).toMatchObject({ used: 2 });
+    expect(await mockRepo.getScan(ctx, response.scanId)).toMatchObject({
+      imageSha256: unique,
+      pages: 2,
+      storagePath: `${ctx.storeId}/${unique}/p1.jpg`,
+    });
+    expect([...storage.objects.keys()].sort()).toEqual([
+      `${ctx.storeId}/${unique}/p1.jpg`,
+      `${ctx.storeId}/${unique}/p2.jpg`,
+    ]);
+  });
+
+  it("storagePaths: deduplica, sube las únicas bajo su hash y cobra solo esas", async () => {
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+    const a = jpegHeader(1600, 1200, "a");
+    const b = jpegHeader(1600, 1200, "b");
+    const all = [a, a, b];
+    const declared = sha256OfPages(all);
+    const storagePaths = all.map((data, index) => {
+      const path = `${ctx.storeId}/${declared}/p${index + 1}.jpg`;
+      storage.objects.set(path, data);
+      return path;
+    });
+    const unique = sha256OfPages([a, b]);
+
+    const response = await scanInvoice(built, ctx, { sha256: declared, source: "storage", storagePaths });
+
+    expect((extract.mock.calls[0] as unknown as [{ pages: InvoicePage[] }])[0].pages).toHaveLength(2);
+    expect(response.limits).toMatchObject({ used: 2 });
+    const row = await mockRepo.getScan(ctx, response.scanId);
+    expect(row).toMatchObject({ imageSha256: unique, pages: 2 });
+    expect(invoiceScanPagePaths(row!.storagePath, row!.pages).map((path) => storage.objects.get(path))).toEqual([a, b]);
+  });
+});
