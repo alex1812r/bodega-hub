@@ -404,3 +404,80 @@ describe("toInvoiceScanApiError", () => {
     });
   });
 });
+
+describe("extractInvoice: ¿el proveedor pudo facturar? (D24-a, caos B3)", () => {
+  let consoleError: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  function failingWith(statusCode: number) {
+    return new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new APICallError({
+          isRetryable: false,
+          message: "rechazo del proveedor",
+          requestBodyValues: {},
+          statusCode,
+          url: "https://example.test",
+        });
+      },
+    });
+  }
+
+  it.each([401, 403, 503, 429])("un %i del proveedor no se factura (billable=false)", async (statusCode) => {
+    const error = await extractInvoice({ model: info(failingWith(statusCode)), pages: [page()] }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(InvoiceExtractionError);
+    expect((error as InvoiceExtractionError).billable).toBe(false);
+  });
+
+  it("un 500 del proveedor, una salida inválida y un timeout sí cuentan (billable=true)", async () => {
+    const server = await extractInvoice({ model: info(failingWith(500)), pages: [page()] }).catch((e: unknown) => e);
+    const invalid = await expectCode(extractInvoice({ model: mockInfo("invalid").info, pages: [page()] }), "INVALID_OUTPUT");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10);
+    const timeout = await expectCode(
+      extractInvoice({ model: mockInfo("timeout").info, pages: [page()], signal: controller.signal }),
+      "TIMEOUT",
+    );
+
+    expect((server as InvoiceExtractionError).billable).toBe(true);
+    expect(invalid.billable).toBe(true);
+    expect(timeout.billable).toBe(true);
+  });
+
+  it("si la página 1 ya se leyó y la 2 da 503, el intento cuenta (la página 1 se facturó)", async () => {
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        calls += 1;
+
+        if (calls === 1) {
+          return generated(firstPageExtraction, 10, 10);
+        }
+
+        throw new APICallError({
+          isRetryable: false,
+          message: "caído",
+          requestBodyValues: {},
+          statusCode: 503,
+          url: "https://example.test",
+        });
+      },
+    });
+
+    const error = await extractInvoice({ model: info(model), pages: [page("p1"), page("p2")] }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect((error as InvoiceExtractionError).billable).toBe(true);
+  });
+});

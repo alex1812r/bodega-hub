@@ -63,8 +63,22 @@ const ERROR_MESSAGES: Record<InvoiceExtractionErrorCode, string> = {
     "La lectura de la factura tardó demasiado. Intenta de nuevo; si se repite, registra la compra a mano.",
 };
 
+/**
+ * Respuestas con las que el proveedor rechaza la petición sin procesarla (key
+ * inválida o sin permiso, servicio no disponible, límite de peticiones): no
+ * llegó a facturar, así que el intento no cuenta en la cuota (D24-a).
+ */
+const NOT_BILLED_STATUS_CODES: ReadonlySet<number> = new Set([401, 403, 429, 503]);
+
 export class InvoiceExtractionError extends Error {
-  constructor(public readonly code: InvoiceExtractionErrorCode) {
+  /**
+   * `billable`: el proveedor pudo facturar el intento (timeout, salida
+   * inválida, error desconocido). Si es false, quien llama devuelve la cuota.
+   */
+  constructor(
+    public readonly code: InvoiceExtractionErrorCode,
+    public readonly billable = true,
+  ) {
     super(ERROR_MESSAGES[code]);
     this.name = "InvoiceExtractionError";
   }
@@ -95,6 +109,18 @@ function classify(error: unknown, signal: AbortSignal): InvoiceExtractionErrorCo
   }
 
   return "PROVIDER_ERROR";
+}
+
+/** ¿Pudo facturar el proveedor? Solo no si respondió con un rechazo sin procesar. */
+function isBilled(error: unknown, signal: AbortSignal): boolean {
+  const cause = RetryError.isInstance(error) ? error.lastError : error;
+
+  return (
+    signal.aborted ||
+    !APICallError.isInstance(cause) ||
+    cause.statusCode === undefined ||
+    !NOT_BILLED_STATUS_CODES.has(cause.statusCode)
+  );
 }
 
 /**
@@ -192,7 +218,7 @@ async function extractPage(
   } catch (error) {
     const code = classify(error, signal);
     logFailure(code, error);
-    throw new InvoiceExtractionError(code);
+    throw new InvoiceExtractionError(code, isBilled(error, signal));
   }
 }
 
@@ -260,7 +286,16 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
   const results: PageResult[] = [];
 
   for (let index = 0; index < input.pages.length; index += 1) {
-    results.push(await extractPage(info, input, index));
+    try {
+      results.push(await extractPage(info, input, index));
+    } catch (error) {
+      // Las páginas ya leídas se facturaron aunque esta no.
+      if (index > 0 && error instanceof InvoiceExtractionError && !error.billable) {
+        throw new InvoiceExtractionError(error.code, true);
+      }
+
+      throw error;
+    }
   }
 
   return {

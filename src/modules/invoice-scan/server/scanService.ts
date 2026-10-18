@@ -474,7 +474,8 @@ async function readCachedScan(
  * - `reserved` (páginas ya cobradas): subida → few-shot → extracción →
  *   emparejamiento → `extracted`. Un fallo deja la fila `failed` con el código
  *   (nunca el contenido); si es del modelo responde 502. Si falla la subida
- *   (antes de llamar al modelo) se devuelven las páginas cobradas; un corte del
+ *   o el few-shot (antes de llamar al modelo), o el proveedor rechaza sin
+ *   procesar (401/403/429/503, D24-a), se devuelven las páginas cobradas; un corte del
  *   cliente durante la lectura queda como `CLIENT_ABORTED`. El cierre lleva el
  *   `attemptId` de la reserva: si otra reserva tomó la fila, 409.
  * Un escaneo `failed` o `discarded` se vuelve a leer y cobra otra vez.
@@ -540,17 +541,35 @@ export async function scanInvoice(
     throw error;
   }
 
-  const fewShot = await loadFewShot(deps, ctx, input.supplierId);
+  let fewShot: InvoiceFewShotExample[];
+
+  try {
+    fewShot = await loadFewShot(deps, ctx, input.supplierId);
+  } catch (error) {
+    // Antes de llamar al modelo: se devuelven las páginas (D24-a).
+    await fail("FEW_SHOT_ERROR", true);
+    throw error;
+  }
 
   try {
     result = await deps.extract({ fewShot, model, pages: scan.pages, signal: options.signal });
   } catch (error) {
+    if (error instanceof ApiError) {
+      // Rechazo propio antes de enviar (bytes, configuración): ni modelo ni cobro.
+      await fail("PRE_SEND_ERROR", true);
+      throw error;
+    }
+
+    const aborted = options.signal?.aborted === true;
+    // D24-a: un rechazo del proveedor sin procesar (401/403/429/503) no cobra.
+    const notBilled = !aborted && error instanceof InvoiceExtractionError && !error.billable;
     await fail(
-      options.signal?.aborted
+      aborted
         ? INVOICE_SCAN_CLIENT_ABORTED
         : error instanceof InvoiceExtractionError
           ? error.code
           : "PROVIDER_ERROR",
+      notBilled,
     );
     throw toInvoiceScanApiError(error);
   }

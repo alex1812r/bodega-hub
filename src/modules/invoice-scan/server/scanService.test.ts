@@ -1,13 +1,16 @@
 /**
  * @jest-environment node
  */
+import { APICallError } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+
 import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
 
 import type { InvoiceExtraction } from "../contracts";
 import { notAnInvoiceExtraction, singlePageExtraction } from "./__fixtures__/extractions";
 import { jpegHeader } from "./__fixtures__/images";
-import { InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } from "./extract";
+import { extractInvoice, InvoiceExtractionError, type ExtractInvoiceResult, type InvoicePage } from "./extract";
 import { toFewShotFormat } from "./fewShot";
 import { matchScan } from "./matchScan";
 import { createMockInvoiceScanModel } from "./mockModel";
@@ -1036,5 +1039,85 @@ describe("scanInvoice · textos opcionales vacíos (SCN-13a)", () => {
     expect(response.cached).toBe(true);
     expect(extract).not.toHaveBeenCalled();
     expectNoBlankOptionals(response.extraction);
+  });
+});
+
+describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B3)", () => {
+  let consoleError: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  function providerFailing(statusCode: number) {
+    return new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new APICallError({
+          isRetryable: false,
+          message: "rechazo",
+          requestBodyValues: {},
+          statusCode,
+          url: "https://example.test",
+        });
+      },
+    });
+  }
+
+  it.each([401, 403, 503])("un %i del proveedor deja la fila failed sin cobrar la página", async (statusCode) => {
+    const ctx = newContext();
+    const model = providerFailing(statusCode);
+    const { built } = deps({
+      extract: extractInvoice,
+      model: () => ({ model, modelId: "gemini-x", provider: "google" }),
+    });
+    const pages = [page(`rechazo ${statusCode}`)];
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 502 });
+
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      error: "PROVIDER_ERROR",
+      status: "failed",
+      usagePages: 0,
+    });
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
+  it("INVALID_OUTPUT y TIMEOUT sí cobran la página", async () => {
+    const ctx = newContext();
+    const invalid = deps({
+      extract: extractInvoice,
+      model: () => ({ model: createMockInvoiceScanModel("invalid"), modelId: "m", provider: "mock" }),
+    });
+    const timeout = deps({ extract: jest.fn(async () => Promise.reject(new InvoiceExtractionError("TIMEOUT"))) });
+
+    await expect(scanInvoice(invalid.built, ctx, { pages: [page("ilegible")], source: "upload" })).rejects.toMatchObject({
+      details: { reason: "INVALID_OUTPUT" },
+    });
+    await expect(scanInvoice(timeout.built, ctx, { pages: [page("lenta")], source: "upload" })).rejects.toMatchObject({
+      details: { reason: "TIMEOUT" },
+    });
+
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 2 });
+  });
+
+  it("un fallo antes de enviar (few-shot) deja la fila failed y devuelve la página", async () => {
+    const ctx = newContext();
+    const listFewShotExamples = jest.fn(async () => Promise.reject(new Error("base caída")));
+    const { built, extract } = deps({ repo: { ...mockRepo, listFewShotExamples } });
+    const pages = [page("few caído")];
+
+    await expect(
+      scanInvoice(built, ctx, { pages, source: "upload", supplierId: SUPPLIER_ID }),
+    ).rejects.toThrow("base caída");
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      status: "failed",
+      usagePages: 0,
+    });
   });
 });
