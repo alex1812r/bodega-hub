@@ -13,6 +13,7 @@ import {
 
 import type { InvoiceReviewProduct } from "../reviewModel";
 import { formatScore } from "./invoiceReviewView";
+import { searchByReadText } from "./readTextSearch";
 
 const PRODUCT_FILTERS: ProductEntityFilters = { active: true };
 
@@ -60,8 +61,11 @@ export function InvoiceReviewProductSearch({
 
   const withCandidates = useMemo<EntityFetcher<"product">>(
     () => async (params) => {
-      const found = await fetcher(params);
-      if (params.query.trim() !== readQuery || candidates.length === 0) {
+      if (params.query.trim() !== readQuery) {
+        return fetcher(params);
+      }
+      const found = await searchByReadText(fetcher, params);
+      if (candidates.length === 0) {
         return found;
       }
       return [
