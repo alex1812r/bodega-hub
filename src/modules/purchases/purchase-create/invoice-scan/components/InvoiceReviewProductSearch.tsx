@@ -37,7 +37,7 @@ function candidateOption(candidate: InvoiceMatchCandidate): ProductEntityOption 
     isActive: true,
     label: candidate.name,
     salePriceRef: 0,
-    sku: "",
+    sku: candidate.sku ?? "",
   };
 }
 
@@ -94,7 +94,8 @@ export function InvoiceReviewProductSearch({
         renderSecondary={(option) => {
           const candidate = reasons.get(option.id);
           if (candidate) {
-            return `Sugerido · ${candidate.reason} · ${formatScore(candidate.score)}`;
+            // D24-d: el SKU distingue candidatos de igual nombre, como en los chips.
+            return `Sugerido · ${candidate.sku ? `SKU ${candidate.sku} · ` : ""}${candidate.reason} · ${formatScore(candidate.score)}`;
           }
           return [option.sku, `Stock ${option.currentStock}`].filter(Boolean).join(" · ");
         }}
