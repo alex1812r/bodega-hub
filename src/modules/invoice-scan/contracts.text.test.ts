@@ -110,7 +110,11 @@ describe("invoiceExtractionSchema · textos seguros para jsonb (CIE-06)", () => 
 });
 
 describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", () => {
-  const invisibles = ["\u202a", "\u202e", "\u2066", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"];
+  const invisibles = [
+    "\u202a", "\u202e", "\u2066", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff",
+    // REP2-03b (caos N2): guion blando, separadores de l\u00ednea/p\u00e1rrafo, rellenos y tags.
+    "\u00ad", "\u2028", "\u2029", "\u3164", "\u180e", "\u034f", "\udb40\udc00", "\udb40\udc41", "\udb40\udc7f",
+  ];
 
   it.each(textFields.flatMap(([field, set]) => invisibles.map((char): [string, string, typeof set] => [field, char, set])))(
     "rechaza en %s el carácter %s (bidi o ancho cero, caos B5)",
@@ -130,6 +134,23 @@ describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", (
     expect(
       correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.supplier.name = `AVILA 😀 ${family} ${heart}`))).success,
     ).toBe(true);
+  });
+
+  it("acepta hangul normal (U+3164 es solo el relleno invisible)", () => {
+    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.supplier.name = "한국 식품 ㄱㅏ"))).success).toBe(true);
+  });
+
+  it.each(["31/02/2026", "31-02-2026", "29/02/2025", "32/01/2026", "15/13/2026", "00/10/2026", "1/0/2026"])(
+    "rechaza la fecha no ISO imposible %s (DD/MM/AAAA o DD-MM-AAAA, caos N3)",
+    (date) => {
+      const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date)));
+
+      expect(parsed.error?.issues[0]).toMatchObject({ message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
+    },
+  );
+
+  it.each(["29/02/2024", "14/10/2026", "14-10-2026", "1/2/2026", " 31/12/2026 "])("acepta la fecha no ISO válida %s", (date) => {
+    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date))).success).toBe(true);
   });
 
   it("rechaza una fecha ISO imposible con mensaje en español; acepta 29 de febrero bisiesto y otros formatos (caos B8)", () => {

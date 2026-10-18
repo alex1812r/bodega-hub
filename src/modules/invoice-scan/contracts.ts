@@ -69,8 +69,12 @@ export function hasForbiddenInvoiceChar(value: string): boolean {
  * U+061C) y caracteres de ancho cero (U+200B–U+200D, U+2060, U+FEFF). Permiten
  * suplantar visualmente un nombre en el detalle o en los few-shot. Los emoji
  * siguen pasando, también las secuencias unidas con U+200D (p. ej. una familia).
+ * REP2-03b (caos N2): también el guion blando (U+00AD), los separadores de línea y
+ * párrafo (U+2028/U+2029), los rellenos invisibles U+3164 (el hangul normal pasa)
+ * y U+180E, el U+034F y los tags U+E0000–U+E007F (par de surrogates U+DB40 + U+DC00–U+DC7F).
  */
-const INVISIBLE_INVOICE_CHARS = /[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b\u200c\u2060\ufeff]/;
+const INVISIBLE_INVOICE_CHARS =
+  /[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b\u200c\u2060\ufeff\u00ad\u2028\u2029\u3164\u180e\u034f]|\udb40[\udc00-\udc7f]/;
 /** U+200D fuera de una secuencia de emoji (entre un emoji, o su U+FE0F, y otro emoji). */
 const LOOSE_ZERO_WIDTH_JOINER = /(?<![\udc00-\udfff\ufe0f])\u200d|\u200d(?![\ud800-\udbff])/;
 
@@ -78,18 +82,47 @@ export function hasInvisibleInvoiceChar(value: string): boolean {
   return INVISIBLE_INVOICE_CHARS.test(value) || LOOSE_ZERO_WIDTH_JOINER.test(value);
 }
 
-/** REP-05 (caos B8): una fecha con forma ISO `YYYY-MM-DD` que no existe en el calendario (2026-02-31). */
-export function isImpossibleIsoDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+const ALL_INVISIBLE_INVOICE_CHARS = new RegExp(INVISIBLE_INVOICE_CHARS.source, "g");
+const ALL_LOOSE_ZERO_WIDTH_JOINERS = new RegExp(LOOSE_ZERO_WIDTH_JOINER.source, "g");
 
-  if (!match) {
-    return false;
-  }
+/**
+ * REP2-03b (caos N2): quita de un texto lo que `hasInvisibleInvoiceChar` vetaría
+ * (U+2028/U+2029 pasan a salto de línea). Para la lectura del modelo, que no debe
+ * guardar nada que luego impida confirmarla. Los emoji unidos con U+200D se conservan.
+ */
+export function stripInvisibleInvoiceChars(value: string): string {
+  return value
+    .replace(/[\u2028\u2029]/g, "\n")
+    .replace(ALL_INVISIBLE_INVOICE_CHARS, "")
+    .replace(ALL_LOOSE_ZERO_WIDTH_JOINERS, "");
+}
 
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** DD/MM/AAAA o DD-MM-AAAA (día y mes de 1 o 2 dígitos), como se imprime en Venezuela. */
+const DAY_FIRST_DATE = /^(\d{1,2})([/-])(\d{1,2})\2(\d{4})$/;
+
+function existsOnCalendar(year: number, month: number, day: number): boolean {
   const date = new Date(Date.UTC(year, month - 1, day));
 
-  return date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day;
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/**
+ * REP-05 (caos B8) / REP2-03b (caos N3): una fecha `YYYY-MM-DD`, `DD/MM/YYYY` o
+ * `DD-MM-YYYY` que no existe en el calendario (2026-02-31, 31/02/2026). Otros
+ * formatos no se juzgan.
+ */
+export function isImpossibleInvoiceDate(value: string): boolean {
+  const trimmed = value.trim();
+  const iso = ISO_DATE.exec(trimmed);
+
+  if (iso) {
+    return !existsOnCalendar(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  }
+
+  const dayFirst = DAY_FIRST_DATE.exec(trimmed);
+
+  return dayFirst !== null && !existsOnCalendar(Number(dayFirst[4]), Number(dayFirst[3]), Number(dayFirst[1]));
 }
 
 /** REP-05 (auditoría B10): tope de líneas de una factura (lectura y corrección). */
@@ -254,8 +287,8 @@ function invoiceTexts(extraction: InvoiceExtraction): Array<[(string | number)[]
 
 /**
  * Extracción corregida por el usuario (`invoiceScanExtraction` de `POST /api/purchases`,
- * D10): además del contrato, sin bidi ni ancho cero (caos B5), sin fechas ISO
- * imposibles (caos B8) y con un tamaño que `confirm_invoice_scan` acepta
+ * D10): además del contrato, sin bidi ni invisibles (caos B5/N2), sin fechas
+ * imposibles (caos B8/N3) y con un tamaño que `confirm_invoice_scan` acepta
  * (auditoría B10). Todo se valida antes de crear la compra (400).
  */
 export const correctedInvoiceExtractionSchema = invoiceExtractionSchema.superRefine((extraction, context) => {
@@ -265,7 +298,7 @@ export const correctedInvoiceExtractionSchema = invoiceExtractionSchema.superRef
     }
   }
 
-  if (extraction.date !== undefined && isImpossibleIsoDate(extraction.date)) {
+  if (extraction.date !== undefined && isImpossibleInvoiceDate(extraction.date)) {
     context.addIssue({ code: "custom", message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
   }
 

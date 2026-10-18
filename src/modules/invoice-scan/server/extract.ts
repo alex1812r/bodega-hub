@@ -11,7 +11,12 @@ import { ZodError } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
 
-import { invoiceExtractionSchema, isImpossibleIsoDate, type InvoiceExtraction } from "../contracts";
+import {
+  invoiceExtractionSchema,
+  isImpossibleInvoiceDate,
+  stripInvisibleInvoiceChars,
+  type InvoiceExtraction,
+} from "../contracts";
 import type { FewShotFormat } from "./fewShot";
 import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, stripImageMetadata, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
@@ -273,9 +278,9 @@ export const INCOHERENT_CONFIDENCE_WARNING =
 
 export const IMPOSSIBLE_DATE_WARNING = "La fecha leída no existe en el calendario; revísala en la factura.";
 
-/** Caos B8: una fecha ISO imposible (2026-02-31) leída por el modelo se descarta con aviso; no falla la lectura. */
+/** Caos B8/N3: una fecha imposible (2026-02-31, 31/02/2026) leída por el modelo se descarta con aviso; no falla la lectura. */
 function guardDate(extraction: InvoiceExtraction): InvoiceExtraction {
-  if (extraction.date === undefined || !isImpossibleIsoDate(extraction.date)) {
+  if (extraction.date === undefined || !isImpossibleInvoiceDate(extraction.date)) {
     return extraction;
   }
 
@@ -286,6 +291,37 @@ function guardDate(extraction: InvoiceExtraction): InvoiceExtraction {
   delete guarded.date;
 
   return guarded;
+}
+
+/**
+ * Caos N2: quita de cada texto de la lectura los invisibles que la extracción
+ * corregida vetaría (bidi, ancho cero, guion blando, tags…). Sin esto, una línea
+ * legítima con un U+00AD leído quedaría imposible de confirmar.
+ */
+function stripInvisibles(extraction: InvoiceExtraction): InvoiceExtraction {
+  const strip = stripInvisibleInvoiceChars;
+  const stripOptional = (value: string | undefined) => (value === undefined ? undefined : strip(value));
+
+  return {
+    ...extraction,
+    supplier: {
+      ...extraction.supplier,
+      name: strip(extraction.supplier.name),
+      taxId: stripOptional(extraction.supplier.taxId),
+      phone: stripOptional(extraction.supplier.phone),
+      address: stripOptional(extraction.supplier.address),
+    },
+    number: stripOptional(extraction.number),
+    date: stripOptional(extraction.date),
+    lines: extraction.lines.map((line) => ({
+      ...line,
+      rawText: strip(line.rawText),
+      description: strip(line.description),
+      barcode: stripOptional(line.barcode),
+      supplierSku: stripOptional(line.supplierSku),
+    })),
+    warnings: extraction.warnings.map((warning) => strip(warning)),
+  };
 }
 
 /**
@@ -368,7 +404,7 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
 
   return {
     durationMs: Date.now() - startedAt,
-    extraction: guardReadability(mergePages(results.map((result) => guardDate(result.extraction))), images),
+    extraction: guardReadability(mergePages(results.map((result) => guardDate(stripInvisibles(result.extraction)))), images),
     inputTokens: sumTokens(results.map((result) => result.inputTokens)),
     modelId: info.modelId,
     outputTokens: sumTokens(results.map((result) => result.outputTokens)),
