@@ -22,7 +22,7 @@ import { invoiceAliasKey } from "../invoiceAliasKey";
 
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { createRouteSupabaseClient } from "@/lib/supabase/route-client";
-import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
+import { readCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.server";
 
 import type { InvoiceExtraction } from "../contracts";
 
@@ -210,13 +210,15 @@ async function loadTaxRates(supabase: MatchContextSupabaseClient, storeId: strin
  * Bs<->REF (`useCurrentExchangeRate` -> `/api/exchange-rates/current` ->
  * `getCurrentExchangeRate`: DolarAPI oficial con caché de proceso), para que la
  * coherencia de precio y el costo precargado cuadren con el formulario (CIE-02).
+ * El escaneo solo la LEE (`readCurrentExchangeRate`, D24-b): no inserta en
+ * `exchange_rates`; persistirla queda en el flujo del formulario.
  * Si DolarAPI falla, el formulario se queda sin tasa del día (la ruta responde
  * error, no cae a la última guardada); aquí igual: `undefined`, y `matchInvoice`
  * aplica 6.7 (tasa impresa con aviso o, sin ella, sin costos REF y con aviso).
  */
-async function loadSystemRate(storeId: string): Promise<number | undefined> {
+async function loadSystemRate(): Promise<number | undefined> {
   try {
-    const { rateVes } = await getCurrentExchangeRate(storeId);
+    const { rateVes } = await readCurrentExchangeRate();
     return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
   } catch {
     return undefined;
@@ -605,7 +607,7 @@ export async function loadMatchContext(
   const [candidates, taxRates, systemRate, previousScans, barcodeRows] = await Promise.all([
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
-    loadSystemRate(storeId),
+    loadSystemRate(),
     loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
     loadProductsWhere(supabase, storeId, "barcode", barcodeVariants(extraction)),
   ]);
