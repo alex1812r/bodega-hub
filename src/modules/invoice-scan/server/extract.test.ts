@@ -8,7 +8,7 @@ import { MockLanguageModelV4 } from "ai/test";
 
 import { ApiError } from "@/lib/api/apiError";
 
-import { invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
+import { correctedInvoiceExtractionSchema, invoiceExtractionSchema, type InvoiceExtraction } from "../contracts";
 import {
   firstPageExtraction,
   secondPageExtraction,
@@ -521,6 +521,50 @@ describe("extractInvoice: fecha imposible leída por el modelo (caos B8)", () =>
     const result = await extractInvoice({ model: info(model), pages: [page("p1"), page("p2")] });
 
     expect(result.extraction.date).toBe("2026-02-28");
+  });
+});
+
+describe("extractInvoice: invisibles en la lectura del modelo (caos N2)", () => {
+  it("los quita de todos los textos para que la lectura guardada se pueda confirmar", async () => {
+    const dirty = (text: string) =>
+      `${text}‮⁦​‌⁠﻿­ㅤ᠎͏\u{E0041}‍`;
+    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        generated(
+          {
+            ...singlePageExtraction,
+            date: dirty("2026-02-28"),
+            lines: singlePageExtraction.lines.map((line) => ({
+              ...line,
+              barcode: dirty("759"),
+              description: dirty(line.description),
+              rawText: `A B ${dirty(line.rawText)}`,
+              supplierSku: dirty("SKU"),
+            })),
+            number: dirty("000123"),
+            supplier: { address: dirty("Caracas"), name: `${dirty("AVILA")} ${family}`, phone: dirty("0212"), taxId: dirty("J-1") },
+            warnings: [dirty("Revisa")],
+          },
+          10,
+          10,
+        ),
+      ],
+    });
+
+    const { extraction } = await extractInvoice({ model: info(model), pages: [page()] });
+
+    expect(correctedInvoiceExtractionSchema.safeParse(extraction).success).toBe(true);
+    expect(extraction.supplier).toEqual({ address: "Caracas", name: `AVILA ${family}`, phone: "0212", taxId: "J-1" });
+    expect(extraction.number).toBe("000123");
+    expect(extraction.date).toBe("2026-02-28");
+    expect(extraction.warnings).toEqual(["Revisa"]);
+    expect(extraction.lines[0]).toMatchObject({
+      barcode: "759",
+      description: singlePageExtraction.lines[0]!.description,
+      rawText: `A\nB\n${singlePageExtraction.lines[0]!.rawText}`,
+      supplierSku: "SKU",
+    });
   });
 });
 
