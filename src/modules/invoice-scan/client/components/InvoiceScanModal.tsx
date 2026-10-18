@@ -104,6 +104,8 @@ export function InvoiceScanModal({
   const pickerDisabled = quotaExhausted;
   // La misma factura volvería a pasarse de la cuota: se elige otra más corta o se espera a mañana.
   const retryDisabled = error?.kind === "quota";
+  // 503 (sin key, almacenamiento caído): reintentar no puede funcionar; se sigue a mano.
+  const unavailable = error?.kind === "unavailable";
 
   async function runUpload() {
     const response = await upload();
@@ -337,23 +339,29 @@ export function InvoiceScanModal({
             <p className="break-words" role="alert">
               {error.message}
             </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button disabled={retryDisabled} onClick={() => void handleRetry()} size="sm" type="button">
-                Reintentar
+            {unavailable ? (
+              <Button onClick={() => onOpenChange(false)} size="sm" type="button">
+                Registrar a mano
               </Button>
-              <Button
-                disabled={pickerDisabled}
-                onClick={() => {
-                  reset();
-                  openPicker(fileInputRef.current);
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Elegir otro archivo
-              </Button>
-            </div>
+            ) : (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button disabled={retryDisabled} onClick={() => void handleRetry()} size="sm" type="button">
+                  Reintentar
+                </Button>
+                <Button
+                  disabled={pickerDisabled}
+                  onClick={() => {
+                    reset();
+                    openPicker(fileInputRef.current);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Elegir otro archivo
+                </Button>
+              </div>
+            )}
           </div>
         ) : null}
       </div>
