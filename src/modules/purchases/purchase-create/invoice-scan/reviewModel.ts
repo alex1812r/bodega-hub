@@ -17,6 +17,7 @@ import type {
   InvoiceExtraction,
   InvoiceMatchCandidate,
   InvoiceMatchStatus,
+  InvoiceScanConfirmedPurchase,
   InvoiceScanResponse,
 } from "@/modules/invoice-scan/contracts";
 import { DECIMAL_QUANTITY_ISSUE, USD_DOCUMENT_ISSUE } from "@/modules/invoice-scan/server/match/money";
@@ -173,6 +174,8 @@ export type InvoiceReviewState = {
    */
   pricesIncludeTax?: boolean;
   duplicateOfScanId?: string;
+  /** REP-01: la misma foto ya se confirmó en esta compra; no se puede cargar otra vez. */
+  confirmedPurchase?: InvoiceScanConfirmedPurchase;
   /** Datos del emparejamiento por línea para restaurar empaque al volver al producto propuesto. */
   matchDefaults: MatchLineDefaults[];
 };
@@ -477,6 +480,7 @@ export function createInvoiceReviewState(
     usd: { anomaly, accepted: false },
     taxRates: { ...ctx.taxRates },
     ...(matched.duplicateOfScanId ? { duplicateOfScanId: matched.duplicateOfScanId } : {}),
+    ...(response.confirmedPurchase ? { confirmedPurchase: response.confirmedPurchase } : {}),
     matchDefaults,
   };
   return { ...state, lines: lines.map((line) => withStatus(state, line)) };
@@ -1033,6 +1037,14 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
   };
 }
 
+/** REP-01: "Esta factura ya se registró en la compra C-000123" (o "en una compra" sin número). */
+export function confirmedPurchaseMessage(purchase: InvoiceScanConfirmedPurchase): string {
+  const number = purchase.purchaseNumber?.trim();
+  return number
+    ? `Esta factura ya se registró en la compra ${number}`
+    : "Esta factura ya se registró en una compra";
+}
+
 /**
  * Por qué "Cargar en la compra" está deshabilitado, en español. Vacío = se puede cargar.
  * Además de las líneas pendientes exige proveedor confirmado, al menos una línea,
@@ -1040,6 +1052,9 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
  */
 export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   const blockers: string[] = [];
+  if (state.confirmedPurchase) {
+    blockers.push(confirmedPurchaseMessage(state.confirmedPurchase) + ".");
+  }
   const pending = getPendingCount(state);
   if (pending > 0) {
     blockers.push(pending === 1 ? "Queda 1 línea por resolver." : `Quedan ${pending} líneas por resolver.`);

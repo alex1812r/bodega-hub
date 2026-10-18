@@ -31,7 +31,7 @@ El modelo de IA **propone**; no escribe nada en productos, vínculos ni compras.
    - Una página con el lado mayor por encima de 1600 px responde 400 "La imagen supera 1.600 px en su lado mayor. Vuelve a subirla desde la app para que se reduzca." (CIE-07; sin `sharp` el servidor no redimensiona). En multipart se rechaza antes de subir, reservar o cobrar: no queda objeto ni fila. Con `storagePaths` se valida tras descargar y antes de reservar: el objeto ya subido con la URL firmada se queda en el bucket hasta la purga.
    - Con datos en Supabase y sin ninguna key de IA responde 503 "El escaneo de facturas no está configurado: falta la key del proveedor de IA." antes de reservar: sin fila, sin cupo y sin caché (CIE-08). El mock solo se usa con `INVOICE_SCAN_PROVIDER=mock` o con datos mock.
 2. Reserva atómica (`reserve_invoice_scan`, lock por tienda):
-   - misma foto ya leída → devuelve ese escaneo con `cached: true`, sin modelo y sin cuota;
+   - misma foto ya leída → devuelve ese escaneo con `cached: true`, sin modelo y sin cuota. La lectura guardada se vuelve a emparejar siempre con los alias actuales (el `matched` guardado no se sirve). Si el escaneo ya está `confirmed`, la respuesta lleva `confirmedPurchase: { id, purchaseNumber }`: la revisión avisa "Esta factura ya se registró en la compra …: Ver" y no deja cargarla (REP-01);
    - otra petición la está leyendo → 409;
    - las páginas no caben en la cuota de hoy → 429 `INVOICE_SCAN_LIMIT_REACHED`;
    - si no, fila `processing` y páginas cobradas. Cada intento cobra, también un reintento fallido.

@@ -15,6 +15,7 @@ import {
   findLiveScanByHash,
   getDailyUsage,
   getProductNames,
+  getPurchaseNumber,
   getScan,
   listFewShotExamples,
   deleteScansByIds,
@@ -532,5 +533,15 @@ describe("scans.mock-server · findLiveScanByHash (upload-url, M3)", () => {
     await seedScanForTest(storeB, input({ imageSha256: hash, storagePath: `store-b/${hash}/p1.jpg` }));
 
     expect(await findLiveScanByHash(storeA, hash)).toBeNull();
+  });
+});
+
+describe("getPurchaseNumber (REP-01)", () => {
+  it("devuelve el número de una compra de la tienda y null para otra tienda o un id desconocido", async () => {
+    const defaultStore = { storeId: DEFAULT_STORE_ID, userId: "user-a" };
+
+    expect(await getPurchaseNumber(defaultStore, "purchase-001")).toBe("C-000001");
+    expect(await getPurchaseNumber(storeA, "purchase-001")).toBeNull();
+    expect(await getPurchaseNumber(defaultStore, "no-existe")).toBeNull();
   });
 });

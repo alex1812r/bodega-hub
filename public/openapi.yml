@@ -7839,7 +7839,22 @@ components:
           $ref: "#/components/schemas/InvoiceScanLimits"
         cached:
           type: boolean
-          description: true si vino del cache por hash (0 llamadas al modelo).
+          description: >-
+            true si vino del cache por hash (0 llamadas al modelo). La lectura
+            guardada se vuelve a emparejar con los alias actuales.
+        confirmedPurchase:
+          type: object
+          description: >-
+            Solo si el escaneo en cache ya se confirmo en una compra (REP-01):
+            la compra ligada, para enlazarla y no cargar la factura otra vez.
+          required: [id, purchaseNumber]
+          properties:
+            id:
+              type: string
+            purchaseNumber:
+              type: string
+              nullable: true
+              description: null si la compra no se pudo leer.
     InvoiceScanDetail:
       type: object
       required: [scanId, status, extraction, matched, pages, createdAt, imageUrls, purchaseId]

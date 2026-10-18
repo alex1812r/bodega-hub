@@ -179,6 +179,17 @@ jest.mock("../../invoice-scan/client/components/InvoiceScanModal", () => ({
       >
         factura leída
       </button>
+      <button
+        onClick={() =>
+          onScanned({
+            confirmedPurchase: { id: "purchase-001", purchaseNumber: "C-000001" },
+            scanId: "5a0e1b2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c",
+          })
+        }
+        type="button"
+      >
+        factura ya confirmada
+      </button>
       <button onClick={() => onOpenChange(false)} type="button">
         cerrar escaneo
       </button>
@@ -767,6 +778,20 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     expect(lineTexts().map((line) => line?.split(" · ")[0])).toEqual(["Cable HDMI"]);
     expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
     await waitFor(() => expect(api.posts.map((post) => post.url)).toEqual([DISCARD_URL]));
+  });
+
+  it("REP-01: «Descartar escaneo» de una factura ya confirmada solo cierra la revisión, sin descarte ni error", async () => {
+    const api = installApi();
+    renderPage();
+
+    click("Escanear factura");
+    click("factura ya confirmada");
+    click("Descartar escaneo");
+
+    expect(reviewPanel()).not.toBeInTheDocument();
+    await waitFor(() => expect(linesList()).toBeInTheDocument());
+    expect(api.posts).toEqual([]);
+    expect(screen.queryByText("No pudimos descartar el escaneo")).not.toBeInTheDocument();
   });
 
   it("si el descarte falla lo dice en español", async () => {

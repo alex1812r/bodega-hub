@@ -30,6 +30,7 @@ import {
   type InvoiceReviewState,
 } from "../reviewModel";
 import { useInvoiceReview } from "../useInvoiceReview";
+import { InvoiceReviewConfirmedNotice } from "./InvoiceReviewConfirmedNotice";
 import { InvoiceReviewFooter } from "./InvoiceReviewFooter";
 import { InvoiceReviewHeader } from "./InvoiceReviewHeader";
 import { InvoiceReviewLineRow } from "./InvoiceReviewLineRow";
@@ -312,6 +313,8 @@ export function InvoiceReviewPanel({
           Ver factura
         </Button>
       </div>
+
+      <InvoiceReviewConfirmedNotice state={state} />
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-4">

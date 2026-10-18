@@ -214,6 +214,28 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
 }
 
 /**
+ * Número de la compra `purchaseId` de la tienda de la sesión (REP-01: enlace del
+ * reescaneo de una factura ya confirmada); null si no es de la tienda o no se ve.
+ */
+export async function getPurchaseNumber(ctx: InvoiceScanContext, purchaseId: string): Promise<string | null> {
+  if (!UUID_PATTERN.test(purchaseId)) {
+    return null;
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("purchases")
+    .select("purchase_number")
+    .eq("id", purchaseId)
+    .eq("store_id", ctx.storeId)
+    .maybeSingle<{ purchase_number: string | null }>();
+
+  throwIfSupabaseError(error);
+
+  return data?.purchase_number ?? null;
+}
+
+/**
  * Escaneo confirmado de la compra `purchaseId` (SCN-09a). `purchaseFound` es
  * false si la compra no es de la tienda de la sesión (la ruta responde 404);
  * `scan` es null si la compra no salió de un escaneo confirmado. Ambas

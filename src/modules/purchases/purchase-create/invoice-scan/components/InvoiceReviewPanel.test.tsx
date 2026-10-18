@@ -635,4 +635,48 @@ describe("InvoiceReviewPanel", () => {
 
     expect(mockUseInvoiceScanPurchase).not.toHaveBeenCalledWith(expect.any(String));
   });
+
+  describe("REP-01: la misma foto de una factura ya confirmada", () => {
+    const PURCHASE_ID = "00000000-0000-4000-8000-0000000000bb";
+
+    it("avisa arriba con enlace a la compra y no deja cargarla otra vez", async () => {
+      const user = userEvent.setup();
+      const props = renderPanel({
+        ...makeReviewResponse({ lines: [{}] }),
+        cached: true,
+        confirmedPurchase: { id: PURCHASE_ID, purchaseNumber: "C-000123" },
+      });
+
+      const notice = screen.getByTestId("invoice-review-confirmed-notice");
+      expect(notice).toHaveTextContent("Esta factura ya se registró en la compra C-000123");
+      expect(within(notice).getByRole("link", { name: "Ver" })).toHaveAttribute("href", `/purchases/${PURCHASE_ID}`);
+      expect(loadButton()).toBeDisabled();
+      expect(screen.getByTestId("invoice-review-blockers")).toHaveTextContent(
+        "Esta factura ya se registró en la compra C-000123.",
+      );
+
+      await user.click(loadButton());
+      expect(props.onLoad).not.toHaveBeenCalled();
+    });
+
+    it("sin número de compra legible igual avisa, enlaza y bloquea", () => {
+      renderPanel({
+        ...makeReviewResponse({ lines: [{}] }),
+        cached: true,
+        confirmedPurchase: { id: PURCHASE_ID, purchaseNumber: null },
+      });
+
+      const notice = screen.getByTestId("invoice-review-confirmed-notice");
+      expect(notice).toHaveTextContent("Esta factura ya se registró en una compra");
+      expect(within(notice).getByRole("link", { name: "Ver" })).toHaveAttribute("href", `/purchases/${PURCHASE_ID}`);
+      expect(loadButton()).toBeDisabled();
+    });
+
+    it("sin compra ligada no hay aviso y se puede cargar", () => {
+      renderPanel(makeReviewResponse({ lines: [{}] }));
+
+      expect(screen.queryByTestId("invoice-review-confirmed-notice")).not.toBeInTheDocument();
+      expect(loadButton()).toBeEnabled();
+    });
+  });
 });

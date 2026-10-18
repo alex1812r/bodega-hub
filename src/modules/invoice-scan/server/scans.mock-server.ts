@@ -332,6 +332,13 @@ export async function getScan(ctx: InvoiceScanContext, id: string): Promise<Invo
   return scan ? { ...scan } : null;
 }
 
+/** Paridad con `scans.server.ts` (REP-01): número de la compra de la tienda, o null. */
+export async function getPurchaseNumber(ctx: InvoiceScanContext, purchaseId: string): Promise<string | null> {
+  const purchase = findMockPurchase(purchaseId);
+
+  return purchase && mockEntityStoreId(purchase) === ctx.storeId ? purchase.purchaseNumber : null;
+}
+
 /** Paridad con `scans.server.ts` (SCN-09a): compra de la tienda y su escaneo confirmado más reciente. */
 export async function findConfirmedScanByPurchase(
   ctx: InvoiceScanContext,

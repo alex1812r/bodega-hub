@@ -6,6 +6,7 @@ import { MockLanguageModelV4 } from "ai/test";
 
 import { ApiError } from "@/lib/api/apiError";
 import { mockState } from "@/shared/mocks/mockStore";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
 import { notAnInvoiceExtraction, singlePageExtraction } from "./__fixtures__/extractions";
@@ -954,7 +955,8 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
     warn.mockRestore();
   });
 
-  it("un emparejamiento en caché válido se sirve tal cual, sin volver a emparejar", async () => {
+  it("un emparejamiento en caché válido tampoco se sirve: se vuelve a emparejar sin aviso (REP-01)", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const ctx = newContext();
     const { built, matcher } = deps();
     const pages = [page("matched válido")];
@@ -962,7 +964,9 @@ describe("scanInvoice · caché validado, intento vigente e imagen ausente (SCN-
 
     await scanInvoice(built, ctx, { pages, source: "upload" });
 
-    expect(matcher).toHaveBeenCalledTimes(1);
+    expect(matcher).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalledWith("[invoice-scan] emparejamiento en caché fuera del contrato", expect.anything());
+    warn.mockRestore();
   });
 
   it("una lectura vieja no pisa la nueva: si otra reserva tomó la fila, complete responde 409 y la fila sigue con el intento nuevo (C1/C2)", async () => {
@@ -1200,5 +1204,69 @@ describe("scanInvoice · página repetida en multipágina (caos B9)", () => {
     const row = await mockRepo.getScan(ctx, response.scanId);
     expect(row).toMatchObject({ imageSha256: unique, pages: 2 });
     expect(invoiceScanPagePaths(row!.storagePath, row!.pages).map((path) => storage.objects.get(path))).toEqual([a, b]);
+  });
+});
+
+describe("scanInvoice · reescaneo en caché (REP-01, QA M1)", () => {
+  function rows() {
+    return mockState("invoice-scan:scans", () => new Map<string, InvoiceScanRow>());
+  }
+
+  function tamper(id: string, patch: Partial<InvoiceScanRow>) {
+    rows().set(id, { ...(rows().get(id) as InvoiceScanRow), ...patch });
+  }
+
+  it("la misma foto de una factura ya confirmada responde con la compra ligada", async () => {
+    // La compra mock `purchase-001` es de la tienda por defecto.
+    const ctx = { storeId: DEFAULT_STORE_ID, userId: "user-1" };
+    const { built } = deps();
+    const pages = [page(`confirmada ${Date.now()}`)];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    tamper(first.scanId, { confirmedAt: new Date().toISOString(), purchaseId: "purchase-001", status: "confirmed" });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again).toMatchObject({
+      cached: true,
+      confirmedPurchase: { id: "purchase-001", purchaseNumber: "C-000001" },
+      scanId: first.scanId,
+    });
+  });
+
+  it("un escaneo en caché sin confirmar no trae compra ligada", async () => {
+    const ctx = newContext();
+    const { built } = deps();
+    const pages = [page("sin confirmar")];
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again.cached).toBe(true);
+    expect(again).not.toHaveProperty("confirmedPurchase");
+  });
+
+  it("no sirve el `matched` guardado: vuelve a emparejar con los alias actuales, sin modelo ni cuota", async () => {
+    const ctx = newContext();
+    // El segundo emparejamiento ya ve el alias aprendido al confirmar: la línea sale confirmada.
+    let calls = 0;
+    const matcher = jest.fn(async (...args: Parameters<typeof matchScan>) => {
+      calls += 1;
+      const fresh = await matchScan(...args);
+      return calls === 1
+        ? fresh
+        : { ...fresh, lines: fresh.lines.map((line) => ({ ...line, productId: "prod-alias", status: "confirmed" as const })) };
+    });
+    const { built, extract } = deps({ matcher });
+    const pages = [page("alias aprendido")];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(first.matched.lines.every((line) => line.status === "unmatched")).toBe(true);
+    expect(again.cached).toBe(true);
+    expect(again.matched.lines.every((line) => line.status === "confirmed" && line.productId === "prod-alias")).toBe(true);
+    expect(matcher).toHaveBeenCalledTimes(2);
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(again.limits.used).toBe(1);
   });
 });
