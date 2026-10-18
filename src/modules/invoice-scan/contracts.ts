@@ -97,13 +97,24 @@ export const INVOICE_MAX_LINES = 300;
 export const INVOICE_TOO_MANY_LINES_MESSAGE = `La factura puede tener como máximo ${INVOICE_MAX_LINES} líneas.`;
 
 /**
- * REP-05 (auditoría B10): tope del JSON (UTF-8) de la extracción corregida.
- * `confirm_invoice_scan` rechaza un `confirmed` de más de 256 KB DESPUÉS de crear
- * la compra; con 128 KB para la extracción queda sitio para las líneas confirmadas.
+ * REP-05 (auditoría B10): tope del JSON (UTF-8) de la extracción corregida y
+ * (REP2-02) de la lectura del modelo que se guarda. No garantiza que `confirmed`
+ * quepa: eso lo comprueba `INVOICE_CONFIRMED_MAX_BYTES` antes de crear la compra.
  */
 export const INVOICE_CORRECTED_MAX_BYTES = 128 * 1024;
 export const INVOICE_CORRECTED_TOO_LARGE_MESSAGE =
   "La factura corregida es demasiado grande. Acorta los textos o divide la compra.";
+
+/**
+ * REP2-02 (auditoría B11): tope de `invoice_scans.confirmed` completo (extracción +
+ * líneas con el rawText guardado, aliasNorm y packLabel). Es el MISMO valor que
+ * `confirm_invoice_scan` (`pg_column_size(p_confirmed) > 262144`,
+ * supabase/patches/20261019b-supplier-product-aliases.sql): si cambia allí, cambia
+ * aquí. Se mide con `jsonbSizeUpperBound` antes de crear la compra.
+ */
+export const INVOICE_CONFIRMED_MAX_BYTES = 262144;
+export const INVOICE_CONFIRMED_TOO_LARGE_MESSAGE =
+  "La confirmación de la factura es demasiado grande. Vincula menos líneas, acorta las etiquetas de empaque o divide la compra.";
 export const INVOICE_IMPOSSIBLE_DATE_MESSAGE =
   "La fecha de la factura no existe. Corrígela (AAAA-MM-DD) o déjala vacía.";
 
@@ -180,6 +191,48 @@ function utf8Length(value: string): number {
   return bytes;
 }
 
+/**
+ * Cota superior de `pg_column_size` del `jsonb` de un valor JSON (REP2-02). El JSON
+ * UTF-8 se queda CORTO: jsonb guarda 4 bytes de JEntry por elemento (8 por par
+ * clave/valor, frente a `"":,` en texto), 4 de cabecera por contenedor más hasta 3
+ * de alineación, y cada número como `numeric` alineado (hasta 23 bytes por "1").
+ * Los textos van en UTF-8 sin escapes. Se mide lo que viaja (`JSON.stringify`).
+ */
+export function jsonbSizeUpperBound(value: unknown): number {
+  const serialized = JSON.stringify(value);
+
+  return serialized === undefined ? 0 : 4 + jsonbDatumBytes(JSON.parse(serialized) as unknown);
+}
+
+function jsonbDatumBytes(value: unknown): number {
+  if (typeof value === "string") {
+    return utf8Length(value);
+  }
+
+  if (typeof value === "number") {
+    // Alineación (3) + varlena (4) + cabecera larga (4) + 2 bytes por grupo de 4
+    // dígitos significativos (+1 grupo si no cae alineado). Un double tiene ≤ 17.
+    const significant = String(Math.abs(value)).split("e")[0].replace(".", "").replace(/^0+/, "").length;
+    return 11 + 2 * (Math.ceil(significant / 4) + 1);
+  }
+
+  if (Array.isArray(value)) {
+    return 7 + value.reduce((sum: number, item: unknown) => sum + 4 + jsonbDatumBytes(item), 0);
+  }
+
+  if (value !== null && typeof value === "object") {
+    return 7 + Object.entries(value).reduce((sum, [key, item]) => sum + 8 + utf8Length(key) + jsonbDatumBytes(item), 0);
+  }
+
+  // true / false / null: solo su JEntry.
+  return 0;
+}
+
+/** La extracción supera el tope de bytes (JSON UTF-8) de la lectura guardada o corregida. */
+export function isInvoiceExtractionTooLarge(extraction: InvoiceExtraction): boolean {
+  return utf8Length(JSON.stringify(extraction)) > INVOICE_CORRECTED_MAX_BYTES;
+}
+
 /** Cada texto de la extracción con su ruta, para los vetos de la extracción corregida. */
 function invoiceTexts(extraction: InvoiceExtraction): Array<[(string | number)[], string | undefined]> {
   return [
@@ -216,7 +269,7 @@ export const correctedInvoiceExtractionSchema = invoiceExtractionSchema.superRef
     context.addIssue({ code: "custom", message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
   }
 
-  if (utf8Length(JSON.stringify(extraction)) > INVOICE_CORRECTED_MAX_BYTES) {
+  if (isInvoiceExtractionTooLarge(extraction)) {
     context.addIssue({ code: "custom", message: INVOICE_CORRECTED_TOO_LARGE_MESSAGE, path: [] });
   }
 });

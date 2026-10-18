@@ -47,6 +47,7 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { ApiError } from "@/lib/api/apiError";
 
 import {
+  assertConfirmedScanFits,
   assertScanLinesInStoredExtraction,
   assertScanUsable,
   buildConfirmedPayload,
@@ -289,6 +290,8 @@ export async function precheckInvoiceScan(
   // SCN-UI-C2: líneas fuera de la extracción guardada → 400 antes de reclamar.
   if (!replay) {
     assertScanLinesInStoredExtraction(readExtractedRawTexts(usable.extracted), input.lines);
+    // REP2-02: el `confirmed` debe caber en el tope de confirm_invoice_scan.
+    assertConfirmedScanFits(usable.extracted, input);
   }
 
   // Espejo del UPDATE condicional de claim_invoice_scan (sin await en medio: atómico).

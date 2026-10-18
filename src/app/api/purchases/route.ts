@@ -148,12 +148,17 @@ export async function POST(request: Request) {
     // otro intento → 400 sin crear la compra (salvo el replay del mismo intento).
     // El esquema exige clientRequestId junto a invoiceScanId (SCN-06-F1).
     const scanService = getInvoiceScanService();
+    // SCN-13a-F1: la lectura corregida del cliente pasa por el mismo borde que la del modelo.
+    const correctedExtraction = invoiceScanExtraction && normalizeExtractionForMatch(invoiceScanExtraction);
     const scanClaim =
       invoiceScanId && input.clientRequestId
         ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
         : null;
     const scan = scanClaim
-      ? await scanService.precheckInvoiceScan({ ...scanClaim, lines: invoiceScanLines }, auth.storeId)
+      ? await scanService.precheckInvoiceScan(
+          { ...scanClaim, extraction: correctedExtraction, lines: invoiceScanLines },
+          auth.storeId,
+        )
       : null;
 
     const service = getPurchasesService();
@@ -180,8 +185,7 @@ export async function POST(request: Request) {
           scan,
           {
             clientRequestId: input.clientRequestId,
-            // SCN-13a-F1: la lectura corregida del cliente pasa por el mismo borde que la del modelo.
-            extraction: invoiceScanExtraction && normalizeExtractionForMatch(invoiceScanExtraction),
+            extraction: correctedExtraction,
             items: input.items,
             lines: invoiceScanLines ?? [],
             purchaseId: purchase.id,
