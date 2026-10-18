@@ -1099,7 +1099,12 @@ describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B
     });
   }
 
-  it.each([401, 403, 503])("un %i del proveedor deja la fila failed sin cobrar la página", async (statusCode) => {
+  // REP2-03a: 401/403 (key inválida o sin permiso) son PROVIDER_CONFIG y responden 503.
+  it.each([
+    [401, 503, "PROVIDER_CONFIG"],
+    [403, 503, "PROVIDER_CONFIG"],
+    [503, 502, "PROVIDER_ERROR"],
+  ])("un %i del proveedor deja la fila failed sin cobrar la página", async (statusCode, httpStatus, error) => {
     const ctx = newContext();
     const model = providerFailing(statusCode);
     const { built } = deps({
@@ -1108,10 +1113,10 @@ describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B
     });
     const pages = [page(`rechazo ${statusCode}`)];
 
-    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 502 });
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: httpStatus });
 
     expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
-      error: "PROVIDER_ERROR",
+      error,
       status: "failed",
       usagePages: 0,
     });
@@ -1295,5 +1300,32 @@ describe("scanInvoice · reescaneo en caché (REP-01, QA M1)", () => {
     expect(matcher).toHaveBeenCalledTimes(2);
     expect(extract).toHaveBeenCalledTimes(1);
     expect(again.limits.used).toBe(1);
+  });
+});
+
+describe("scanInvoice · lectura sobre el tope de bytes (REP2-02 · auditoría B11)", () => {
+  it("300 líneas de 1000 caracteres (cada texto dentro del contrato) → 502 INVALID_OUTPUT, cobrada y sin guardar extracted", async () => {
+    const ctx = newContext();
+    const huge: InvoiceExtraction = {
+      ...singlePageExtraction,
+      lines: Array.from({ length: 300 }, (_, index) => ({
+        ...singlePageExtraction.lines[0],
+        rawText: `${index} ${"x".repeat(990)}`,
+      })),
+    };
+    const { built } = deps({ extract: jest.fn(async () => extractResult({ extraction: huge })) });
+    const pages = [page("enorme")];
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({
+      code: "INVOICE_SCAN_PROVIDER_ERROR",
+      details: { reason: "INVALID_OUTPUT" },
+      status: 502,
+    });
+    expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
+      error: "INVALID_OUTPUT",
+      extracted: null,
+      status: "failed",
+    });
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
   });
 });

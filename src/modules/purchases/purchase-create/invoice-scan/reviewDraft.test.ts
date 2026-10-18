@@ -92,6 +92,8 @@ describe("buildInvoiceReviewDraft", () => {
     state = reviewReducer(state, { type: "editTaxRate", index: 0, taxRateCode: "exento" });
     state = reviewReducer(state, { type: "editHeader", number: "  000124 ", date: "2026-10-13" });
 
+    // D25-a: cargar con diferencia frente al total leído exige confirmarla.
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
     const draft = buildInvoiceReviewDraft(state);
     expect(draft).not.toBeNull();
     if (!draft) return;

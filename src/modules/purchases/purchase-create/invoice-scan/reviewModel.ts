@@ -173,6 +173,11 @@ export type InvoiceReviewState = {
    * `unitPrice` sigue siendo el precio leído y la base es precio ÷ (1 + alícuota).
    */
   pricesIncludeTax?: boolean;
+  /**
+   * D25-a: diferencia (leído − registrado) que el usuario confirmó cargar. Solo vale
+   * mientras la diferencia siga siendo esa; cualquier cambio que la mueva la vuelve a pedir.
+   */
+  acceptedDifference?: number;
   duplicateOfScanId?: string;
   /** REP-01: la misma foto ya se confirmó en esta compra; no se puede cargar otra vez. */
   confirmedPurchase?: InvoiceScanConfirmedPurchase;
@@ -208,6 +213,8 @@ export type InvoiceReviewAction =
   /** Cantidad fraccionaria de empaques → unidades enteras (`getUnitConversion`). */
   | { type: "convertPackToUnits"; index: number }
   | { type: "setPricesIncludeTax"; included: boolean }
+  /** D25-a: confirma (o retira) cargar con la diferencia actual frente al total leído. */
+  | { type: "confirmTotalsDifference"; confirmed: boolean }
   | { type: "setSupplier"; supplier: { contactId: string; name: string } }
   | { type: "editHeader"; number?: string; date?: string }
   | { type: "setRateChoice"; choice: InvoiceRateChoice; manualRate?: number }
@@ -677,6 +684,10 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
       });
     case "setPricesIncludeTax":
       return state.pricesIncludeTax === action.included ? state : { ...state, pricesIncludeTax: action.included };
+    case "confirmTotalsDifference": {
+      const difference = action.confirmed ? getTotalsDifference(state) : undefined;
+      return difference === state.acceptedDifference ? state : { ...state, acceptedDifference: difference };
+    }
     case "setSupplier":
       return {
         ...state,
@@ -969,8 +980,9 @@ export function isLineMismatch(state: InvoiceReviewState, line: InvoiceReviewLin
 
 export type InvoiceTaxInclusion = {
   /**
-   * La factura no desglosa IVA, Σ cantidad × precio ≈ total leído y las alícuotas
-   * elegidas añadirían IVA: los precios parecen incluirlo (se avisa y se ofrece elegir).
+   * Σ cantidad × precio ≈ total leído, las alícuotas elegidas añadirían IVA y, si la
+   * factura desglosa IVA, esa suma no es el subtotal leído (M3, D25-a): los precios
+   * parecen incluirlo (se avisa y se ofrece elegir).
    */
   suggested: boolean;
   /** Se carga la base precio ÷ (1 + alícuota): la elección del usuario o, sin ella, la sugerencia. */
@@ -987,19 +999,31 @@ function sumAmounts(lines: InvoiceReviewLine[], amount: (line: InvoiceReviewLine
  * cambie la sugerencia. Es reversible: `setPricesIncludeTax` la fija.
  */
 export function getTaxInclusion(state: InvoiceReviewState): InvoiceTaxInclusion {
-  const { total, subtotal, tax } = state.extraction;
+  const { total, subtotal } = state.extraction;
   const min = minTolerance(state);
   const read = isPositive(total) ? total : undefined;
-  const breakdown =
-    isPositive(tax) ||
-    (read !== undefined && subtotal !== undefined && Number.isFinite(subtotal) && !withinTolerance(read, subtotal, min));
   let suggested = false;
-  if (read !== undefined && !breakdown) {
+  if (read !== undefined) {
     const plain = sumAmounts(state.lines, getLineAmount);
     const withTax = sumAmounts(state.lines, (line) => roundMoney(getLineAmount(line) * (1 + linePct(state, line) / 100)));
-    suggested = withinTolerance(read, plain, min) && !withinTolerance(read, withTax, min);
+    // M3: con desglose, Σ líneas ≈ subtotal leído es una factura con precios sin IVA.
+    const plainIsSubtotal =
+      hasTaxBreakdown(state) && subtotal !== undefined && Number.isFinite(subtotal) && withinTolerance(subtotal, plain, min);
+    suggested = withinTolerance(read, plain, min) && !withinTolerance(read, withTax, min) && !plainIsSubtotal;
   }
   return { suggested, included: state.pricesIncludeTax ?? suggested };
+}
+
+/** La factura desglosa IVA: trae IVA > 0 o un subtotal distinto del total leído. */
+export function hasTaxBreakdown(state: InvoiceReviewState): boolean {
+  const { total, subtotal, tax } = state.extraction;
+  return (
+    isPositive(tax) ||
+    (isPositive(total) &&
+      subtotal !== undefined &&
+      Number.isFinite(subtotal) &&
+      !withinTolerance(total, subtotal, minTolerance(state)))
+  );
 }
 
 export type InvoiceReviewTotals = {
@@ -1054,6 +1078,21 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
   };
 }
 
+/**
+ * D25-a: leído − registrado cuando no cuadran (tolerancia de `getInvoiceReviewTotals`,
+ * la del ✓ del pie); sin total leído o cuadrando, `undefined`.
+ */
+export function getTotalsDifference(state: InvoiceReviewState): number | undefined {
+  const { mismatch, read, registered } = getInvoiceReviewTotals(state);
+  return mismatch && read !== undefined ? roundMoney(read - registered) : undefined;
+}
+
+/** D25-a: hay diferencia con el total leído y el usuario no la confirmó tal como está ahora. */
+export function needsDifferenceConfirmation(state: InvoiceReviewState): boolean {
+  const difference = getTotalsDifference(state);
+  return difference !== undefined && difference !== state.acceptedDifference;
+}
+
 /** REP-01: "Esta factura ya se registró en la compra C-000123" (o "en una compra" sin número). */
 export function confirmedPurchaseMessage(purchase: InvoiceScanConfirmedPurchase): string {
   const number = purchase.purchaseNumber?.trim();
@@ -1087,6 +1126,9 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   }
   if (!isUsdAccepted(state) && getEffectiveRate(state) === undefined) {
     blockers.push("Escribe la tasa para convertir los costos a REF.");
+  }
+  if (needsDifferenceConfirmation(state)) {
+    blockers.push("El total a registrar no cuadra con el leído: corrige las líneas o confirma la diferencia.");
   }
   return blockers;
 }

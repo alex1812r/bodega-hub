@@ -388,6 +388,7 @@ export function InvoiceReviewPanel({
 
       <InvoiceReviewFooter
         footerRef={footerRef}
+        onAction={dispatch}
         onDiscard={onDiscard}
         onLoad={handleLoad}
         state={state}

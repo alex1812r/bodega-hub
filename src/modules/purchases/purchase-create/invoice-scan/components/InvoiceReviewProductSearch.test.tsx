@@ -98,4 +98,24 @@ describe("InvoiceReviewProductSearch", () => {
     expect(options).toHaveLength(3);
     expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual(["Glup"]);
   });
+
+  it("REP2-03d: candidatos empatados de igual nombre se distinguen por SKU, como en los chips", async () => {
+    render(
+      <InvoiceReviewProductSearch
+        candidates={[
+          { name: "CAOSG Jabon Azul 250g", productId: "j1", reason: "nombre parecido 0,73", score: 0.73, sku: "CAOSG-JA-1" },
+          { name: "CAOSG Jabon Azul 250g", productId: "j2", reason: "nombre parecido 0,73", score: 0.73, sku: "CAOSG-JA-2" },
+        ]}
+        fetcher={catalogFetcher()}
+        initialQuery="JABON AZUL 250G"
+        label="Producto de la línea 1"
+        onPick={jest.fn()}
+      />,
+    );
+
+    const options = await screen.findAllByRole("option");
+    expect(options[0]).toHaveTextContent("CAOSG Jabon Azul 250g");
+    expect(options[0]).toHaveTextContent("Sugerido · SKU CAOSG-JA-1 · nombre parecido 0,73 · 0,73");
+    expect(options[1]).toHaveTextContent("Sugerido · SKU CAOSG-JA-2 · nombre parecido 0,73 · 0,73");
+  });
 });

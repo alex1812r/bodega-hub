@@ -18,6 +18,7 @@ import { mockState } from "@/shared/mocks/mockStore";
 
 import {
   invoiceExtractionSchema,
+  isInvoiceExtractionTooLarge,
   type InvoiceExtraction,
   type InvoiceMatch,
   type InvoiceScanResponse,
@@ -635,6 +636,14 @@ export async function scanInvoice(
 
   // SCN-13a: textos opcionales vacíos → ausentes antes de emparejar y de guardar `extracted`.
   const extraction = normalizeExtractionForMatch(result.extraction);
+
+  // REP2-02 (auditoría B11): una lectura de más de 128 KB (el tope de la corregida)
+  // no se guarda: falla como cualquier salida fuera del contrato (INVALID_OUTPUT,
+  // cobrada). Recortar textos cambiaría el rawText del que sale el alias.
+  if (isInvoiceExtractionTooLarge(extraction)) {
+    await fail("INVALID_OUTPUT");
+    throw toInvoiceScanApiError(new InvoiceExtractionError("INVALID_OUTPUT"));
+  }
 
   try {
     matched = await deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });

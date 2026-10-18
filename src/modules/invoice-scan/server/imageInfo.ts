@@ -425,3 +425,176 @@ export function assertNoTrailingData(info: InvoiceImageInfo): void {
     throw badRequest(TRAILING_DATA);
   }
 }
+
+function concatParts(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+
+  return out;
+}
+
+/**
+ * Segmentos JPEG que no hacen falta para decodificar: COM y todo APPn salvo
+ * APP0 JFIF y APP14 Adobe (transformación de color). Se quitan APP1 EXIF/XMP,
+ * APP2 ICC/MPF, APP13 Photoshop, etc.
+ */
+function isJpegMetadata(marker: number, segment: Uint8Array): boolean {
+  if (marker === 0xfe) {
+    return true;
+  }
+
+  if (marker < 0xe0 || marker > 0xef) {
+    return false;
+  }
+
+  return !(
+    (marker === 0xe0 && ascii(segment, 4, 5) === "JFIF\0") ||
+    (marker === 0xee && ascii(segment, 4, 5) === "Adobe")
+  );
+}
+
+/**
+ * Copia el JPEG sin los segmentos de `isJpegMetadata`, tanto en la cabecera
+ * como entre scans (progresivo, o tras los datos de escaneo antes del EOI), y
+ * sin lo que siga al primer EOI. Los datos de escaneo se copian intactos. Si
+ * la estructura no se puede recorrer devuelve `data` sin tocar.
+ */
+function stripJpeg(data: Uint8Array): Uint8Array {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const parts: Uint8Array[] = [data.subarray(0, 2)];
+  let offset = 2;
+  let scanStart: number | null = null;
+
+  while (offset + 1 < data.length) {
+    const marker = data[offset + 1]!;
+
+    if (scanStart !== null) {
+      // Datos de escaneo: se avanza sobre bytes, relleno (FF FF), FF 00 y RSTn.
+      if (data[offset] !== 0xff || marker === 0xff) {
+        offset += 1;
+        continue;
+      }
+
+      if (marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)) {
+        offset += 2;
+        continue;
+      }
+
+      parts.push(data.subarray(scanStart, offset));
+      scanStart = null;
+    }
+
+    if (data[offset] !== 0xff) {
+      return data;
+    }
+
+    if (marker === 0xff) {
+      offset += 1; // relleno entre segmentos
+      continue;
+    }
+
+    if (marker === 0xd9) {
+      parts.push(data.subarray(offset, offset + 2));
+      return concatParts(parts);
+    }
+
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      parts.push(data.subarray(offset, offset + 2));
+      offset += 2;
+      continue;
+    }
+
+    if (marker === 0x00 || marker === 0xd8 || offset + 4 > data.length) {
+      return data;
+    }
+
+    const length = view.getUint16(offset + 2);
+    const end = offset + 2 + length;
+
+    if (length < 2 || end > data.length) {
+      return data;
+    }
+
+    const segment = data.subarray(offset, end);
+
+    if (!isJpegMetadata(marker, segment)) {
+      parts.push(segment);
+    }
+
+    offset = end;
+
+    if (marker === 0xda) {
+      scanStart = offset;
+    }
+  }
+
+  return data;
+}
+
+/** Chunks PNG de texto libre (auxiliares: el decodificador no los necesita). */
+const PNG_TEXT_CHUNKS: ReadonlySet<string> = new Set(["tEXt", "iTXt", "zTXt"]);
+
+/**
+ * Copia el PNG sin chunks de texto ni lo que siga al IEND; los demás chunks
+ * van íntegros (cada uno lleva su CRC). Si la estructura no se puede recorrer
+ * devuelve `data` sin tocar.
+ */
+function stripPng(data: Uint8Array): Uint8Array {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const parts: Uint8Array[] = [data.subarray(0, PNG_SIGNATURE.length)];
+  let offset = PNG_SIGNATURE.length;
+
+  while (offset + 12 <= data.length) {
+    const length = view.getUint32(offset);
+    const type = ascii(data, offset + 4, 4);
+
+    if (length > data.length - offset - 12) {
+      return data;
+    }
+
+    const end = offset + 12 + length;
+
+    if (!PNG_TEXT_CHUNKS.has(type)) {
+      parts.push(data.subarray(offset, end));
+    }
+
+    if (type === "IEND") {
+      return concatParts(parts);
+    }
+
+    offset = end;
+  }
+
+  return data;
+}
+
+/**
+ * Auditoría B13: copia en memoria de la página para el modelo, sin los
+ * metadatos donde cabe texto arbitrario (instrucciones escondidas que el
+ * proveedor podría leer). Los bytes guardados y su hash no cambian: solo se
+ * aplica a lo que se envía.
+ * - JPEG: sin COM ni APPn salvo APP0 JFIF y APP14 Adobe, y sin cola tras el
+ *   primer EOI. Sin EXIF no hay orientación: el cliente ya la aplica al
+ *   redibujar (`createImageBitmap` con `imageOrientation: "from-image"`).
+ * - PNG: sin tEXt/iTXt/zTXt y sin cola tras el IEND.
+ * - WebP: tal cual; quitar EXIF/XMP de un VP8X exige reescribir el tamaño
+ *   RIFF y los flags, y el cliente sube JPEG.
+ * Espera bytes ya validados por `inspectInvoiceImage`; ante una estructura que
+ * no puede recorrer devuelve la entrada sin tocar.
+ */
+export function stripImageMetadata(data: Uint8Array, mediaType: InvoiceImageMediaType): Uint8Array {
+  if (mediaType === "image/jpeg" && startsWith(data, [0xff, 0xd8])) {
+    return stripJpeg(data);
+  }
+
+  if (mediaType === "image/png" && startsWith(data, PNG_SIGNATURE)) {
+    return stripPng(data);
+  }
+
+  return data;
+}
