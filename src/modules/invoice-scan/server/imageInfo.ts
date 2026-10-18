@@ -21,6 +21,13 @@ export type InvoiceImageInfo = {
   mediaType: InvoiceImageMediaType;
   width: number;
   height: number;
+  /**
+   * Bytes tras el final de la imagen (EOI del JPEG, IEND del PNG, fin del RIFF
+   * del WebP). El parser los tolera, sin tope (un JPEG MPF de cámara trae su
+   * vista previa tras el primer EOI); la entrada del BFF los rechaza con
+   * `assertNoTrailingData`.
+   */
+  trailingBytes: number;
 };
 
 const NOT_AN_IMAGE = "El archivo no es una imagen válida. Sube una foto JPG, PNG o WebP de la factura.";
@@ -72,7 +79,7 @@ function detectType(data: Uint8Array): InvoiceImageMediaType | null {
   return null;
 }
 
-type Size = { width: number; height: number };
+type Size = { width: number; height: number; trailingBytes: number };
 
 /**
  * Recorre los datos de escaneo desde `from` (tras la cabecera del primer SOS):
@@ -116,12 +123,12 @@ function jpegEnd(data: Uint8Array, view: DataView, from: number): number | null 
 /**
  * Recorre los segmentos desde SOI respetando sus longitudes hasta el primer
  * SOS. Exige exactamente un SOFn coherente (C0–CF salvo DHT C4, JPG C8 y DAC
- * CC) antes del SOS, un SOS coherente con él y un EOI que cierre el archivo
- * (bytes tras el EOI: 400 `TRAILING_DATA`).
+ * CC) antes del SOS, un SOS coherente con él y un EOI tras los datos de
+ * escaneo; lo que siga al primer EOI se cuenta en `trailingBytes`.
  */
 function jpegSize(data: Uint8Array, view: DataView): Size | null {
   let offset = 2;
-  let size: Size | null = null;
+  let size: Omit<Size, "trailingBytes"> | null = null;
   let components = 0;
 
   while (offset + 4 <= data.length) {
@@ -158,11 +165,7 @@ function jpegSize(data: Uint8Array, view: DataView): Size | null {
 
       const end = coherent ? jpegEnd(data, view, offset + 2 + length) : null;
 
-      if (end !== null && end < data.length) {
-        throw badRequest(TRAILING_DATA);
-      }
-
-      return end === null ? null : size;
+      return end === null || size === null ? null : { ...size, trailingBytes: data.length - end };
     }
 
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
@@ -217,11 +220,11 @@ function crc32(bytes: Uint8Array): number {
 
 /**
  * Recorre los chunks verificando longitud, tipo y CRC: IHDR primero, al menos
- * un IDAT y un IEND al final (bytes tras el IEND: 400 `TRAILING_DATA`).
+ * un IDAT y un IEND (lo que siga al IEND se cuenta en `trailingBytes`).
  */
 function pngSize(data: Uint8Array, view: DataView): Size | null {
   let offset = PNG_SIGNATURE.length;
-  let size: Size | null = null;
+  let size: Omit<Size, "trailingBytes"> | null = null;
   let hasData = false;
 
   while (offset + 12 <= data.length) {
@@ -251,15 +254,7 @@ function pngSize(data: Uint8Array, view: DataView): Size | null {
     }
 
     if (type === "IEND") {
-      if (!hasData || length !== 0) {
-        return null;
-      }
-
-      if (offset + 12 < data.length) {
-        throw badRequest(TRAILING_DATA);
-      }
-
-      return size;
+      return hasData && length === 0 ? { ...size, trailingBytes: data.length - (offset + 12) } : null;
     }
 
     offset += 12 + length;
@@ -272,8 +267,8 @@ function pngSize(data: Uint8Array, view: DataView): Size | null {
 const WEBP_MIN_CHUNK: Record<string, number> = { ANMF: 16, "VP8 ": 10, VP8L: 5 };
 
 /**
- * Exige que el tamaño RIFF coincida con la longitud (falta, como mucho, el byte
- * de relleno; bytes tras el fin del RIFF: 400 `TRAILING_DATA`) y que el
+ * Exige que el tamaño RIFF quepa en la longitud (falta, como mucho, el byte de
+ * relleno; lo que siga al fin del RIFF lo cuenta `webpSize`) y que el
  * chunk VP8/VP8L/VP8X quepa en él; en VP8X recorre el resto de chunks y exige
  * al menos uno de imagen (VP8, VP8L o ANMF) con tamaño coherente.
  */
@@ -283,10 +278,6 @@ function webpStructureOk(data: Uint8Array, view: DataView, chunk: string): boole
   }
 
   const riffSize = view.getUint32(4, true);
-
-  if (data.length - 8 > riffSize) {
-    throw badRequest(TRAILING_DATA);
-  }
 
   if (data.length - 8 < riffSize - 1) {
     return false;
@@ -340,6 +331,7 @@ function webpStructureOk(data: Uint8Array, view: DataView, chunk: string): boole
 
 function webpSize(data: Uint8Array, view: DataView): Size | null {
   const chunk = ascii(data, 12, 4);
+  const trailingBytes = Math.max(0, data.length - 8 - view.getUint32(4, true));
 
   if (!webpStructureOk(data, view, chunk)) {
     return null;
@@ -350,7 +342,7 @@ function webpSize(data: Uint8Array, view: DataView): Size | null {
       return null;
     }
 
-    return { height: view.getUint16(28, true) & 0x3fff, width: view.getUint16(26, true) & 0x3fff };
+    return { height: view.getUint16(28, true) & 0x3fff, trailingBytes, width: view.getUint16(26, true) & 0x3fff };
   }
 
   if (chunk === "VP8L") {
@@ -359,12 +351,12 @@ function webpSize(data: Uint8Array, view: DataView): Size | null {
     }
 
     const bits = view.getUint32(21, true);
-    return { height: ((bits >>> 14) & 0x3fff) + 1, width: (bits & 0x3fff) + 1 };
+    return { height: ((bits >>> 14) & 0x3fff) + 1, trailingBytes, width: (bits & 0x3fff) + 1 };
   }
 
   if (chunk === "VP8X") {
     const uint24 = (offset: number) => data[offset]! | (data[offset + 1]! << 8) | (data[offset + 2]! << 16);
-    return { height: uint24(27) + 1, width: uint24(24) + 1 };
+    return { height: uint24(27) + 1, trailingBytes, width: uint24(24) + 1 };
   }
 
   return null;
@@ -420,5 +412,16 @@ export function inspectInvoiceImage(data: Uint8Array, declaredType: string): Inv
     throw badRequest(TOO_LARGE);
   }
 
-  return { height: size.height, mediaType, width: size.width };
+  return { height: size.height, mediaType, trailingBytes: size.trailingBytes, width: size.width };
+}
+
+/**
+ * Auditoría B8: la entrada del BFF no admite bytes tras el final de la imagen
+ * (se guardarían en el bucket y llegarían al proveedor). Solo para la subida;
+ * `extractInvoice` y `invoice-eval` los toleran (JPEG MPF de cámara).
+ */
+export function assertNoTrailingData(info: InvoiceImageInfo): void {
+  if (info.trailingBytes > 0) {
+    throw badRequest(TRAILING_DATA);
+  }
 }

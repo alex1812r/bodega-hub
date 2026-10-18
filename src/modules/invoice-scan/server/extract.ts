@@ -291,6 +291,10 @@ function guardReadability(
  * Se valida aquí, y no en quien llama, para que ningún camino llegue al modelo
  * sin esa comprobación; quien llama puede usar `inspectInvoiceImage` antes
  * (p. ej. antes de subir al bucket) sin que cambie el resultado.
+ *
+ * Los bytes tras el final de la imagen (`trailingBytes`) se toleran aquí, sin
+ * tope: un JPEG MPF de cámara (f09/f12/f21/f22 de invoice-eval) trae su vista
+ * previa tras el primer EOI. Solo la entrada del BFF (`assertImages`) los rechaza.
  */
 export async function extractInvoice(input: ExtractInvoiceInput): Promise<ExtractInvoiceResult> {
   if (input.pages.length === 0) {

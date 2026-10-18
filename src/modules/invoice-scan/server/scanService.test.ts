@@ -740,6 +740,34 @@ describe("scanInvoice · reserva atómica (SCN-03h)", () => {
     expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
   });
 
+  it("un JPEG con cola MPF tras el EOI: 400 en multipart y en storagePaths, sin subir, leer ni cobrar (B8)", async () => {
+    const TRAILING = "La imagen trae datos extra después del final del archivo. Vuelve a subirla desde la app.";
+    const first = jpegHeader(1600, 1200, "mpf");
+    const preview = jpegHeader(160, 120, "preview");
+    const mpf = new Uint8Array(first.length + preview.length);
+    mpf.set(first);
+    mpf.set(preview, first.length);
+
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+
+    await expect(
+      scanInvoice(built, ctx, { pages: [{ data: mpf, mediaType: "image/jpeg" }], source: "upload" }),
+    ).rejects.toMatchObject({ message: TRAILING, status: 400 });
+    expect(storage.upload).not.toHaveBeenCalled();
+
+    const sha = sha256OfPages([mpf]);
+    const path = `${ctx.storeId}/${sha}/p1.jpg`;
+    storage.objects.set(path, mpf);
+
+    await expect(
+      scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths: [path] }),
+    ).rejects.toMatchObject({ message: TRAILING, status: 400 });
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
   it("pasa la señal de cancelación del cliente a la extracción", async () => {
     const { built, extract } = deps();
     const controller = new AbortController();

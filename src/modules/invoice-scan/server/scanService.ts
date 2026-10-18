@@ -31,7 +31,7 @@ import {
 } from "./extract";
 import { readExtractedRawTexts } from "./confirmScan.server";
 import { toFewShotFormat } from "./fewShot";
-import { inspectInvoiceImage } from "./imageInfo";
+import { assertNoTrailingData, inspectInvoiceImage } from "./imageInfo";
 import { invoiceMatchSchema } from "./invoiceMatchSchema";
 import { matchScan, normalizeExtractionForMatch, type InvoiceScanMatcher } from "./matchScan";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
@@ -290,10 +290,10 @@ function assertSameMediaType(mediaTypes: readonly InvoiceScanMediaType[]) {
   }
 }
 
-/** Bytes mágicos, tipo declarado y tamaño: antes de subir, de cobrar y de reservar. */
+/** Bytes mágicos, tipo declarado, tamaño y sin cola tras el final (B8): antes de subir, de cobrar y de reservar. */
 function assertImages(pages: readonly InvoicePage[]) {
   for (const page of pages) {
-    inspectInvoiceImage(page.data, page.mediaType);
+    assertNoTrailingData(inspectInvoiceImage(page.data, page.mediaType));
   }
 }
 

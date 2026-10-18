@@ -323,6 +323,20 @@ describe("extractInvoice: legibilidad (plan §6.1)", () => {
     expect(model.doGenerateCalls).toHaveLength(0);
   });
 
+  it("tolera la cola MPF tras el EOI (vista previa de cámara): lee la página sin 400 (REP-05, B8 solo en el BFF)", async () => {
+    const model = modelReturning(overconfident);
+    const first = page("mpf").data;
+    const preview = jpegHeader(160, 120, "preview");
+    const mpf = new Uint8Array(first.length + preview.length);
+    mpf.set(first);
+    mpf.set(preview, first.length);
+
+    await expect(
+      extractInvoice({ model: info(model), pages: [{ data: mpf, mediaType: "image/jpeg" }] }),
+    ).resolves.toMatchObject({ pages: 1 });
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
   it("warns and caps every confidence at 0.5 when a page is low resolution", async () => {
     const result = await extractInvoice({
       model: info(modelReturning(overconfident)),
