@@ -1099,7 +1099,12 @@ describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B
     });
   }
 
-  it.each([401, 403, 503])("un %i del proveedor deja la fila failed sin cobrar la página", async (statusCode) => {
+  // REP2-03a: 401/403 (key inválida o sin permiso) son PROVIDER_CONFIG y responden 503.
+  it.each([
+    [401, 503, "PROVIDER_CONFIG"],
+    [403, 503, "PROVIDER_CONFIG"],
+    [503, 502, "PROVIDER_ERROR"],
+  ])("un %i del proveedor deja la fila failed sin cobrar la página", async (statusCode, httpStatus, error) => {
     const ctx = newContext();
     const model = providerFailing(statusCode);
     const { built } = deps({
@@ -1108,10 +1113,10 @@ describe("scanInvoice · cuota solo si el proveedor pudo facturar (D24-a, caos B
     });
     const pages = [page(`rechazo ${statusCode}`)];
 
-    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 502 });
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: httpStatus });
 
     expect(failedRow(ctx, sha256OfPages(pages.map((item) => item.data)))).toMatchObject({
-      error: "PROVIDER_ERROR",
+      error,
       status: "failed",
       usagePages: 0,
     });
