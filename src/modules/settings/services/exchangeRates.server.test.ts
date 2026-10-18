@@ -13,7 +13,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
-import { getCurrentExchangeRate } from "./exchangeRates.server";
+import { getCurrentExchangeRate, readCurrentExchangeRate } from "./exchangeRates.server";
 
 describe("exchangeRates.server getCurrentExchangeRate", () => {
   const mockMaybeSingle = jest.fn();
@@ -107,5 +107,43 @@ describe("exchangeRates.server getCurrentExchangeRate", () => {
 
     expect(mockInsert).not.toHaveBeenCalled();
     expect(rate.id).toBe("rate-existing");
+  });
+
+  describe("readCurrentExchangeRate (D24-b: el escaneo solo lee la tasa)", () => {
+    it("devuelve la tasa de DolarAPI sin insertar en exchange_rates", async () => {
+      const rate = await readCurrentExchangeRate();
+
+      expect(fetchOfficialDollarRate).toHaveBeenCalled();
+      expect(createAdminSupabaseClient).not.toHaveBeenCalled();
+      expect(mockInsert).not.toHaveBeenCalled();
+      expect(rate.rateVes).toBe(558.6436);
+      expect(rate.source).toBe(DOLAR_API_OFFICIAL_SOURCE);
+    });
+
+    it("reutiliza la tasa en caché del formulario sin llamar a DolarAPI", async () => {
+      await getCurrentExchangeRate(DEFAULT_STORE_ID);
+      jest.clearAllMocks();
+
+      const rate = await readCurrentExchangeRate();
+
+      expect(fetchOfficialDollarRate).not.toHaveBeenCalled();
+      expect(mockInsert).not.toHaveBeenCalled();
+      expect(rate.id).toBe("rate-official-new");
+    });
+
+    it("no llena la caché: getCurrentExchangeRate sigue persistiendo después", async () => {
+      await readCurrentExchangeRate();
+
+      await getCurrentExchangeRate(DEFAULT_STORE_ID);
+
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("propaga el fallo de DolarAPI (el escaneo lo trata como sin tasa, 6.7)", async () => {
+      (fetchOfficialDollarRate as jest.Mock).mockRejectedValueOnce(new Error("DolarAPI caída"));
+
+      await expect(readCurrentExchangeRate()).rejects.toThrow("DolarAPI caída");
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
   });
 });
