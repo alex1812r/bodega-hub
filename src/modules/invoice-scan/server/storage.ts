@@ -115,6 +115,17 @@ export type InvoiceUploadUrl = {
 
 export type InvoiceUploadRequestPage = { page: number; mediaType: InvoiceScanMediaType };
 
+/** Página que ya está en el bucket: no se firma (no se puede reemplazar). */
+export type InvoiceExistingUpload = { alreadyExists: true; page: number; path: string };
+
+/**
+ * Storage niega la firma de una ruta que ya existe sin upsert: StorageApiError
+ * con `status` HTTP 400, `statusCode` "409" y `code` "KeyAlreadyExists".
+ */
+function isAlreadyExistsError(error: { status?: number; statusCode?: string; code?: string } | null) {
+  return error?.statusCode === "409" || error?.status === 409 || error?.code === "KeyAlreadyExists";
+}
+
 /**
  * URLs firmadas de subida, una por página, bajo `<storeId>/<sha256>/`.
  *
@@ -127,13 +138,18 @@ export type InvoiceUploadRequestPage = { page: number; mediaType: InvoiceScanMed
  * existe falla (409 "Duplicate"), sea el segundo PUT del mismo token o uno
  * sobre la página de otro escaneo. Para un reintento legítimo eso equivale a
  * "ya subido": el POST rehace el hash sobre los bytes guardados.
+ *
+ * Storage tampoco firma una ruta que ya existe (Duplicate 409): esa página se
+ * devuelve como `{ alreadyExists: true }` sin URL en vez de 503, para que el
+ * reintento tras un POST cortado o el reescaneo de un escaneo descartado con
+ * el objeto aún en el bucket lleguen al POST (REP-03-F1).
  */
 export async function createInvoiceUploadUrls(
   client: StorageClient,
   storeId: string,
   sha256: string,
   pages: readonly InvoiceUploadRequestPage[],
-): Promise<InvoiceUploadUrl[]> {
+): Promise<Array<InvoiceUploadUrl | InvoiceExistingUpload>> {
   const bucket = client.storage.from(INVOICE_SCANS_BUCKET);
 
   return Promise.all(
@@ -142,6 +158,10 @@ export async function createInvoiceUploadUrls(
       const result = await bucket
         .createSignedUploadUrl(path, { upsert: false })
         .catch(() => storageUnavailable());
+
+      if (result.error && isAlreadyExistsError(result.error)) {
+        return { alreadyExists: true as const, page, path };
+      }
 
       if (result.error || !result.data?.signedUrl) {
         storageUnavailable();

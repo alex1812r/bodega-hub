@@ -51,7 +51,13 @@ const uploadUrlQuerySchema = z
  *   un escaneo `processing`/`extracted`/`confirmed` con ese hash; no se firma
  *   nada para no poder reemplazar sus objetos. El cliente salta la subida y
  *   manda `storagePaths` (las rutas de ese escaneo) al POST, que comprueba el
- *   hash sobre los bytes guardados y sirve la lectura en caché.
+ *   hash sobre los bytes guardados y sirve la lectura en caché. También
+ *   cuando no hay escaneo vivo pero todas las páginas ya están en el bucket
+ *   (POST cortado tras el PUT, o reescaneo de un escaneo descartado/fallido):
+ *   `storagePaths` son entonces las rutas p1..pN deterministas (REP-03-F1).
+ * - `{ alreadyUploaded: false, storagePaths, uploads }`: solo algunas páginas
+ *   ya existían; `uploads` firma las que faltan y `storagePaths` trae todas
+ *   las rutas p1..pN para el POST.
  */
 export async function GET(request: Request) {
   try {
@@ -77,12 +83,19 @@ export async function GET(request: Request) {
       return jsonData({ alreadyUploaded: true, storagePaths: liveScan.storagePaths, uploads: [] });
     }
 
-    const uploads =
+    const targets =
       dataSource === "supabase"
         ? await createInvoiceUploadUrls(createAdminSupabaseClient(), auth.storeId, query.sha256, pages)
         : createMockInvoiceUploadUrls(auth.storeId, query.sha256, pages);
+    const uploads = targets.filter((target) => !("alreadyExists" in target));
 
-    return jsonData({ alreadyUploaded: false, uploads });
+    if (uploads.length === targets.length) {
+      return jsonData({ alreadyUploaded: false, uploads });
+    }
+
+    const storagePaths = targets.map((target) => target.path);
+
+    return jsonData({ alreadyUploaded: uploads.length === 0, storagePaths, uploads });
   } catch (error) {
     return toErrorResponse(error);
   }

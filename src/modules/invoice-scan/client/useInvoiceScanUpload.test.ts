@@ -469,6 +469,19 @@ describe("useInvoiceScanUpload", () => {
       expect(result.current.stage).toBe("done");
     });
 
+    it("páginas ya en el bucket sin URL: sube solo las firmadas y el POST lleva todas las rutas (REP-03-F1)", async () => {
+      storageFlow(
+        { alreadyUploaded: false, storagePaths: paths, uploads: signed.uploads.slice(2) },
+        () => ({ ok: true, status: 200 }) as Response,
+      );
+
+      const result = await run();
+
+      expect(storagePuts()).toHaveLength(3);
+      expect(JSON.parse(String(postCalls()[0]?.[1]?.body))).toEqual({ sha256: HASH, storagePaths: paths });
+      expect(result.current.stage).toBe("done");
+    });
+
     it("otro fallo del PUT sigue siendo error", async () => {
       storageFlow(signed, () => ({ ok: false, status: 403, text: async () => "denied" }) as unknown as Response);
 

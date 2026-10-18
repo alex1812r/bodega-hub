@@ -59,6 +59,8 @@ type UploadUrl = { page: number; path: string; signedUrl: string; token: string 
 /**
  * Respuesta de `upload-url`: con `alreadyUploaded` la tienda ya tiene un escaneo
  * vivo con ese hash, no hay URLs y el POST va con `storagePaths` (auditoría M3).
+ * Sin `alreadyUploaded` pero con `storagePaths`, algunas páginas ya estaban en
+ * el bucket: no traen URL y el POST lleva igualmente todas las rutas (REP-03-F1).
  */
 type UploadUrlResponse = { alreadyUploaded?: boolean; storagePaths?: string[]; uploads: UploadUrl[] };
 
@@ -311,6 +313,11 @@ export function useInvoiceScanUpload({
         (alreadyUploaded ? [] : invoice.pages).map(async (page, index) => {
           const target = uploads.find((upload) => upload.page === index + 1);
 
+          // Página ya en el bucket (viene en `storagePaths` sin URL): no se sube.
+          if (!target && storagePaths?.[index]) {
+            return;
+          }
+
           if (!target) {
             throw new Error(STORAGE_UPLOAD_FAILED_MESSAGE);
           }
@@ -335,9 +342,7 @@ export function useInvoiceScanUpload({
         body: {
           sha256: invoice.sha256,
           storagePaths:
-            alreadyUploaded && storagePaths
-              ? storagePaths
-              : [...uploads].sort((a, b) => a.page - b.page).map((upload) => upload.path),
+            storagePaths ?? [...uploads].sort((a, b) => a.page - b.page).map((upload) => upload.path),
           ...(supplierId ? { supplierId } : {}),
         },
         method: "POST",
