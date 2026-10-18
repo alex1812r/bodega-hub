@@ -24,6 +24,9 @@ const config: Config = {
   maxWorkers: 1,
   testTimeout: 120_000,
   passWithNoTests: true,
+  // Tasa del seed vigente durante la corrida (REP-06, QA X1): ver regression-rate.ts.
+  globalSetup: "<rootDir>/scripts/stock-lab/regression-rate.setup.ts",
+  globalTeardown: "<rootDir>/scripts/stock-lab/regression-rate.teardown.ts",
   moduleNameMapper: {
     "^@bodega/core$": "<rootDir>/packages/core/src/index.ts",
     "^@bodega/core/(.*)$": "<rootDir>/packages/core/src/$1",
