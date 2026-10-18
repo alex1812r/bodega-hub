@@ -369,4 +369,113 @@ describe("useInvoiceScanUpload", () => {
     });
     expect(result.current.stage).toBe("done");
   });
+
+  describe("subida por Storage sin upsert (M3)", () => {
+    const big = preparedInvoice([1_000_000, 1_000_000, 1_000_000, 1_000_000, 900_000]);
+    const paths = [1, 2, 3, 4, 5].map((page) => `store/${HASH}/p${page}.jpg`);
+
+    function storageFlow(uploadUrlData: unknown, put: () => Response) {
+      fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+        const path = String(url).split("?")[0];
+
+        if (path === "/api/purchases/invoice-scan/limits") {
+          return jsonResponse({ data: { limit: 50, remaining: 50, used: 0 } });
+        }
+
+        if (path === "/api/purchases/invoice-scan/upload-url") {
+          return jsonResponse({ data: uploadUrlData });
+        }
+
+        if (String(url).startsWith("https://storage.test/")) {
+          return put();
+        }
+
+        if (path === "/api/purchases/invoice-scan" && init.method === "POST") {
+          return jsonResponse({ data: scanResponse(5) });
+        }
+
+        throw new Error(`Petición inesperada ${url}`);
+      });
+    }
+
+    const signed = {
+      alreadyUploaded: false,
+      uploads: paths.map((path, index) => ({
+        page: index + 1,
+        path,
+        signedUrl: `https://storage.test/p${index + 1}?token=t`,
+        token: "t",
+      })),
+    };
+
+    function storagePuts() {
+      return fetchMock.mock.calls.filter(
+        ([url, init]) => String(url).startsWith("https://storage.test/") && init?.method === "PUT",
+      );
+    }
+
+    async function run() {
+      const { result } = renderHook(() => useInvoiceScanUpload({ prepareFile: async () => big }));
+
+      await act(async () => {
+        await result.current.prepare(file);
+        await result.current.upload();
+      });
+
+      return result;
+    }
+
+    it("alreadyUploaded: no hace ningún PUT y el POST lleva las rutas del escaneo existente", async () => {
+      storageFlow({ alreadyUploaded: true, storagePaths: paths, uploads: [] }, () => {
+        throw new Error("no debe subir");
+      });
+
+      const result = await run();
+
+      expect(storagePuts()).toHaveLength(0);
+      expect(JSON.parse(String(postCalls()[0]?.[1]?.body))).toEqual({ sha256: HASH, storagePaths: paths });
+      expect(result.current.stage).toBe("done");
+    });
+
+    it("el PUT no pide upsert", async () => {
+      storageFlow(signed, () => ({ ok: true, status: 200 }) as Response);
+
+      await run();
+
+      for (const [, init] of storagePuts()) {
+        expect(new Headers(init?.headers).has("x-upsert")).toBe(false);
+      }
+    });
+
+    it.each([
+      ["409", () => ({ ok: false, status: 409, text: async () => "" }) as unknown as Response],
+      [
+        "400 con Duplicate en el cuerpo",
+        () =>
+          ({
+            ok: false,
+            status: 400,
+            text: async () =>
+              JSON.stringify({ error: "Duplicate", message: "The resource already exists", statusCode: "409" }),
+          }) as unknown as Response,
+      ],
+    ])("un PUT %s (objeto ya subido) cuenta como subido y sigue al POST", async (_label, put) => {
+      storageFlow(signed, put);
+
+      const result = await run();
+
+      expect(storagePuts()).toHaveLength(5);
+      expect(JSON.parse(String(postCalls()[0]?.[1]?.body))).toEqual({ sha256: HASH, storagePaths: paths });
+      expect(result.current.stage).toBe("done");
+    });
+
+    it("otro fallo del PUT sigue siendo error", async () => {
+      storageFlow(signed, () => ({ ok: false, status: 403, text: async () => "denied" }) as unknown as Response);
+
+      const result = await run();
+
+      expect(postCalls()).toHaveLength(0);
+      expect(result.current.stage).toBe("error");
+    });
+  });
 });

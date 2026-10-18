@@ -5,6 +5,8 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { requireInvoiceScanSession } from "@/modules/invoice-scan/server/requireScanSession";
+import * as mockScans from "@/modules/invoice-scan/server/scans.mock-server";
+import * as serverScans from "@/modules/invoice-scan/server/scans.server";
 import { INVOICE_MIXED_TYPES_MESSAGE } from "@/modules/invoice-scan/server/scanService";
 import {
   createInvoiceUploadUrls,
@@ -41,6 +43,15 @@ const uploadUrlQuerySchema = z
  *
  * URLs firmadas para subir cada página del escaneo directo a Storage, siempre
  * bajo `<storeId>/` de la sesión. En modo mock devuelve URLs falsas deterministas.
+ *
+ * Respuesta (auditoría M3):
+ * - `{ alreadyUploaded: false, uploads }`: una URL firmada por página, sin
+ *   upsert (ver `createInvoiceUploadUrls`).
+ * - `{ alreadyUploaded: true, storagePaths, uploads: [] }`: la tienda ya tiene
+ *   un escaneo `processing`/`extracted`/`confirmed` con ese hash; no se firma
+ *   nada para no poder reemplazar sus objetos. El cliente salta la subida y
+ *   manda `storagePaths` (las rutas de ese escaneo) al POST, que comprueba el
+ *   hash sobre los bytes guardados y sirve la lectura en caché.
  */
 export async function GET(request: Request) {
   try {
@@ -57,12 +68,21 @@ export async function GET(request: Request) {
       mediaType: query.types[query.types.length === 1 ? 0 : index],
       page: index + 1,
     }));
+    const liveScan = await (dataSource === "supabase" ? serverScans : mockScans).findLiveScanByHash(
+      auth,
+      query.sha256,
+    );
+
+    if (liveScan) {
+      return jsonData({ alreadyUploaded: true, storagePaths: liveScan.storagePaths, uploads: [] });
+    }
+
     const uploads =
       dataSource === "supabase"
         ? await createInvoiceUploadUrls(createAdminSupabaseClient(), auth.storeId, query.sha256, pages)
         : createMockInvoiceUploadUrls(auth.storeId, query.sha256, pages);
 
-    return jsonData({ uploads });
+    return jsonData({ alreadyUploaded: false, uploads });
   } catch (error) {
     return toErrorResponse(error);
   }

@@ -202,6 +202,19 @@ export type StoredFewShotExample = {
 };
 
 /** Escaneo vencido que la purga (cron) debe borrar: primero Storage, luego la fila. */
+/**
+ * Estados con objetos ya subidos y en uso: `upload-url` no firma una subida
+ * sobre el hash de un escaneo así (auditoría M3).
+ */
+export const LIVE_INVOICE_SCAN_STATUSES = ["processing", "extracted", "confirmed"] as const;
+
+/** Escaneo vivo de la tienda con un hash y las rutas de todas sus páginas. */
+export type LiveInvoiceScan = {
+  id: string;
+  status: (typeof LIVE_INVOICE_SCAN_STATUSES)[number];
+  storagePaths: string[];
+};
+
 export type ExpiredScan = {
   id: string;
   /** Rutas de todas las páginas en el bucket `invoice-scans`. */
