@@ -36,6 +36,10 @@ const BAD_PROPORTIONS =
 const TOO_LARGE =
   "La imagen supera 1.600 px en su lado mayor. Vuelve a subirla desde la app para que se reduzca.";
 
+/** Auditoría B8: datos tras el EOI/IEND/fin del RIFF; se guardarían y llegarían al proveedor. */
+const TRAILING_DATA =
+  "La imagen trae datos extra después del final del archivo. Vuelve a subirla desde la app.";
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 function badRequest(message: string): ApiError {
@@ -70,26 +74,50 @@ function detectType(data: Uint8Array): InvoiceImageMediaType | null {
 
 type Size = { width: number; height: number };
 
-/** Bytes de relleno admitidos tras el final de la imagen (EOI de JPEG, IEND de PNG). */
-const MAX_TRAILING_BYTES = 64 * 1024;
+/**
+ * Recorre los datos de escaneo desde `from` (tras la cabecera del primer SOS):
+ * salta los bytes de relleno (FF 00, FF FF) y los RSTn, y los segmentos con
+ * longitud que hay entre scans (DHT, SOS, DQT… del progresivo). Devuelve el
+ * offset justo tras el primer EOI (FF D9), o null si no lo hay.
+ */
+function jpegEnd(data: Uint8Array, view: DataView, from: number): number | null {
+  let index = from;
 
-/** ¿Hay un EOI (FF D9) a partir de `from` seguido de, como mucho, `MAX_TRAILING_BYTES`? */
-function hasJpegEoi(data: Uint8Array, from: number): boolean {
-  const lowest = Math.max(from, data.length - 2 - MAX_TRAILING_BYTES);
+  while (index + 1 < data.length) {
+    if (data[index] !== 0xff) {
+      index += 1;
+      continue;
+    }
 
-  for (let index = data.length - 2; index >= lowest; index -= 1) {
-    if (data[index] === 0xff && data[index + 1] === 0xd9) {
-      return true;
+    const marker = data[index + 1]!;
+
+    if (marker === 0xff) {
+      index += 1;
+    } else if (marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)) {
+      index += 2;
+    } else if (marker === 0xd9) {
+      return index + 2;
+    } else if (marker === 0xd8 || index + 4 > data.length) {
+      return null;
+    } else {
+      const length = view.getUint16(index + 2);
+
+      if (length < 2) {
+        return null;
+      }
+
+      index += 2 + length;
     }
   }
 
-  return false;
+  return null;
 }
 
 /**
  * Recorre los segmentos desde SOI respetando sus longitudes hasta el primer
  * SOS. Exige exactamente un SOFn coherente (C0–CF salvo DHT C4, JPG C8 y DAC
- * CC) antes del SOS, un SOS coherente con él y un EOI al final del archivo.
+ * CC) antes del SOS, un SOS coherente con él y un EOI que cierre el archivo
+ * (bytes tras el EOI: 400 `TRAILING_DATA`).
  */
 function jpegSize(data: Uint8Array, view: DataView): Size | null {
   let offset = 2;
@@ -128,7 +156,13 @@ function jpegSize(data: Uint8Array, view: DataView): Size | null {
       const coherent =
         size !== null && scanComponents >= 1 && scanComponents <= components && length === 6 + 2 * scanComponents;
 
-      return coherent && hasJpegEoi(data, offset + 2 + length) ? size : null;
+      const end = coherent ? jpegEnd(data, view, offset + 2 + length) : null;
+
+      if (end !== null && end < data.length) {
+        throw badRequest(TRAILING_DATA);
+      }
+
+      return end === null ? null : size;
     }
 
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
@@ -183,7 +217,7 @@ function crc32(bytes: Uint8Array): number {
 
 /**
  * Recorre los chunks verificando longitud, tipo y CRC: IHDR primero, al menos
- * un IDAT y un IEND al final (con, como mucho, `MAX_TRAILING_BYTES` de relleno).
+ * un IDAT y un IEND al final (bytes tras el IEND: 400 `TRAILING_DATA`).
  */
 function pngSize(data: Uint8Array, view: DataView): Size | null {
   let offset = PNG_SIGNATURE.length;
@@ -217,8 +251,15 @@ function pngSize(data: Uint8Array, view: DataView): Size | null {
     }
 
     if (type === "IEND") {
-      const coherent = hasData && length === 0 && data.length - (offset + 12) <= MAX_TRAILING_BYTES;
-      return coherent ? size : null;
+      if (!hasData || length !== 0) {
+        return null;
+      }
+
+      if (offset + 12 < data.length) {
+        throw badRequest(TRAILING_DATA);
+      }
+
+      return size;
     }
 
     offset += 12 + length;
@@ -231,7 +272,8 @@ function pngSize(data: Uint8Array, view: DataView): Size | null {
 const WEBP_MIN_CHUNK: Record<string, number> = { ANMF: 16, "VP8 ": 10, VP8L: 5 };
 
 /**
- * Exige que el tamaño RIFF coincida con la longitud (±1 de relleno) y que el
+ * Exige que el tamaño RIFF coincida con la longitud (falta, como mucho, el byte
+ * de relleno; bytes tras el fin del RIFF: 400 `TRAILING_DATA`) y que el
  * chunk VP8/VP8L/VP8X quepa en él; en VP8X recorre el resto de chunks y exige
  * al menos uno de imagen (VP8, VP8L o ANMF) con tamaño coherente.
  */
@@ -242,7 +284,11 @@ function webpStructureOk(data: Uint8Array, view: DataView, chunk: string): boole
 
   const riffSize = view.getUint32(4, true);
 
-  if (Math.abs(data.length - 8 - riffSize) > 1) {
+  if (data.length - 8 > riffSize) {
+    throw badRequest(TRAILING_DATA);
+  }
+
+  if (data.length - 8 < riffSize - 1) {
     return false;
   }
 

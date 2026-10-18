@@ -173,17 +173,6 @@ describe("inspectInvoiceImage: estructura (N3)", () => {
     expect(caught(() => inspectInvoiceImage(data, "image/jpeg")).message).toMatch(STRUCTURE);
   });
 
-  it("accepts trailing padding after EOI up to 64 KB, but not more", async () => {
-    const real = await bytes(canvas(1200, 1600).jpeg());
-    const padded = (extra: number) => {
-      const out = new Uint8Array(real.length + extra);
-      out.set(real);
-      return out;
-    };
-
-    expect(inspectInvoiceImage(padded(1024), "image/jpeg").width).toBe(1200);
-    expect(caught(() => inspectInvoiceImage(padded(200 * 1024), "image/jpeg")).message).toMatch(STRUCTURE);
-  });
 
   it("rejects a PNG whose IHDR was rewritten without fixing the CRC", async () => {
     const png = await bytes(canvas(800, 600).png());
@@ -306,5 +295,56 @@ describe("inspectInvoiceImage: lado máximo (CIE-07)", () => {
     expect(inspectInvoiceImage(jpegHeader(1200, 1600), "image/jpeg")).toMatchObject({ height: 1600, width: 1200 });
     expect(caught(() => inspectInvoiceImage(jpegHeader(1601, 1200), "image/jpeg")).message).toBe(TOO_LARGE);
     expect(caught(() => inspectInvoiceImage(jpegHeader(1200, 1601), "image/jpeg")).message).toBe(TOO_LARGE);
+  });
+});
+
+describe("inspectInvoiceImage: bytes tras el final de la imagen (auditoría B8)", () => {
+  const TRAILING = "La imagen trae datos extra después del final del archivo. Vuelve a subirla desde la app.";
+
+  function concat(...parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+    let offset = 0;
+    for (const part of parts) {
+      out.set(part, offset);
+      offset += part.length;
+    }
+    return out;
+  }
+
+  it("rechaza un JPEG con otro JPEG de 3600×4600 concatenado tras el EOI (ev-14)", async () => {
+    const page = await bytes(canvas(1200, 1600).jpeg());
+    const hidden = await bytes(canvas(3600, 4600).jpeg());
+
+    expect(caught(() => inspectInvoiceImage(concat(page, hidden), "image/jpeg")).message).toBe(TRAILING);
+  });
+
+  it("rechaza un JPEG con 700 KB de basura (o un solo byte, o ceros) tras el EOI", async () => {
+    const page = await bytes(canvas(1200, 1600).jpeg());
+    const garbage = new Uint8Array(700 * 1024).map((_, index) => (index * 31 + 7) & 0xff);
+
+    expect(caught(() => inspectInvoiceImage(concat(page, garbage), "image/jpeg")).message).toBe(TRAILING);
+    expect(caught(() => inspectInvoiceImage(concat(page, new Uint8Array([0x41])), "image/jpeg")).message).toBe(TRAILING);
+    expect(caught(() => inspectInvoiceImage(concat(page, new Uint8Array(1024)), "image/jpeg")).message).toBe(TRAILING);
+    expect(caught(() => inspectInvoiceImage(concat(jpegHeader(1600, 1200), new Uint8Array([0xff, 0xd9])), "image/jpeg")).message).toBe(TRAILING);
+  });
+
+  it("sigue aceptando JPEG baseline y progresivo sin cola", async () => {
+    expect(inspectInvoiceImage(await bytes(canvas(1200, 1600).jpeg({ quality: 70 })), "image/jpeg").width).toBe(1200);
+    expect(inspectInvoiceImage(await bytes(canvas(1200, 1600).jpeg({ progressive: true })), "image/jpeg").width).toBe(1200);
+  });
+
+  it("rechaza bytes tras el IEND de un PNG", async () => {
+    const png = await bytes(canvas(800, 600).png());
+
+    expect(inspectInvoiceImage(png, "image/png").width).toBe(800);
+    expect(caught(() => inspectInvoiceImage(concat(png, new Uint8Array([0x41])), "image/png")).message).toBe(TRAILING);
+  });
+
+  it("rechaza bytes tras el final del RIFF de un WebP", async () => {
+    const webp = await bytes(canvas(1000, 700).webp());
+
+    expect(inspectInvoiceImage(webp, "image/webp").width).toBe(1000);
+    expect(caught(() => inspectInvoiceImage(concat(webp, new Uint8Array([0x41])), "image/webp")).message).toBe(TRAILING);
+    expect(caught(() => inspectInvoiceImage(concat(webp, new Uint8Array(4096)), "image/webp")).message).toBe(TRAILING);
   });
 });
