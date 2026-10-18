@@ -85,6 +85,22 @@ describe("matchScan (Supabase)", () => {
     }
   });
 
+  it("REP-01-F1: el proveedor elegido (supplierId) se da por resuelto y sus alias aprendidos confirman la línea", async () => {
+    const extraction = buildExtraction({ supplier: { name: "Distribuidora Sintética El Ávila" } });
+    const matcher = createMatchScan(deps());
+
+    const free = await matcher(extraction, { dataSource: "supabase", scanId: "s", storeId: "t" });
+    const chosen = await matcher(extraction, { dataSource: "supabase", scanId: "s", storeId: "t", supplierId: SUPPLIER_POLAR });
+    const unknown = await matcher(extraction, { dataSource: "supabase", scanId: "s", storeId: "t", supplierId: "sup-otro" });
+
+    expect(free.supplier.contactId).toBeUndefined();
+    expect(free.lines[0]?.status).not.toBe("confirmed");
+    expect(chosen.supplier.contactId).toBe(SUPPLIER_POLAR);
+    expect(chosen.lines[0]).toMatchObject({ productId: "p-malta", status: "confirmed" });
+    // Un proveedor que no está entre los candidatos no cambia nada.
+    expect(unknown).toEqual(free);
+  });
+
   it("matchScan por defecto llama a matchInvoice(extraction, await loadMatchContext(...)) (sin stub)", () => {
     const source = readFileSync(join(__dirname, "matchScan.ts"), "utf8");
 

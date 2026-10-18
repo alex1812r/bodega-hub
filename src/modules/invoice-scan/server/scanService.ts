@@ -454,14 +454,22 @@ export type ScanInvoiceOptions = {
  * aprendieron al confirmar), sin llamar al modelo ni cobrar (caos-4 B1, REP-01);
  * si no cumplía el contrato solo se registra el código. Si el escaneo ya está
  * `confirmed`, la respuesta lleva la compra ligada (REP-01). 409 si la fila ya no está.
+ * Se reempareja con el `supplierId` del POST o, si no viene, con el proveedor
+ * con que se confirmó (`invoice_scans.supplier_id`, REP-01-F1).
  */
 async function rematchCachedScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
   scanId: string,
   extraction: InvoiceExtraction,
+  supplierId: string | undefined,
 ): Promise<InvoiceMatch> {
-  return deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
+  return deps.matcher(extraction, {
+    dataSource: deps.dataSource,
+    scanId,
+    storeId: ctx.storeId,
+    ...(supplierId ? { supplierId } : {}),
+  });
 }
 
 async function readConfirmedPurchase(
@@ -482,6 +490,7 @@ async function readCachedScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
   id: string,
+  supplierId: string | undefined,
 ): Promise<InvoiceScanResponse | null> {
   const cached = await deps.repo.getScan(ctx, id);
 
@@ -501,7 +510,8 @@ async function readCachedScan(
     console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
   }
 
-  const matched = await rematchCachedScan(deps, ctx, cached.id, extraction);
+  const chosenSupplierId = supplierId ?? (cached.status === "confirmed" ? (cached.supplierId ?? undefined) : undefined);
+  const matched = await rematchCachedScan(deps, ctx, cached.id, extraction, chosenSupplierId);
 
   return {
     cached: true,
@@ -550,7 +560,7 @@ export async function scanInvoice(
   let reservation = await reserve();
 
   if (reservation.outcome === "cached") {
-    const cached = await readCachedScan(deps, ctx, reservation.id);
+    const cached = await readCachedScan(deps, ctx, reservation.id, input.supplierId);
 
     if (cached) {
       return cached;

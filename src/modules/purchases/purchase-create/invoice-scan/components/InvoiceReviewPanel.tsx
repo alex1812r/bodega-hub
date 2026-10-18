@@ -340,7 +340,7 @@ export function InvoiceReviewPanel({
               <ul aria-label="Líneas por revisar" className="divide-y divide-border dark:divide-slate-800">
                 {sections.review.map((line) => renderRow(line.index))}
               </ul>
-            ) : state.lines.length > 0 ? (
+            ) : state.lines.length > 0 && !state.confirmedPurchase ? (
               <p className="px-4 py-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
                 Todas las líneas quedaron emparejadas con tus productos. Revisa los totales y carga la compra.
               </p>

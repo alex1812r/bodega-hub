@@ -659,6 +659,16 @@ describe("InvoiceReviewPanel", () => {
       expect(props.onLoad).not.toHaveBeenCalled();
     });
 
+    it("REP-01-F1: con todas las líneas emparejadas no invita a cargar la compra ya registrada", () => {
+      renderPanel({
+        ...makeReviewResponse({ lines: [{}] }),
+        cached: true,
+        confirmedPurchase: { id: PURCHASE_ID, purchaseNumber: "C-000123" },
+      });
+
+      expect(screen.queryByText(/carga la compra/)).not.toBeInTheDocument();
+    });
+
     it("sin número de compra legible igual avisa, enlaza y bloquea", () => {
       renderPanel({
         ...makeReviewResponse({ lines: [{}] }),
@@ -677,6 +687,7 @@ describe("InvoiceReviewPanel", () => {
 
       expect(screen.queryByTestId("invoice-review-confirmed-notice")).not.toBeInTheDocument();
       expect(loadButton()).toBeEnabled();
+      expect(screen.getByText(/Revisa los totales y carga la compra/)).toBeInTheDocument();
     });
   });
 });

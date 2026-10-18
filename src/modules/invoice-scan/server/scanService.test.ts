@@ -1233,6 +1233,33 @@ describe("scanInvoice · reescaneo en caché (REP-01, QA M1)", () => {
     });
   });
 
+  it("REP-01-F1: reempareja una factura confirmada con el proveedor que se eligió al confirmarla", async () => {
+    const ctx = { storeId: DEFAULT_STORE_ID, userId: "user-1" };
+    const { built, matcher } = deps();
+    const pages = [page(`proveedor elegido ${Date.now()}`)];
+    const first = await scanInvoice(built, ctx, { pages, source: "upload" });
+    tamper(first.scanId, {
+      confirmedAt: new Date().toISOString(),
+      purchaseId: "purchase-001",
+      status: "confirmed",
+      supplierId: "sup-elegido",
+    });
+
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(matcher).toHaveBeenLastCalledWith(singlePageExtraction, {
+      dataSource: "mock",
+      scanId: first.scanId,
+      storeId: ctx.storeId,
+      supplierId: "sup-elegido",
+    });
+
+    // Un supplierId explícito en el POST manda sobre el guardado.
+    await scanInvoice(built, ctx, { pages, source: "upload", supplierId: "sup-post" });
+
+    expect(matcher).toHaveBeenLastCalledWith(singlePageExtraction, expect.objectContaining({ supplierId: "sup-post" }));
+  });
+
   it("un escaneo en caché sin confirmar no trae compra ligada", async () => {
     const ctx = newContext();
     const { built } = deps();
