@@ -22,6 +22,7 @@ import {
   getLineNeeds,
   getPendingCount,
   getRateOptions,
+  getTaxInclusion,
   getReviewSections,
   isLineMismatch,
   nextPendingIndex,
@@ -460,5 +461,79 @@ describe("summarizeInvoiceReview", () => {
       blockers: ["Queda 1 línea por resolver."],
       effectiveRate: 900,
     });
+  });
+});
+
+describe("M3 / D25-a · IVA incluido con desglose y confirmación de la diferencia", () => {
+  it("sin desglose: la sugerencia de siempre (Σ líneas = total leído → IVA incluido)", () => {
+    expect(getTaxInclusion(stateOf([confirmed], { extraction: { total: 200 } }))).toEqual({
+      suggested: true,
+      included: true,
+    });
+    expect(getTaxInclusion(stateOf([confirmed], { extraction: { total: 232 } }))).toEqual({
+      suggested: false,
+      included: false,
+    });
+  });
+
+  it("desglosada y Σ líneas = total leído ≠ subtotal: preselecciona IVA incluido y cuadra", () => {
+    const state = stateOf([{ read: { quantity: 1, unitPrice: 2412.02, lineTotal: 2412.02 } }], {
+      extraction: { subtotal: 2079.33, tax: 332.69, total: 2412.02 },
+    });
+    expect(getTaxInclusion(state)).toEqual({ suggested: true, included: true });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ base: 2079.33, registered: 2412.02, mismatch: false });
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("exenta (IVA 0, subtotal = total): no sugiere IVA incluido y se carga", () => {
+    const state = stateOf([{ match: { taxRateCode: "exento" } }], {
+      extraction: { subtotal: 200, tax: 0, total: 200 },
+    });
+    expect(getTaxInclusion(state)).toEqual({ suggested: false, included: false });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: 200, mismatch: false });
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("mixta (Σ líneas = subtotal): precios sin IVA, sin sugerencia ni regresión", () => {
+    const state = stateOf(
+      [
+        { read: { quantity: 1, unitPrice: 100, lineTotal: 100 }, match: { taxRateCode: "exento" } },
+        { read: { quantity: 1, unitPrice: 100, lineTotal: 100 } },
+      ],
+      { extraction: { subtotal: 200, tax: 16, total: 216 } },
+    );
+    expect(getTaxInclusion(state)).toEqual({ suggested: false, included: false });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: 216, mismatch: false });
+    expect(canLoad(state)).toBe(true);
+  });
+
+  it("con diferencia Cargar se bloquea hasta confirmarla; si la diferencia cambia, se vuelve a pedir", () => {
+    const blocker = "El total a registrar no cuadra con el leído: corrige las líneas o confirma la diferencia.";
+    let state = stateOf([{ read: { lineTotal: 300 } }], { extraction: { total: 1000 } });
+    expect(getInvoiceReviewBlockers(state)).toEqual([blocker]);
+
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
+    expect(state.acceptedDifference).toBe(768);
+    expect(canLoad(state)).toBe(true);
+
+    state = reviewReducer(state, { type: "editUnitPrice", index: 0, unitPrice: 150 });
+    expect(getInvoiceReviewBlockers(state)).toEqual([blocker]);
+
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
+    expect(canLoad(state)).toBe(true);
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: false });
+    expect(canLoad(state)).toBe(false);
+  });
+
+  it("revertir la preselección de f18 bloquea Cargar (+16 %) hasta volver a IVA incluido o confirmar", () => {
+    let state = stateOf([{ read: { quantity: 1, unitPrice: 2412.02, lineTotal: 2412.02 } }], {
+      extraction: { subtotal: 2079.33, tax: 332.69, total: 2412.02 },
+    });
+    state = reviewReducer(state, { type: "setPricesIncludeTax", included: false });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: 2797.94, mismatch: true });
+    expect(canLoad(state)).toBe(false);
+
+    state = reviewReducer(state, { type: "setPricesIncludeTax", included: true });
+    expect(canLoad(state)).toBe(true);
   });
 });

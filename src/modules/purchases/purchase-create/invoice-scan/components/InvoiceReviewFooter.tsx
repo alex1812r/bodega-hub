@@ -6,13 +6,19 @@ import { type Ref, useId, useState } from "react";
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
 
-import { getTaxInclusion, type InvoiceReviewState, type InvoiceReviewSummary } from "../reviewModel";
+import {
+  getTaxInclusion,
+  type InvoiceReviewAction,
+  type InvoiceReviewState,
+  type InvoiceReviewSummary,
+} from "../reviewModel";
 import { formatInvoiceMoney, getDisplayedTotals } from "./invoiceReviewView";
 
 export type InvoiceReviewFooterProps = {
   state: InvoiceReviewState;
   summary: InvoiceReviewSummary;
   footerRef?: Ref<HTMLElement>;
+  onAction: (action: InvoiceReviewAction) => void;
   onLoad: () => void;
   onDiscard: () => void;
 };
@@ -22,9 +28,17 @@ export type InvoiceReviewFooterProps = {
  * IVA de las alícuotas elegidas, SCN-UI-Q1) con ✓ o la diferencia frente al leído, y
  * "Cargar en la compra". En móvil el detalle (leído, pendientes, bloqueos y "Descartar
  * escaneo") se despliega con la flecha (B-6: el pie ocupaba ~27 % de una pantalla de
- * 390); desde `sm` se ve siempre.
+ * 390); desde `sm` se ve siempre. D25-a: con diferencia frente al leído, Cargar exige
+ * marcar la confirmación de esa diferencia (siempre visible mientras la haya).
  */
-export function InvoiceReviewFooter({ footerRef, onDiscard, onLoad, state, summary }: InvoiceReviewFooterProps) {
+export function InvoiceReviewFooter({
+  footerRef,
+  onAction,
+  onDiscard,
+  onLoad,
+  state,
+  summary,
+}: InvoiceReviewFooterProps) {
   const [detailOpen, setDetailOpen] = useState(false);
   const detailId = useId();
   const totals = getDisplayedTotals(summary.totals);
@@ -130,6 +144,21 @@ export function InvoiceReviewFooter({ footerRef, onDiscard, onLoad, state, summa
           Descartar escaneo
         </Button>
       </div>
+
+      {totals.difference !== undefined ? (
+        <label
+          className="col-span-3 row-start-4 flex items-center gap-2 text-xs text-foreground sm:col-span-1 sm:col-start-1 sm:row-start-3"
+          data-testid="invoice-review-confirm-difference"
+        >
+          <input
+            checked={state.acceptedDifference === totals.difference}
+            className="size-4 rounded border-border"
+            onChange={(event) => onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked })}
+            type="checkbox"
+          />
+          {`Cargar con una diferencia de ${money(totals.difference)} frente al total leído`}
+        </label>
+      ) : null}
     </footer>
   );
 }

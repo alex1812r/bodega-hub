@@ -76,6 +76,8 @@ describe.each([
     state = reviewReducer(state, { type: "setPricesIncludeTax", included: false });
 
     expect(getTaxInclusion(state)).toEqual({ suggested: true, included: false });
+    // D25-a: cargar con diferencia frente al total leído exige confirmarla.
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
     expect(registeredTotalVes(state)).toBe(inflatedTotal);
     expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: inflatedTotal, mismatch: true });
 
@@ -134,6 +136,8 @@ describe("BAJO-N1 (CIE-03a) · f02: el residuo de quitar el IVA línea a línea"
   it("descartar una línea vuelve a cuadrar con lo que queda", () => {
     let state = acceptAll(createInvoiceReviewState(response(f02), ctx));
     state = reviewReducer(state, { type: "discardLine", index: 2 });
+    // D25-a: cargar con diferencia frente al total leído exige confirmarla.
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
 
     expect(getInvoiceReviewTotals(state).registered).toBe(roundMoney(33150.15 - 7226.39));
     expect(registeredTotalVes(state)).toBe(roundMoney(33150.15 - 7226.39));
@@ -216,6 +220,8 @@ describe("MEDIO-3 · f04 media caja (0,50)", () => {
     });
     state = acceptAll(state);
     state = reviewReducer(state, { type: "chooseProduct", index: 2, product: { productId: "00000000-0000-4000-8000-000000000078", name: "De Todito" } });
+    // D25-a: cargar con diferencia frente al total leído exige confirmarla.
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
     const draft = buildInvoiceReviewDraft(state);
 
     expect(draft).not.toBeNull();
@@ -266,5 +272,79 @@ describe("MEDIO-4 · tasa impresa inverosímil (f04: 86,75 es el total REF)", ()
     const state = createInvoiceReviewState(response(f01), ctx);
     expect(state.rate.printed).toBe(875.65);
     expect(state.rate.ignoredWarning).toBeUndefined();
+  });
+});
+
+/** QA pasada 2 · f18 (respuesta real de Gemini): IVA desglosado y la línea ya lo trae. */
+const f18: InvoiceScanResponse = {
+  cached: false,
+  extraction: {
+    supplier: { name: "COMERCIAL COSAS PRINCIPALES, C.A.", taxId: "J-502495312" },
+    date: "2026-09-03",
+    currency: "VES",
+    lines: [
+      {
+        rawText: "1 x CINTA TIRRO CORAL MATE 48MMX180M Bs 2.412,02",
+        description: "CINTA TIRRO CORAL MATE 48MMX180M",
+        quantity: 1,
+        unit: "unidad",
+        unitPrice: 2412.02,
+        lineTotal: 2412.02,
+        taxHint: "general",
+        confidence: 0.5,
+      },
+    ],
+    subtotal: 2079.33,
+    tax: 332.69,
+    total: 2412.02,
+    confidence: 0.5,
+    warnings: ["La imagen tiene poca resolución; revisa cada línea con la factura en mano."],
+  },
+  limits: { limit: 50, remaining: 30, used: 20 },
+  matched: {
+    supplier: {
+      contactId: "89274173-1f56-4482-8d0d-5f272f33a526",
+      candidates: [
+        { contactId: "89274173-1f56-4482-8d0d-5f272f33a526", name: "Cosas Principales", score: 1, reason: "RIF igual" },
+      ],
+    },
+    lines: [
+      {
+        index: 0,
+        status: "confirmed",
+        productId: "00000000-0000-4000-8000-000000000018",
+        entryMode: "unit",
+        taxRateCode: "general",
+        unitCostVes: 2412.02,
+        unitCostRef: 2.74,
+        issues: [],
+      },
+    ],
+    totals: { read: 2412.02, computed: 2412.02, mismatch: true },
+    rate: { system: SYSTEM_RATE },
+  },
+  scanId: "81fe06b1-b382-40b5-93f5-1d91473ecac3",
+};
+
+describe("M3 (QA pasada 2) · f18 con IVA desglosado y la línea con IVA incluido", () => {
+  it("preselecciona «precios con IVA» y registra el total leído, no +16 %", () => {
+    const state = createInvoiceReviewState(response(f18), ctx);
+
+    expect(getTaxInclusion(state)).toEqual({ suggested: true, included: true });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: 2412.02, mismatch: false });
+    expect(registeredTotalVes(state)).toBe(2412.02);
+    expect(getLineBasePrice(state, state.lines[0])).toBe(2079.33);
+  });
+
+  it("la preselección es reversible: sin IVA incluido vuelve a dar 2.797,94 y Cargar exige confirmar", () => {
+    let state = createInvoiceReviewState(response(f18), ctx);
+    state = reviewReducer(state, { type: "setPricesIncludeTax", included: false });
+
+    expect(getTaxInclusion(state)).toEqual({ suggested: true, included: false });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ registered: 2797.94, mismatch: true });
+    expect(buildInvoiceReviewDraft(state)).toBeNull();
+
+    state = reviewReducer(state, { type: "setPricesIncludeTax", included: true });
+    expect(registeredTotalVes(state)).toBe(2412.02);
   });
 });

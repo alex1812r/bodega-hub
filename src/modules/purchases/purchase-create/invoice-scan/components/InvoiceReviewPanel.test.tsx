@@ -418,6 +418,43 @@ describe("InvoiceReviewPanel", () => {
     expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -6.482,61");
   });
 
+  it("M3 / D25-a (números de f18): IVA desglosado con la línea con IVA preselecciona «incluyen IVA»; revertir bloquea Cargar hasta confirmar la diferencia", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 2412.02, lineTotal: 2412.02 } }],
+        extraction: { subtotal: 2079.33, tax: 332.69, total: 2412.02 },
+      }),
+    );
+
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "Los precios de esta factura parecen incluir IVA: la suma de las líneas da el total leído (Bs. 2.412,02), no el subtotal (Bs. 2.079,33).",
+    );
+    expect(screen.getByRole("radio", { name: "Los precios incluyen IVA (cargar sin IVA)" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent("Total a registrar Bs. 2.412,02");
+    expect(screen.queryByTestId("invoice-review-confirm-difference")).not.toBeInTheDocument();
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -385,92");
+    expect(loadButton()).toBeDisabled();
+    expect(screen.getByTestId("invoice-review-blockers")).toHaveTextContent(
+      "El total a registrar no cuadra con el leído: corrige las líneas o confirma la diferencia.",
+    );
+
+    const confirm = screen.getByRole("checkbox", {
+      name: "Cargar con una diferencia de Bs. -385,92 frente al total leído",
+    });
+    await user.click(confirm);
+    expect(confirm).toBeChecked();
+    expect(loadButton()).toBeEnabled();
+    await user.click(loadButton());
+    expect(props.onLoad).toHaveBeenCalledTimes(1);
+  });
+
   it("SCN-UI-Q1 (f04 real): la tasa 86,75 no se ofrece y la media caja se carga como unidades", async () => {
     const user = userEvent.setup();
     renderPanel(f04 as unknown as InvoiceScanResponse, {
