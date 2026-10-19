@@ -872,3 +872,15 @@ notify pgrst, 'reload schema';
 -- dia) pero las 6 vistas los seguirian contando.
 -- OJO: reaplicar 20260716b (y despues 20261006a y 20261013a) o reaplicar 20261013a devuelve a las vistas el criterio
 -- anterior: volver a aplicar este parche AL FINAL y correr verify-patches.sql (filas "(20261018a)").
+-- -----------------------------------------------------------------------------
+-- 20261019m — escaneo de factura: liberacion v3 al anular la compra (REP3-03d; auditoria p4 B14 / B17 y su extension
+--             de B2; caos p3 N10): claim_invoice_scan, release_invoice_scan_claim y discard_invoice_scan
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261019m-invoice-scan-release-v3.sql
+-- Requiere 20261019b y 20261019k (va despues de los dos). Idempotente, una transaccion. Mismas firmas, retornos, grants
+-- y mensajes. Un reclamo ligado por CIE-06 a una compra 'cancelado' deja de bloquear (otra clave lo reclama, release
+-- lo suelta, discard lo descarta); un escaneo confirmed en compra 'cancelado' NO se libera con la clave de esa misma
+-- compra (cae en el replay y create_purchase da PT409 sin tocar el escaneo); almacen con purchases.create en
+-- denied_permissions recibe PT403 en el claim. 'devuelto' sigue bloqueando. No toca stock ni dinero.
+-- OJO: reaplicar 20261019b o 20261019k (o la cadena 19a -> 19g -> 19i -> 19k) devuelve las versiones anteriores: volver
+-- a aplicar este parche despues y correr verify-patches.sql (filas "(20261019m").
