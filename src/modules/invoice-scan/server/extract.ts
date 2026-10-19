@@ -358,6 +358,32 @@ function guardReadability(
 }
 
 /**
+ * REP3-03e: una imagen few-shot guardada que ya no se puede sanear (ApiError
+ * 400 de `stripImageMetadata`) no tumba el escaneo del usuario: se omite ese
+ * ejemplo entero. Las páginas del usuario siguen fallando con 400. El log no
+ * lleva datos de la imagen.
+ */
+function sendableFewShot(
+  example: InvoiceFewShotExample,
+  toSend: (page: InvoicePage) => InvoicePage,
+): InvoiceFewShotExample[] {
+  if (!example.page) {
+    return [example];
+  }
+
+  try {
+    return [{ ...example, page: toSend(example.page) }];
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 400) {
+      throw error;
+    }
+
+    console.warn("[invoice-scan] ejemplo few-shot omitido: imagen no saneable", { mediaType: example.page.mediaType });
+    return [];
+  }
+}
+
+/**
  * Lee la factura (una llamada por página) y devuelve la extracción validada.
  *
  * Antes de llamar al modelo valida TODAS las páginas con `inspectInvoiceImage`
@@ -382,7 +408,7 @@ export async function extractInvoice(input: ExtractInvoiceInput): Promise<Extrac
   const toSend = (page: InvoicePage): InvoicePage => ({ ...page, data: stripImageMetadata(page.data, page.mediaType) });
   const sent: ExtractInvoiceInput = {
     ...input,
-    fewShot: input.fewShot?.map((example) => (example.page ? { ...example, page: toSend(example.page) } : example)),
+    fewShot: input.fewShot?.flatMap((example) => sendableFewShot(example, toSend)),
     pages: input.pages.map(toSend),
   };
   const startedAt = Date.now();
