@@ -47,6 +47,14 @@ const TOO_LARGE =
 const TRAILING_DATA =
   "La imagen trae datos extra después del final del archivo. Vuelve a subirla desde la app.";
 
+/** Caos N7 / auditoría B15: el saneo para el modelo no puede recorrer la imagen con certeza. */
+const UNSANITIZABLE =
+  "La imagen trae datos que no podemos limpiar con seguridad. Vuelve a subirla desde la app para que se procese.";
+
+function unsanitizable(): never {
+  throw badRequest(UNSANITIZABLE);
+}
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 function badRequest(message: string): ApiError {
@@ -439,59 +447,91 @@ function concatParts(parts: readonly Uint8Array[]): Uint8Array {
 }
 
 /**
- * Segmentos JPEG que no hacen falta para decodificar: COM y todo APPn salvo
- * APP0 JFIF y APP14 Adobe (transformación de color). Se quitan APP1 EXIF/XMP,
- * APP2 ICC/MPF, APP13 Photoshop, etc.
+ * Lista blanca de segmentos JPEG con longitud que se copian tal cual: los que
+ * hacen falta para decodificar (SOFn, DHT C4 y DAC CC dentro de C0–CF salvo
+ * JPG C8; DQT DB, DRI DD y SOS DA).
  */
-function isJpegMetadata(marker: number, segment: Uint8Array): boolean {
-  if (marker === 0xfe) {
-    return true;
-  }
-
-  if (marker < 0xe0 || marker > 0xef) {
-    return false;
-  }
-
-  return !(
-    (marker === 0xe0 && ascii(segment, 4, 5) === "JFIF\0") ||
-    (marker === 0xee && ascii(segment, 4, 5) === "Adobe")
-  );
+function isJpegCodingSegment(marker: number): boolean {
+  return (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc8) || marker === 0xdb || marker === 0xdd || marker === 0xda;
 }
 
 /**
- * Copia el JPEG sin los segmentos de `isJpegMetadata`, tanto en la cabecera
- * como entre scans (progresivo, o tras los datos de escaneo antes del EOI), y
- * sin lo que siga al primer EOI. Los datos de escaneo se copian intactos. Si
- * la estructura no se puede recorrer devuelve `data` sin tocar.
+ * Qué se envía de un segmento JPEG: el propio segmento si es de la lista
+ * blanca; APP0 JFIF y APP14 Adobe reconstruidos en su forma canónica (sin
+ * miniatura ni bytes extra, donde cabe texto); null para el resto de APPn y
+ * COM. Cualquier otro marcador (TEM, RSTn, JPGn, DNL, reservados…) lanza 400.
+ */
+function keptJpegSegment(marker: number, segment: Uint8Array): Uint8Array | null {
+  if (isJpegCodingSegment(marker)) {
+    return segment;
+  }
+
+  if (marker === 0xe0) {
+    // FF E0 00 10 "JFIF\0" versión 1.01, unidades, densidad X/Y, miniatura 0×0.
+    return segment.length >= 18 && ascii(segment, 4, 5) === "JFIF\0" && segment[11]! <= 2
+      ? Uint8Array.from([0xff, 0xe0, 0x00, 0x10, ...segment.subarray(4, 9), 0x01, 0x01, ...segment.subarray(11, 16), 0x00, 0x00])
+      : null;
+  }
+
+  if (marker === 0xee) {
+    // FF EE 00 0E "Adobe" versión 100, flags 0, transformación de color (0–2).
+    const transform = segment[15];
+    return segment.length >= 16 && ascii(segment, 4, 5) === "Adobe" && transform !== undefined && transform <= 2
+      ? Uint8Array.from([0xff, 0xee, 0x00, 0x0e, ...segment.subarray(4, 9), 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, transform])
+      : null;
+  }
+
+  if ((marker >= 0xe1 && marker <= 0xef) || marker === 0xfe) {
+    return null;
+  }
+
+  return unsanitizable();
+}
+
+/**
+ * Fin de los datos de escaneo que empiezan en `from`: el offset del FF del
+ * primer marcador que no sea FF 00 ni RSTn. Sin marcador (truncado): 400.
+ */
+function jpegScanEnd(data: Uint8Array, from: number): number {
+  let index = from;
+
+  while (index + 1 < data.length) {
+    if (data[index] !== 0xff) {
+      index += 1;
+      continue;
+    }
+
+    const marker = data[index + 1]!;
+
+    if (marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)) {
+      index += 2;
+      continue;
+    }
+
+    return index;
+  }
+
+  return unsanitizable();
+}
+
+/**
+ * Copia el JPEG con solo los segmentos de `keptJpegSegment`, en la cabecera y
+ * entre scans, los datos de escaneo intactos y sin lo que siga al primer EOI.
+ * Falla cerrado: un byte que no sea marcador donde debe haberlo, una longitud
+ * que no cuadra, un marcador fuera de la lista o la falta de EOI dan 400.
  */
 function stripJpeg(data: Uint8Array): Uint8Array {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const parts: Uint8Array[] = [data.subarray(0, 2)];
   let offset = 2;
-  let scanStart: number | null = null;
+  let sawScan = false;
 
   while (offset + 1 < data.length) {
-    const marker = data[offset + 1]!;
-
-    if (scanStart !== null) {
-      // Datos de escaneo: se avanza sobre bytes, relleno (FF FF), FF 00 y RSTn.
-      if (data[offset] !== 0xff || marker === 0xff) {
-        offset += 1;
-        continue;
-      }
-
-      if (marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)) {
-        offset += 2;
-        continue;
-      }
-
-      parts.push(data.subarray(scanStart, offset));
-      scanStart = null;
-    }
-
     if (data[offset] !== 0xff) {
-      return data;
+      return unsanitizable();
     }
+
+    const marker = data[offset + 1]!;
 
     if (marker === 0xff) {
       offset += 1; // relleno entre segmentos
@@ -499,50 +539,63 @@ function stripJpeg(data: Uint8Array): Uint8Array {
     }
 
     if (marker === 0xd9) {
-      parts.push(data.subarray(offset, offset + 2));
-      return concatParts(parts);
+      return sawScan ? concatParts([...parts, data.subarray(offset, offset + 2)]) : unsanitizable();
     }
 
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-      parts.push(data.subarray(offset, offset + 2));
-      offset += 2;
-      continue;
-    }
-
-    if (marker === 0x00 || marker === 0xd8 || offset + 4 > data.length) {
-      return data;
+    if (offset + 4 > data.length) {
+      return unsanitizable();
     }
 
     const length = view.getUint16(offset + 2);
     const end = offset + 2 + length;
 
     if (length < 2 || end > data.length) {
-      return data;
+      return unsanitizable();
     }
 
-    const segment = data.subarray(offset, end);
+    const kept = keptJpegSegment(marker, data.subarray(offset, end));
 
-    if (!isJpegMetadata(marker, segment)) {
-      parts.push(segment);
+    if (kept) {
+      parts.push(kept);
     }
 
     offset = end;
 
     if (marker === 0xda) {
-      scanStart = offset;
+      sawScan = true;
+      const scanEnd = jpegScanEnd(data, offset);
+      parts.push(data.subarray(offset, scanEnd));
+      offset = scanEnd;
     }
   }
 
-  return data;
+  return unsanitizable();
 }
 
-/** Chunks PNG de texto libre (auxiliares: el decodificador no los necesita). */
-const PNG_TEXT_CHUNKS: ReadonlySet<string> = new Set(["tEXt", "iTXt", "zTXt"]);
+/**
+ * Lista blanca de chunks PNG: los críticos que se decodifican y los auxiliares
+ * de color/transparencia/densidad, con la longitud que fija la norma (máxima
+ * en los de longitud variable). Fuera todo lo demás: tEXt/iTXt/zTXt, eXIf,
+ * iCCP (lleva un nombre libre), tIME, APNG y los privados.
+ */
+const PNG_KEPT: Readonly<Record<string, (length: number) => boolean>> = {
+  IDAT: () => true,
+  IEND: (length) => length === 0,
+  IHDR: (length) => length === 13,
+  PLTE: (length) => length > 0 && length <= 768 && length % 3 === 0,
+  bKGD: (length) => length === 1 || length === 2 || length === 6,
+  cHRM: (length) => length === 32,
+  gAMA: (length) => length === 4,
+  pHYs: (length) => length === 9,
+  sBIT: (length) => length >= 1 && length <= 4,
+  sRGB: (length) => length === 1,
+  tRNS: (length) => length <= 256,
+};
 
 /**
- * Copia el PNG sin chunks de texto ni lo que siga al IEND; los demás chunks
- * van íntegros (cada uno lleva su CRC). Si la estructura no se puede recorrer
- * devuelve `data` sin tocar.
+ * Copia el PNG con solo los chunks de `PNG_KEPT` (íntegros, con su CRC) y sin
+ * lo que siga al IEND. Falla cerrado: un tipo no ASCII, un CRC roto, un chunk
+ * crítico desconocido o mal medido, o la falta de IEND dan 400.
  */
 function stripPng(data: Uint8Array): Uint8Array {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -553,14 +606,23 @@ function stripPng(data: Uint8Array): Uint8Array {
     const length = view.getUint32(offset);
     const type = ascii(data, offset + 4, 4);
 
-    if (length > data.length - offset - 12) {
-      return data;
+    if (length > data.length - offset - 12 || !/^[A-Za-z]{4}$/.test(type)) {
+      return unsanitizable();
     }
 
     const end = offset + 12 + length;
 
-    if (!PNG_TEXT_CHUNKS.has(type)) {
+    if (crc32(data.subarray(offset + 4, offset + 8 + length)) !== view.getUint32(offset + 8 + length)) {
+      return unsanitizable();
+    }
+
+    const fits = PNG_KEPT[type]?.(length);
+    const critical = (data[offset + 4]! & 0x20) === 0;
+
+    if (fits) {
       parts.push(data.subarray(offset, end));
+    } else if (critical) {
+      return unsanitizable();
     }
 
     if (type === "IEND") {
@@ -570,31 +632,106 @@ function stripPng(data: Uint8Array): Uint8Array {
     offset = end;
   }
 
-  return data;
+  return unsanitizable();
+}
+
+function riffChunk(type: string, payload: Uint8Array): Uint8Array {
+  const header = new Uint8Array(8);
+  const view = new DataView(header.buffer);
+  header.set(Array.from(type, (char) => char.charCodeAt(0)));
+  view.setUint32(4, payload.length, true);
+  return concatParts(payload.length % 2 === 1 ? [header, payload, new Uint8Array(1)] : [header, payload]);
 }
 
 /**
- * Auditoría B13: copia en memoria de la página para el modelo, sin los
- * metadatos donde cabe texto arbitrario (instrucciones escondidas que el
- * proveedor podría leer). Los bytes guardados y su hash no cambian: solo se
- * aplica a lo que se envía.
- * - JPEG: sin COM ni APPn salvo APP0 JFIF y APP14 Adobe, y sin cola tras el
- *   primer EOI. Sin EXIF no hay orientación: el cliente ya la aplica al
- *   redibujar (`createImageBitmap` con `imageOrientation: "from-image"`).
- * - PNG: sin tEXt/iTXt/zTXt y sin cola tras el IEND.
- * - WebP: tal cual; quitar EXIF/XMP de un VP8X exige reescribir el tamaño
- *   RIFF y los flags, y el cliente sube JPEG.
- * Espera bytes ya validados por `inspectInvoiceImage`; ante una estructura que
- * no puede recorrer devuelve la entrada sin tocar.
+ * Reconstruye el WebP con solo los chunks de imagen: VP8 o VP8L simple, o en
+ * VP8X el propio VP8X (sin flags de ICC/EXIF/XMP ni bytes reservados), ALPH y
+ * un VP8/VP8L. Fuera ICCP, EXIF, XMP y los desconocidos. Falla cerrado: un
+ * tamaño que no cabe, animación (flag o ANIM/ANMF) o no tener exactamente un
+ * chunk de imagen dan 400.
+ */
+function stripWebp(data: Uint8Array): Uint8Array {
+  if (data.length < 20 || ascii(data, 0, 4) !== "RIFF" || ascii(data, 8, 4) !== "WEBP") {
+    return unsanitizable();
+  }
+
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const end = Math.min(data.length, 8 + view.getUint32(4, true));
+  const chunks: { type: string; payload: Uint8Array }[] = [];
+  let offset = 12;
+
+  while (offset + 8 <= end) {
+    const type = ascii(data, offset, 4);
+    const size = view.getUint32(offset + 4, true);
+
+    if (size > end - offset - 8) {
+      return unsanitizable();
+    }
+
+    chunks.push({ payload: data.subarray(offset + 8, offset + 8 + size), type });
+    offset += 8 + size + (size & 1);
+  }
+
+  if (end - offset > 1 || chunks.length === 0) {
+    return unsanitizable();
+  }
+
+  const [first] = chunks;
+  const images = chunks.filter((chunk) => chunk.type === "VP8 " || chunk.type === "VP8L");
+  const kept: Uint8Array[] = [];
+
+  if (first!.type === "VP8 " || first!.type === "VP8L") {
+    kept.push(riffChunk(first!.type, first!.payload));
+  } else if (first!.type === "VP8X" && first!.payload.length === 10) {
+    const flags = first!.payload[0]!;
+
+    if (flags & 0x02 || images.length !== 1 || chunks.some((chunk) => chunk.type === "ANIM" || chunk.type === "ANMF")) {
+      return unsanitizable();
+    }
+
+    kept.push(riffChunk("VP8X", Uint8Array.from([flags & 0x10, 0, 0, 0, ...first!.payload.subarray(4, 10)])));
+
+    for (const chunk of chunks) {
+      if (chunk.type === "ALPH" || chunk === images[0]) {
+        kept.push(riffChunk(chunk.type, chunk.payload));
+      }
+    }
+  } else {
+    return unsanitizable();
+  }
+
+  const body = concatParts(kept);
+  const header = new Uint8Array(12);
+  const headerView = new DataView(header.buffer);
+  header.set([0x52, 0x49, 0x46, 0x46]);
+  headerView.setUint32(4, 4 + body.length, true);
+  header.set([0x57, 0x45, 0x42, 0x50], 8);
+  return concatParts([header, body]);
+}
+
+/**
+ * Auditoría B13, caos N7 y auditoría B15: copia en memoria de la página para
+ * el modelo, solo con lo que hace falta para decodificar (lista blanca, no
+ * lista negra), sin los metadatos donde cabe texto arbitrario (instrucciones
+ * escondidas que el proveedor podría leer). Los bytes guardados y su hash no
+ * cambian: solo se aplica a lo que se envía.
+ * - JPEG: SOFn, DHT, DAC, DQT, DRI y SOS con sus datos de escaneo; APP0 JFIF y
+ *   APP14 Adobe reconstruidos en forma canónica; fuera COM, el resto de APPn y
+ *   la cola tras el primer EOI. Sin EXIF no hay orientación: el cliente ya la
+ *   aplica al redibujar (`createImageBitmap` con `imageOrientation: "from-image"`).
+ * - PNG: críticos y auxiliares de `PNG_KEPT`; fuera el resto y la cola tras el IEND.
+ * - WebP: solo VP8/VP8L (y en VP8X, ALPH); fuera ICCP/EXIF/XMP y desconocidos.
+ * Falla cerrado: si no puede recorrer la estructura con certeza lanza ApiError
+ * 400 (la entrada del BFF lo comprueba antes de subir y de cobrar).
  */
 export function stripImageMetadata(data: Uint8Array, mediaType: InvoiceImageMediaType): Uint8Array {
-  if (mediaType === "image/jpeg" && startsWith(data, [0xff, 0xd8])) {
-    return stripJpeg(data);
+  if (mediaType === "image/jpeg") {
+    return startsWith(data, [0xff, 0xd8]) ? stripJpeg(data) : unsanitizable();
   }
 
-  if (mediaType === "image/png" && startsWith(data, PNG_SIGNATURE)) {
-    return stripPng(data);
+  if (mediaType === "image/png") {
+    return startsWith(data, PNG_SIGNATURE) ? stripPng(data) : unsanitizable();
   }
 
-  return data;
+  return stripWebp(data);
 }

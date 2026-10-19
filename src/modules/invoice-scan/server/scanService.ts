@@ -32,7 +32,7 @@ import {
 } from "./extract";
 import { readExtractedRawTexts } from "./confirmScan.server";
 import { toFewShotFormat } from "./fewShot";
-import { assertNoTrailingData, inspectInvoiceImage } from "./imageInfo";
+import { assertNoTrailingData, inspectInvoiceImage, stripImageMetadata } from "./imageInfo";
 import { invoiceMatchSchema } from "./invoiceMatchSchema";
 import { matchScan, normalizeExtractionForMatch, type InvoiceScanMatcher } from "./matchScan";
 import { createInvoiceScanModel, type InvoiceScanModelInfo } from "./provider";
@@ -292,10 +292,15 @@ function assertSameMediaType(mediaTypes: readonly InvoiceScanMediaType[]) {
   }
 }
 
-/** Bytes mágicos, tipo declarado, tamaño y sin cola tras el final (B8): antes de subir, de cobrar y de reservar. */
+/**
+ * Bytes mágicos, tipo declarado, tamaño, sin cola tras el final (B8) y
+ * saneable para el modelo (B15: si no, 400): antes de subir, de cobrar y de reservar.
+ */
 function assertImages(pages: readonly InvoicePage[]) {
   for (const page of pages) {
-    assertNoTrailingData(inspectInvoiceImage(page.data, page.mediaType));
+    const info = inspectInvoiceImage(page.data, page.mediaType);
+    assertNoTrailingData(info);
+    stripImageMetadata(page.data, info.mediaType);
   }
 }
 
