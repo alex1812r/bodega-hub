@@ -3,6 +3,7 @@ import {
   type InvoiceExtraction,
   type InvoiceExtractionLine,
 } from "../contracts";
+import { replaceInvisibleChars } from "../invisibleChars";
 
 /**
  * Capa 2 (SCN-03q): de un `confirmed` previo solo se envía el FORMATO de sus
@@ -37,18 +38,17 @@ export type FewShotFormatResult =
   | { ok: false; code: FewShotFormatCode };
 
 /**
- * Controles C0/C1, invisibles de ancho cero (U+200B–U+200F, U+2060–U+2065,
- * BOM), bidi (U+202A–U+202E, U+2066–U+2069) y separadores U+2028/U+2029.
+ * Controles C0/C1. Los invisibles (ancho cero, bidi, U+2028/U+2029, rellenos…)
+ * los quita `replaceInvisibleChars`, la lista compartida con la validación.
  */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/gu;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 /** `<`, `>`, `&` y sus parecidos que sobreviven a NFKC. */
 const DELIMITER_LOOKALIKES = /[<>&«»˂˃‹›〈〉⟨⟩❮❯〈-》﹤﹥＜＞]/gu;
 
 /** Texto de una línea de ejemplo: NFKC, sin controles ni delimitadores, espacios colapsados y 80 caracteres como mucho. */
 export function sanitizeFewShotText(text: string): string {
-  const clean = text
-    .normalize("NFKC")
+  const clean = replaceInvisibleChars(text.normalize("NFKC"), " ")
     .replace(CONTROL_CHARS, " ")
     .replace(DELIMITER_LOOKALIKES, " ")
     .replace(/\s+/gu, " ")
