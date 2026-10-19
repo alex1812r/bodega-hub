@@ -7,6 +7,8 @@
  */
 import { z } from "zod";
 
+import { hasInvisibleChar } from "./invisibleChars";
+
 export const invoiceLineUnits = [
   "unidad",
   "caja",
@@ -65,41 +67,12 @@ export function hasForbiddenInvoiceChar(value: string): boolean {
 }
 
 /**
- * REP-05 (caos B5): marcas bidi (U+202A–U+202E, U+2066–U+2069, U+200E/U+200F,
- * U+061C) y caracteres de ancho cero (U+200B–U+200D, U+2060, U+FEFF). Permiten
- * suplantar visualmente un nombre en el detalle o en los few-shot. Los emoji
- * siguen pasando, también las secuencias unidas con U+200D (p. ej. una familia).
- * REP2-03b (caos N2): también el guion blando (U+00AD), los separadores de línea y
- * párrafo (U+2028/U+2029), los rellenos invisibles U+3164 (el hangul normal pasa)
- * y U+180E, el U+034F y los tags U+E0000–U+E007F (par de surrogates U+DB40 + U+DC00–U+DC7F).
+ * REP3-03b (caos N9): AAAA-MM-DD, AAAA/MM/DD o AAAA.MM.DD (mes y día de 1 o 2
+ * dígitos, mismo separador).
  */
-const INVISIBLE_INVOICE_CHARS =
-  /[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b\u200c\u2060\ufeff\u00ad\u2028\u2029\u3164\u180e\u034f]|\udb40[\udc00-\udc7f]/;
-/** U+200D fuera de una secuencia de emoji (entre un emoji, o su U+FE0F, y otro emoji). */
-const LOOSE_ZERO_WIDTH_JOINER = /(?<![\udc00-\udfff\ufe0f])\u200d|\u200d(?![\ud800-\udbff])/;
-
-export function hasInvisibleInvoiceChar(value: string): boolean {
-  return INVISIBLE_INVOICE_CHARS.test(value) || LOOSE_ZERO_WIDTH_JOINER.test(value);
-}
-
-const ALL_INVISIBLE_INVOICE_CHARS = new RegExp(INVISIBLE_INVOICE_CHARS.source, "g");
-const ALL_LOOSE_ZERO_WIDTH_JOINERS = new RegExp(LOOSE_ZERO_WIDTH_JOINER.source, "g");
-
-/**
- * REP2-03b (caos N2): quita de un texto lo que `hasInvisibleInvoiceChar` vetaría
- * (U+2028/U+2029 pasan a salto de línea). Para la lectura del modelo, que no debe
- * guardar nada que luego impida confirmarla. Los emoji unidos con U+200D se conservan.
- */
-export function stripInvisibleInvoiceChars(value: string): string {
-  return value
-    .replace(/[\u2028\u2029]/g, "\n")
-    .replace(ALL_INVISIBLE_INVOICE_CHARS, "")
-    .replace(ALL_LOOSE_ZERO_WIDTH_JOINERS, "");
-}
-
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-/** DD/MM/AAAA o DD-MM-AAAA (día y mes de 1 o 2 dígitos), como se imprime en Venezuela. */
-const DAY_FIRST_DATE = /^(\d{1,2})([/-])(\d{1,2})\2(\d{4})$/;
+const YEAR_FIRST_DATE = /^(\d{4})([/.-])(\d{1,2})\2(\d{1,2})$/;
+/** DD/MM/AAAA, DD-MM-AAAA o DD.MM.AAAA (día y mes de 1 o 2 dígitos), como se imprime en Venezuela. */
+const DAY_FIRST_DATE = /^(\d{1,2})([/.-])(\d{1,2})\2(\d{4})$/;
 
 function existsOnCalendar(year: number, month: number, day: number): boolean {
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -108,16 +81,17 @@ function existsOnCalendar(year: number, month: number, day: number): boolean {
 }
 
 /**
- * REP-05 (caos B8) / REP2-03b (caos N3): una fecha `YYYY-MM-DD`, `DD/MM/YYYY` o
- * `DD-MM-YYYY` que no existe en el calendario (2026-02-31, 31/02/2026). Otros
- * formatos no se juzgan.
+ * REP-05 (caos B8) / REP2-03b (caos N3) / REP3-03b (caos N9): una fecha
+ * `YYYY-MM-DD`, `DD/MM/YYYY` (o con `-`/`.` en cualquiera de los dos órdenes)
+ * que no existe en el calendario (2026-02-31, 31/02/2026, 31.04.2026,
+ * 2026/02/31). Otros formatos no se juzgan.
  */
 export function isImpossibleInvoiceDate(value: string): boolean {
   const trimmed = value.trim();
-  const iso = ISO_DATE.exec(trimmed);
+  const yearFirst = YEAR_FIRST_DATE.exec(trimmed);
 
-  if (iso) {
-    return !existsOnCalendar(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  if (yearFirst) {
+    return !existsOnCalendar(Number(yearFirst[1]), Number(yearFirst[3]), Number(yearFirst[4]));
   }
 
   const dayFirst = DAY_FIRST_DATE.exec(trimmed);
@@ -293,7 +267,7 @@ function invoiceTexts(extraction: InvoiceExtraction): Array<[(string | number)[]
  */
 export const correctedInvoiceExtractionSchema = invoiceExtractionSchema.superRefine((extraction, context) => {
   for (const [path, value] of invoiceTexts(extraction)) {
-    if (value !== undefined && hasInvisibleInvoiceChar(value)) {
+    if (value !== undefined && hasInvisibleChar(value)) {
       context.addIssue({ code: "custom", message: INVOICE_TEXT_INVALID_MESSAGE, path });
     }
   }

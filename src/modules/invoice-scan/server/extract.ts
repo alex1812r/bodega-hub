@@ -14,9 +14,9 @@ import { ApiError } from "@/lib/api/apiError";
 import {
   invoiceExtractionSchema,
   isImpossibleInvoiceDate,
-  stripInvisibleInvoiceChars,
   type InvoiceExtraction,
 } from "../contracts";
+import { replaceInvisibleChars } from "../invisibleChars";
 import type { FewShotFormat } from "./fewShot";
 import { INVOICE_LOW_RES_SIDE, inspectInvoiceImage, stripImageMetadata, type InvoiceImageInfo } from "./imageInfo";
 import { buildFewShotMessages, buildInvoiceSystemPrompt, buildTargetMessage } from "./prompt";
@@ -299,7 +299,7 @@ function guardDate(extraction: InvoiceExtraction): InvoiceExtraction {
  * legítima con un U+00AD leído quedaría imposible de confirmar.
  */
 function stripInvisibles(extraction: InvoiceExtraction): InvoiceExtraction {
-  const strip = stripInvisibleInvoiceChars;
+  const strip = (value: string) => replaceInvisibleChars(value);
   const stripOptional = (value: string | undefined) => (value === undefined ? undefined : strip(value));
 
   return {

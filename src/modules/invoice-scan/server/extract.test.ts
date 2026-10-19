@@ -568,6 +568,32 @@ describe("extractInvoice: invisibles en la lectura del modelo (caos N2)", () => 
   });
 });
 
+describe("extractInvoice: invisibles nuevos en la lectura del modelo (caos N8 / auditoría B16)", () => {
+  it("quita U+FFF9–FFFB, rellenos hangul, operadores invisibles, formatos obsoletos, selectores sueltos, U+1D173–1D17A y U+2800", async () => {
+    const dirty = (text: string) =>
+      `${text}\ufff9\ufffb\u115f\u1160\uffa0\u2061\u2064\u206a\u206f\ufe00\ufe0f\u{E0100}\u{E01EF}\u{1D173}\u{1D17A}\u2800`;
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        generated(
+          {
+            ...singlePageExtraction,
+            lines: singlePageExtraction.lines.map((line) => ({ ...line, description: dirty(line.description) })),
+            supplier: { ...singlePageExtraction.supplier, name: `${dirty("AVILA")} \u2764\ufe0f` },
+          },
+          10,
+          10,
+        ),
+      ],
+    });
+
+    const { extraction } = await extractInvoice({ model: info(model), pages: [page()] });
+
+    expect(correctedInvoiceExtractionSchema.safeParse(extraction).success).toBe(true);
+    expect(extraction.supplier.name).toBe("AVILA \u2764\ufe0f");
+    expect(extraction.lines[0]!.description).toBe(singlePageExtraction.lines[0]!.description);
+  });
+});
+
 describe("extractInvoice: key inválida del proveedor (caos N1 / D25-d)", () => {
   let consoleError: jest.SpyInstance;
 
