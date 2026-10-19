@@ -417,6 +417,13 @@ describe("PurchaseLineNumberCell · un costo se muestra con dos decimales (COM-F
 
   beforeEach(() => {
     onScan.mockReset();
+    // Reloj simulado: la celda separa la ráfaga del lector con `Date.now()` (50 ms entre
+    // teclas) y con el reloj real una máquina cargada la partía.
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("«30.600» tecleado en un costo queda como 30.60 al salir, no como 30.6", () => {
@@ -438,7 +445,8 @@ describe("PurchaseLineNumberCell · un costo se muestra con dos decimales (COM-F
 
   /** El lector teclea detrás de «1020.00»: clic en el campo ya enfocado, sin nada seleccionado. */
   async function scanAfterDecimals(keys: string) {
-    const user = userEvent.setup();
+    // El lector: 4 ms simulados por tecla, sin depender de la carga de la máquina.
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime, delay: 4 });
 
     render(
       <PurchaseLineNumberCell aria-label="Celda" onChange={onChange} onScan={onScan} value={1020} />,
