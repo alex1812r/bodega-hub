@@ -1,7 +1,9 @@
 /**
  * SCN-UI-Q1 · Revisión con respuestas REALES de Gemini (qa-final, anonimizadas en
  * `__fixtures__`): f01 y f02 son facturas sin desglose de IVA ("SIN DERECHO A CRÉDITO
- * FISCAL") cuyo Σ cantidad × precio ya es el total; f04 trae media caja (0,50) y una
+ * FISCAL", el modelo lee IVA 0,00) cuyo Σ cantidad × precio ya es el total. REP3-01 (D27):
+ * con IVA 0,00 nunca se preselecciona "IVA incluido" (podría ser exenta, N12); se pregunta
+ * y el usuario lo elige (`includeTax`). f04 trae media caja (0,50) y una
  * "tasa" impresa 86,75 que en realidad es el total REF.
  */
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "@bodega/core/purchases";
@@ -19,6 +21,7 @@ import { buildInvoiceReviewDraft } from "./reviewDraft";
 import {
   createInvoiceReviewState,
   getInvoiceReviewTotals,
+  getInvoiceTaxAssessment,
   getLineBasePrice,
   getLineIssues,
   getLineNeeds,
@@ -43,6 +46,11 @@ function acceptAll(state: InvoiceReviewState): InvoiceReviewState {
   return state.lines.reduce((next, line) => reviewReducer(next, { type: "acceptMarked", index: line.index }), state);
 }
 
+/** La elección explícita "los precios incluyen IVA" (f01/f02 no la traen preseleccionada). */
+function includeTax(state: InvoiceReviewState): InvoiceReviewState {
+  return reviewReducer(state, { type: "setPricesIncludeTax", included: true });
+}
+
 function registeredTotalVes(state: InvoiceReviewState): number {
   const draft = buildInvoiceReviewDraft(state);
   if (!draft) {
@@ -60,11 +68,18 @@ describe.each([
   ["f01", f01, 40516.32, 46998.93],
   ["f02", f02, 33150.15, 38454.17],
 ])("ALTO-1 · %s sin desglose de IVA", (_name, fixture, readTotal, inflatedTotal) => {
-  it("la compra registra el total leído y el pie muestra ese mismo total", () => {
-    const state = acceptAll(createInvoiceReviewState(response(fixture), ctx));
+  it("IVA 0,00: se pregunta sin preselección; eligiendo «incluyen IVA» registra el total leído", () => {
+    const initial = acceptAll(createInvoiceReviewState(response(fixture), ctx));
+    expect(getTaxInclusion(initial)).toEqual({ suggested: false, included: false });
+    expect(getInvoiceTaxAssessment(initial).exemptOrIncluded).toBe(true);
+    // Sin elegir, Cargar exige confirmar la diferencia: nada se carga +16 % en silencio.
+    expect(getInvoiceReviewTotals(initial)).toMatchObject({ registered: inflatedTotal, mismatch: true });
+    expect(buildInvoiceReviewDraft(initial)).toBeNull();
+
+    const state = includeTax(initial);
     const totals = getInvoiceReviewTotals(state);
 
-    expect(getTaxInclusion(state)).toEqual({ suggested: true, included: true });
+    expect(getTaxInclusion(state)).toEqual({ suggested: false, included: true });
     expect(registeredTotalVes(state)).toBe(readTotal);
     // El pie enseña lo que se va a registrar, no "el calculado más cercano".
     expect(totals.registered).toBe(registeredTotalVes(state));
@@ -72,10 +87,10 @@ describe.each([
   });
 
   it("«Los precios no incluyen IVA» es visible y reversible: suma el IVA y el pie lo marca", () => {
-    let state = acceptAll(createInvoiceReviewState(response(fixture), ctx));
+    let state = includeTax(acceptAll(createInvoiceReviewState(response(fixture), ctx)));
     state = reviewReducer(state, { type: "setPricesIncludeTax", included: false });
 
-    expect(getTaxInclusion(state)).toEqual({ suggested: true, included: false });
+    expect(getTaxInclusion(state)).toEqual({ suggested: false, included: false });
     // D25-a: cargar con diferencia frente al total leído exige confirmarla.
     state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
     expect(registeredTotalVes(state)).toBe(inflatedTotal);
@@ -86,7 +101,7 @@ describe.each([
   });
 
   it("D10: la extracción corregida conserva los precios leídos (con IVA), no la base convertida", () => {
-    const state = acceptAll(createInvoiceReviewState(response(fixture), ctx));
+    const state = includeTax(acceptAll(createInvoiceReviewState(response(fixture), ctx)));
     const draft = buildInvoiceReviewDraft(state);
     const read = response(fixture).extraction.lines;
 
@@ -123,7 +138,7 @@ describe.each([
 describe("BAJO-N1 (CIE-03a) · f02: el residuo de quitar el IVA línea a línea", () => {
   // Dos bultos a 4.163,12 y 4.032,77: la base por bulto redondeada × 2 se pasa un céntimo cada una.
   it("se reparte en las bases y la compra registra 33.150,15, no 33.150,17", () => {
-    const state = acceptAll(createInvoiceReviewState(response(f02), ctx));
+    const state = includeTax(acceptAll(createInvoiceReviewState(response(f02), ctx)));
     const plain = state.lines.map((line) => roundMoney(line.unitPrice / 1.16));
     const bases = state.lines.map((line) => getLineBasePrice(state, line));
 
@@ -134,7 +149,7 @@ describe("BAJO-N1 (CIE-03a) · f02: el residuo de quitar el IVA línea a línea"
   });
 
   it("descartar una línea vuelve a cuadrar con lo que queda", () => {
-    let state = acceptAll(createInvoiceReviewState(response(f02), ctx));
+    let state = includeTax(acceptAll(createInvoiceReviewState(response(f02), ctx)));
     state = reviewReducer(state, { type: "discardLine", index: 2 });
     // D25-a: cargar con diferencia frente al total leído exige confirmarla.
     state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });

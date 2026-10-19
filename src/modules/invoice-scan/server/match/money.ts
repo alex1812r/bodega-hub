@@ -1,6 +1,7 @@
 import { roundMoney } from "@bodega/core/currency";
 
 import type { InvoiceExtraction, InvoiceExtractionLine, InvoiceMatch } from "../../contracts";
+import { assessInvoiceTax, getInvoiceTotalsGap } from "../../invoiceTaxCheck";
 
 import { formatDecimal, isPositive } from "./text";
 
@@ -264,12 +265,12 @@ function withinTolerance(read: number, computed: number): boolean {
 }
 
 /**
- * Totales. `computed` = suma de importes de línea (sin IVA). Se compara:
- * - con `subtotal` si se leyó (y además `subtotal + tax` con `total` si están los tres);
- * - si no, `total − tax` si se leyeron ambos;
- * - si solo hay `total`, vale tanto sin IVA como con el IVA de las alícuotas
- *   resueltas (`computedWithTax`), porque la factura puede imprimirlo de las dos formas.
- * Tolerancia: max(1 % del leído, 1 Bs). Sin nada leído, no hay descuadre.
+ * Totales. `computed` = suma de importes de línea tal como se leyeron. REP3-01 (D27):
+ * misma regla que la revisión (`assessInvoiceTax`): si los precios parecen incluir IVA,
+ * lo que se registraría es `computedNet`; si no, `computedWithTax` (IVA de las alícuotas
+ * resueltas). Eso se compara con el total de referencia (leído o subtotal + IVA). Sin
+ * referencia, solo el subtotal leído frente a `computedNet` (máx(1 %, 1 Bs)); sin nada
+ * leído, no hay descuadre.
  */
 export function computeTotals(
   extraction: InvoiceExtraction,
@@ -279,18 +280,21 @@ export function computeTotals(
   const computed = roundMoney(computedNet);
   const read = Number.isFinite(extraction.total) ? extraction.total : undefined;
   const subtotal = Number.isFinite(extraction.subtotal) ? extraction.subtotal : undefined;
-  const tax = Number.isFinite(extraction.tax) ? extraction.tax : undefined;
+  const assessment = assessInvoiceTax({
+    linesAmount: computed,
+    linesAmountWithTax: roundMoney(computedWithTax),
+    subtotal: extraction.subtotal,
+    tax: extraction.tax,
+    total: extraction.total,
+    minTolerance: TOTALS_MIN_TOLERANCE_VES,
+  });
 
   let mismatch = false;
-  if (subtotal !== undefined) {
+  if (assessment.reference) {
+    const registered = assessment.includedSuggested ? computed : roundMoney(computedWithTax);
+    mismatch = getInvoiceTotalsGap(assessment, registered) !== undefined;
+  } else if (subtotal !== undefined) {
     mismatch = !withinTolerance(subtotal, computed);
-    if (!mismatch && tax !== undefined && read !== undefined) {
-      mismatch = !withinTolerance(read, subtotal + tax);
-    }
-  } else if (read !== undefined && tax !== undefined) {
-    mismatch = !withinTolerance(read - tax, computed);
-  } else if (read !== undefined) {
-    mismatch = !withinTolerance(read, computed) && !withinTolerance(read, roundMoney(computedWithTax));
   }
 
   return { ...(read !== undefined ? { read } : {}), computed, mismatch };
