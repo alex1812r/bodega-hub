@@ -396,17 +396,22 @@ describe("InvoiceReviewPanel", () => {
     expect(screen.getByText("Cuadra con el total leído")).toBeInTheDocument();
   });
 
-  it("SCN-UI-Q1 (f01 real): precios con IVA incluido, elección visible y reversible; el pie da lo que se registra", async () => {
+  it("SCN-UI-Q1 / D27 (f01 real, IVA 0,00): se pregunta sin preselección; la elección es visible y reversible; el pie da lo que se registra", async () => {
     const user = userEvent.setup();
     renderPanel(f01 as unknown as InvoiceScanResponse, {
       context: { systemRateVes: 880.1159, taxRates: REVIEW_TAX_RATES },
     });
 
     expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
-      "Los precios de esta factura parecen incluir IVA",
+      "La factura no trae IVA y la suma de las líneas ya da el total leído",
     );
     const included = screen.getByRole("radio", { name: "Los precios incluyen IVA (cargar sin IVA)" });
     const excluded = screen.getByRole("radio", { name: "Los precios no incluyen IVA" });
+    expect(included).toHaveAttribute("aria-checked", "false");
+    expect(excluded).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -6.482,61");
+
+    await user.click(included);
     expect(included).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(/Total a registrar Bs\. 40\.516,3\d/);
     expect(screen.queryByTestId("invoice-review-difference")).not.toBeInTheDocument();
@@ -453,6 +458,41 @@ describe("InvoiceReviewPanel", () => {
     expect(loadButton()).toBeEnabled();
     await user.click(loadButton());
     expect(props.onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("REP3-01 (C3-M1): sin total leído, subtotal + IVA es la referencia; revertir el IVA incluido pide confirmar", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 104.4, lineTotal: 104.4 } }],
+        extraction: { subtotal: 90, tax: 14.4 },
+      }),
+    );
+
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "la suma de las líneas da el subtotal más el IVA leídos (Bs. 104,40), no el subtotal (Bs. 90,00)",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
+      /Total a registrar Bs\. 104,40\s*·\s*Subtotal \+ IVA leídos Bs\. 104,40/,
+    );
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -16,70");
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Cargar con una diferencia de Bs. -16,70 frente al subtotal + IVA leídos",
+      }),
+    ).not.toBeChecked();
+    expect(loadButton()).toBeDisabled();
+  });
+
+  it("REP3-01: sin ningún total leído no hay casilla, se informa que no hay con qué comparar", () => {
+    renderPanel(makeReviewResponse({ lines: [{}], extraction: { tax: 32 } }));
+
+    expect(screen.getByTestId("invoice-review-no-reference")).toHaveTextContent("Sin total leído para comparar");
+    expect(screen.queryByTestId("invoice-review-confirm-difference")).not.toBeInTheDocument();
+    expect(loadButton()).toBeEnabled();
   });
 
   it("SCN-UI-Q1 (f04 real): la tasa 86,75 no se ofrece y la media caja se carga como unidades", async () => {

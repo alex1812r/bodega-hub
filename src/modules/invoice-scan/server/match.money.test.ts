@@ -176,6 +176,60 @@ describe("matchInvoice · totales", () => {
     expect(result.totals).toEqual({ computed: 600, mismatch: false });
   });
 
+  describe("REP3-01 (D27): el IVA incluido cuenta, con la misma regla que la revisión", () => {
+    const priced = (lineTotal: number, taxHint: "general" | "exento" = "general") =>
+      buildLine({ quantity: 1, unitPrice: lineTotal, lineTotal, taxHint });
+
+    it.each([
+      {
+        name: "f18: desglose y la línea con IVA incluido cuadra",
+        lines: [priced(2412.02)],
+        totals: { subtotal: 2079.33, tax: 332.69, total: 2412.02 },
+        mismatch: false,
+      },
+      {
+        name: "C3-M1: sin total, subtotal + IVA = línea con IVA incluido",
+        lines: [priced(104.4)],
+        totals: { subtotal: 90, tax: 14.4 },
+        mismatch: false,
+      },
+      {
+        name: "sin total, subtotal + IVA que no da ni las líneas ni las líneas + IVA",
+        lines: [priced(600)],
+        totals: { subtotal: 482.76, tax: 77.24 },
+        mismatch: true,
+      },
+      {
+        name: "N11: mixta con parte gravada 5 % e IVA impreso que no da el total (el 1 % lo tapaba)",
+        lines: [priced(950, "exento"), priced(50)],
+        totals: { subtotal: 1000, tax: 8, total: 1000 },
+        mismatch: true,
+      },
+      {
+        name: "mixta con parte gravada 5 % e IVA incluido",
+        lines: [priced(950, "exento"), priced(50)],
+        totals: { subtotal: 993.1, tax: 6.9, total: 1000 },
+        mismatch: false,
+      },
+      {
+        name: "exenta con IVA 0,00 y líneas exentas",
+        lines: [priced(500, "exento")],
+        totals: { subtotal: 500, tax: 0, total: 500 },
+        mismatch: false,
+      },
+      {
+        name: "descuento global sin campo propio: no cuadra",
+        lines: [priced(600), priced(400)],
+        totals: { subtotal: 900, tax: 144, total: 1044 },
+        mismatch: true,
+      },
+    ])("$name", ({ lines, totals, mismatch }) => {
+      const result = matchInvoice(buildExtraction({ lines, ...totals }), buildContext());
+
+      expect(result.totals.mismatch).toBe(mismatch);
+    });
+  });
+
   it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])(
     "alias exacto con cantidad %p: dudosa con aviso de cantidad inválida",
     (quantity) => {

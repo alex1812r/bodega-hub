@@ -20,6 +20,12 @@ import type {
   InvoiceScanConfirmedPurchase,
   InvoiceScanResponse,
 } from "@/modules/invoice-scan/contracts";
+import {
+  assessInvoiceTax,
+  getInvoiceTotalsGap,
+  type InvoiceTaxAssessment,
+  type InvoiceTaxReference,
+} from "@/modules/invoice-scan/invoiceTaxCheck";
 import { DECIMAL_QUANTITY_ISSUE, USD_DOCUMENT_ISSUE } from "@/modules/invoice-scan/server/match/money";
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 
@@ -35,8 +41,8 @@ export const PRINTED_RATE_MAX_DEVIATION = 0.25;
 export const PRINTED_RATE_LAST_KNOWN_MIN_FACTOR = 0.5;
 export const PRINTED_RATE_LAST_KNOWN_MAX_FACTOR = 2;
 /**
- * Tolerancia de totales (la misma del emparejamiento, `server/match/money.ts`):
- * máx(1 % del leído, 1 Bs). En facturas en dólares el mínimo es 0,01.
+ * Tolerancia de líneas: máx(1 % del leído, 1 Bs); en facturas en dólares el mínimo es
+ * 0,01. El cuadre de totales e IVA es el de `invoiceTaxCheck.ts` (D27) con estos mínimos.
  */
 export const TOTALS_RELATIVE_TOLERANCE = 0.01;
 export const TOTALS_MIN_TOLERANCE_VES = 1;
@@ -980,9 +986,8 @@ export function isLineMismatch(state: InvoiceReviewState, line: InvoiceReviewLin
 
 export type InvoiceTaxInclusion = {
   /**
-   * Σ cantidad × precio ≈ total leído, las alícuotas elegidas añadirían IVA y, si la
-   * factura desglosa IVA, esa suma no es el subtotal leído (M3, D25-a): los precios
-   * parecen incluirlo (se avisa y se ofrece elegir).
+   * Σ cantidad × precio ≈ total de referencia y no ≈ "precios sin IVA" (`assessInvoiceTax`,
+   * D27): los precios parecen incluirlo (se avisa y se ofrece elegir).
    */
   suggested: boolean;
   /** Se carga la base precio ÷ (1 + alícuota): la elección del usuario o, sin ella, la sugerencia. */
@@ -993,42 +998,46 @@ function sumAmounts(lines: InvoiceReviewLine[], amount: (line: InvoiceReviewLine
   return roundMoney(lines.reduce((sum, line) => sum + (Number.isFinite(amount(line)) ? amount(line) : 0), 0));
 }
 
+/** REP3-01 (D27): evaluación por estado (inmutable) de la regla única `assessInvoiceTax`. */
+const taxAssessmentByState = new WeakMap<InvoiceReviewState, InvoiceTaxAssessment>();
+
+/**
+ * La regla única de IVA y cuadre (`assessInvoiceTax`) sobre la revisión. Mira TODAS las
+ * líneas (también las descartadas) para que descartar una no cambie la sugerencia.
+ */
+export function getInvoiceTaxAssessment(state: InvoiceReviewState): InvoiceTaxAssessment {
+  const cached = taxAssessmentByState.get(state);
+  if (cached) {
+    return cached;
+  }
+  const { subtotal, tax, total } = state.extraction;
+  const assessment = assessInvoiceTax({
+    linesAmount: sumAmounts(state.lines, getLineAmount),
+    linesAmountWithTax: sumAmounts(state.lines, (line) =>
+      roundMoney(getLineAmount(line) * (1 + linePct(state, line) / 100)),
+    ),
+    subtotal,
+    tax,
+    total,
+    minTolerance: minTolerance(state),
+  });
+  taxAssessmentByState.set(state, assessment);
+  return assessment;
+}
+
 /**
  * SCN-UI-Q1 (ALTO-1, regla ux-mejoras 10: las líneas de compra van sin IVA). La
- * detección mira TODAS las líneas (también las descartadas) para que descartar una no
- * cambie la sugerencia. Es reversible: `setPricesIncludeTax` la fija.
+ * sugerencia sale de `getInvoiceTaxAssessment`; es reversible: `setPricesIncludeTax` la fija.
  */
 export function getTaxInclusion(state: InvoiceReviewState): InvoiceTaxInclusion {
-  const { total, subtotal } = state.extraction;
-  const min = minTolerance(state);
-  const read = isPositive(total) ? total : undefined;
-  let suggested = false;
-  if (read !== undefined) {
-    const plain = sumAmounts(state.lines, getLineAmount);
-    const withTax = sumAmounts(state.lines, (line) => roundMoney(getLineAmount(line) * (1 + linePct(state, line) / 100)));
-    // M3: con desglose, Σ líneas ≈ subtotal leído es una factura con precios sin IVA.
-    const plainIsSubtotal =
-      hasTaxBreakdown(state) && subtotal !== undefined && Number.isFinite(subtotal) && withinTolerance(subtotal, plain, min);
-    suggested = withinTolerance(read, plain, min) && !withinTolerance(read, withTax, min) && !plainIsSubtotal;
-  }
+  const suggested = getInvoiceTaxAssessment(state).includedSuggested;
   return { suggested, included: state.pricesIncludeTax ?? suggested };
 }
 
-/** La factura desglosa IVA: trae IVA > 0 o un subtotal distinto del total leído. */
-export function hasTaxBreakdown(state: InvoiceReviewState): boolean {
-  const { total, subtotal, tax } = state.extraction;
-  return (
-    isPositive(tax) ||
-    (isPositive(total) &&
-      subtotal !== undefined &&
-      Number.isFinite(subtotal) &&
-      !withinTolerance(total, subtotal, minTolerance(state)))
-  );
-}
-
 export type InvoiceReviewTotals = {
-  /** `extraction.total` leído. */
+  /** Total de referencia: el total leído o, sin él, subtotal + IVA leídos (`readSource`). */
   read?: number;
+  readSource?: InvoiceTaxReference["source"];
   /** Σ cantidad × precio de las líneas no descartadas, tal como se leyeron o editaron. */
   computed: number;
   /** Σ base sin IVA que se registra (cantidad × `getLineBasePrice`, redondeada por línea). */
@@ -1041,8 +1050,8 @@ export type InvoiceReviewTotals = {
    */
   registered: number;
   /**
-   * `registered` no cuadra con el total leído (sin total leído: la base contra el
-   * subtotal leído). Tolerancia máx(1 %, 1 Bs) (0,01 en USD).
+   * `registered` no cuadra con el total de referencia (tolerancia de `assessInvoiceTax`).
+   * Sin referencia es informativo: la base contra el subtotal leído.
    */
   mismatch: boolean;
   /** Índices de las líneas no descartadas con `isLineMismatch`. */
@@ -1056,19 +1065,19 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
   const base = sumAmounts(active, lineBase);
   const tax = sumAmounts(active, (line) => roundMoney(lineBase(line) * (linePct(state, line) / 100)));
   const registered = roundMoney(base + tax);
-  const { total, subtotal } = state.extraction;
-  const read = Number.isFinite(total) ? total : undefined;
-  const min = minTolerance(state);
+  const assessment = getInvoiceTaxAssessment(state);
+  const { reference } = assessment;
+  const { subtotal } = state.extraction;
 
   let mismatch = false;
-  if (read !== undefined) {
-    mismatch = !withinTolerance(read, registered, min);
+  if (reference) {
+    mismatch = getInvoiceTotalsGap(assessment, registered) !== undefined;
   } else if (subtotal !== undefined && Number.isFinite(subtotal)) {
-    mismatch = !withinTolerance(subtotal, base, min);
+    mismatch = !withinTolerance(subtotal, base, minTolerance(state));
   }
 
   return {
-    ...(read !== undefined ? { read } : {}),
+    ...(reference ? { read: reference.amount, readSource: reference.source } : {}),
     computed,
     base,
     tax,
@@ -1079,15 +1088,14 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
 }
 
 /**
- * D25-a: leído − registrado cuando no cuadran (tolerancia de `getInvoiceReviewTotals`,
- * la del ✓ del pie); sin total leído o cuadrando, `undefined`.
+ * D25-a / D27: referencia − registrado cuando no cuadran (la misma regla del ✓ del pie);
+ * sin total de referencia o cuadrando, `undefined`.
  */
 export function getTotalsDifference(state: InvoiceReviewState): number | undefined {
-  const { mismatch, read, registered } = getInvoiceReviewTotals(state);
-  return mismatch && read !== undefined ? roundMoney(read - registered) : undefined;
+  return getInvoiceTotalsGap(getInvoiceTaxAssessment(state), getInvoiceReviewTotals(state).registered);
 }
 
-/** D25-a: hay diferencia con el total leído y el usuario no la confirmó tal como está ahora. */
+/** D25-a: hay diferencia con el total de referencia y el usuario no la confirmó tal como está ahora. */
 export function needsDifferenceConfirmation(state: InvoiceReviewState): boolean {
   const difference = getTotalsDifference(state);
   return difference !== undefined && difference !== state.acceptedDifference;
