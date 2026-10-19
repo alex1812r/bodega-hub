@@ -769,6 +769,32 @@ describe("scanInvoice · reserva atómica (SCN-03h)", () => {
     expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
   });
 
+  it("un JPEG que el inspector acepta pero no se puede sanear: 400 en multipart y en storagePaths, sin subir ni cobrar (B15)", async () => {
+    const UNSANITIZABLE =
+      "La imagen trae datos que no podemos limpiar con seguridad. Vuelve a subirla desde la app para que se procese.";
+    const clean = jpegHeader(1600, 1200, "b15");
+    const smuggled = new Uint8Array([...clean.subarray(0, -2), 0xff, 0xfe, 0x00, 0x03, 0x78, 0x41, 0x41, 0x41, 0xff, 0xd9]);
+
+    const ctx = newContext();
+    const { built, extract, storage } = deps();
+
+    await expect(
+      scanInvoice(built, ctx, { pages: [{ data: smuggled, mediaType: "image/jpeg" }], source: "upload" }),
+    ).rejects.toMatchObject({ message: UNSANITIZABLE, status: 400 });
+    expect(storage.upload).not.toHaveBeenCalled();
+
+    const sha = sha256OfPages([smuggled]);
+    const path = `${ctx.storeId}/${sha}/p1.jpg`;
+    storage.objects.set(path, smuggled);
+
+    await expect(
+      scanInvoice(built, ctx, { sha256: sha, source: "storage", storagePaths: [path] }),
+    ).rejects.toMatchObject({ message: UNSANITIZABLE, status: 400 });
+
+    expect(extract).not.toHaveBeenCalled();
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 0 });
+  });
+
   it("pasa la señal de cancelación del cliente a la extracción", async () => {
     const { built, extract } = deps();
     const controller = new AbortController();
