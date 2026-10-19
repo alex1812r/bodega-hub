@@ -696,6 +696,28 @@ describe("loadMatchContext · duplicado prefiere el escaneo confirmado (SCN-UI-C
   });
 });
 
+describe("loadMatchContext · la compra anulada no es duplicado (REP3-03a, B6)", () => {
+  it("pide el estado de la compra; el escaneo de una compra cancelada no es duplicado y el de una devuelta sí", async () => {
+    const rows = [
+      { id: "scan-anulada", supplier_id: SUPPLIER_ID, number: "0123", supplier_tax_id: null, matched_contact_id: null, purchase_id: "purchase-1", purchase: { status: "cancelado" } },
+      { id: "scan-devuelta", supplier_id: SUPPLIER_ID, number: "0123", supplier_tax_id: null, matched_contact_id: null, purchase_id: "purchase-2", purchase: { status: "devuelto" } },
+    ];
+    const tables = fullTables();
+    tables.invoice_scans = (query) => ({ data: argsOf(query, "ilike").length > 0 ? rows : [], error: null });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    const [scans] = queriesOf(stub.queries, "invoice_scans");
+    expect(String(argsOf(scans, "select")[0]?.[0])).toContain("purchase:purchases(status)");
+    expect(ctx.previousScans.map((scan) => [scan.scanId, scan.purchaseStatus])).toEqual([
+      ["scan-anulada", "cancelado"],
+      ["scan-devuelta", "devuelto"],
+    ]);
+    expect(matchInvoice(extraction, ctx).duplicateOfScanId).toBe("scan-devuelta");
+  });
+});
+
 describe("loadMatchContext · tasa del día del formulario de compra (CIE-02, caos 6.7)", () => {
   const loadWith = async (printedRate?: number) => {
     const stub = createSupabaseStub({ candidates, tables: fullTables(), rpcs: { tax_rates_for_store: taxRateRows } });

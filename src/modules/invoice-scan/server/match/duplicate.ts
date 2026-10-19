@@ -11,6 +11,8 @@ const DUPLICATE_TOTAL_TOLERANCE = 0.01 + 1e-9;
  * posible duplicado (caos 5.4): mismo proveedor, mismo total (±0,01) y
  * - número que difiere en un solo carácter y misma fecha, o
  * - sin número leído y misma fecha (o sin fecha leída tampoco).
+ * El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó
+ * registrada (REP3-03a). La compra `devuelto` sí (D26).
  */
 export function findDuplicateScan(input: {
   number: string | undefined;
@@ -21,12 +23,13 @@ export function findDuplicateScan(input: {
   previousScans: MatchPreviousScan[];
 }): string | undefined {
   const number = normalizeInvoiceNumber(input.number);
+  const previousScans = input.previousScans.filter((scan) => scan.purchaseStatus !== "cancelado");
   const sameSupplier = (scan: MatchPreviousScan) =>
     (input.contactId !== undefined && scan.supplierId === input.contactId) || sameTaxId(input.taxId, scan.supplierTaxId);
 
   if (number) {
     const exact = preferConfirmed(
-      input.previousScans.filter((scan) => normalizeInvoiceNumber(scan.number) === number && sameSupplier(scan)),
+      previousScans.filter((scan) => normalizeInvoiceNumber(scan.number) === number && sameSupplier(scan)),
     );
     if (exact) {
       return exact.scanId;
@@ -42,7 +45,7 @@ export function findDuplicateScan(input: {
     return undefined;
   }
 
-  const possible = preferConfirmed(input.previousScans.filter((scan) => {
+  const possible = preferConfirmed(previousScans.filter((scan) => {
     if (typeof scan.total !== "number" || Math.abs(scan.total - total) > DUPLICATE_TOTAL_TOLERANCE) {
       return false;
     }

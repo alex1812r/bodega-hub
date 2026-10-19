@@ -65,7 +65,8 @@ export type InvoiceReviewPanelProps = {
  * Destino del foco tras una acción de teclado; `seq` fuerza el efecto aunque se
  * repita. `need`: campo que le falta a la línea (con producto) para resolverse.
  */
-type FocusRequest = { target: number | null; need?: string; seq: number };
+/** `needsSupplier`: sin línea pendiente y sin proveedor, Cargar está deshabilitado (REP3-03a). */
+type FocusRequest = { target: number | null; need?: string; needsSupplier?: boolean; seq: number };
 
 const NEED_FOCUS_ORDER = ["unitsPerPack", "quantity", "unitPrice"] as const;
 
@@ -118,6 +119,7 @@ export function InvoiceReviewPanel({
   });
   const rowRefs = useRef(new Map<number, HTMLLIElement>());
   const footerRef = useRef<HTMLElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const sections = getReviewSections(state);
@@ -134,7 +136,13 @@ export function InvoiceReviewPanel({
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
     const needs = line?.productId && line.accepted ? getLineNeeds(line) : [];
     const need = NEED_FOCUS_ORDER.find((item) => needs.includes(item));
-    setFocusRequest((current) => ({ seq: (current?.seq ?? 0) + 1, target, ...(need ? { need } : {}) }));
+    const needsSupplier = target === null && !next.header.supplier.contactId;
+    setFocusRequest((current) => ({
+      seq: (current?.seq ?? 0) + 1,
+      target,
+      ...(need ? { need } : {}),
+      ...(needsSupplier ? { needsSupplier } : {}),
+    }));
   }
 
   useEffect(() => {
@@ -142,7 +150,16 @@ export function InvoiceReviewPanel({
       return;
     }
     if (focusRequest.target === null) {
-      footerRef.current?.querySelector<HTMLButtonElement>("[data-load-button]:not(:disabled)")?.focus();
+      // Sin pendientes: Cargar. Si está deshabilitado (QA B7) el foco no puede quedarse en
+      // BODY: va al buscador de proveedor si falta, si no al primer control del pie.
+      const footer = footerRef.current;
+      const target =
+        footer?.querySelector<HTMLButtonElement>("[data-load-button]:not(:disabled)") ??
+        (focusRequest.needsSupplier
+          ? headerRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]')
+          : null) ??
+        footer?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)");
+      target?.focus();
       return;
     }
     const row = rowRefs.current.get(focusRequest.target);
@@ -318,12 +335,14 @@ export function InvoiceReviewPanel({
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-4">
-          <InvoiceReviewHeader
-            onAction={dispatch}
-            onRescan={onRescan}
-            state={state}
-            supplierFetcher={supplierFetcher}
-          />
+          <div ref={headerRef}>
+            <InvoiceReviewHeader
+              onAction={dispatch}
+              onRescan={onRescan}
+              state={state}
+              supplierFetcher={supplierFetcher}
+            />
+          </div>
           <InvoiceReviewRateNotice onAction={dispatch} state={state} />
           <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
 

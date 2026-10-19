@@ -699,6 +699,80 @@ describe("InvoiceReviewPanel", () => {
     }
   });
 
+  describe("REP3-03a (B6): el aviso de duplicado dice el criterio que lo disparó", () => {
+    const duplicateNotice = () => screen.getByText(/Esta factura \(/);
+
+    it("sin número leído: mismo proveedor, fecha y total (no «número»)", () => {
+      mockDuplicatePurchaseId = "00000000-0000-4000-8000-0000000000aa";
+      try {
+        renderPanel(
+          makeReviewResponse({
+            lines: [{}],
+            extraction: { number: undefined, total: 2412.02 },
+            matched: { duplicateOfScanId: "scan-anterior" },
+          }),
+        );
+
+        expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor, fecha y total) ya se registró");
+        expect(duplicateNotice()).not.toHaveTextContent("número");
+      } finally {
+        mockDuplicatePurchaseId = null;
+      }
+    });
+
+    it("sin número ni fecha: mismo proveedor y total", () => {
+      renderPanel(
+        makeReviewResponse({
+          lines: [{}],
+          extraction: { date: undefined, number: "000", total: 50 },
+          matched: { duplicateOfScanId: "scan-anterior" },
+        }),
+      );
+
+      expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor y total) ya se escaneó antes");
+    });
+
+    it("con número leído: mismo proveedor y número igual o casi igual", () => {
+      renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
+
+      expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor y número igual o casi igual) ya se escaneó antes");
+    });
+  });
+
+  describe("REP3-03a (B7): tras «Nuevo producto» el foco no se pierde", () => {
+    const created = async (response: InvoiceScanResponse) => {
+      const user = userEvent.setup();
+      renderPanel(response, { canCreateProduct: true });
+      await user.click(within(row(0)).getByRole("button", { name: "Nuevo producto" }));
+      await user.click(screen.getByRole("button", { name: "Crear producto" }));
+    };
+
+    it("con otra línea pendiente: el foco va a esa línea", async () => {
+      await created(makeReviewResponse({ lines: [unmatchedLine(9, false), doubtfulLine(2)] }));
+
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+    });
+
+    it("sin pendientes y Cargar deshabilitado por falta de proveedor: el foco va al buscador de proveedor", async () => {
+      await created(
+        makeReviewResponse({ lines: [unmatchedLine(9, false)], matched: { supplier: { candidates: [] } } }),
+      );
+
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      expect(loadButton()).toBeDisabled();
+      const supplier = within(screen.getByRole("region", { name: "Datos de la factura" })).getByRole("combobox");
+      await waitFor(() => expect(supplier).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("sin pendientes y Cargar habilitado: el foco va a Cargar", async () => {
+      await created(makeReviewResponse({ lines: [unmatchedLine(9, false)] }));
+
+      await waitFor(() => expect(loadButton()).toHaveFocus());
+    });
+  });
+
   it("SCN-08-F1: factura duplicada sin compra registrada solo dice que ya se escaneó", () => {
     renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
 

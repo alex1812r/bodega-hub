@@ -176,6 +176,8 @@ export type MatchPreviousScan = {
   total?: number | null;
   /** Compra con la que se confirmó (`purchase_id`): el aviso prefiere estos (SCN-UI-C2). */
   purchaseId?: string | null;
+  /** Estado de esa compra (`purchases.status`): con `cancelado` no es duplicado (REP3-03a). */
+  purchaseStatus?: string | null;
 };
 
 export type MatchContext = {
