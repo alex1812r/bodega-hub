@@ -3,6 +3,7 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
+import { normalizeInvoiceNumber } from "@/modules/invoice-scan/server/match/text";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
@@ -17,6 +18,18 @@ import {
   type InvoiceReviewState,
   type InvoiceReviewTotals,
 } from "../reviewModel";
+
+/**
+ * REP3-03a (B6): criterio con el que `findDuplicateScan` marcó la factura, según lo
+ * leído: con número, el mismo (o uno a un carácter, con la misma fecha y total); sin
+ * número, proveedor y total, y la fecha si se leyó.
+ */
+export function duplicateCriterionLabel(extraction: InvoiceReviewState["extraction"]): string {
+  if (normalizeInvoiceNumber(extraction.number)) {
+    return "mismo proveedor y número igual o casi igual";
+  }
+  return extraction.date?.trim() ? "mismo proveedor, fecha y total" : "mismo proveedor y total";
+}
 
 /** Por debajo de esta confianza global de la lectura se sugiere repetir la foto. */
 export const LOW_EXTRACTION_CONFIDENCE = 0.6;

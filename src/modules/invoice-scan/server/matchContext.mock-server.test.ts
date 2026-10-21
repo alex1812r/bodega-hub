@@ -1,4 +1,6 @@
+import { createdMockPurchases } from "@/modules/purchases/services/purchaseMockStore";
 import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.mock-server";
+import type { PurchaseMock, PurchaseStatus } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
@@ -100,6 +102,57 @@ describe("loadMockMatchContext · duplicado prefiere el escaneo confirmado (pari
     const ctx = loadMockMatchContext(DEFAULT_STORE_ID, singlePageExtraction);
 
     expect(matchInvoice(singlePageExtraction, ctx).duplicateOfScanId).toBe(confirmed.id);
+  });
+});
+
+describe("loadMockMatchContext · la compra anulada no es duplicado (paridad REP3-03a)", () => {
+  const scanCtx = { storeId: DEFAULT_STORE_ID, userId: "user-1" };
+  const putPurchase = (id: string, status: PurchaseStatus) => {
+    const purchase = {
+      createdAt: "2026-10-01T10:00:00.000Z",
+      discountRef: 0,
+      id,
+      paidVes: 0,
+      purchaseNumber: `C-${id}`,
+      refRateVes: 900,
+      status,
+      storeId: DEFAULT_STORE_ID,
+      subtotalRef: 1,
+      supplierId: "contact-1",
+      taxRef: 0,
+      totalRef: 1,
+      totalVes: 900,
+      userId: "user-1",
+    } satisfies PurchaseMock;
+    createdMockPurchases().set(id, { items: [], purchase });
+  };
+  const seed = (sha: string, purchaseId: string) =>
+    seedScanForTest(scanCtx, {
+      extracted: singlePageExtraction,
+      imageSha256: sha.repeat(64),
+      model: "mock",
+      provider: "mock",
+      storagePath: `${DEFAULT_STORE_ID}/${sha.repeat(64)}/p1.jpg`,
+    }).then((row) => putMockScanRow({ ...row, purchaseId, status: "confirmed" }));
+
+  beforeEach(() => resetMockInvoiceScans());
+  afterEach(() => {
+    createdMockPurchases().delete("rep3-anulada");
+    createdMockPurchases().delete("rep3-devuelta");
+  });
+
+  it("compra cancelada: sin aviso; compra devuelta: aviso", async () => {
+    putPurchase("rep3-anulada", "cancelado");
+    const cancelled = await seed("f", "rep3-anulada");
+
+    const ctx = loadMockMatchContext(DEFAULT_STORE_ID, singlePageExtraction);
+    expect(ctx.previousScans).toEqual([expect.objectContaining({ scanId: cancelled.id, purchaseStatus: "cancelado" })]);
+    expect(matchInvoice(singlePageExtraction, ctx).duplicateOfScanId).toBeUndefined();
+
+    putPurchase("rep3-devuelta", "devuelto");
+    const returned = await seed("g", "rep3-devuelta");
+    const again = loadMockMatchContext(DEFAULT_STORE_ID, singlePageExtraction);
+    expect(matchInvoice(singlePageExtraction, again).duplicateOfScanId).toBe(returned.id);
   });
 });
 

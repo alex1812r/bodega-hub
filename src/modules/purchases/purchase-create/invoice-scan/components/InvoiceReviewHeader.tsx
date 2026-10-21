@@ -11,7 +11,12 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import { Input } from "@/shared/components/Input";
 
 import type { InvoiceReviewAction, InvoiceReviewState } from "../reviewModel";
-import { formatConfidencePct, formatScore, LOW_EXTRACTION_CONFIDENCE } from "./invoiceReviewView";
+import {
+  duplicateCriterionLabel,
+  formatConfidencePct,
+  formatScore,
+  LOW_EXTRACTION_CONFIDENCE,
+} from "./invoiceReviewView";
 
 const CURRENCY_LABELS: Record<InvoiceReviewState["header"]["currency"], string> = {
   USD: "Dólares (USD)",
@@ -77,7 +82,7 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
           <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
           {duplicatePurchaseId ? (
             <span>
-              Esta factura (mismo proveedor y número) ya se registró en una compra. Revisa que no la cargues dos
+              Esta factura ({duplicateCriterionLabel(extraction)}) ya se registró en una compra. Revisa que no la cargues dos
               veces.{" "}
               <Link
                 className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
@@ -88,7 +93,7 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
             </span>
           ) : (
             <span>
-              Esta factura (mismo proveedor y número) ya se escaneó antes en la tienda. Revisa que no la cargues dos
+              Esta factura ({duplicateCriterionLabel(extraction)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
               veces.
             </span>
           )}

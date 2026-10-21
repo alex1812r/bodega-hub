@@ -33,6 +33,7 @@ import {
   mockSupplierProducts,
 } from "@/shared/mocks/erp-data";
 import { listActiveMockPackUnitsOfLink } from "@/modules/contacts/services/supplierProducts.mock-server";
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { InvoiceExtraction } from "../contracts";
@@ -264,6 +265,7 @@ function previousScans(storeId: string, extraction: InvoiceExtraction, excludeSc
     date: scan.extracted?.date,
     total: scan.extracted?.total,
     purchaseId: scan.purchaseId ?? undefined,
+    purchaseStatus: scan.purchaseId ? findMockPurchase(scan.purchaseId)?.status : undefined,
   }));
 }
 
