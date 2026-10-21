@@ -114,6 +114,11 @@ describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", (
     "\u202a", "\u202e", "\u2066", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff",
     // REP2-03b (caos N2): guion blando, separadores de l\u00ednea/p\u00e1rrafo, rellenos y tags.
     "\u00ad", "\u2028", "\u2029", "\u3164", "\u180e", "\u034f", "\udb40\udc00", "\udb40\udc41", "\udb40\udc7f",
+    // REP3-03b (caos N8 / auditor\u00eda B16): anotaciones, rellenos hangul, Khmer, operadores invisibles,
+    // formatos obsoletos, selectores de variante sueltos, notaci\u00f3n musical y braille vac\u00edo.
+    "\ufff9", "\ufffa", "\ufffb", "\u115f", "\u1160", "\uffa0", "\u17b4", "\u17b5",
+    "\u2061", "\u2062", "\u2063", "\u2064", "\u206a", "\u206f", "\ufe00", "\ufe0d", "\ufe0e", "\ufe0f",
+    "\udb40\udd00", "\udb40\uddef", "\ud834\udd73", "\ud834\udd7a", "\u2800",
   ];
 
   it.each(textFields.flatMap(([field, set]) => invisibles.map((char): [string, string, typeof set] => [field, char, set])))(
@@ -136,11 +141,17 @@ describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", (
     ).toBe(true);
   });
 
+  it("acepta emoji con selector de variante y keycaps (U+FE0F solo se veta suelto)", () => {
+    const name = "AVILA \u2764\ufe0f \u00a9\ufe0f 1\ufe0f\u20e3";
+
+    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.supplier.name = name))).success).toBe(true);
+  });
+
   it("acepta hangul normal (U+3164 es solo el relleno invisible)", () => {
     expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.supplier.name = "한국 식품 ㄱㅏ"))).success).toBe(true);
   });
 
-  it.each(["31/02/2026", "31-02-2026", "29/02/2025", "32/01/2026", "15/13/2026", "00/10/2026", "1/0/2026"])(
+  it.each(["31/02/2026", "31-02-2026", "29/02/2025", "32/01/2026", "15/13/2026", "00/10/2026", "1/0/2026", "31.04.2026", "30.02.2026"])(
     "rechaza la fecha no ISO imposible %s (DD/MM/AAAA o DD-MM-AAAA, caos N3)",
     (date) => {
       const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date)));
@@ -149,7 +160,16 @@ describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", (
     },
   );
 
-  it.each(["29/02/2024", "14/10/2026", "14-10-2026", "1/2/2026", " 31/12/2026 "])("acepta la fecha no ISO válida %s", (date) => {
+  it.each(["2026/02/31", "2026.04.31", "2026-4-31", "2025/2/29", "2026/13/01", "2026.00.10"])(
+    "rechaza la fecha AAAA/MM/DD o AAAA.MM.DD imposible %s (caos N9)",
+    (date) => {
+      const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date)));
+
+      expect(parsed.error?.issues[0]).toMatchObject({ message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
+    },
+  );
+
+  it.each(["29/02/2024", "14/10/2026", "14-10-2026", "1/2/2026", " 31/12/2026 ", "30.04.2026", "2026/02/28", "2024.2.29", "2026-4-30"])("acepta la fecha no ISO válida %s", (date) => {
     expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date))).success).toBe(true);
   });
 

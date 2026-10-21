@@ -2,7 +2,12 @@
 
 import { AlertTriangle } from "lucide-react";
 
-import { getTaxInclusion, hasTaxBreakdown, type InvoiceReviewAction, type InvoiceReviewState } from "../reviewModel";
+import {
+  getInvoiceTaxAssessment,
+  getTaxInclusion,
+  type InvoiceReviewAction,
+  type InvoiceReviewState,
+} from "../reviewModel";
 import { formatInvoiceMoney } from "./invoiceReviewView";
 import { ChoiceButton } from "./InvoiceReviewRateNotice";
 
@@ -12,23 +17,34 @@ export type InvoiceReviewTaxNoticeProps = {
 };
 
 /**
- * SCN-UI-Q1 (ALTO-1): la suma de las líneas ya da el total leído, sin desglose de IVA
- * o (M3, D25-a) con desglose pero sin ser el subtotal. Se avisa y se elige
- * explícitamente; viene marcada la opción que cuadra con el total leído y se puede
- * cambiar. Se queda visible mientras haya una elección hecha.
+ * SCN-UI-Q1 (ALTO-1): la suma de las líneas ya da el total de referencia (leído o, sin
+ * él, subtotal + IVA leídos) y no la hipótesis "precios sin IVA" (`assessInvoiceTax`,
+ * D27). Se avisa y se elige explícitamente; viene marcada la opción que cuadra y se
+ * puede cambiar. Se queda visible mientras haya una elección hecha. Con IVA 0,00 (o
+ * subtotal = total) nunca se preselecciona: si la suma ya da el total, se pregunta si es
+ * exenta o trae el IVA incluido (`exemptOrIncluded`), sin marcar ninguna opción.
  */
 export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoticeProps) {
   const inclusion = getTaxInclusion(state);
-  if (!inclusion.suggested && state.pricesIncludeTax === undefined) {
+  const { reference, plainSource, exemptOrIncluded } = getInvoiceTaxAssessment(state);
+  const chosen = state.pricesIncludeTax !== undefined;
+  if (!inclusion.suggested && !exemptOrIncluded && !chosen) {
     return null;
   }
-  const { subtotal, total: read } = state.extraction;
-  const readText = read !== undefined ? ` (${formatInvoiceMoney(state, read)})` : "";
-  const reason = hasTaxBreakdown(state)
-    ? `la suma de las líneas da el total leído${readText}, no el subtotal${
-        subtotal !== undefined ? ` (${formatInvoiceMoney(state, subtotal)})` : ""
-      }`
-    : `no lo desglosa y la suma de las líneas ya da el total leído${readText}`;
+  // Sin sugerencia ni elección (exenta o IVA incluido sin desglosar) no se marca ninguna.
+  const marked = inclusion.suggested || chosen;
+  const { subtotal, tax } = state.extraction;
+  const money = (value: number | undefined) => (value !== undefined ? ` (${formatInvoiceMoney(state, value)})` : "");
+  const referenceText =
+    reference?.source === "subtotalPlusTax"
+      ? `el subtotal más el IVA leídos${money(reference.amount)}`
+      : `el total leído${money(reference?.amount)}`;
+  let reason = `no lo desglosa y la suma de las líneas ya da ${referenceText}`;
+  if (plainSource === "subtotal") {
+    reason = `la suma de las líneas da ${referenceText}, no el subtotal${money(subtotal)}`;
+  } else if (plainSource === "totalMinusTax") {
+    reason = `la suma de las líneas da ${referenceText}, no el total menos el IVA leído${money(tax)}`;
+  }
 
   return (
     <div
@@ -38,17 +54,21 @@ export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoti
     >
       <p className="flex items-start gap-2">
         <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-        <span>Los precios de esta factura parecen incluir IVA: {reason}.</span>
+        <span>
+          {exemptOrIncluded && !inclusion.suggested
+            ? `La factura no trae IVA y la suma de las líneas ya da ${referenceText}: si es exenta, marca las líneas como exentas; si los precios incluyen IVA, indícalo.`
+            : `Los precios de esta factura parecen incluir IVA: ${reason}.`}
+        </span>
       </p>
       <div aria-label="IVA en los precios de la factura" className="flex flex-wrap gap-2" role="radiogroup">
         <ChoiceButton
-          checked={inclusion.included}
+          checked={marked && inclusion.included}
           onClick={() => onAction({ type: "setPricesIncludeTax", included: true })}
         >
           Los precios incluyen IVA (cargar sin IVA)
         </ChoiceButton>
         <ChoiceButton
-          checked={!inclusion.included}
+          checked={marked && !inclusion.included}
           onClick={() => onAction({ type: "setPricesIncludeTax", included: false })}
         >
           Los precios no incluyen IVA

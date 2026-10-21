@@ -29,6 +29,9 @@
  * `purchases.client_request_id` (existe desde que `create_purchase` hace commit);
  * aquí se registra al llegar la compra a finalize, que en el mock va justo detrás.
  * El aprendizaje del mock no falla, así que el replay no lo reintenta.
+ * REP3-03d (20261019m): si esa compra se anula, el reclamo deja de estar ligado
+ * (otra clave lo reclama y release lo suelta), y un confirmado en compra anulada
+ * no se libera con la clave de esa misma compra (replay; la compra da 409).
  *
  * Almacén (SCN-13a): las filas son las de `scans.mock-server.ts`, el mismo almacén
  * donde `POST /api/purchases/invoice-scan` guarda el escaneo en modo mock (con su
@@ -116,16 +119,33 @@ function aliases() {
   return mockState("invoice-scan:confirm:aliases", () => new Map<string, MockLearnedAlias>());
 }
 
-/** CIE-06: escaneo → clave del reclamo que ya creó su compra (reclamo ligado a la compra). */
+/** CIE-06: escaneo → clave del reclamo que ya creó su compra y esa compra (reclamo ligado a la compra). */
 function purchaseBoundClaims() {
-  return mockState("invoice-scan:confirm:purchase-bound", () => new Map<string, string>());
+  return mockState(
+    "invoice-scan:confirm:purchase-bound",
+    () => new Map<string, { key: string; purchaseId: string }>(),
+  );
 }
 
-/** El reclamo vigente del escaneo es de una clave que ya creó su compra. */
-function isPurchaseBound(id: string): boolean {
-  const boundKey = purchaseBoundClaims().get(id);
+/** Estado de la compra a la que está ligado el reclamo vigente del escaneo (CIE-06), o null si no lo está. */
+function boundPurchaseStatus(id: string): string | null {
+  const bound = purchaseBoundClaims().get(id);
 
-  return boundKey !== undefined && boundKey === mockScanClaim(id).claimRequestId;
+  if (bound === undefined || bound.key !== mockScanClaim(id).claimRequestId) {
+    return null;
+  }
+
+  return findMockPurchase(bound.purchaseId)?.status ?? "";
+}
+
+/**
+ * El reclamo vigente del escaneo es de una clave que ya creó su compra y esa compra
+ * no está anulada (REP3-03d · B14: ligado a una compra `cancelado` ya no bloquea).
+ */
+function isPurchaseBound(id: string): boolean {
+  const status = boundPurchaseStatus(id);
+
+  return status !== null && status !== "cancelado";
 }
 
 function aliasKey(storeId: string, supplierId: string, aliasNorm: string) {
@@ -282,7 +302,14 @@ export async function precheckInvoiceScan(
 
   // REP2-03c (D25-c), espejo de claim_invoice_scan: confirmado en una compra
   // `cancelado` → se libera (extracted, sin compra ni confirmación). `devuelto` no.
-  if (scan?.status === "confirmed" && scan.purchaseId && findMockPurchase(scan.purchaseId)?.status === "cancelado") {
+  // REP3-03d (B17, N10): con la clave de esa compra no se libera (create_purchase da
+  // 409 y no crea nada); cae en el replay.
+  if (
+    scan?.status === "confirmed" &&
+    scan.purchaseId &&
+    findMockPurchase(scan.purchaseId)?.status === "cancelado" &&
+    claim?.confirmedClientRequestId !== input.clientRequestId
+  ) {
     scan = putMockScanRow({ ...scan, confirmed: null, confirmedAt: null, purchaseId: null, status: "extracted" });
     (claim as NonNullable<typeof claim>).confirmedClientRequestId = null;
   }
@@ -314,7 +341,9 @@ export async function precheckInvoiceScan(
       usableClaim.claimRequestId === null ||
       usableClaim.claimRequestId === input.clientRequestId ||
       usableClaim.claimedAt === null ||
-      usableClaim.claimedAt < now - INVOICE_SCAN_CLAIM_TTL_MS;
+      usableClaim.claimedAt < now - INVOICE_SCAN_CLAIM_TTL_MS ||
+      // REP3-03d (B14): la compra de la clave del reclamo está anulada.
+      boundPurchaseStatus(usable.id) === "cancelado";
 
     if (!claimFree) {
       throw new ApiError(400, "BAD_REQUEST", INVOICE_SCAN_CLAIMED_MESSAGE);
@@ -339,7 +368,7 @@ export async function precheckInvoiceScan(
   };
 }
 
-/** Espejo de `release_invoice_scan_claim`: no-op si el reclamo no es de esa clave o ya tiene compra (CIE-06). */
+/** Espejo de `release_invoice_scan_claim`: no-op si el reclamo no es de esa clave o ya tiene compra viva (CIE-06). */
 export async function releaseInvoiceScanClaim(
   input: InvoiceScanClaimInput,
   storeId: string,
@@ -462,7 +491,7 @@ export async function finalizeInvoiceScan(
 
   // CIE-06: la compra es de este intento; desde aquí el reclamo queda ligado a ella
   // aunque el confirm falle.
-  purchaseBoundClaims().set(stored.id, input.clientRequestId);
+  purchaseBoundClaims().set(stored.id, { key: input.clientRequestId, purchaseId: input.purchaseId });
 
   const confirmed = buildConfirmedPayload(
     {

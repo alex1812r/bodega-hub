@@ -568,6 +568,32 @@ describe("extractInvoice: invisibles en la lectura del modelo (caos N2)", () => 
   });
 });
 
+describe("extractInvoice: invisibles nuevos en la lectura del modelo (caos N8 / auditoría B16)", () => {
+  it("quita U+FFF9–FFFB, rellenos hangul, operadores invisibles, formatos obsoletos, selectores sueltos, U+1D173–1D17A y U+2800", async () => {
+    const dirty = (text: string) =>
+      `${text}\ufff9\ufffb\u115f\u1160\uffa0\u2061\u2064\u206a\u206f\ufe00\ufe0f\u{E0100}\u{E01EF}\u{1D173}\u{1D17A}\u2800`;
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        generated(
+          {
+            ...singlePageExtraction,
+            lines: singlePageExtraction.lines.map((line) => ({ ...line, description: dirty(line.description) })),
+            supplier: { ...singlePageExtraction.supplier, name: `${dirty("AVILA")} \u2764\ufe0f` },
+          },
+          10,
+          10,
+        ),
+      ],
+    });
+
+    const { extraction } = await extractInvoice({ model: info(model), pages: [page()] });
+
+    expect(correctedInvoiceExtractionSchema.safeParse(extraction).success).toBe(true);
+    expect(extraction.supplier.name).toBe("AVILA \u2764\ufe0f");
+    expect(extraction.lines[0]!.description).toBe(singlePageExtraction.lines[0]!.description);
+  });
+});
+
 describe("extractInvoice: key inválida del proveedor (caos N1 / D25-d)", () => {
   let consoleError: jest.SpyInstance;
 
@@ -680,5 +706,49 @@ describe("extractInvoice: metadatos de la imagen no llegan al modelo (auditoría
       expect(image.length).toBeLessThan(200);
     }
     expect(data).toEqual(original);
+  });
+
+  it("omite el ejemplo few-shot cuya imagen no se puede sanear y el escaneo sigue (REP3-03e)", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { info: modelInfo, model } = mockInfo("ok");
+    // Bytes JPEG declarados como PNG: stripImageMetadata no puede sanearlos.
+    const broken: InvoicePage = { data: jpegHeader(1131, 1600, SMUGGLED), mediaType: "image/png" };
+    const exampleFormat = (rawText: string) =>
+      formatOf({ ...singlePageExtraction, lines: [{ ...singlePageExtraction.lines[0]!, rawText }] });
+
+    try {
+      const result = await extractInvoice({
+        fewShot: [
+          { format: exampleFormat("EJ-ROTO"), page: broken },
+          { format: exampleFormat("EJ-SANO"), page: page("ejemplo sano") },
+        ],
+        model: modelInfo,
+        pages: [page("objetivo")],
+      });
+
+      expect(result.extraction).toEqual(singlePageExtraction);
+      const prompt = model.doGenerateCalls[0]!.prompt;
+      expect(sentImages(model)).toHaveLength(2);
+      expect(textOf(prompt)).not.toContain("EJ-ROTO");
+      expect(textOf(prompt)).toContain("EJ-SANO");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("IGNORA");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("la página del usuario que no se puede sanear sigue fallando con 400 sin llamar al modelo", async () => {
+    const { info: modelInfo, model } = mockInfo("ok");
+
+    const error = await extractInvoice({
+      fewShot: [{ format: formatOf(singlePageExtraction), page: page("ejemplo") }],
+      model: modelInfo,
+      pages: [{ data: jpegHeader(1131, 1600, "x"), mediaType: "image/png" }],
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(400);
+    expect(model.doGenerateCalls).toHaveLength(0);
   });
 });

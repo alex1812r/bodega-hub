@@ -396,17 +396,22 @@ describe("InvoiceReviewPanel", () => {
     expect(screen.getByText("Cuadra con el total leído")).toBeInTheDocument();
   });
 
-  it("SCN-UI-Q1 (f01 real): precios con IVA incluido, elección visible y reversible; el pie da lo que se registra", async () => {
+  it("SCN-UI-Q1 / D27 (f01 real, IVA 0,00): se pregunta sin preselección; la elección es visible y reversible; el pie da lo que se registra", async () => {
     const user = userEvent.setup();
     renderPanel(f01 as unknown as InvoiceScanResponse, {
       context: { systemRateVes: 880.1159, taxRates: REVIEW_TAX_RATES },
     });
 
     expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
-      "Los precios de esta factura parecen incluir IVA",
+      "La factura no trae IVA y la suma de las líneas ya da el total leído",
     );
     const included = screen.getByRole("radio", { name: "Los precios incluyen IVA (cargar sin IVA)" });
     const excluded = screen.getByRole("radio", { name: "Los precios no incluyen IVA" });
+    expect(included).toHaveAttribute("aria-checked", "false");
+    expect(excluded).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -6.482,61");
+
+    await user.click(included);
     expect(included).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(/Total a registrar Bs\. 40\.516,3\d/);
     expect(screen.queryByTestId("invoice-review-difference")).not.toBeInTheDocument();
@@ -453,6 +458,41 @@ describe("InvoiceReviewPanel", () => {
     expect(loadButton()).toBeEnabled();
     await user.click(loadButton());
     expect(props.onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("REP3-01 (C3-M1): sin total leído, subtotal + IVA es la referencia; revertir el IVA incluido pide confirmar", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 104.4, lineTotal: 104.4 } }],
+        extraction: { subtotal: 90, tax: 14.4 },
+      }),
+    );
+
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "la suma de las líneas da el subtotal más el IVA leídos (Bs. 104,40), no el subtotal (Bs. 90,00)",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
+      /Total a registrar Bs\. 104,40\s*·\s*Subtotal \+ IVA leídos Bs\. 104,40/,
+    );
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -16,70");
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Cargar con una diferencia de Bs. -16,70 frente al subtotal + IVA leídos",
+      }),
+    ).not.toBeChecked();
+    expect(loadButton()).toBeDisabled();
+  });
+
+  it("REP3-01: sin ningún total leído no hay casilla, se informa que no hay con qué comparar", () => {
+    renderPanel(makeReviewResponse({ lines: [{}], extraction: { tax: 32 } }));
+
+    expect(screen.getByTestId("invoice-review-no-reference")).toHaveTextContent("Sin total leído para comparar");
+    expect(screen.queryByTestId("invoice-review-confirm-difference")).not.toBeInTheDocument();
+    expect(loadButton()).toBeEnabled();
   });
 
   it("SCN-UI-Q1 (f04 real): la tasa 86,75 no se ofrece y la media caja se carga como unidades", async () => {
@@ -657,6 +697,110 @@ describe("InvoiceReviewPanel", () => {
     } finally {
       mockDuplicatePurchaseId = null;
     }
+  });
+
+  describe("REP3-03a (B6): el aviso de duplicado dice el criterio que lo disparó", () => {
+    const duplicateNotice = () => screen.getByText(/Esta factura \(/);
+
+    it("sin número leído: mismo proveedor, fecha y total (no «número»)", () => {
+      mockDuplicatePurchaseId = "00000000-0000-4000-8000-0000000000aa";
+      try {
+        renderPanel(
+          makeReviewResponse({
+            lines: [{}],
+            extraction: { number: undefined, total: 2412.02 },
+            matched: { duplicateOfScanId: "scan-anterior" },
+          }),
+        );
+
+        expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor, fecha y total) ya se registró");
+        expect(duplicateNotice()).not.toHaveTextContent("número");
+      } finally {
+        mockDuplicatePurchaseId = null;
+      }
+    });
+
+    it("sin número ni fecha: mismo proveedor y total", () => {
+      renderPanel(
+        makeReviewResponse({
+          lines: [{}],
+          extraction: { date: undefined, number: "000", total: 50 },
+          matched: { duplicateOfScanId: "scan-anterior" },
+        }),
+      );
+
+      expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor y total) ya se escaneó antes");
+    });
+
+    it("con número leído: mismo proveedor y número igual o casi igual", () => {
+      renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
+
+      expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor y número igual o casi igual) ya se escaneó antes");
+    });
+  });
+
+  describe("REP3-03a (B7): tras «Nuevo producto» el foco no se pierde", () => {
+    const created = async (response: InvoiceScanResponse) => {
+      const user = userEvent.setup();
+      renderPanel(response, { canCreateProduct: true });
+      await user.click(within(row(0)).getByRole("button", { name: "Nuevo producto" }));
+      await user.click(screen.getByRole("button", { name: "Crear producto" }));
+    };
+
+    it("con otra línea pendiente: el foco va a esa línea", async () => {
+      await created(makeReviewResponse({ lines: [unmatchedLine(9, false), doubtfulLine(2)] }));
+
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+    });
+
+    it("sin pendientes y Cargar deshabilitado por falta de proveedor: el foco va al buscador de proveedor", async () => {
+      await created(
+        makeReviewResponse({ lines: [unmatchedLine(9, false)], matched: { supplier: { candidates: [] } } }),
+      );
+
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      expect(loadButton()).toBeDisabled();
+      const supplier = within(screen.getByRole("region", { name: "Datos de la factura" })).getByRole("combobox");
+      await waitFor(() => expect(supplier).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("sin pendientes y Cargar habilitado: el foco va a Cargar", async () => {
+      await created(makeReviewResponse({ lines: [unmatchedLine(9, false)] }));
+
+      await waitFor(() => expect(loadButton()).toHaveFocus());
+    });
+
+    describe("REP3-03f: sin pendientes, con proveedor y Cargar bloqueado por la diferencia", () => {
+      /** Simula el layout de escritorio: lo que lleva `sm:hidden` (o está dentro) no tiene cajas. */
+      const desktopLayout = (allHidden = false) =>
+        jest.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (this: HTMLElement) {
+          const hidden = allHidden || this.closest(".sm\\:hidden") !== null;
+          return { length: hidden ? 0 : 1 } as unknown as DOMRectList;
+        });
+      const mismatched = () =>
+        makeReviewResponse({ lines: [unmatchedLine(9, false)], extraction: { total: 1000 } });
+
+      afterEach(() => jest.restoreAllMocks());
+
+      it("el foco va a la casilla de diferencia, no a «Ver detalle del total» oculto en escritorio", async () => {
+        desktopLayout();
+        await created(mismatched());
+
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        expect(loadButton()).toBeDisabled();
+        await waitFor(() => expect(screen.getByRole("checkbox", { name: /Cargar con una diferencia de/ })).toHaveFocus());
+      });
+
+      it("si ningún control del pie es visible, el foco va al pie y nunca a BODY", async () => {
+        desktopLayout(true);
+        await created(mismatched());
+
+        expect(loadButton()).toBeDisabled();
+        await waitFor(() => expect(screen.getByRole("contentinfo", { name: "Resumen de la revisión" })).toHaveFocus());
+      });
+    });
   });
 
   it("SCN-08-F1: factura duplicada sin compra registrada solo dice que ya se escaneó", () => {

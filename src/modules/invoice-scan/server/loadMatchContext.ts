@@ -63,7 +63,7 @@ const LAST_LINE_SELECT = "id, purchase_items(unit_cost_ref, purchases!inner(crea
 const SUPPLIER_PRODUCT_SELECT =
   "id, product_id, supplier_sku, is_preferred, supplier_product_pack_units(id, label, units_per_pack, is_default, is_active)";
 const PREVIOUS_SCAN_SELECT =
-  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId, date:extracted->>date, total:extracted->>total, purchase_id";
+  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId, date:extracted->>date, total:extracted->>total, purchase_id, purchase:purchases(status)";
 
 type CandidatesRpcResult = {
   suppliers?: Array<{
@@ -125,6 +125,7 @@ type PreviousScanRow = {
   date?: string | null;
   total?: number | string | null;
   purchase_id?: string | null;
+  purchase?: { status: string | null } | null;
 };
 
 const EMPTY_CATALOG: MatchSupplierCatalog = { supplierProducts: [], aliases: [], packUnits: [] };
@@ -255,6 +256,7 @@ async function loadPreviousScans(
     date: row.date ?? undefined,
     total: toNumber(row.total),
     purchaseId: row.purchase_id ?? undefined,
+    purchaseStatus: row.purchase?.status ?? undefined,
   }));
 }
 

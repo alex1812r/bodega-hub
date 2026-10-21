@@ -29,7 +29,9 @@ export type InvoiceReviewFooterProps = {
  * "Cargar en la compra". En móvil el detalle (leído, pendientes, bloqueos y "Descartar
  * escaneo") se despliega con la flecha (B-6: el pie ocupaba ~27 % de una pantalla de
  * 390); desde `sm` se ve siempre. D25-a: con diferencia frente al leído, Cargar exige
- * marcar la confirmación de esa diferencia (siempre visible mientras la haya).
+ * marcar la confirmación de esa diferencia (siempre visible mientras la haya). D27: la
+ * referencia es el total leído o, sin él, subtotal + IVA leídos; sin ninguno no hay
+ * casilla y se informa que no hay con qué comparar.
  */
 export function InvoiceReviewFooter({
   footerRef,
@@ -45,6 +47,7 @@ export function InvoiceReviewFooter({
   const pricesIncludeTax = getTaxInclusion(state).included;
   const money = (value: number) => formatInvoiceMoney(state, value);
   const readText = totals.read !== undefined ? money(totals.read) : "—";
+  const readLabel = summary.totals.readSource === "subtotalPlusTax" ? "Subtotal + IVA leídos" : "Leído";
   const collapsible = detailOpen ? null : "hidden sm:flex";
 
   return (
@@ -64,9 +67,15 @@ export function InvoiceReviewFooter({
           ·
         </span>
         <span className="hidden sm:inline">
-          Leído <span className="font-medium tabular-nums">{readText}</span>
+          {readLabel} <span className="font-medium tabular-nums">{readText}</span>
         </span>
-        {totals.ok ? (
+        {totals.read === undefined ? (
+          <span className="text-xs text-on-surface-variant" data-testid="invoice-review-no-reference">
+            {totals.ok
+              ? "Sin total leído para comparar: revisa los importes con la factura"
+              : "Sin total leído; la base no cuadra con el subtotal leído"}
+          </span>
+        ) : totals.ok ? (
           <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
             <Check aria-hidden className="size-4" />
             <span className="sr-only">Cuadra con el total leído</span>
@@ -108,7 +117,9 @@ export function InvoiceReviewFooter({
         className={cn("col-span-3 row-start-2 min-w-0 flex-col gap-1 sm:col-span-1 sm:col-start-1", collapsible ?? "flex")}
         id={detailId}
       >
-        <p className="text-xs text-on-surface-variant sm:hidden">Leído {readText}</p>
+        <p className="text-xs text-on-surface-variant sm:hidden">
+          {readLabel} {readText}
+        </p>
         <p
           className={cn(
             "text-xs",
@@ -156,7 +167,9 @@ export function InvoiceReviewFooter({
             onChange={(event) => onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked })}
             type="checkbox"
           />
-          {`Cargar con una diferencia de ${money(totals.difference)} frente al total leído`}
+          {`Cargar con una diferencia de ${money(totals.difference)} frente al ${
+            summary.totals.readSource === "subtotalPlusTax" ? "subtotal + IVA leídos" : "total leído"
+          }`}
         </label>
       ) : null}
     </footer>

@@ -2933,6 +2933,37 @@ select
   )
 union all
 select
+  'claim_invoice_scan: el reclamo ligado (CIE-06) a una compra cancelado se reclama con otra clave y el confirmed en compra cancelado no se libera con la clave de esa compra (20261019m, REP3-03d B14 / B17 / N10)',
+  coalesce((
+    select p.prosrc ilike '%or exists (%p.client_request_id = s.claim_request_id%p.created_at >= s.claim_started_at - interval ''1 second''%and p.status = ''cancelado''%'
+      and p.prosrc ilike '%p.id = s.purchase_id%p.status = ''cancelado''%and p.client_request_id is distinct from p_client_request_id%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'claim_invoice_scan: PT403 para almacen con purchases.create en denied_permissions (20261019m, REP3-03d B17-ext)',
+  coalesce((
+    select p.prosrc ilike '%current_user_role()::text = ''almacen''%pr.id = auth.uid()%pr.denied_permissions ? ''purchases.create''%errcode = ''PT403''%'
+    from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
+  ), false)
+union all
+select
+  'release_invoice_scan_claim suelta el reclamo ligado a una compra cancelado; discard_invoice_scan no lo bloquea (20261019m, REP3-03d B14)',
+  coalesce((
+    select p.prosrc ilike '%and not exists%p.client_request_id = s.claim_request_id%p.created_at >= s.claim_started_at - interval ''1 second''%and p.status <> ''cancelado''%'
+    from pg_proc p where p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)')
+  ), false)
+  and exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'discard_invoice_scan'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid, p_id uuid'
+      and p.prosrc ilike '%v_claim_purchase_cancelled :=%p.status = ''cancelado''%'
+      and p.prosrc ilike '%(v_fields->>''claim_started_at'')::timestamptz - interval ''1 second''%and p.status <> ''cancelado''%ya tiene una compra registrada y no se puede descartar%'
+      and p.prosrc ilike '%interval ''5 minutes''%and not v_claim_purchase_cancelled%'
+  )
+union all
+select
   'remove_supplier_product_alias(uuid) uuid existe, security definer y search_path=public (20261020a)',
   exists (
     select 1 from pg_proc p
