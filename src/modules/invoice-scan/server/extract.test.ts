@@ -707,4 +707,48 @@ describe("extractInvoice: metadatos de la imagen no llegan al modelo (auditoría
     }
     expect(data).toEqual(original);
   });
+
+  it("omite el ejemplo few-shot cuya imagen no se puede sanear y el escaneo sigue (REP3-03e)", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { info: modelInfo, model } = mockInfo("ok");
+    // Bytes JPEG declarados como PNG: stripImageMetadata no puede sanearlos.
+    const broken: InvoicePage = { data: jpegHeader(1131, 1600, SMUGGLED), mediaType: "image/png" };
+    const exampleFormat = (rawText: string) =>
+      formatOf({ ...singlePageExtraction, lines: [{ ...singlePageExtraction.lines[0]!, rawText }] });
+
+    try {
+      const result = await extractInvoice({
+        fewShot: [
+          { format: exampleFormat("EJ-ROTO"), page: broken },
+          { format: exampleFormat("EJ-SANO"), page: page("ejemplo sano") },
+        ],
+        model: modelInfo,
+        pages: [page("objetivo")],
+      });
+
+      expect(result.extraction).toEqual(singlePageExtraction);
+      const prompt = model.doGenerateCalls[0]!.prompt;
+      expect(sentImages(model)).toHaveLength(2);
+      expect(textOf(prompt)).not.toContain("EJ-ROTO");
+      expect(textOf(prompt)).toContain("EJ-SANO");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("IGNORA");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("la página del usuario que no se puede sanear sigue fallando con 400 sin llamar al modelo", async () => {
+    const { info: modelInfo, model } = mockInfo("ok");
+
+    const error = await extractInvoice({
+      fewShot: [{ format: formatOf(singlePageExtraction), page: page("ejemplo") }],
+      model: modelInfo,
+      pages: [{ data: jpegHeader(1131, 1600, "x"), mediaType: "image/png" }],
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(400);
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
 });
