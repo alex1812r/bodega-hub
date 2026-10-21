@@ -151,15 +151,27 @@ export function InvoiceReviewPanel({
     }
     if (focusRequest.target === null) {
       // Sin pendientes: Cargar. Si está deshabilitado (QA B7) el foco no puede quedarse en
-      // BODY: va al buscador de proveedor si falta, si no al primer control del pie.
+      // BODY: va al buscador de proveedor si falta, si no a la casilla de diferencia (lo que
+      // desbloquea Cargar) o al primer control VISIBLE del pie (QA REP3-03f: «Ver detalle del
+      // total» es display:none en sm+ y focus() no hacía nada), y como último recurso al pie.
       const footer = footerRef.current;
+      const firstVisible = (selector: string) =>
+        Array.from(footer?.querySelectorAll<HTMLElement>(selector) ?? []).find(
+          (element) => element.getClientRects().length > 0,
+        );
       const target =
         footer?.querySelector<HTMLButtonElement>("[data-load-button]:not(:disabled)") ??
         (focusRequest.needsSupplier
           ? headerRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]')
           : null) ??
-        footer?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)");
-      target?.focus();
+        firstVisible('input[type="checkbox"]:not(:disabled)') ??
+        firstVisible("input:not(:disabled), button:not(:disabled)");
+      if (target) {
+        target.focus();
+      } else if (footer) {
+        footer.tabIndex = -1;
+        footer.focus();
+      }
       return;
     }
     const row = rowRefs.current.get(focusRequest.target);

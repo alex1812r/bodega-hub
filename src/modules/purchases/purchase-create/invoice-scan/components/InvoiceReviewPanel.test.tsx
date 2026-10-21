@@ -771,6 +771,36 @@ describe("InvoiceReviewPanel", () => {
 
       await waitFor(() => expect(loadButton()).toHaveFocus());
     });
+
+    describe("REP3-03f: sin pendientes, con proveedor y Cargar bloqueado por la diferencia", () => {
+      /** Simula el layout de escritorio: lo que lleva `sm:hidden` (o está dentro) no tiene cajas. */
+      const desktopLayout = (allHidden = false) =>
+        jest.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (this: HTMLElement) {
+          const hidden = allHidden || this.closest(".sm\\:hidden") !== null;
+          return { length: hidden ? 0 : 1 } as unknown as DOMRectList;
+        });
+      const mismatched = () =>
+        makeReviewResponse({ lines: [unmatchedLine(9, false)], extraction: { total: 1000 } });
+
+      afterEach(() => jest.restoreAllMocks());
+
+      it("el foco va a la casilla de diferencia, no a «Ver detalle del total» oculto en escritorio", async () => {
+        desktopLayout();
+        await created(mismatched());
+
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        expect(loadButton()).toBeDisabled();
+        await waitFor(() => expect(screen.getByRole("checkbox", { name: /Cargar con una diferencia de/ })).toHaveFocus());
+      });
+
+      it("si ningún control del pie es visible, el foco va al pie y nunca a BODY", async () => {
+        desktopLayout(true);
+        await created(mismatched());
+
+        expect(loadButton()).toBeDisabled();
+        await waitFor(() => expect(screen.getByRole("contentinfo", { name: "Resumen de la revisión" })).toHaveFocus());
+      });
+    });
   });
 
   it("SCN-08-F1: factura duplicada sin compra registrada solo dice que ya se escaneó", () => {
