@@ -2626,7 +2626,8 @@ union all
 select
   'invoice_scans: RLS activa, authenticated solo select (sin insert, update ni delete), anon sin privilegios (20261019a, SCN-03o)',
   exists (select 1 from pg_class c where c.oid = to_regclass('public.invoice_scans') and c.relrowsecurity)
-  and coalesce(has_table_privilege('authenticated', 'public.invoice_scans', 'select'), false)
+  -- 20261019o: el select es por columna (sin claim_request_id).
+  and coalesce(has_any_column_privilege('authenticated', 'public.invoice_scans', 'select'), false)
   and not has_table_privilege('authenticated', 'public.invoice_scans', 'insert')
   and not has_table_privilege('authenticated', 'public.invoice_scans', 'update')
   and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'insert')
@@ -2740,7 +2741,8 @@ select
   and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'INSERT')
   and not has_any_column_privilege('authenticated', 'public.invoice_scans', 'UPDATE')
   and not has_table_privilege('authenticated', 'public.invoice_scans', 'DELETE')
-  and has_table_privilege('authenticated', 'public.invoice_scans', 'SELECT')
+  -- 20261019o: el select es por columna (sin claim_request_id).
+  and has_any_column_privilege('authenticated', 'public.invoice_scans', 'SELECT')
 union all
 select
   'invoice_scans: sin politicas de insert ni update, con la de lectura (20261019g)',
@@ -2997,5 +2999,29 @@ select
       and p.prosrc ilike '%(''admin'', ''almacen'')%'
       and p.prosrc ilike '%errcode = ''PT403''%'
       and p.prosrc ilike '%errcode = ''PT404''%'
+  )
+union all
+select
+  'release_invoice_scan_claim: PT403 para almacen con purchases.create en denied_permissions, como claim (20261019o, REP4-02b B19)',
+  coalesce((
+    select p.prosrc ilike '%current_user_role()::text = ''almacen''%pr.id = auth.uid()%pr.denied_permissions ? ''purchases.create''%errcode = ''PT403''%update public.invoice_scans%'
+      and p.prosrc ilike '%and not exists%p.client_request_id = s.claim_request_id%and p.status <> ''cancelado''%'
+      and p.prosecdef
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+    from pg_proc p where p.oid = to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)')
+  ), false)
+union all
+select
+  'invoice_scans.claim_request_id no legible por authenticated ni anon; el resto de columnas si por authenticated (20261019o, REP4-02b B19)',
+  not has_column_privilege('authenticated', 'public.invoice_scans', 'claim_request_id', 'select')
+  and not has_column_privilege('anon', 'public.invoice_scans', 'claim_request_id', 'select')
+  and not has_table_privilege('authenticated', 'public.invoice_scans', 'select')
+  and has_column_privilege('service_role', 'public.invoice_scans', 'claim_request_id', 'select')
+  and not exists (
+    select 1 from pg_attribute a
+    where a.attrelid = 'public.invoice_scans'::regclass and a.attnum > 0 and not a.attisdropped
+      and a.attname <> 'claim_request_id'
+      and not has_column_privilege('authenticated', 'public.invoice_scans', a.attname, 'select')
   )
 order by 1;
