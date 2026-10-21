@@ -12,6 +12,8 @@ import { z } from "zod";
 import {
   correctedInvoiceExtractionSchema,
   INVOICE_CORRECTED_TOO_LARGE_MESSAGE,
+  INVOICE_DATE_FORMAT_MESSAGE,
+  INVOICE_DATE_OUT_OF_RANGE_MESSAGE,
   INVOICE_IMPOSSIBLE_DATE_MESSAGE,
   INVOICE_MAX_LINES,
   INVOICE_TEXT_INVALID_MESSAGE,
@@ -151,7 +153,7 @@ describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", (
     expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.supplier.name = "한국 식품 ㄱㅏ"))).success).toBe(true);
   });
 
-  it.each(["31/02/2026", "31-02-2026", "29/02/2025", "32/01/2026", "15/13/2026", "00/10/2026", "1/0/2026", "31.04.2026", "30.02.2026"])(
+  it.each(["31/02/2026", "31-02-2026", "29/02/2025", "32/01/2026", "15/13/2026", "00/10/2026", "1/0/2026", "31/04/2026", "29-02-2027"])(
     "rechaza la fecha no ISO imposible %s (DD/MM/AAAA o DD-MM-AAAA, caos N3)",
     (date) => {
       const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date)));
@@ -160,18 +162,36 @@ describe("correctedInvoiceExtractionSchema · extracción corregida (REP-05)", (
     },
   );
 
-  it.each(["2026/02/31", "2026.04.31", "2026-4-31", "2025/2/29", "2026/13/01", "2026.00.10"])(
-    "rechaza la fecha AAAA/MM/DD o AAAA.MM.DD imposible %s (caos N9)",
+  // REP4-02a (caos N9r / D29): solo AAAA-MM-DD o DD/MM/AAAA / DD-MM-AAAA, año de 4 dígitos y dígitos ASCII.
+  it.each([
+    "31/04/26", "29-02-27", "14/10/26", "31 04 2026", "2026-04-31T00:00", "2026-04-30T00:00", "2026-04-30 10:00",
+    "３１/04/2026", "２０２６-０４-３０", "٢٠٢٦-٠٤-٣٠", "31.04.2026", "30.04.2026", "2026/02/31", "2026/02/28",
+    "2026.04.31", "2024.2.29", "2026-4-30", "2026-4-31", "2025/2/29", "2026/13/01", "2026.00.10", "14/10-2026",
+    "1410/2026", "20261014", "14 de octubre de 2026", "hoy",
+  ])("rechaza la fecha con formato no admitido %j (caos N9r)", (date) => {
+    const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date)));
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]).toMatchObject({ message: INVOICE_DATE_FORMAT_MESSAGE, path: ["date"] });
+    expect(INVOICE_DATE_FORMAT_MESSAGE).toMatch(/^La fecha de la factura no tiene un formato válido/);
+  });
+
+  // Año fuera de 2000–2100: en una factura en curso es una mala lectura, no una fecha real.
+  it.each(["9999-12-31", "0000-01-01", "31/12/1899", "1999-12-31", "01/01/2101"])(
+    "rechaza la fecha con año fuera de rango %s (caos N9r)",
     (date) => {
       const parsed = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date)));
 
-      expect(parsed.error?.issues[0]).toMatchObject({ message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
+      expect(parsed.error?.issues[0]).toMatchObject({ message: INVOICE_DATE_OUT_OF_RANGE_MESSAGE, path: ["date"] });
     },
   );
 
-  it.each(["29/02/2024", "14/10/2026", "14-10-2026", "1/2/2026", " 31/12/2026 ", "30.04.2026", "2026/02/28", "2024.2.29", "2026-4-30"])("acepta la fecha no ISO válida %s", (date) => {
-    expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date))).success).toBe(true);
-  });
+  it.each(["29/02/2024", "14/10/2026", "14-10-2026", "1/2/2026", " 31/12/2026 ", "2026-10-14", "2000-01-01", "31/12/2100", "29-02-2000"])(
+    "acepta la fecha válida %j",
+    (date) => {
+      expect(correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = date))).success).toBe(true);
+    },
+  );
 
   it("rechaza una fecha ISO imposible con mensaje en español; acepta 29 de febrero bisiesto y otros formatos (caos B8)", () => {
     const impossible = correctedInvoiceExtractionSchema.safeParse(mutate((draft) => (draft.date = "2026-02-31")));
