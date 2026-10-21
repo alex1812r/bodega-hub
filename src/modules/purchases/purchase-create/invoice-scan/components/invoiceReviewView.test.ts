@@ -35,7 +35,7 @@ describe("invoiceReviewView", () => {
 
   it("SCN-UI-Q1: muestra siempre el total a registrar y solo da diferencia con descuadre", () => {
     const base = { base: 200, computed: 200, lineMismatches: [], registered: 232, tax: 32 };
-    expect(getDisplayedTotals({ ...base, mismatch: true, read: 200 })).toEqual({
+    expect(getDisplayedTotals({ ...base, mismatch: true, read: 200, difference: -32 })).toEqual({
       difference: -32,
       ok: false,
       read: 200,

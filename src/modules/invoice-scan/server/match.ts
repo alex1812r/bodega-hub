@@ -184,13 +184,10 @@ export function matchInvoice(extraction: InvoiceExtraction, ctx: MatchContext): 
 
   const lines = extraction.lines.map((line, index) => matchLine(line, index, ctx, state));
 
-  let computedNet = 0;
-  let computedWithTax = 0;
-  extraction.lines.forEach((line, index) => {
-    const amount = lineAmount(line);
-    computedNet += amount;
-    computedWithTax += amount * (1 + taxPctOf(lines[index].taxRateCode, ctx.taxRates) / 100);
-  });
+  const taxLines = extraction.lines.map((line, index) => ({
+    amount: lineAmount(line),
+    ratePct: taxPctOf(lines[index].taxRateCode, ctx.taxRates),
+  }));
 
   const duplicateOfScanId = findDuplicateScan({
     number: extraction.number,
@@ -204,7 +201,7 @@ export function matchInvoice(extraction: InvoiceExtraction, ctx: MatchContext): 
   return {
     supplier,
     lines,
-    totals: computeTotals(extraction, computedNet, computedWithTax),
+    totals: computeTotals(extraction, taxLines),
     ...(rate.info ? { rate: rate.info } : {}),
     ...(duplicateOfScanId ? { duplicateOfScanId } : {}),
   };

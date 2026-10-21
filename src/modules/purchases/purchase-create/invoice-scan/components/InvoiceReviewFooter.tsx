@@ -11,6 +11,7 @@ import {
   type InvoiceReviewAction,
   type InvoiceReviewState,
   type InvoiceReviewSummary,
+  type InvoiceReviewTotals,
 } from "../reviewModel";
 import { formatInvoiceMoney, getDisplayedTotals } from "./invoiceReviewView";
 
@@ -29,10 +30,18 @@ export type InvoiceReviewFooterProps = {
  * "Cargar en la compra". En móvil el detalle (leído, pendientes, bloqueos y "Descartar
  * escaneo") se despliega con la flecha (B-6: el pie ocupaba ~27 % de una pantalla de
  * 390); desde `sm` se ve siempre. D25-a: con diferencia frente al leído, Cargar exige
- * marcar la confirmación de esa diferencia (siempre visible mientras la haya). D27: la
- * referencia es el total leído o, sin él, subtotal + IVA leídos; sin ninguno no hay
- * casilla y se informa que no hay con qué comparar.
+ * marcar la confirmación de esa diferencia (siempre visible mientras la haya). D29: la
+ * referencia es el total leído; sin él, subtotal + IVA leídos; sin IVA, el subtotal
+ * (frente a la base a registrar); sin subtotal, el IVA (frente al IVA a registrar). Sin
+ * ninguna cifra leída no hay casilla y se informa que no hay con qué comparar.
  */
+const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { label: string; against: string }> = {
+  total: { label: "Leído", against: "total leído" },
+  subtotalPlusTax: { label: "Subtotal + IVA leídos", against: "subtotal + IVA leídos" },
+  subtotal: { label: "Subtotal leído", against: "subtotal leído (base sin IVA)" },
+  tax: { label: "IVA leído", against: "IVA leído" },
+};
+
 export function InvoiceReviewFooter({
   footerRef,
   onAction,
@@ -47,7 +56,14 @@ export function InvoiceReviewFooter({
   const pricesIncludeTax = getTaxInclusion(state).included;
   const money = (value: number) => formatInvoiceMoney(state, value);
   const readText = totals.read !== undefined ? money(totals.read) : "—";
-  const readLabel = summary.totals.readSource === "subtotalPlusTax" ? "Subtotal + IVA leídos" : "Leído";
+  const { readSource } = summary.totals;
+  const sourceCopy = READ_LABELS[readSource ?? "total"];
+  let readLabel = sourceCopy.label;
+  if (readSource === "subtotal") {
+    readLabel = `Base a registrar ${money(summary.totals.base)} · ${sourceCopy.label}`;
+  } else if (readSource === "tax") {
+    readLabel = `IVA a registrar ${money(summary.totals.tax)} · ${sourceCopy.label}`;
+  }
   const collapsible = detailOpen ? null : "hidden sm:flex";
 
   return (
@@ -71,14 +87,12 @@ export function InvoiceReviewFooter({
         </span>
         {totals.read === undefined ? (
           <span className="text-xs text-on-surface-variant" data-testid="invoice-review-no-reference">
-            {totals.ok
-              ? "Sin total leído para comparar: revisa los importes con la factura"
-              : "Sin total leído; la base no cuadra con el subtotal leído"}
+            Sin total, subtotal ni IVA leídos para comparar: revisa los importes con la factura
           </span>
         ) : totals.ok ? (
           <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
             <Check aria-hidden className="size-4" />
-            <span className="sr-only">Cuadra con el total leído</span>
+            <span className="sr-only">{`Cuadra con el ${sourceCopy.against}`}</span>
           </span>
         ) : (
           <span
@@ -167,9 +181,7 @@ export function InvoiceReviewFooter({
             onChange={(event) => onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked })}
             type="checkbox"
           />
-          {`Cargar con una diferencia de ${money(totals.difference)} frente al ${
-            summary.totals.readSource === "subtotalPlusTax" ? "subtotal + IVA leídos" : "total leído"
-          }`}
+          {`Cargar con una diferencia de ${money(totals.difference)} frente al ${sourceCopy.against}`}
         </label>
       ) : null}
     </footer>

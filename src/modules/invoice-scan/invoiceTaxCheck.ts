@@ -1,38 +1,49 @@
 import { roundMoney } from "@bodega/core/currency";
 
 /**
- * REP3-01 (D27): regla ÚNICA de IVA y cuadre de totales de una factura escaneada. PURA y
- * compartida: la usan la revisión (`reviewModel.ts`, cliente) y el emparejamiento
- * (`server/match/money.ts`), así que el ✓ del pie y `totals.mismatch` no pueden discrepar.
+ * REP3-01 (D27) · REP4-01 (D29): regla ÚNICA de IVA y cuadre de totales de una factura
+ * escaneada. PURA y compartida: la usan la revisión (`reviewModel.ts`, cliente) y el
+ * emparejamiento (`server/match/money.ts`) con los mismos importes por línea, así que el ✓
+ * del pie y `totals.mismatch` no pueden discrepar.
  *
- * - Total de referencia: el total leído; sin él, subtotal + IVA leídos; sin ninguno, no
- *   hay con qué comparar (no se pide confirmar diferencia, solo se informa).
- * - "Precios sin IVA" se contrasta con: el subtotal leído; sin él, total − IVA leído; sin
- *   desglose, referencia − IVA que añadirían las alícuotas de las líneas (por línea, así
- *   en una mixta solo cuentan las gravadas).
+ * - Cifra leída de referencia y su homóloga calculada (D29): el total leído ↔ total
+ *   registrado; sin él, subtotal + IVA leídos ↔ total registrado; sin IVA leído, el
+ *   subtotal ↔ base imponible registrada; sin subtotal, el IVA ↔ IVA registrado. Sin
+ *   ninguna cifra leída no hay con qué comparar. Cualquier discrepancia exige la casilla.
+ * - Con total (o subtotal + IVA), "precios sin IVA" se contrasta con: el subtotal leído;
+ *   sin él, total − IVA leído; sin desglose, referencia − IVA que añadirían las alícuotas
+ *   de las líneas (por línea, así en una mixta solo cuentan las gravadas).
+ * - Con solo subtotal o solo IVA, las dos hipótesis son la base (o el IVA) que saldría
+ *   con precios sin IVA y con IVA incluido, línea a línea por su alícuota.
  * - El IVA en juego (`gap`) es la distancia entre ambas hipótesis. La sugerencia "los
- *   precios incluyen IVA" exige Σ líneas a ≤ ¼ del IVA en juego de la referencia y a más
- *   de ¼ de la otra: con una parte gravada pequeña (≤ 6 % de una mixta) el 1 % del total
- *   la escondía (N11).
+ *   precios incluyen IVA" exige que la hipótesis incluida quede a ≤ ¼ del IVA en juego de
+ *   la cifra leída y la otra a más de ¼: con una parte gravada pequeña (≤ 6 % de una
+ *   mixta) el 1 % del total la escondía (N11).
  * - IVA leído 0,00 (o subtotal = total): nunca se sugiere (N12). Si además Σ líneas da la
  *   referencia con líneas gravadas, no se puede saber si es exenta o una nota de despacho
- *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin preselección.
- * - El cuadre del total registrado con la referencia usa máx(mínimo, mín(1 %, ¼ del IVA
- *   en juego)): el 1 % nunca tapa un IVA de más o de menos.
+ *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin
+ *   preselección (D28). Con solo IVA 0,00 leído y líneas gravadas ninguna hipótesis lo
+ *   cuadra: no se pregunta, se pide la casilla (o marcar las líneas exentas).
+ * - El cuadre con la cifra leída usa máx(mínimo, mín(1 % de la cifra, ¼ del IVA en
+ *   juego)): el 1 % nunca tapa un IVA de más o de menos.
  */
 
-/** Tolerancia relativa del cuadre de totales: 1 % de la referencia (acotada por el IVA en juego). */
+/** Tolerancia relativa del cuadre: 1 % de la cifra leída (acotada por el IVA en juego). */
 export const TOTALS_RELATIVE_TOLERANCE = 0.01;
 /** Fracción del IVA en juego que separa "cuadra" de "no cuadra" en la sugerencia y en el cuadre. */
 export const TAX_GAP_TOLERANCE_SHARE = 0.25;
 /** Por debajo de medio céntimo el IVA leído es 0,00. */
 const ZERO_TAX_EPSILON = 0.005;
 
+export type InvoiceTaxLine = {
+  /** Importe de la línea tal como se leyó (cantidad × precio, redondeado), sin quitar ni añadir IVA. */
+  amount: number;
+  /** Alícuota de la línea en % (0 si exenta). */
+  ratePct: number;
+};
+
 export type InvoiceTaxInput = {
-  /** Σ importes de las líneas tal como se leyeron (sin quitar ni añadir IVA). */
-  linesAmount: number;
-  /** Σ de cada importe más el IVA de su alícuota: lo que se registraría si los precios no lo incluyen. */
-  linesAmountWithTax: number;
+  lines: InvoiceTaxLine[];
   subtotal?: number;
   tax?: number;
   total?: number;
@@ -41,16 +52,17 @@ export type InvoiceTaxInput = {
 };
 
 export type InvoiceTaxReference = {
+  /** Cifra leída con la que se compara su homóloga registrada. */
   amount: number;
-  source: "total" | "subtotalPlusTax";
+  source: "total" | "subtotalPlusTax" | "subtotal" | "tax";
 };
 
 export type InvoiceTaxAssessment = {
-  /** Total con el que se compara lo registrado; ausente si no se leyó ningún total. */
+  /** Cifra leída de referencia; ausente si no se leyó ninguna. */
   reference?: InvoiceTaxReference;
-  /** De dónde sale la hipótesis "precios sin IVA" (para explicar la sugerencia). */
+  /** De dónde sale la hipótesis "precios sin IVA" frente a un total (para explicar la sugerencia). */
   plainSource?: "subtotal" | "totalMinusTax" | "linesTax";
-  /** Σ líneas ≈ referencia y no ≈ "precios sin IVA": los precios parecen incluir IVA. */
+  /** La hipótesis "IVA incluido" cuadra la cifra leída y la otra no: los precios parecen incluirlo. */
   includedSuggested: boolean;
   /**
    * La factura no trae IVA (0,00 o subtotal = total), Σ líneas ya da la referencia y las
@@ -58,12 +70,69 @@ export type InvoiceTaxAssessment = {
    * despacho f01/f02). No se sugiere nada; se pregunta.
    */
   exemptOrIncluded: boolean;
-  /** Tolerancia del cuadre del total registrado con la referencia. */
+  /** Tolerancia del cuadre de la cifra registrada con la referencia. */
   tolerance: number;
 };
 
+/** Lo que se registraría: base sin IVA, IVA de las alícuotas y total. */
+export type InvoiceRegisteredAmounts = { base: number; tax: number; total: number };
+
+type LineSums = { net: number; withTax: number; baseIfIncluded: number };
+
 function finite(value: number | undefined): value is number {
   return value !== undefined && Number.isFinite(value);
+}
+
+function sumLines(lines: InvoiceTaxLine[]): LineSums {
+  let net = 0;
+  let withTax = 0;
+  let baseIfIncluded = 0;
+  for (const { amount, ratePct } of lines) {
+    if (!Number.isFinite(amount)) {
+      continue;
+    }
+    const factor = 1 + Math.max(0, ratePct) / 100;
+    net += amount;
+    withTax += roundMoney(amount * factor);
+    baseIfIncluded += roundMoney(amount / factor);
+  }
+  return { net: roundMoney(net), withTax: roundMoney(withTax), baseIfIncluded: roundMoney(baseIfIncluded) };
+}
+
+/**
+ * Base, IVA y total que se registrarían con los precios incluyendo IVA o no (por línea y
+ * su alícuota). Es lo que compara el servidor; la revisión usa sus cifras, que reparten el
+ * residuo de redondeo para que el total incluido sea Σ líneas.
+ */
+export function getInvoiceRegisteredAmounts(lines: InvoiceTaxLine[], included: boolean): InvoiceRegisteredAmounts {
+  const { net, withTax, baseIfIncluded } = sumLines(lines);
+  return included
+    ? { base: baseIfIncluded, tax: roundMoney(net - baseIfIncluded), total: net }
+    : { base: net, tax: roundMoney(withTax - net), total: withTax };
+}
+
+/** Solo subtotal o solo IVA leídos: la cifra frente a su homóloga sin IVA y con IVA incluido. */
+function assessSingleFigure(
+  reference: InvoiceTaxReference,
+  ifPlain: number,
+  ifIncluded: number,
+  addedTax: number,
+  minTolerance: number,
+): InvoiceTaxAssessment {
+  const read = reference.amount;
+  const gap = Math.abs(roundMoney(ifPlain - ifIncluded));
+  const gapTolerance = Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * gap);
+  const zeroTax = reference.source === "tax" && Math.abs(read) < ZERO_TAX_EPSILON;
+  const includedSuggested =
+    !zeroTax &&
+    addedTax > 0 &&
+    Math.abs(ifIncluded - read) <= gapTolerance &&
+    Math.abs(ifPlain - read) > gapTolerance;
+  const tolerance = Math.max(
+    minTolerance,
+    Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TAX_GAP_TOLERANCE_SHARE * gap),
+  );
+  return { reference, includedSuggested, exemptOrIncluded: false, tolerance };
 }
 
 export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
@@ -71,19 +140,24 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
   const subtotal = finite(input.subtotal) ? input.subtotal : undefined;
   const tax = finite(input.tax) ? input.tax : undefined;
   const total = finite(input.total) ? input.total : undefined;
+  const { net, withTax, baseIfIncluded } = sumLines(input.lines);
+  const addedTax = roundMoney(withTax - net);
 
   let reference: InvoiceTaxReference | undefined;
   if (total !== undefined) {
     reference = { amount: total, source: "total" };
   } else if (subtotal !== undefined && tax !== undefined) {
     reference = { amount: roundMoney(subtotal + tax), source: "subtotalPlusTax" };
+  } else if (subtotal !== undefined) {
+    return assessSingleFigure({ amount: subtotal, source: "subtotal" }, net, baseIfIncluded, addedTax, minTolerance);
+  } else if (tax !== undefined) {
+    const includedTax = roundMoney(net - baseIfIncluded);
+    return assessSingleFigure({ amount: tax, source: "tax" }, addedTax, includedTax, addedTax, minTolerance);
   }
   if (!reference) {
     return { includedSuggested: false, exemptOrIncluded: false, tolerance: minTolerance };
   }
 
-  const net = roundMoney(input.linesAmount);
-  const addedTax = roundMoney(input.linesAmountWithTax - input.linesAmount);
   let plainSource: NonNullable<InvoiceTaxAssessment["plainSource"]>;
   let plainTarget: number;
   if (subtotal !== undefined) {
@@ -118,11 +192,33 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
   return { reference, plainSource, includedSuggested, exemptOrIncluded, tolerance };
 }
 
-/** Referencia − registrado cuando no cuadran con la tolerancia de la evaluación; si cuadra o no hay referencia, `undefined`. */
-export function getInvoiceTotalsGap(assessment: InvoiceTaxAssessment, registered: number): number | undefined {
+/** La cifra registrada homóloga de la referencia: total, base imponible o IVA. */
+function getComparedAmount(reference: InvoiceTaxReference, registered: InvoiceRegisteredAmounts): number {
+  switch (reference.source) {
+    case "subtotal":
+      return registered.base;
+    case "tax":
+      return registered.tax;
+    default:
+      return registered.total;
+  }
+}
+
+/**
+ * Referencia − su homóloga registrada cuando no cuadran con la tolerancia de la
+ * evaluación; si cuadra o no hay referencia, `undefined`.
+ */
+export function getInvoiceTotalsGap(
+  assessment: InvoiceTaxAssessment,
+  registered: InvoiceRegisteredAmounts,
+): number | undefined {
   const { reference, tolerance } = assessment;
-  if (!reference || Math.abs(reference.amount - registered) <= tolerance) {
+  if (!reference) {
     return undefined;
   }
-  return roundMoney(reference.amount - registered);
+  const compared = getComparedAmount(reference, registered);
+  if (Math.abs(reference.amount - compared) <= tolerance) {
+    return undefined;
+  }
+  return roundMoney(reference.amount - compared);
 }

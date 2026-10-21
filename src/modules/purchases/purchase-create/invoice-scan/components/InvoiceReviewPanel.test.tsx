@@ -487,10 +487,63 @@ describe("InvoiceReviewPanel", () => {
     expect(loadButton()).toBeDisabled();
   });
 
-  it("REP3-01: sin ningún total leído no hay casilla, se informa que no hay con qué comparar", () => {
-    renderPanel(makeReviewResponse({ lines: [{}], extraction: { tax: 32 } }));
+  it("REP4-01 (C4-M1 u7): solo subtotal leído, el IVA incluido cuadra la base; revertirlo pide confirmar", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 104.4, lineTotal: 104.4 } }],
+        extraction: { subtotal: 90 },
+      }),
+    );
 
-    expect(screen.getByTestId("invoice-review-no-reference")).toHaveTextContent("Sin total leído para comparar");
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "quitándoselo, las líneas dan el subtotal leído (Bs. 90,00)",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
+      /Total a registrar Bs\. 104,40\s*·\s*Base a registrar Bs\. 90,00 · Subtotal leído Bs\. 90,00/,
+    );
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -14,40");
+    const confirm = screen.getByRole("checkbox", {
+      name: "Cargar con una diferencia de Bs. -14,40 frente al subtotal leído (base sin IVA)",
+    });
+    expect(loadButton()).toBeDisabled();
+    await user.click(confirm);
+    expect(loadButton()).toBeEnabled();
+  });
+
+  it("REP4-01 (C4-M1 u8): solo IVA leído, el IVA incluido cuadra el leído; revertirlo pide confirmar", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 104.4, lineTotal: 104.4 } }],
+        extraction: { tax: 14.4 },
+      }),
+    );
+
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "el IVA que llevan dentro las líneas da el IVA leído (Bs. 14,40)",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
+      /Total a registrar Bs\. 104,40\s*·\s*IVA a registrar Bs\. 14,40 · IVA leído Bs\. 14,40/,
+    );
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Cargar con una diferencia de Bs. -2,30 frente al IVA leído" }),
+    ).not.toBeChecked();
+    expect(loadButton()).toBeDisabled();
+  });
+
+  it("REP3-01: sin ninguna cifra leída no hay casilla, se informa que no hay con qué comparar", () => {
+    renderPanel(makeReviewResponse({ lines: [{}], extraction: {} }));
+
+    expect(screen.getByTestId("invoice-review-no-reference")).toHaveTextContent(
+      "Sin total, subtotal ni IVA leídos para comparar",
+    );
     expect(screen.queryByTestId("invoice-review-confirm-difference")).not.toBeInTheDocument();
     expect(loadButton()).toBeEnabled();
   });

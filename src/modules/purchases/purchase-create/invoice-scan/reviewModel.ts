@@ -1012,10 +1012,7 @@ export function getInvoiceTaxAssessment(state: InvoiceReviewState): InvoiceTaxAs
   }
   const { subtotal, tax, total } = state.extraction;
   const assessment = assessInvoiceTax({
-    linesAmount: sumAmounts(state.lines, getLineAmount),
-    linesAmountWithTax: sumAmounts(state.lines, (line) =>
-      roundMoney(getLineAmount(line) * (1 + linePct(state, line) / 100)),
-    ),
+    lines: state.lines.map((line) => ({ amount: getLineAmount(line), ratePct: linePct(state, line) })),
     subtotal,
     tax,
     total,
@@ -1035,7 +1032,10 @@ export function getTaxInclusion(state: InvoiceReviewState): InvoiceTaxInclusion 
 }
 
 export type InvoiceReviewTotals = {
-  /** Total de referencia: el total leído o, sin él, subtotal + IVA leídos (`readSource`). */
+  /**
+   * Cifra leída de referencia (D29, `readSource`): el total leído; sin él, subtotal + IVA
+   * leídos; sin IVA, el subtotal (frente a `base`); sin subtotal, el IVA (frente a `tax`).
+   */
   read?: number;
   readSource?: InvoiceTaxReference["source"];
   /** Σ cantidad × precio de las líneas no descartadas, tal como se leyeron o editaron. */
@@ -1049,11 +1049,10 @@ export type InvoiceReviewTotals = {
    * de compra (`getDraftLineTotals`). Es lo que muestra el pie.
    */
   registered: number;
-  /**
-   * `registered` no cuadra con el total de referencia (tolerancia de `assessInvoiceTax`).
-   * Sin referencia es informativo: la base contra el subtotal leído.
-   */
+  /** La cifra registrada homóloga de `read` no cuadra con ella (tolerancia de `assessInvoiceTax`). */
   mismatch: boolean;
+  /** Con `mismatch`: `read` − su homóloga registrada (la diferencia que confirma la casilla). */
+  difference?: number;
   /** Índices de las líneas no descartadas con `isLineMismatch`. */
   lineMismatches: number[];
 };
@@ -1067,14 +1066,7 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
   const registered = roundMoney(base + tax);
   const assessment = getInvoiceTaxAssessment(state);
   const { reference } = assessment;
-  const { subtotal } = state.extraction;
-
-  let mismatch = false;
-  if (reference) {
-    mismatch = getInvoiceTotalsGap(assessment, registered) !== undefined;
-  } else if (subtotal !== undefined && Number.isFinite(subtotal)) {
-    mismatch = !withinTolerance(subtotal, base, minTolerance(state));
-  }
+  const difference = getInvoiceTotalsGap(assessment, { base, tax, total: registered });
 
   return {
     ...(reference ? { read: reference.amount, readSource: reference.source } : {}),
@@ -1082,17 +1074,18 @@ export function getInvoiceReviewTotals(state: InvoiceReviewState): InvoiceReview
     base,
     tax,
     registered,
-    mismatch,
+    mismatch: difference !== undefined,
+    ...(difference !== undefined ? { difference } : {}),
     lineMismatches: active.filter((line) => isLineMismatch(state, line)).map((line) => line.index),
   };
 }
 
 /**
- * D25-a / D27: referencia − registrado cuando no cuadran (la misma regla del ✓ del pie);
- * sin total de referencia o cuadrando, `undefined`.
+ * D25-a / D29: cifra leída de referencia − su homóloga registrada cuando no cuadran (la
+ * misma regla del ✓ del pie); sin cifra leída o cuadrando, `undefined`.
  */
 export function getTotalsDifference(state: InvoiceReviewState): number | undefined {
-  return getInvoiceTotalsGap(getInvoiceTaxAssessment(state), getInvoiceReviewTotals(state).registered);
+  return getInvoiceReviewTotals(state).difference;
 }
 
 /** D25-a: hay diferencia con el total de referencia y el usuario no la confirmó tal como está ahora. */

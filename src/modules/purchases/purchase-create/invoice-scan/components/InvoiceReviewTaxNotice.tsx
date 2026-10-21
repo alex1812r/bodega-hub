@@ -17,9 +17,9 @@ export type InvoiceReviewTaxNoticeProps = {
 };
 
 /**
- * SCN-UI-Q1 (ALTO-1): la suma de las líneas ya da el total de referencia (leído o, sin
- * él, subtotal + IVA leídos) y no la hipótesis "precios sin IVA" (`assessInvoiceTax`,
- * D27). Se avisa y se elige explícitamente; viene marcada la opción que cuadra y se
+ * SCN-UI-Q1 (ALTO-1): con IVA incluido las líneas cuadran la cifra leída de referencia
+ * (total; subtotal + IVA; solo subtotal frente a la base; solo IVA frente al IVA) y sin
+ * IVA no (`assessInvoiceTax`, D27/D29). Se avisa y se elige explícitamente; viene marcada la opción que cuadra y se
  * puede cambiar. Se queda visible mientras haya una elección hecha. Con IVA 0,00 (o
  * subtotal = total) nunca se preselecciona: si la suma ya da el total, se pregunta si es
  * exenta o trae el IVA incluido (`exemptOrIncluded`), sin marcar ninguna opción.
@@ -40,7 +40,11 @@ export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoti
       ? `el subtotal más el IVA leídos${money(reference.amount)}`
       : `el total leído${money(reference?.amount)}`;
   let reason = `no lo desglosa y la suma de las líneas ya da ${referenceText}`;
-  if (plainSource === "subtotal") {
+  if (reference?.source === "subtotal") {
+    reason = `quitándoselo, las líneas dan el subtotal leído${money(reference.amount)}`;
+  } else if (reference?.source === "tax") {
+    reason = `el IVA que llevan dentro las líneas da el IVA leído${money(reference.amount)}`;
+  } else if (plainSource === "subtotal") {
     reason = `la suma de las líneas da ${referenceText}, no el subtotal${money(subtotal)}`;
   } else if (plainSource === "totalMinusTax") {
     reason = `la suma de las líneas da ${referenceText}, no el total menos el IVA leído${money(tax)}`;
