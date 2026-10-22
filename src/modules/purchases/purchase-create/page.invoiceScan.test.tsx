@@ -780,6 +780,47 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
     await waitFor(() => expect(api.posts.map((post) => post.url)).toEqual([DISCARD_URL]));
   });
 
+  describe("REP7-06 (D36/B7): al cerrarse la revisión el foco no queda en BODY", () => {
+    const pageHeader = () => screen.getByRole("group", { name: "Registrar nueva compra" });
+    /** Pulsa el botón con el foco puesto en él, como el teclado; se desmonta con la revisión. */
+    const press = (name: string) => {
+      const button = screen.getByRole("button", { name });
+      button.focus();
+      fireEvent.click(button);
+    };
+
+    it("tras «Cargar» el foco va al encabezado de la compra", async () => {
+      renderPage();
+      scanInvoice();
+
+      press("Cargar en la compra");
+
+      await waitFor(() => expect(reviewPanel()).not.toBeInTheDocument());
+      await waitFor(() => expect(pageHeader()).toHaveFocus());
+    });
+
+    it("tras «Descartar escaneo» el foco va al encabezado, donde está «Escanear factura»", async () => {
+      renderPage();
+      scanInvoice();
+
+      press("Descartar escaneo");
+
+      expect(reviewPanel()).not.toBeInTheDocument();
+      await waitFor(() => expect(pageHeader()).toHaveFocus());
+      expect(within(pageHeader()).getByRole("button", { name: "Escanear factura" })).toBeInTheDocument();
+    });
+
+    it("«Repetir foto» no le quita el foco al escaneo que se reabre", async () => {
+      renderPage();
+      scanInvoice();
+
+      press("Repetir foto");
+
+      await waitFor(() => expect(reviewPanel()).not.toBeInTheDocument());
+      expect(pageHeader()).not.toHaveFocus();
+    });
+  });
+
   it("REP-01: «Descartar escaneo» de una factura ya confirmada solo cierra la revisión, sin descarte ni error", async () => {
     const api = installApi();
     renderPage();

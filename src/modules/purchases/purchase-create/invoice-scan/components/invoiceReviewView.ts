@@ -3,19 +3,23 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
+import { PRICE_DEVIATION_LIMIT } from "@/modules/invoice-scan/server/match/money";
 import { normalizeInvoiceNumber } from "@/modules/invoice-scan/server/match/text";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
+  getEntryModeOutcome,
   getLineCosts,
+  getLineIssues,
   getLineNeeds,
   getUnitConversion,
   linePackWord,
   MAX_REVIEW_UNITS_PER_PACK,
   needsExplicitChoice,
   PRICE_CHOICE_QUESTION,
+  type EntryModeOutcome,
   type InvoiceReviewLine,
   type InvoiceReviewLineStatus,
   type InvoiceReviewState,
@@ -175,10 +179,87 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
  * palabra del empaque de la línea, la misma de la opción «Por <empaque>». El texto guardado
  * no cambia (`isExplicitChoiceIssue` lo sigue reconociendo).
  */
-export function lineIssueText(line: InvoiceReviewLine, issue: string): string {
+function lineIssueText(line: InvoiceReviewLine, issue: string): string {
   return issue.startsWith(PRICE_CHOICE_QUESTION)
     ? `¿Precio por ${linePackWord(line)} o por unidad?${issue.slice(PRICE_CHOICE_QUESTION.length)}`
     : issue;
+}
+
+/**
+ * REP7-06 (QA Obs-2): el aviso de precio del servidor se calculó con lo leído (0,50 caja a
+ * 46,08 REF/u). Elegida la opción o corregida la línea (`choiceMade`: «Cargar como N unidades»,
+ * unidades por empaque, cantidad…), se recalcula con lo que deja ahora, con la regla de las
+ * opciones (B-p7-3), y se retira si ya no se aparta del último costo. Sin tasa ni último costo
+ * se muestra el del servidor.
+ */
+function currentIssueText(state: InvoiceReviewState, line: InvoiceReviewLine, issue: string): string | undefined {
+  const outcome =
+    line.choiceMade && issue.startsWith(PRICE_CHOICE_QUESTION)
+      ? getEntryModeOutcome(state, line, line.entryMode)
+      : undefined;
+  const cost = outcome?.unitCost;
+  if (!outcome || cost?.currency !== "REF" || outcome.lastUnitCostRef === undefined) {
+    return lineIssueText(line, issue);
+  }
+  if (!outcome.deviates) {
+    return undefined;
+  }
+  return `¿Precio por ${linePackWord(line)} o por unidad? Sale a ${formatRefAmount(cost.amount)} REF por unidad y el último costo fue ${formatRefAmount(outcome.lastUnitCostRef)} REF.`;
+}
+
+/** Avisos que muestra la fila: `key` es el texto del servidor; `text`, el que aplica ahora. */
+export function getDisplayedLineIssues(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+): { key: string; text: string }[] {
+  return getLineIssues(line).flatMap((issue) => {
+    const text = currentIssueText(state, line, issue);
+    return text === undefined ? [] : [{ key: issue, text }];
+  });
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
+}
+
+/** Dos decimales como el aviso de precio del servidor («0,10 REF»). */
+function formatRefAmount(value: number): string {
+  return value.toLocaleString("es-VE", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+}
+
+/** «caja» → «cajas» (una palabra); una etiqueta compuesta («caja x6») se deja tal cual. */
+function packNoun(word: string, count: number): string {
+  if (count === 1 || !/^[a-záéíóúñ]+$/.test(word)) {
+    return word;
+  }
+  return /[aeiouáéíóú]$/.test(word) ? `${word}s` : `${word}es`;
+}
+
+/** B-p7-3: texto (no solo el ámbar) de la opción que deja el costo desviado como el aviso 6.18. */
+export const ENTRY_MODE_DEVIATION_TEXT = `Se aparta más del ${Math.round(PRICE_DEVIATION_LIMIT * 100)} % del último costo`;
+
+/**
+ * B-p7-3: lo que deja la opción, para mostrarlo en ella antes de elegir: «6 cajas = 36 u ·
+ * 0,10 REF/u (último 0,59)» / «6 u · 0,59 REF/u». El último costo se cita en la desviada.
+ */
+export function entryModeOutcomeText(line: InvoiceReviewLine, outcome: EntryModeOutcome): string {
+  const word = linePackWord(line);
+  const packs = `${formatCount(outcome.quantity)} ${packNoun(word, outcome.quantity)}`;
+  let text = `${formatCount(outcome.quantity)} u`;
+  if (outcome.entryMode === "pack") {
+    text =
+      outcome.units === undefined
+        ? `${packs} · indica las unidades por ${word}`
+        : `${packs} = ${formatCount(outcome.units)} u`;
+  }
+  const cost = outcome.unitCost;
+  if (cost) {
+    text += ` · ${cost.currency === "REF" ? `${formatRefAmount(cost.amount)} REF` : formatVesBs(cost.amount)}/u`;
+  }
+  if (outcome.deviates && outcome.lastUnitCostRef !== undefined) {
+    text += ` (último ${formatRefAmount(outcome.lastUnitCostRef)})`;
+  }
+  return text;
 }
 
 export type DisplayedTotals = {

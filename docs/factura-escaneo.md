@@ -634,6 +634,7 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 | 7 | `20261019i-invoice-scan-service-only.sql` | RPCs de escritura solo para `service_role`, `attempt_id` y tope de 512 KB; redefine reserve, complete, fail y discard |
 | 8 | `20261019k-invoice-scan-claim-guard.sql` | El descarte respeta el reclamo de la compra en curso (PT409) y la reserva exige usuario de la tienda; redefine reserve y discard. CIE-06: el descarte también da PT409 "Esta factura ya tiene una compra registrada y no se puede descartar." si la clave del reclamo ya creó su compra, aunque el reclamo haya caducado |
 | 9 | `20261020a-supplier-alias-remove.sql` | `remove_supplier_product_alias` (quitar un alias desde el proveedor) |
+| 10 | `20261019q-invoice-match-exact.sql` | Va después de 19o (la lista de arriba omite 19m y 19o; ver `apply-all-pending.sql`) y **antes** del BFF de REP7-01. `invoice_match_exact_aliases`, `invoice_match_barcode_products` e `invoice_match_previous_scans`: claves de alias, barcodes, número y fecha de la factura por el cuerpo POST, nunca en la URL (P8-M1 / D35: 414 con facturas de ≥55 líneas). Solo lectura, `security invoker`, execute solo `authenticated`. REP7-04: índice GIN trigram `idx_products_match_name_trgm` (y `fastupdate = off` en el de alias de 19b), `invoice_match_candidates` redefinida con `%` (misma firma y resultado: 450 textos con ~1.200 productos pasan de 17 s, cortados a los 8 s con 57014, a ~0,1 s) y `save_invoice_scan_match` (solo `service_role`): guarda solo `matched` de un escaneo `extracted` tras un MATCH_ERROR |
 
 **Cadena de reaplicación.** Varias funciones se redefinen en parches posteriores; la versión vigente es la del último:
 
@@ -643,6 +644,7 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 | `discard_invoice_scan` | 19g → 19i → 19k | 19k |
 | `complete_invoice_scan`, `fail_invoice_scan` | 19g → 19i | 19i |
 | `claim_invoice_scan`, `release_invoice_scan_claim`, `confirm_invoice_scan`, `learn_invoice_aliases` | 19b | 19b |
+| `invoice_match_candidates` | 19d → 19q | 19q (reaplicar 19d obliga a reaplicar 19q) |
 
 - Cadenas: **19a → 19g → 19i → 19k** y **19b → 19k**.
 - Reaplicar 19a obliga a reaplicar después 19g, 19i y 19k. 19a ya no devuelve escrituras (solo concede select a `authenticated` y borra las políticas de insert y update de la tabla y la de insert de Storage), pero se mantiene el orden de despliegue.

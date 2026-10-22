@@ -22,6 +22,7 @@ import {
   listExpiredScanObjects,
   listExpiredScans,
   reserveScan,
+  saveMatch,
 } from "./scans.server";
 
 type Result = { data: unknown; error: { code?: string; message: string } | null };
@@ -296,6 +297,19 @@ describe("scans.server · completeScan / failScan / discardScan por RPC service 
 
     await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
   });
+
+  it("saveMatch llama a save_invoice_scan_match con la tienda y devuelve la fila; null si ya no está extracted (QA REP7-01 F2)", async () => {
+    const calls = useRpcClient(ok(dbRow({ matched: completion.matched })));
+    expect(await saveMatch(ctx, scanId, completion.matched)).toMatchObject({ matched: completion.matched, status: "extracted" });
+    expect(calls[0]).toEqual([
+      "rpc",
+      "save_invoice_scan_match",
+      { p_id: scanId, p_matched: completion.matched, p_store_id: ctx.storeId },
+    ]);
+
+    useRpcClient(ok(null));
+    expect(await saveMatch(ctx, scanId, completion.matched)).toBeNull();
+  });
 });
 
 describe("scans.server · getScan", () => {
@@ -311,7 +325,13 @@ describe("scans.server · getScan", () => {
 
 describe("scans.server · getDailyUsage", () => {
   it("suma usage_pages (cada intento cobrado) en el rango [00:00, 24:00) de Caracas del día de `now`", async () => {
-    const { calls } = useRouteClient([ok([{ usage_pages: 2 }, { usage_pages: 1 }, { usage_pages: 3 }])]);
+    const { calls } = useRouteClient([
+      ok([
+        { id: "s1", usage_pages: 2 },
+        { id: "s2", usage_pages: 1 },
+        { id: "s3", usage_pages: 3 },
+      ]),
+    ]);
 
     // 23:30 del 14-oct en Caracas.
     const usage = await getDailyUsage(ctx, 5, new Date("2026-10-15T03:30:00.000Z"));
@@ -319,7 +339,7 @@ describe("scans.server · getDailyUsage", () => {
     expect(usage).toEqual({ limit: 5, remaining: 0, used: 6 });
     expect(calls[0]).toEqual(
       expect.arrayContaining([
-        ["select", "usage_pages"],
+        ["select", "id, usage_pages"],
         ["eq", "store_id", ctx.storeId],
         ["gte", "created_at", "2026-10-14T04:00:00.000Z"],
         ["lt", "created_at", "2026-10-15T04:00:00.000Z"],

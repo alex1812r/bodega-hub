@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
-import type { KeyboardEvent, Ref } from "react";
+import { type KeyboardEvent, type Ref, useId } from "react";
 
 import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
@@ -13,8 +13,8 @@ import { cn } from "@/shared/utils/cn";
 
 import {
   enterTargetProductId,
+  getEntryModeOutcome,
   getLineAmount,
-  getLineIssues,
   getTaxInclusion,
   getUnitConversion,
   isExplicitChoiceIssue,
@@ -28,9 +28,11 @@ import {
 } from "../reviewModel";
 import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
 import {
+  ENTRY_MODE_DEVIATION_TEXT,
+  entryModeOutcomeText,
   formatInvoiceMoney,
   getChoiceChips,
-  lineIssueText,
+  getDisplayedLineIssues,
   lineNeedMessages,
   REVIEW_STATUS_META,
 } from "./invoiceReviewView";
@@ -46,6 +48,8 @@ export type InvoiceReviewLineRowProps = {
   mismatch: boolean;
   taxRates: TaxRate[];
   searchOpen: boolean;
+  /** D36: Enter sobre la fila con aviso no elige: resalta los avisos (la opción la elige el usuario). */
+  noticeHighlighted?: boolean;
   canCreateProduct: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
@@ -71,6 +75,7 @@ export function InvoiceReviewLineRow({
   canCreateProduct,
   line,
   mismatch,
+  noticeHighlighted = false,
   onAcceptAndAdvance,
   onAction,
   onNewProduct,
@@ -103,12 +108,18 @@ export function InvoiceReviewLineRow({
   const marked = pending ? enterTargetProductId(line) : undefined;
   const chips = pending ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
-  const issues = getLineIssues(line);
+  const issues = getDisplayedLineIssues(state, line);
   const needs = line.discarded ? [] : lineNeedMessages(line);
   const amount = getLineAmount(line);
+  const noticesId = useId();
+  const optionsId = useId();
+  // B-p7-3: con aviso de elección, cada opción dice antes qué entra al stock y a qué costo.
+  const showOutcomes = line.issues.some(isExplicitChoiceIssue);
+  const hasNotices = issues.length > 0 || needs.length > 0;
 
   return (
     <li
+      aria-describedby={hasNotices ? noticesId : undefined}
       aria-label={`Línea ${index + 1}: ${line.description || line.rawText}`}
       className={cn(
         "flex flex-col gap-3 border-l-4 bg-surface-container-lowest px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
@@ -271,40 +282,70 @@ export function InvoiceReviewLineRow({
           {showPack ? (
             <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
               <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="radiogroup">
-                {(["unit", "pack"] as const).map((mode) => (
-                  <button
-                    aria-checked={checkedMode === mode}
-                    className={cn(
-                      "h-8 cursor-pointer rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      checkedMode === mode
-                        ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                        : "border-outline-variant text-foreground hover:bg-surface-container-low",
-                    )}
-                    data-choice={mode}
-                    key={mode}
-                    onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
-                    onKeyDown={(event) => {
-                      if (!ARROW_KEYS.has(event.key)) {
-                        return;
+                {(["unit", "pack"] as const).map((mode) => {
+                  const outcome = showOutcomes ? getEntryModeOutcome(state, line, mode) : undefined;
+                  const deviates = outcome?.deviates === true;
+                  const optionId = `${optionsId}-${mode}`;
+                  return (
+                    <button
+                      aria-checked={checkedMode === mode}
+                      aria-describedby={
+                        outcome ? `${optionId}-outcome${deviates ? ` ${optionId}-deviation` : ""}` : undefined
                       }
-                      event.preventDefault();
-                      if (event.repeat) {
-                        return;
-                      }
-                      // Dos opciones: cualquier flecha va a la otra y la elige (radiogrupo).
-                      const other = mode === "unit" ? "pack" : "unit";
-                      event.currentTarget.parentElement
-                        ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
-                        ?.focus();
-                      onAction({ type: "editEntryMode", index, entryMode: other });
-                    }}
-                    role="radio"
-                    tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
-                    type="button"
-                  >
-                    {mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}
-                  </button>
-                ))}
+                      aria-labelledby={`${optionId}-label`}
+                      className={cn(
+                        "cursor-pointer border text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        // Con resultado, la opción envuelve el texto (cabe a 390 px).
+                        outcome
+                          ? "flex min-h-8 max-w-full flex-col items-start gap-0.5 rounded-lg px-3 py-1.5 text-left break-words whitespace-normal"
+                          : "h-8 rounded-full px-3",
+                        checkedMode === mode
+                          ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                          : "border-outline-variant text-foreground hover:bg-surface-container-low",
+                        deviates ? "border-amber-400 dark:border-amber-500" : null,
+                        deviates && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
+                      )}
+                      data-choice={mode}
+                      data-deviates={deviates || undefined}
+                      key={mode}
+                      onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
+                      onKeyDown={(event) => {
+                        if (!ARROW_KEYS.has(event.key)) {
+                          return;
+                        }
+                        event.preventDefault();
+                        if (event.repeat) {
+                          return;
+                        }
+                        // Dos opciones: cualquier flecha va a la otra y la elige (radiogrupo).
+                        const other = mode === "unit" ? "pack" : "unit";
+                        event.currentTarget.parentElement
+                          ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
+                          ?.focus();
+                        onAction({ type: "editEntryMode", index, entryMode: other });
+                      }}
+                      role="radio"
+                      tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
+                      type="button"
+                    >
+                      <span id={`${optionId}-label`}>{mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}</span>
+                      {outcome ? (
+                        <span className="font-normal tabular-nums" id={`${optionId}-outcome`}>
+                          {entryModeOutcomeText(line, outcome)}
+                        </span>
+                      ) : null}
+                      {deviates ? (
+                        <span
+                          className="flex items-start gap-1 font-normal text-amber-700 dark:text-amber-300"
+                          id={`${optionId}-deviation`}
+                        >
+                          <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
+                          {ENTRY_MODE_DEVIATION_TEXT}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
               {line.entryMode === "pack" ? (
                 // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
@@ -341,12 +382,22 @@ export function InvoiceReviewLineRow({
             </div>
           ) : null}
 
-          {issues.length > 0 || needs.length > 0 ? (
-            <ul className="flex flex-col gap-1 text-xs">
+          {hasNotices ? (
+            <ul
+              className={cn(
+                "flex flex-col gap-1 text-xs",
+                noticeHighlighted
+                  ? "rounded-md bg-amber-50 p-2 ring-2 ring-amber-400 dark:bg-amber-950 dark:ring-amber-500"
+                  : null,
+              )}
+              data-highlighted={noticeHighlighted || undefined}
+              data-testid="invoice-review-line-notices"
+              id={noticesId}
+            >
               {issues.map((issue) => (
-                <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue}`}>
+                <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue.key}`}>
                   <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {lineIssueText(line, issue)}
+                  {issue.text}
                 </li>
               ))}
               {needs.map((need) => (

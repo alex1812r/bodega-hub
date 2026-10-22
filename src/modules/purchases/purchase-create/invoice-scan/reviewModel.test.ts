@@ -34,6 +34,7 @@ import {
   orderedLineIndices,
   pressEnter,
   pressEscape,
+  priceIssueLastUnitCostRef,
   reviewReducer,
   summarizeInvoiceReview,
   type InvoiceReviewAction,
@@ -556,6 +557,21 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
     );
     expect(unrecognized).toEqual([]);
     expect(isExplicitChoiceIssue(priceIssue as string)).toBe(true);
+  });
+
+  /** REP7-05 (B-p7-3): el último costo de las opciones sale del aviso; si su texto cambia, esto falla. */
+  it("el último costo se lee del aviso de precio del servidor (también con miles)", () => {
+    const expensive = priceCoherenceIssue({
+      line: { rawText: "WHISKY CAJA X6", description: "WHISKY", quantity: 1, unitPrice: 900, lineTotal: 900, confidence: 0.9 },
+      unitsPerPack: 6,
+      entryMode: "pack",
+      rate: 1,
+      lastUnitCostRef: 1234.5,
+    });
+
+    expect(priceIssueLastUnitCostRef({ issues: [priceIssue as string] })).toBe(0.05);
+    expect(priceIssueLastUnitCostRef({ issues: [expensive as string] })).toBe(1234.5);
+    expect(priceIssueLastUnitCostRef({ issues: [packIssue] })).toBeUndefined();
   });
 });
 

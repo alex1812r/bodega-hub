@@ -3024,4 +3024,102 @@ select
       and a.attname <> 'claim_request_id'
       and not has_column_privilege('authenticated', 'public.invoice_scans', a.attname, 'select')
   )
+union all
+select
+  'invoice_match_exact_aliases(uuid, text[]), invoice_match_barcode_products(text[]) e invoice_match_previous_scans(text, text[], text, uuid, integer): jsonb, security invoker, search_path=public, execute solo authenticated (sin public ni anon) (20261019q, REP7-01 P8-M1)',
+  (
+    select count(*) = 3
+      and bool_and(not p.prosecdef)
+      and bool_and(p.prorettype = 'jsonb'::regtype)
+      and bool_and(p.provolatile = 's')
+      and bool_and(coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false))
+      and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+      and bool_and(not exists (
+        select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      ))
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.invoice_match_exact_aliases(uuid, text[])'),
+      to_regprocedure('public.invoice_match_barcode_products(text[])'),
+      to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
+    )
+  )
+union all
+select
+  'invoice_match_exact_aliases / barcode_products / previous_scans: tienda de assert_store_context(), rol admin | almacen (PT403), arrays acotados (PT400) y alias_norm / barcode exactos con = any (20261019q, REP7-01 P8-M1)',
+  coalesce((
+    select bool_and(p.prosrc ilike '%v_store_id := public.assert_store_context()%'
+      and p.prosrc ilike '%(''admin'', ''almacen'')%errcode = ''PT403''%'
+      and p.prosrc ilike '%errcode = ''PT400''%')
+      and count(*) = 3
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.invoice_match_exact_aliases(uuid, text[])'),
+      to_regprocedure('public.invoice_match_barcode_products(text[])'),
+      to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
+    )
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%array_length(v_keys, 1), 0) > 1000%'
+      and p.prosrc ilike '%a.store_id = v_store_id%a.supplier_id = p_supplier_id%a.alias_norm = any(v_keys)%'
+    from pg_proc p where p.oid = to_regprocedure('public.invoice_match_exact_aliases(uuid, text[])')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%array_length(v_barcodes, 1), 0) > 1000%'
+      and p.prosrc ilike '%p.store_id = v_store_id%p.barcode = any(v_barcodes)%'
+    from pg_proc p where p.oid = to_regprocedure('public.invoice_match_barcode_products(text[])')
+  ), false)
+  and coalesce((
+    select p.prosrc ilike '%p_limit > 200%'
+      and p.prosrc ilike '%p_number !~ ''^[A-Z0-9]+$''%'
+      and p.prosrc ilike '%s.store_id = v_store_id%s.status not in (''discarded'', ''failed'')%'
+    from pg_proc p where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
+  ), false)
+union all
+select
+  'invoice_match_candidates con indices trigram: similarity_threshold=0.6 y force_custom_plan en la funcion, % sobre alias_norm e invoice_match_norm(name) sin quitar similarity >= 0.6; idx_products_match_name_trgm GIN y fastupdate=off en los dos GIN (20261019q, REP7-04 F1)',
+  coalesce((
+    select p.prosecdef
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%pg_trgm.similarity_threshold=0.6%', false)
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%plan_cache_mode=force_custom_plan%', false)
+      and p.prosrc ilike '%a.alias_norm \% i.txt%'
+      and p.prosrc ilike '%public.invoice_match_norm(p.name) \% i.descr%'
+      and p.prosrc ilike '%similarity(a.alias_norm, i.txt) as score%s.score >= 0.6%'
+      and p.prosrc ilike '%similarity(public.invoice_match_norm(p.name), i.descr) as score%s.score >= 0.6%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_candidates(text, text, text[], text[], uuid, integer)')
+  ), false)
+  and (
+    select count(*) = 2
+      and bool_and(coalesce(array_to_string(c.reloptions, ',') ilike '%fastupdate=off%', false))
+      and bool_and(am.amname = 'gin')
+    from pg_class c
+    join pg_am am on am.oid = c.relam
+    where c.oid in (
+      to_regclass('public.idx_products_match_name_trgm'),
+      to_regclass('public.idx_supplier_product_aliases_alias_trgm')
+    )
+  )
+  and coalesce((
+    select pg_get_indexdef(to_regclass('public.idx_products_match_name_trgm')) ilike '%invoice_match_norm(name) %gin_trgm_ops%'
+  ), false)
+union all
+select
+  'save_invoice_scan_match(uuid, uuid, jsonb): security definer, search_path vacio, execute solo service_role; solo matched de un escaneo extracted de la tienda (20261019q, REP7-04 F2)',
+  coalesce((
+    select p.prosecdef
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=""%', false)
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not exists (
+        select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      )
+      and p.prosrc ilike '%set matched = p_matched%s.store_id = p_store_id%s.status = ''extracted''%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.save_invoice_scan_match(uuid, uuid, jsonb)')
+  ), false)
 order by 1;

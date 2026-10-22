@@ -157,11 +157,32 @@ export async function completeScan(
       p_extracted: completion.extracted,
       p_id: id,
       p_input_tokens: completion.inputTokens,
-      p_matched: completion.matched,
+      p_matched: completion.matched ?? {},
       p_output_tokens: completion.outputTokens,
       p_store_id: ctx.storeId,
       p_user_id: ctx.userId,
     })
+    .select(scanSelect)
+    .maybeSingle<DbInvoiceScanRow>();
+
+  throwIfSupabaseError(error);
+
+  return data ? mapScan(data) : null;
+}
+
+/**
+ * Guarda solo `matched` de un escaneo `extracted` de la tienda (RPC
+ * `save_invoice_scan_match`, 20261019q): el reintento en caché tras un
+ * MATCH_ERROR (D35). Sin cambiar estado ni cobro. null si la fila ya no está o
+ * dejó de estar `extracted`.
+ */
+export async function saveMatch(
+  ctx: InvoiceScanContext,
+  id: string,
+  matched: InvoiceMatch,
+): Promise<InvoiceScanRow | null> {
+  const { data, error } = await createAdminSupabaseClient()
+    .rpc("save_invoice_scan_match", { p_id: id, p_matched: matched, p_store_id: ctx.storeId })
     .select(scanSelect)
     .maybeSingle<DbInvoiceScanRow>();
 
@@ -365,15 +386,18 @@ export async function getDailyUsage(
   const { endUtcExclusive, startUtc } = caracasDateToUtcRange(getCaracasIsoDate(now));
   const supabase = await createRouteSupabaseClient();
   // REP6-05: con un límite diario de hasta 10.000 páginas el día puede pasar de 1000 filas.
-  const rows = await fetchAllRows<{ usage_pages: number }>((from, to) =>
-    supabase
-      .from("invoice_scans")
-      .select("usage_pages")
-      .eq("store_id", ctx.storeId)
-      .gte("created_at", startUtc)
-      .lt("created_at", endUtcExclusive)
-      .order("id")
-      .range(from, to),
+  // P8-B1: un escaneo que entra entre dos páginas repite la fila del borde; se descarta por id.
+  const rows = await fetchAllRows<{ id: string; usage_pages: number }>(
+    (from, to) =>
+      supabase
+        .from("invoice_scans")
+        .select("id, usage_pages")
+        .eq("store_id", ctx.storeId)
+        .gte("created_at", startUtc)
+        .lt("created_at", endUtcExclusive)
+        .order("id")
+        .range(from, to),
+    { getKey: (row) => row.id },
   );
 
   const used = rows.reduce((sum, row) => sum + row.usage_pages, 0);
