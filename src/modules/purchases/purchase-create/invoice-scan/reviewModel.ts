@@ -518,6 +518,24 @@ export function getEntryModeOutcome(
   return { ...base, units: line.quantity * unitsPerEntry, ...(unitCost ? { unitCost } : {}), deviates };
 }
 
+/**
+ * B-p8-1: el usuario ya eligió la opción o corrigió la línea (`choiceMade`) y solo le falta
+ * confirmar el producto que propuso el emparejamiento (dudosa). Con ratón o toque, elegir la
+ * opción no acepta el producto (6.9: nunca elige sola); hay que tocar el chip o pulsar Enter en
+ * la fila. Un producto sin aceptar solo puede ser el propuesto (`setProduct` siempre acepta).
+ */
+export function awaitsProductConfirmation(line: InvoiceReviewLine): boolean {
+  return (
+    line.choiceMade === true &&
+    !line.discarded &&
+    line.productId !== undefined &&
+    !line.accepted &&
+    line.origin !== "confirmed" &&
+    getLineNeeds(line).length === 0 &&
+    !needsExplicitChoice(line)
+  );
+}
+
 function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefined): InvoiceReviewLineStatus {
   if (line.discarded) {
     return "discarded";
@@ -1307,7 +1325,11 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
       getLineNeeds(line).length === 0 &&
       needsExplicitChoice(line),
   ).length;
-  const otherPending = pending - choiceOnly;
+  // B-p8-1: líneas a las que solo les falta confirmar el producto propuesto.
+  const productOnly = state.lines.filter(
+    (line) => isPendingStatus(line.status) && awaitsProductConfirmation(line),
+  ).length;
+  const otherPending = pending - choiceOnly - productOnly;
   if (otherPending > 0) {
     blockers.push(
       otherPending === 1 ? "Queda 1 línea por resolver." : `Quedan ${otherPending} líneas por resolver.`,
@@ -1316,6 +1338,13 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   if (choiceOnly > 0) {
     blockers.push(
       choiceOnly === 1 ? "Falta elegir cómo viene en 1 línea." : `Falta elegir cómo viene en ${choiceOnly} líneas.`,
+    );
+  }
+  if (productOnly > 0) {
+    blockers.push(
+      productOnly === 1
+        ? "Falta confirmar el producto en 1 línea."
+        : `Falta confirmar el producto en ${productOnly} líneas.`,
     );
   }
   if (!state.lines.some((line) => !line.discarded)) {
