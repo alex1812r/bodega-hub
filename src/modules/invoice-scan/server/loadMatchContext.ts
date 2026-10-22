@@ -10,7 +10,8 @@
  *    (`tax_rates_for_store` + `app_settings.default_tax_rate_id`), tasa del día
  *    (`getCurrentExchangeRate`, la del formulario de compra), escaneos previos con el mismo número y productos por código de barras.
  * 2. Catálogo del proveedor elegido por la RPC: `supplier_products` activos con
- *    sus `supplier_product_pack_units` activos y `supplier_product_aliases`; en
+ *    sus `supplier_product_pack_units` activos (paginados) y los `supplier_product_aliases`
+ *    exactos de la factura y de los productos casados por SKU (C6-M3); en
  *    paralelo, la misma RPC con textos limpios (`searchTextVariants`) para las
  *    líneas que no trajeron ningún candidato difuso.
  * 3. Detalle de los productos referenciados (candidatos + catálogo + alias +
@@ -40,7 +41,8 @@ import type {
   MatchTaxRateKind,
 } from "./match.types";
 import { searchTextVariants } from "./match/searchText";
-import { normalizeInvoiceNumber } from "./match/text";
+import { exactAliasTexts } from "./match/product";
+import { normalizeCode, normalizeInvoiceNumber } from "./match/text";
 
 /** Mismo cliente que usan los `*.server.ts` (sesión del usuario: `auth.uid()` para la RPC). */
 export type MatchContextSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
@@ -55,6 +57,15 @@ export const MATCH_CANDIDATES_MAX_TEXTS = 500;
 export const PREVIOUS_SCANS_LIMIT = 50;
 /** Candidatos que se piden a la base antes de filtrar por número normalizado. */
 export const PREVIOUS_SCAN_CANDIDATES_LIMIT = 200;
+
+/**
+ * Filas por página: el `max_rows` de PostgREST (supabase/config.toml). Una
+ * respuesta nunca trae más; toda lectura que pueda pasar de aquí se pagina con
+ * `order` estable (C6-M3, D33-c).
+ */
+export const POSTGREST_PAGE_SIZE = 1000;
+/** Valores por filtro `in` (URL acotada); cada lote se pagina aparte. */
+export const IN_FILTER_CHUNK_SIZE = 150;
 
 const PRODUCT_SELECT =
   "id, name, sku, barcode, is_active, current_cost_ref, category:categories(tax_rate:tax_rates(code))";
@@ -104,6 +115,7 @@ type SupplierProductRow = {
 };
 
 type AliasRow = {
+  id: string;
   alias_norm: string;
   product_id: string;
   pack_label: string | null;
@@ -141,6 +153,39 @@ function toNumber(value: number | string | null | undefined): number | undefined
 function positiveCost(value: number | string | null | undefined): number | undefined {
   const cost = toNumber(value);
   return cost !== undefined && cost > 0 ? cost : undefined;
+}
+
+type PageResult = { data: unknown[] | null; error: unknown };
+
+/**
+ * Todas las filas de una consulta, página a página (`range`). `page` debe
+ * llevar un `order` por una columna única para que las páginas no se solapen.
+ */
+async function fetchAllPages<T>(page: (from: number, to: number) => PromiseLike<PageResult>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += POSTGREST_PAGE_SIZE) {
+    const { data, error } = await page(from, from + POSTGREST_PAGE_SIZE - 1);
+    throwIfSupabaseError(error);
+    const batch = (data ?? []) as T[];
+    rows.push(...batch);
+    if (batch.length < POSTGREST_PAGE_SIZE) {
+      return rows;
+    }
+  }
+}
+
+/** `fetchAllPages` por lotes de valores del filtro `in` (en paralelo). */
+async function fetchAllIn<T>(
+  values: string[],
+  page: (chunk: string[], from: number, to: number) => PromiseLike<PageResult>,
+): Promise<T[]> {
+  const unique = [...new Set(values)];
+  const chunks: string[][] = [];
+  for (let start = 0; start < unique.length; start += IN_FILTER_CHUNK_SIZE) {
+    chunks.push(unique.slice(start, start + IN_FILTER_CHUNK_SIZE));
+  }
+  const results = await Promise.all(chunks.map((chunk) => fetchAllPages<T>((from, to) => page(chunk, from, to))));
+  return results.flat();
 }
 
 /** Clasifica la alícuota para leer el `taxHint`: por código semilla (20261007a) y, si no, por porcentaje. */
@@ -339,41 +384,60 @@ async function loadProductsWhere(
   column: "id" | "barcode",
   values: string[],
 ): Promise<ProductRow[]> {
-  if (values.length === 0) {
-    return [];
-  }
-  const { data, error } = await supabase
-    .from("products")
-    .select(PRODUCT_SELECT)
-    .eq("store_id", storeId)
-    .in(column, values);
-  throwIfSupabaseError(error);
-  return (data ?? []) as unknown as ProductRow[];
+  return fetchAllIn<ProductRow>(values, (chunk, from, to) =>
+    supabase
+      .from("products")
+      .select(PRODUCT_SELECT)
+      .eq("store_id", storeId)
+      .in(column, chunk)
+      .order("id")
+      .range(from, to),
+  );
 }
 
+const ALIAS_SELECT = "id, alias_norm, product_id, pack_label, units_per_pack, hits";
+
+/**
+ * Catálogo del proveedor. Vínculos (`supplier_products`) completos, paginados.
+ * Alias (C6-M3, D33-c): NO todos los del proveedor (pueden ser miles), sino
+ * los exactos de la factura (`alias_norm in` las claves de `exactAliasTexts`)
+ * y los de los productos casados por SKU del proveedor (`aliasForPack`). Los
+ * difusos los da la RPC `invoice_match_candidates` (trigram, acotada por línea).
+ */
 async function loadCatalog(
   supabase: MatchContextSupabaseClient,
   storeId: string,
   supplierId: string,
+  extraction: InvoiceExtraction,
 ): Promise<MatchSupplierCatalog> {
-  const [links, aliases] = await Promise.all([
-    supabase
-      .from("supplier_products")
-      .select(SUPPLIER_PRODUCT_SELECT)
-      .eq("store_id", storeId)
-      .eq("supplier_id", supplierId)
-      .eq("is_active", true)
-      .eq("supplier_product_pack_units.is_active", true),
-    supabase
-      .from("supplier_product_aliases")
-      .select("alias_norm, product_id, pack_label, units_per_pack, hits")
-      .eq("store_id", storeId)
-      .eq("supplier_id", supplierId),
+  const aliasQuery = () =>
+    supabase.from("supplier_product_aliases").select(ALIAS_SELECT).eq("store_id", storeId).eq("supplier_id", supplierId);
+  const [linkRows, exactAliases] = await Promise.all([
+    fetchAllPages<SupplierProductRow>((from, to) =>
+      supabase
+        .from("supplier_products")
+        .select(SUPPLIER_PRODUCT_SELECT)
+        .eq("store_id", storeId)
+        .eq("supplier_id", supplierId)
+        .eq("is_active", true)
+        .eq("supplier_product_pack_units.is_active", true)
+        .order("id")
+        .range(from, to),
+    ),
+    fetchAllIn<AliasRow>(extraction.lines.flatMap(exactAliasTexts), (chunk, from, to) =>
+      aliasQuery().in("alias_norm", chunk).order("id").range(from, to),
+    ),
   ]);
-  throwIfSupabaseError(links.error);
-  throwIfSupabaseError(aliases.error);
 
-  const linkRows = (links.data ?? []) as unknown as SupplierProductRow[];
+  const lineSkus = new Set(extraction.lines.map((line) => normalizeCode(line.supplierSku)).filter(Boolean));
+  const skuProductIds = linkRows
+    .filter((row) => lineSkus.has(normalizeCode(row.supplier_sku)))
+    .map((row) => row.product_id);
+  const skuAliases = await fetchAllIn<AliasRow>(skuProductIds, (chunk, from, to) =>
+    aliasQuery().in("product_id", chunk).order("id").range(from, to),
+  );
+  const aliasById = new Map([...exactAliases, ...skuAliases].map((row) => [row.id, row]));
+
   const supplierProducts: MatchSupplierProduct[] = linkRows.map((row) => ({
     supplierProductId: row.id,
     productId: row.product_id,
@@ -391,7 +455,7 @@ async function loadCatalog(
         isDefault: pack.is_default === true,
       })),
   );
-  const aliasRows: MatchAlias[] = ((aliases.data ?? []) as AliasRow[]).map((row) => ({
+  const aliasRows: MatchAlias[] = [...aliasById.values()].map((row) => ({
     aliasNorm: row.alias_norm,
     productId: row.product_id,
     packLabel: row.pack_label,
@@ -414,14 +478,18 @@ async function loadRecipeConversions(
   if (productIds.length === 0) {
     return new Map();
   }
-  const { data, error } = await supabase
-    .from("product_pack_conversions")
-    .select("pack_product_id, total_units")
-    .eq("store_id", storeId)
-    .eq("is_active", true)
-    .in("pack_product_id", productIds);
-  throwIfSupabaseError(error);
-  const rows = (data ?? []) as Array<{ pack_product_id: string; total_units: number | string | null }>;
+  const rows = await fetchAllIn<{ pack_product_id: string; total_units: number | string | null }>(
+    productIds,
+    (chunk, from, to) =>
+      supabase
+        .from("product_pack_conversions")
+        .select("pack_product_id, total_units")
+        .eq("store_id", storeId)
+        .eq("is_active", true)
+        .in("pack_product_id", chunk)
+        .order("id")
+        .range(from, to),
+  );
   return new Map(rows.map((row) => [row.pack_product_id, toNumber(row.total_units)]));
 }
 
@@ -440,18 +508,20 @@ async function loadComponentPackSizes(
   if (productIds.length === 0) {
     return new Map();
   }
-  const { data, error } = await supabase
-    .from("product_pack_components")
-    .select("unit_product_id, units_per_pack, conversion:product_pack_conversions!inner(total_units, is_active)")
-    .eq("store_id", storeId)
-    .eq("conversion.is_active", true)
-    .in("unit_product_id", productIds);
-  throwIfSupabaseError(error);
-  const rows = (data ?? []) as unknown as Array<{
+  const rows = await fetchAllIn<{
     unit_product_id: string;
     units_per_pack: number | string;
     conversion: { total_units: number | string | null; is_active: boolean } | null;
-  }>;
+  }>(productIds, (chunk, from, to) =>
+    supabase
+      .from("product_pack_components")
+      .select("unit_product_id, units_per_pack, conversion:product_pack_conversions!inner(total_units, is_active)")
+      .eq("store_id", storeId)
+      .eq("conversion.is_active", true)
+      .in("unit_product_id", chunk)
+      .order("id")
+      .range(from, to),
+  );
   const sizes = new Map<string, number[]>();
   for (const row of rows) {
     const size = toNumber(row.units_per_pack);
@@ -477,23 +547,26 @@ async function loadLastLines(
   if (productIds.length === 0) {
     return new Map();
   }
-  let query = supabase
-    .from("products")
-    .select(LAST_LINE_SELECT)
-    .eq("store_id", storeId)
-    .in("id", productIds)
-    .eq("purchase_items.purchases.store_id", storeId)
-    .eq("purchase_items.purchases.status", "recibido");
-  if (supplierId) {
-    query = query.eq("purchase_items.purchases.supplier_id", supplierId);
-  }
-  const { data, error } = await query
-    .order("purchases(created_at)", { ascending: false, referencedTable: "purchase_items" })
-    .limit(1, { referencedTable: "purchase_items" });
-  throwIfSupabaseError(error);
+  const rows = await fetchAllIn<LastLineRow>(productIds, (chunk, from, to) => {
+    let query = supabase
+      .from("products")
+      .select(LAST_LINE_SELECT)
+      .eq("store_id", storeId)
+      .in("id", chunk)
+      .eq("purchase_items.purchases.store_id", storeId)
+      .eq("purchase_items.purchases.status", "recibido");
+    if (supplierId) {
+      query = query.eq("purchase_items.purchases.supplier_id", supplierId);
+    }
+    return query
+      .order("purchases(created_at)", { ascending: false, referencedTable: "purchase_items" })
+      .limit(1, { referencedTable: "purchase_items" })
+      .order("id")
+      .range(from, to);
+  });
 
   const costs = new Map<string, number>();
-  for (const row of (data ?? []) as unknown as LastLineRow[]) {
+  for (const row of rows) {
     const cost = toNumber(row.purchase_items?.[0]?.unit_cost_ref);
     if (cost !== undefined) {
       costs.set(row.id, cost);
@@ -618,7 +691,7 @@ export async function loadMatchContext(
   const supplierId = candidates.supplier_id ?? undefined;
   const firstFuzzy = toFuzzy(candidates, extraction.lines.length);
   const [catalog, variantFuzzy] = await Promise.all([
-    supplierId ? loadCatalog(supabase, storeId, supplierId) : Promise.resolve(undefined),
+    supplierId ? loadCatalog(supabase, storeId, supplierId, extraction) : Promise.resolve(undefined),
     loadVariantFuzzy(supabase, extraction, firstFuzzy, supplierId),
   ]);
   const fuzzy = { ...firstFuzzy, ...variantFuzzy };

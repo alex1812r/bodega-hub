@@ -129,6 +129,8 @@ type ListResult = { items: unknown[]; limit: number; skip: number; total: number
 type SweepCase = {
   /** Nº mínimo de filtros que la consulta de conteo debe repetir. */
   minFilters: number;
+  /** Lecturas de la misma tabla que no son la lista (p. ej. el detalle previo); no se cuentan. */
+  auxiliary?: (query: RecordedQuery) => boolean;
   run: (searchParams: URLSearchParams) => Promise<ListResult>;
   /** Parámetros de filtro de la petición (además de `skip` / `limit`). */
   query?: string;
@@ -164,6 +166,8 @@ const CASES: Record<string, SweepCase> = {
     table: "supplier_products",
   },
   "supplier-products · listSupplierProductPriceHistory": {
+    // REP6-05: el detalle previo lee el último historial por `in` de ids, paginado.
+    auxiliary: (query) => query.calls.some(([method]) => method === "in"),
     minFilters: 1,
     run: (params) => listSupplierProductPriceHistory(ID, params, DEFAULT_STORE_ID),
     table: "supplier_product_price_history",
@@ -252,7 +256,7 @@ describe("listas paginadas · página más allá del total (POS-H2)", () => {
 
     expect(result).toEqual({ items: [], limit: 20, skip: 999999, total: TOTAL });
 
-    const listQueries = queries.filter((query) => query.table === sweepCase.table);
+    const listQueries = queries.filter((query) => query.table === sweepCase.table && !sweepCase.auxiliary?.(query));
     const ranged = listQueries.filter((query) => query.ranged);
     const counted = listQueries.filter((query) => query.head && !query.ranged);
 
@@ -273,7 +277,7 @@ describe("listas paginadas · página más allá del total (POS-H2)", () => {
 
     expect(result).toEqual({ items: [], limit: 20, skip: 0, total: 0 });
 
-    const listQueries = queries.filter((query) => query.table === sweepCase.table);
+    const listQueries = queries.filter((query) => query.table === sweepCase.table && !sweepCase.auxiliary?.(query));
 
     expect(listQueries.filter((query) => query.ranged)).toHaveLength(1);
     expect(listQueries.filter((query) => query.head && !query.ranged)).toHaveLength(0);

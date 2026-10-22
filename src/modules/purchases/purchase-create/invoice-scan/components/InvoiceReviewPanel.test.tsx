@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
@@ -1087,14 +1087,15 @@ describe("InvoiceReviewPanel", () => {
       await user.keyboard("{Enter}");
 
       expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
-      const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
-      await waitFor(() => expect(perPack).toHaveFocus());
+      // D33-a: el foco va a la primera opción del radiogrupo, sin marcar.
+      const perUnit = within(row(0)).getByRole("radio", { name: "Por unidad" });
+      await waitFor(() => expect(perUnit).toHaveFocus());
 
       // Un rebote del Enter no elige la opción.
       now += 30;
       await user.keyboard("{Enter}");
       expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
-      expect(perPack).toHaveFocus();
+      expect(perUnit).toHaveFocus();
 
       now += 450;
       await user.keyboard("{Enter}");
@@ -1133,8 +1134,9 @@ describe("InvoiceReviewPanel", () => {
 
           expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
           expect(within(row(0)).getByText(issue)).toBeInTheDocument();
+          // D33-a: foco en la primera opción, sin marcar; el usuario elige «Por caja».
           const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
-          await waitFor(() => expect(perPack).toHaveFocus());
+          await waitFor(() => expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveFocus());
           expect(loadButton()).toBeDisabled();
 
           now += 450;
@@ -1146,14 +1148,451 @@ describe("InvoiceReviewPanel", () => {
       );
     });
 
-    it("6.18 por unidad: la línea sin empaque con aviso de precio ofrece «Por unidad / Por caja»", () => {
+    it("6.18 por unidad: la línea leída por unidad con aviso de precio ofrece «Por unidad / Por bulto» sin marcar", () => {
       renderPanel(
         makeReviewResponse({
           lines: [doubtfulLine(2, 1, { match: { candidates: singleCandidate(2), issues: [PRICE_ISSUE] } })],
         }),
       );
 
-      expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "true");
+      expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "false");
+      expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toHaveAttribute("aria-checked", "false");
+    });
+
+    describe("REP6-01 (C6-M1, D33-a): ni la autorrepetición ni un doble clic lento resuelven ni cargan", () => {
+      /** Repetición del SO sobre el control enfocado; si nadie la cancela, un botón se activa (como el navegador). */
+      const holdEnter = () => {
+        const target = document.activeElement;
+        if (!(target instanceof HTMLElement)) {
+          throw new Error("Sin foco");
+        }
+        const unprevented = fireEvent.keyDown(target, { key: "Enter", repeat: true });
+        if (unprevented && target instanceof HTMLButtonElement) {
+          fireEvent.click(target, { detail: 0 });
+        }
+      };
+      const radios = (index: number) => within(row(index)).getAllByRole("radio");
+
+      it.each([
+        ["precio", priceLine],
+        ["tamaño de empaque", packLine],
+      ])("aviso de %s: ninguna opción viene marcada y la primera es la enfocable", (_, line) => {
+        renderPanel(makeReviewResponse({ lines: [line()] }));
+
+        const [perUnit, perPack] = radios(0);
+        expect(perUnit).toHaveAttribute("aria-checked", "false");
+        expect(perPack).toHaveAttribute("aria-checked", "false");
+        expect(perUnit).toHaveAttribute("tabindex", "0");
+        expect(perPack).toHaveAttribute("tabindex", "-1");
+      });
+
+      it("Enter mantenido desde «Descartar línea»: no acepta la siguiente, no elige opción y no carga", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), priceLine()] }));
+        discardButton(0).focus();
+
+        await user.keyboard("{Enter>}");
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        for (let step = 0; step < 30; step += 1) {
+          now += step === 0 ? 500 : 33;
+          holdEnter();
+        }
+        await user.keyboard("{/Enter}");
+
+        expect(row(0)).toHaveAttribute("data-status", "discarded");
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+        expect(radios(1).map((radio) => radio.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+        expect(props.onLoad).not.toHaveBeenCalled();
+      });
+
+      it("Enter mantenido sin la marca de repetición: tras cambiar de fila exige un keyup nuevo", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+        discardButton(0).focus();
+
+        await user.keyboard("{Enter>}");
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 600;
+        fireEvent.keyDown(row(1), { key: "Enter" });
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+
+        await user.keyboard("{/Enter}");
+        await user.keyboard("{Enter}");
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("Enter repetido sobre el chip, sobre la opción y sobre Cargar se ignora", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [priceLine()] }));
+        now += 1000;
+
+        within(row(0)).getByRole("button", { name: /Producto 2/ }).focus();
+        holdEnter();
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        expect(within(row(0)).queryByText("Producto elegido")).not.toBeInTheDocument();
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 1000;
+        const [perUnit] = radios(0);
+        await waitFor(() => expect(perUnit).toHaveFocus());
+        holdEnter();
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+        await user.click(radios(0)[1]);
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        now += 1000;
+        expect(loadButton()).toBeEnabled();
+        loadButton().focus();
+        holdEnter();
+        expect(props.onLoad).not.toHaveBeenCalled();
+      });
+
+      it("doble clic lento (2.º clic a 420 ms, detail 2) tras Descartar: no acepta el chip de la siguiente", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        await user.click(discardButton(0));
+        now += 420;
+        fireEvent.click(within(row(1)).getByRole("button", { name: /Producto 2/ }), { detail: 2 });
+
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      });
+
+      it("clic con detail 2 sobre la opción, Restaurar y Cargar se ignora", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [priceLine(), {}] }));
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 1000;
+        fireEvent.click(radios(0)[1], { detail: 2 });
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+        await user.click(radios(0)[1]);
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        now += 1000;
+        expect(loadButton()).toBeEnabled();
+        fireEvent.click(loadButton(), { detail: 2 });
+        expect(props.onLoad).not.toHaveBeenCalled();
+      });
+
+      it("el 2.º clic de un doble clic en «Descartar línea» no restaura la línea", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        await user.click(discardButton(0));
+        now += 1000;
+        fireEvent.click(within(row(0)).getByRole("button", { name: "Restaurar" }), { detail: 2 });
+
+        expect(row(0)).toHaveAttribute("data-status", "discarded");
+      });
+
+      it("6.17 solo teclado: Enter acepta, la flecha elige «Por caja» y el foco sigue a la siguiente", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        await user.keyboard("{Enter}");
+        const [perUnit, perPack] = radios(0);
+        await waitFor(() => expect(perUnit).toHaveFocus());
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+        now += 450;
+        await user.keyboard("{ArrowRight}");
+
+        expect(perPack).toHaveAttribute("aria-checked", "true");
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        await waitFor(() => expect(row(1)).toHaveFocus());
+      });
+
+      it("6.17 solo teclado: Espacio sobre la opción no marcada la elige", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        await user.keyboard("{Enter}");
+        const [perUnit] = radios(0);
+        await waitFor(() => expect(perUnit).toHaveFocus());
+        now += 450;
+        await user.keyboard(" ");
+
+        expect(perUnit).toHaveAttribute("aria-checked", "true");
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("puntero soltado fuera del panel: tras cambiar de fila un Enter normal sí acepta", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        // Toque en un chip arrastrado fuera: el pointerup llega a document.body, no al panel.
+        fireEvent.pointerDown(within(row(1)).getByRole("button", { name: /Producto 2/ }), { pointerId: 7 });
+        fireEvent.pointerUp(document.body, { pointerId: 7 });
+
+        await user.click(discardButton(0));
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 500;
+        await user.keyboard("{Enter}");
+
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("Enter pulsado y la ventana pierde el foco (Alt+Tab): tras cambiar de fila un Enter normal sí acepta", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        fireEvent.keyDown(screen.getByTestId("invoice-review-panel"), { key: "Enter" });
+        fireEvent.blur(window);
+
+        await user.click(discardButton(0));
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 500;
+        await user.keyboard("{Enter}");
+
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+    });
+
+    describe("REP6-04: bajos de la pasada 6 (B6-1, B6-2, B-p6-1, B-p6-2)", () => {
+      // Línea leída por unidad (sin `unit`): su empaque es «Bulto» por defecto.
+      const unitPriceLine = (seed = 2) =>
+        doubtfulLine(seed, 1, { match: { candidates: singleCandidate(seed), issues: [PRICE_ISSUE] } });
+      const unitPackLine = (seed = 2) =>
+        doubtfulLine(seed, 1, { match: { candidates: singleCandidate(seed), issues: [PACK_ISSUE] } });
+      const radios = (index: number) => within(row(index)).getAllByRole("radio");
+      const blockers = () => screen.getByTestId("invoice-review-blockers");
+
+      it("B6-1: tras «Restaurar», Espacio ×5 sobre la fila enfocada no desplaza el panel ni hace nada", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+        await user.click(discardButton(0));
+        now += 1000;
+        await user.click(within(row(0)).getByRole("button", { name: "Restaurar" }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        for (let step = 0; step < 5; step += 1) {
+          // `fireEvent` devuelve false si alguien llamó a preventDefault (sin él, el navegador desplaza).
+          expect(fireEvent.keyDown(row(0), { key: " " })).toBe(false);
+        }
+
+        expect(row(0)).toHaveFocus();
+        expect(row(0)).toHaveAttribute("data-status", "pending_unmatched");
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      });
+
+      it("B6-2: «Por unidad» y a 150 ms «Por caja» en la misma línea: se aplica la corrección", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [priceLine(), nameLine()] }));
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 450;
+
+        const [perUnit, perPack] = radios(0);
+        await user.click(perUnit);
+        expect(perUnit).toHaveAttribute("aria-checked", "true");
+        now += 150;
+        await user.click(perPack);
+
+        expect(perPack).toHaveAttribute("aria-checked", "true");
+        expect(perUnit).toHaveAttribute("aria-checked", "false");
+        expect(perPack).toHaveFocus();
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("B6-2: la guarda sigue bloqueando otra fila tras elegir la opción", async () => {
+        const user = userEvent.setup();
+        renderPanel(
+          makeReviewResponse({
+            lines: [priceLine(), doubtfulLine(3, 1, { match: { candidates: singleCandidate(3) } })],
+          }),
+        );
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 450;
+        await user.click(radios(0)[0]);
+        now += 150;
+        await user.click(within(row(1)).getByRole("button", { name: /Producto 3/ }));
+
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      });
+
+      it("B-p6-1: tras tocar el candidato, la línea y el pie dicen qué falta elegir", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unitPackLine(), {}] }));
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        expect(within(row(0)).getByText("Elige cómo viene: Por unidad o Por bulto.")).toBeInTheDocument();
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 1 línea.");
+        expect(blockers()).not.toHaveTextContent("por resolver");
+      });
+
+      it("B-p6-1: con dos líneas así y otra pendiente, el pie dice «en 2 líneas» y cuenta aparte solo la otra", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unitPackLine(2), unitPriceLine(3), unmatchedLine(4, false)] }));
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 1000;
+        await user.click(within(row(1)).getByRole("button", { name: /Producto 3/ }));
+
+        expect(blockers()).toHaveTextContent("Queda 1 línea por resolver.");
+        expect(blockers()).not.toHaveTextContent("Quedan 3");
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 2 líneas.");
+
+        now += 1000;
+        await user.click(within(row(2)).getByRole("button", { name: "Descartar línea" }));
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 2 líneas.");
+        expect(blockers()).not.toHaveTextContent("por resolver");
+      });
+
+      it("B-p6-1: con una línea así y dos pendientes más, el genérico cuenta solo las otras dos", async () => {
+        const user = userEvent.setup();
+        renderPanel(
+          makeReviewResponse({ lines: [unitPackLine(2), unmatchedLine(3, false), unmatchedLine(4, false)] }),
+        );
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+        expect(blockers()).toHaveTextContent("Quedan 2 líneas por resolver.");
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 1 línea.");
+        expect(blockers()).not.toHaveTextContent("Quedan 3");
+      });
+
+      it("B-p6-2: el aviso de precio usa la misma palabra que la opción («bulto»)", () => {
+        renderPanel(makeReviewResponse({ lines: [unitPriceLine()] }));
+
+        expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toBeInTheDocument();
+        expect(
+          within(row(0)).getByText(
+            "¿Precio por bulto o por unidad? Sale a 0,51 REF por unidad y el último costo fue 0,05 REF.",
+          ),
+        ).toBeInTheDocument();
+        expect(within(row(0)).queryByText(/Precio por caja/)).not.toBeInTheDocument();
+      });
+    });
+
+    describe("REP6-05: el filtro de activación de REP6-01 en el selector de tasa y en el pie", () => {
+      const printedResponse = () => makeReviewResponse({ lines: [nameLine()], extraction: { printedRate: 875.65 } });
+      const todayRadio = () => screen.getByRole("radio", { name: "Tasa de hoy (900,00)" });
+      const printedRadio = () => screen.getByRole("radio", { name: "Tasa de la factura (875,65)" });
+      /** Enter sin la marca de repetición; si nadie lo cancela, un botón se activa (como el navegador). */
+      const pressEnterOn = (target: HTMLElement) => {
+        const unprevented = fireEvent.keyDown(target, { key: "Enter" });
+        if (unprevented && target instanceof HTMLButtonElement) {
+          fireEvent.click(target, { detail: 0 });
+        }
+      };
+      /** Enter pulsado sobre la fila: acepta y el foco pasa a otro control con la tecla aún abajo. */
+      const acceptWithEnterHeld = async (user: ReturnType<typeof userEvent.setup>) => {
+        now += 1000;
+        row(0).focus();
+        await user.keyboard("{Enter>}");
+        await waitFor(() => expect(row(0)).toHaveAttribute("data-status", "resolved"));
+        now += 600;
+      };
+
+      it("la tasa preseleccionada es la del sistema, no la impresa", () => {
+        renderPanel(printedResponse());
+
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+        expect(printedRadio()).toHaveAttribute("aria-checked", "false");
+      });
+
+      it("Enter mantenido sobre la tasa de la factura (con y sin marca de repetición tras cambiar de foco) no la elige", async () => {
+        const user = userEvent.setup();
+        renderPanel(printedResponse());
+        await acceptWithEnterHeld(user);
+
+        printedRadio().focus();
+        const unprevented = fireEvent.keyDown(printedRadio(), { key: "Enter", repeat: true });
+        if (unprevented) {
+          fireEvent.click(printedRadio(), { detail: 0 });
+        }
+        pressEnterOn(printedRadio());
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+
+        await user.keyboard("{/Enter}");
+        await user.keyboard("{Enter}");
+        expect(printedRadio()).toHaveAttribute("aria-checked", "true");
+      });
+
+      it("doble clic lento (detail 2) sobre la tasa de la factura no la elige; un clic normal sí", async () => {
+        const user = userEvent.setup();
+        renderPanel(printedResponse());
+        now += 1000;
+
+        fireEvent.click(printedRadio(), { detail: 2 });
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+
+        await user.click(printedRadio());
+        expect(printedRadio()).toHaveAttribute("aria-checked", "true");
+        now += 1000;
+        fireEvent.click(todayRadio(), { detail: 2 });
+        expect(printedRadio()).toHaveAttribute("aria-checked", "true");
+      });
+
+      it("«Descartar escaneo»: el 2.º clic de un doble clic y un Enter sin soltar tras cambiar de foco se ignoran", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [nameLine()] }));
+        const discardScan = screen.getByRole("button", { name: "Descartar escaneo" });
+        now += 1000;
+
+        fireEvent.click(discardScan, { detail: 2 });
+        expect(props.onDiscard).not.toHaveBeenCalled();
+
+        await acceptWithEnterHeld(user);
+        discardScan.focus();
+        pressEnterOn(discardScan);
+        expect(props.onDiscard).not.toHaveBeenCalled();
+
+        await user.keyboard("{/Enter}");
+        await user.click(discardScan);
+        expect(props.onDiscard).toHaveBeenCalledTimes(1);
+      });
+
+      it("«Ver detalle del total»: el 2.º clic de un doble clic no lo vuelve a plegar", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [nameLine()] }));
+        now += 1000;
+
+        await user.click(screen.getByRole("button", { name: "Ver detalle del total" }));
+        fireEvent.click(screen.getByRole("button", { name: "Ocultar detalle del total" }), { detail: 2 });
+
+        expect(screen.getByRole("button", { name: "Ocultar detalle del total" })).toHaveAttribute("aria-expanded", "true");
+      });
+
+      it("la tasa del día que llega después de abrir la revisión pasa a ser la preseleccionada", () => {
+        const props: InvoiceReviewPanelProps = {
+          context: { taxRates: REVIEW_TAX_RATES },
+          onDiscard: jest.fn(),
+          onLoad: jest.fn(),
+          onRescan: jest.fn(),
+          response: printedResponse(),
+        };
+        const { rerender } = render(<InvoiceReviewPanel {...props} />);
+        expect(screen.getByRole("radio", { name: "Tasa de la factura (875,65)" })).toHaveAttribute("aria-checked", "true");
+
+        rerender(<InvoiceReviewPanel {...props} context={CONTEXT} />);
+
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+        expect(printedRadio()).toHaveAttribute("aria-checked", "false");
+      });
+
+      it("con la tasa elegida a mano antes de que llegue la del día, se respeta la elección", async () => {
+        const user = userEvent.setup();
+        const props: InvoiceReviewPanelProps = {
+          context: { taxRates: REVIEW_TAX_RATES },
+          onDiscard: jest.fn(),
+          onLoad: jest.fn(),
+          onRescan: jest.fn(),
+          response: printedResponse(),
+        };
+        const { rerender } = render(<InvoiceReviewPanel {...props} />);
+        now += 1000;
+        await user.click(screen.getByRole("radio", { name: "Escribir la tasa" }));
+
+        rerender(<InvoiceReviewPanel {...props} context={CONTEXT} />);
+
+        expect(screen.getByRole("radio", { name: "Escribir la tasa" })).toHaveAttribute("aria-checked", "true");
+        expect(screen.queryByRole("radio", { name: "Tasa de hoy (900,00)" })).not.toBeInTheDocument();
+      });
     });
   });
 

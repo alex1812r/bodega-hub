@@ -94,6 +94,22 @@ function isGuarded(until: { current: number }) {
   return Date.now() < until.current;
 }
 
+/**
+ * D33-a (C6-M1): teclas que activan algo en la revisión. Una tecla mantenida al mover el foco
+ * no actúa sobre el nuevo destino hasta que se suelte (aunque el sistema no marque `repeat`).
+ */
+const ACTIVATION_KEYS = new Set(["Enter", " ", "Escape"]);
+
+/** D33-a: controles cuyo 2.º clic de un doble clic (`detail > 1`) se ignora. */
+const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-row-action], [data-load-button]";
+
+/**
+ * REP6-05: selector de tasa y botones del pie distintos de Cargar. Filtro de D33-a (sin
+ * `repeat`, sin `detail > 1` y liberación nueva tras mover el foco), aplicado en la captura del
+ * clic porque sus manejadores no pasan por `applyRowAction`. La guarda de 400 ms es de las filas.
+ */
+const GUARDED_CONTROL_SELECTOR = "[data-guarded-activation]";
+
 function InvoiceScanImages({ scanId }: { scanId: string }) {
   const images = useInvoiceScanImages(scanId);
 
@@ -160,6 +176,14 @@ export function InvoiceReviewPanel({
   supplierFetcher,
 }: InvoiceReviewPanelProps) {
   const { dispatch, state, summary } = useInvoiceReview(response, context);
+  // REP6-05: la tasa del día que llega con la revisión ya abierta pasa a ser la preseleccionada
+  // (el reductor la ignora si ya había tasa del día o el usuario eligió una).
+  const lateSystemRate = context.systemRateVes;
+  useEffect(() => {
+    if (lateSystemRate !== undefined) {
+      dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate });
+    }
+  }, [dispatch, lateSystemRate]);
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [confirmedOpen, setConfirmedOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -174,6 +198,13 @@ export function InvoiceReviewPanel({
   const headerRef = useRef<HTMLDivElement>(null);
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
   const guardUntilRef = useRef(0);
+  // REP6-04 (B6-2): línea cuya opción explícita armó la guarda; corregir la opción en esa misma
+  // línea no es un rebote sobre otra fila y se aplica. Cualquier otro armado lo anula.
+  const guardChoiceIndexRef = useRef<number | null>(null);
+  // D33-a: teclas de activación y punteros pulsados ahora; al mover el foco con alguno pulsado,
+  // hace falta un keyup/pointerup nuevo antes de aceptar otra activación.
+  const pressedRef = useRef(new Set<string>());
+  const awaitingReleaseRef = useRef(false);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const sections = getReviewSections(state);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
@@ -184,14 +215,49 @@ export function InvoiceReviewPanel({
 
   function armActivationGuard() {
     armGuard(guardUntilRef);
+    guardChoiceIndexRef.current = null;
   }
 
   function activationGuarded() {
-    return isGuarded(guardUntilRef);
+    return awaitingReleaseRef.current || isGuarded(guardUntilRef);
   }
+
+  // D33-a: la tecla o el puntero pueden soltarse fuera del panel (arrastre, Alt+Tab, foco en otro
+  // árbol); se escucha en `window` y se vacía el estado si la ventana pierde el foco o se oculta.
+  useEffect(() => {
+    const pressed = pressedRef.current;
+    const release = (input: string) => {
+      pressed.delete(input);
+      awaitingReleaseRef.current = false;
+    };
+    const releaseAll = () => {
+      pressed.clear();
+      awaitingReleaseRef.current = false;
+    };
+    const onKeyUp = (event: globalThis.KeyboardEvent) => release(`key:${event.key}`);
+    const onPointerUp = (event: PointerEvent) => release(`pointer:${event.pointerId}`);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        releaseAll();
+      }
+    };
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", onPointerUp, true);
+    window.addEventListener("blur", releaseAll);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("pointercancel", onPointerUp, true);
+      window.removeEventListener("blur", releaseAll);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
   function requestFocus(target: number | null, next: InvoiceReviewState) {
+    awaitingReleaseRef.current = pressedRef.current.size > 0;
     const line = target === null ? undefined : next.lines[target];
     // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
@@ -245,9 +311,9 @@ export function InvoiceReviewPanel({
       }
       return;
     }
-    // D31: la opción explícita marcada («Por unidad / Por caja»); sin ella, el costo a corregir.
+    // D31: la opción enfocable del radiogrupo (D33-a: sin marcar); sin ella, el costo a corregir.
     const choice = focusRequest.choice
-      ? (row.querySelector<HTMLElement>('[data-choice][aria-checked="true"]') ??
+      ? (row.querySelector<HTMLElement>('[data-choice][tabindex="0"]') ??
         row.querySelector<HTMLElement>('[data-need="unitPrice"]'))
       : null;
     if (choice) {
@@ -275,7 +341,11 @@ export function InvoiceReviewPanel({
    */
   function applyRowAction(action: InvoiceReviewAction) {
     if (action.type === "acceptCandidate" || action.type === "editEntryMode") {
-      if (activationGuarded()) {
+      const sameLineChoiceFix =
+        action.type === "editEntryMode" &&
+        !awaitingReleaseRef.current &&
+        guardChoiceIndexRef.current === action.index;
+      if (activationGuarded() && !sameLineChoiceFix) {
         return;
       }
       const current = state.lines[action.index];
@@ -287,6 +357,7 @@ export function InvoiceReviewPanel({
         // Elegida la opción: resuelta, a la siguiente pendiente; sin aceptar aún, a la fila.
         armActivationGuard();
         requestFocus(isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+        guardChoiceIndexRef.current = action.index;
       } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
         // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31).
         requestFocus(action.index, next);
@@ -355,6 +426,11 @@ export function InvoiceReviewPanel({
         acceptMarkedByEnter(index);
         return;
       }
+      case " ": {
+        // REP6-04 (B6-1): Espacio no tiene acción en la fila; sin esto desplaza el panel.
+        event.preventDefault();
+        return;
+      }
       case "Escape": {
         event.preventDefault();
         const result = pressEscape(state, index);
@@ -413,6 +489,10 @@ export function InvoiceReviewPanel({
   }
 
   function handleLoad() {
+    // D33-a: el rebote de la elección que resolvió la última línea no carga el borrador.
+    if (activationGuarded()) {
+      return;
+    }
     const draft = buildInvoiceReviewDraft(state);
     if (draft) {
       onLoad(draft);
@@ -453,7 +533,38 @@ export function InvoiceReviewPanel({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-4" data-testid="invoice-review-panel">
+    <div
+      className="flex min-w-0 flex-col gap-4"
+      data-testid="invoice-review-panel"
+      // D33-a (C6-M1): la autorrepetición del teclado y el 2.º clic de un doble clic no activan
+      // nada (fila, chip, opción, Descartar/Restaurar, Cargar).
+      onClickCapture={(event) => {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+        const guardedControl = event.target.closest(GUARDED_CONTROL_SELECTOR);
+        if (
+          (event.detail > 1 && (guardedControl || event.target.closest(ACTIVATION_SELECTOR))) ||
+          (guardedControl && awaitingReleaseRef.current)
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onKeyDownCapture={(event) => {
+        if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (ACTIVATION_KEYS.has(event.key)) {
+          pressedRef.current.add(`key:${event.key}`);
+        }
+      }}
+      onPointerDownCapture={(event) => {
+        pressedRef.current.add(`pointer:${event.pointerId}`);
+      }}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Revisión de la factura</h2>

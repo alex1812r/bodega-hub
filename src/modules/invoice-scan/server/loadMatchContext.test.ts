@@ -61,7 +61,7 @@ function createSupabaseStub(options: {
     queries.push(query);
     const run = (): Result => options.tables?.[table]?.(query) ?? { data: [], error: null };
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "neq", "in", "not", "ilike", "order", "limit"]) {
+    for (const method of ["select", "eq", "neq", "in", "not", "ilike", "order", "limit", "range"]) {
       chain[method] = (...args: unknown[]) => {
         query.calls.push({ method, args });
         return chain;
@@ -819,5 +819,118 @@ describe("loadMatchContext · coherencia de precio sin compras recibidas (D24-c,
     expect(byId.get(ARROZ_ID)?.lastUnitCostRef).toBe(0.8);
     expect(byId.get(CAJA_ID)?.lastUnitCostRef).toBeNull(); // 0 no es un costo
     expect(byId.get(HARINA_ID)?.lastUnitCostRef).toBe(0.95); // recibido del proveedor
+  });
+});
+
+/**
+ * C6-M3 (REP6-03): PostgREST corta cada respuesta en `max_rows = 1000`. La tabla
+ * falsa aplica los `eq`/`in` de primer nivel, el `order` y el `range` pedidos, y
+ * nunca devuelve más de 1000 filas (sin `order` ni `range`, las 1000 primeras).
+ */
+const POSTGREST_MAX_ROWS = 1000;
+
+function cappedTable(rows: Array<Record<string, unknown>>): TableHandler {
+  return (query) => {
+    let data = rows.filter(
+      (row) =>
+        argsOf(query, "eq").every(([column, value]) => !(String(column) in row) || row[String(column)] === value) &&
+        argsOf(query, "in").every(([column, values]) => (values as unknown[]).includes(row[String(column)])),
+    );
+    const [order] = argsOf(query, "order");
+    if (order) {
+      const column = String(order[0]);
+      data = [...data].sort((a, b) => String(a[column]).localeCompare(String(b[column])));
+    }
+    const [range] = argsOf(query, "range");
+    const from = range ? Number(range[0]) : 0;
+    const to = range ? Number(range[1]) : Number.POSITIVE_INFINITY;
+    return { data: data.slice(from, Math.min(to + 1, from + POSTGREST_MAX_ROWS)), error: null };
+  };
+}
+
+describe("loadMatchContext · más de 1000 filas por proveedor (C6-M3, REP6-03)", () => {
+  const VATEL_ID = "88888888-8888-4888-8888-888888888888";
+  const TECLADO_ID = "99999999-9999-4999-8999-999999999999";
+  const SKU_PRODUCT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const pad = (n: number) => String(n).padStart(4, "0");
+  const fillerId = (n: number) => `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, "0")}`;
+
+  const bigExtraction: InvoiceExtraction = {
+    supplier: { name: "CAOSG", taxId: "J-12345678-9" },
+    currency: "VES",
+    lines: [
+      { rawText: "TECLADO ALIAS 3", description: "TECLADO ALIAS 3", quantity: 1, unitPrice: 10, lineTotal: 10, confidence: 0.9 },
+      { rawText: "ACEITE VATEL 1LT", description: "ACEITE VATEL 1LT", quantity: 1, unitPrice: 10, lineTotal: 10, confidence: 0.9 },
+      {
+        rawText: "PRODUCTO POR SKU",
+        description: "PRODUCTO POR SKU",
+        quantity: 1,
+        unitPrice: 10,
+        lineTotal: 10,
+        supplierSku: "SKU-1200",
+        confidence: 0.9,
+      },
+    ],
+    confidence: 0.9,
+    warnings: [],
+  };
+
+  function bigTables(): Record<string, TableHandler> {
+    // 1500 alias del proveedor; el de TECLADO entre los primeros 1000 y el de VATEL en la posición 1200.
+    const aliases = Array.from({ length: 1500 }, (_, n) => ({
+      id: `alias-${pad(n)}`,
+      store_id: STORE_ID,
+      supplier_id: SUPPLIER_ID,
+      alias_norm: n === 10 ? "teclado alias 3" : n === 1200 ? "aceite vatel 1lt" : `malta polar ${pad(n)}`,
+      product_id: n === 10 ? TECLADO_ID : n === 1200 ? VATEL_ID : MALTA_ID,
+      pack_label: null,
+      units_per_pack: null,
+      hits: n === 1200 ? 2 : 1,
+    }));
+    // 1500 vínculos del proveedor; el del SKU-1200 pasa del corte.
+    const links = Array.from({ length: 1500 }, (_, n) => ({
+      id: `sp-${pad(n)}`,
+      store_id: STORE_ID,
+      supplier_id: SUPPLIER_ID,
+      is_active: true,
+      product_id: n === 1200 ? SKU_PRODUCT_ID : fillerId(n),
+      supplier_sku: `SKU-${n}`,
+      is_preferred: false,
+      supplier_product_pack_units: [],
+    }));
+    const products = [
+      productRow(VATEL_ID, "Aceite Vatel 1L"),
+      productRow(TECLADO_ID, "Teclado Prod 3"),
+      productRow(SKU_PRODUCT_ID, "Producto por SKU"),
+      productRow(MALTA_ID, "Malta Polar"),
+      ...links.filter((link) => link.product_id !== SKU_PRODUCT_ID).map((link) => productRow(link.product_id, link.id)),
+    ].map((row) => ({ ...row, store_id: STORE_ID }));
+    const productTable = cappedTable(products);
+    return {
+      supplier_product_aliases: cappedTable(aliases),
+      supplier_products: cappedTable(links),
+      products: (query) => {
+        const select = String(argsOf(query, "select")[0]?.[0] ?? "");
+        return select.startsWith("id, purchase_items") ? { data: [], error: null } : productTable(query);
+      },
+    };
+  }
+
+  it("el alias exacto en la posición 1200 confirma la línea y el SKU vinculado pasado el corte también", async () => {
+    const stub = createSupabaseStub({
+      candidates: { suppliers: candidates.suppliers.slice(0, 1), supplier_id: SUPPLIER_ID, lines: [] },
+      tables: bigTables(),
+      rpcs: { tax_rates_for_store: taxRateRows },
+    });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, bigExtraction);
+    const match = matchInvoice(bigExtraction, ctx);
+
+    expect(match.lines[0]).toMatchObject({ status: "confirmed", productId: TECLADO_ID });
+    expect(match.lines[1]).toMatchObject({ status: "confirmed", productId: VATEL_ID });
+    expect(match.lines[1]?.candidates?.[0]?.reason).toBe("alias visto 2 veces");
+    expect(match.lines[2]).toMatchObject({ status: "confirmed", productId: SKU_PRODUCT_ID });
+    expect(ctx.supplierCatalogs[SUPPLIER_ID]?.supplierProducts).toHaveLength(1500);
+    expect(ctx.products.find((product) => product.id === SKU_PRODUCT_ID)?.linkedToSupplier).toBe(true);
   });
 });

@@ -107,7 +107,12 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
           <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
           {rate.warning}
         </p>
-        <div aria-label="Tasa para convertir los costos" className="flex flex-wrap gap-2" role="radiogroup">
+        <div
+          aria-label="Tasa para convertir los costos"
+          className="flex flex-wrap gap-2"
+          data-guarded-activation
+          role="radiogroup"
+        >
           <ChoiceButton checked={rate.choice === "system"} onClick={() => choose("system")}>
             {`Tasa de hoy (${formatRate(rate.system)})`}
           </ChoiceButton>
@@ -138,7 +143,12 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
         </p>
       ) : null}
       {rate.printed !== undefined ? (
-        <div aria-label="Tasa para convertir los costos" className="flex flex-wrap gap-2" role="radiogroup">
+        <div
+          aria-label="Tasa para convertir los costos"
+          className="flex flex-wrap gap-2"
+          data-guarded-activation
+          role="radiogroup"
+        >
           <ChoiceButton checked={rate.choice === "printed"} onClick={() => choose("printed")}>
             {`Tasa de la factura (${formatRate(rate.printed)})`}
           </ChoiceButton>

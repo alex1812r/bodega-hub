@@ -20,6 +20,7 @@ import {
   toPaginatedList,
 } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
 
 import { SUPPLIER_PRODUCT_SELECT } from "./contacts.server";
 import { applySupplierProductSort } from "./supplierProductSort";
@@ -217,17 +218,24 @@ async function fetchLatestHistoryBySupplierProductIds(ids: string[]) {
   }
 
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("supplier_product_price_history")
-    .select("supplier_product_id, origin, old_cost_ref, new_cost_ref, created_at")
-    .in("supplier_product_id", ids)
-    .order("created_at", { ascending: false });
+  // REP6-05: por lotes de ids y páginas con orden estable (PostgREST corta en 1000 filas).
+  type HistoryRow = Pick<
+    DbSupplierProductPriceHistoryRow,
+    "created_at" | "new_cost_ref" | "old_cost_ref" | "origin" | "supplier_product_id"
+  >;
+  const data = await fetchAllRowsByIds<HistoryRow>(ids, (chunk, from, to) =>
+    supabase
+      .from("supplier_product_price_history")
+      .select("supplier_product_id, origin, old_cost_ref, new_cost_ref, created_at")
+      .in("supplier_product_id", chunk)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to),
+  );
 
-  throwIfSupabaseError(error);
+  const grouped = new Map<string, HistoryRow[]>();
 
-  const grouped = new Map<string, DbSupplierProductPriceHistoryRow[]>();
-
-  for (const row of (data ?? []) as DbSupplierProductPriceHistoryRow[]) {
+  for (const row of data) {
     const current = grouped.get(row.supplier_product_id) ?? [];
     current.push(row);
     grouped.set(row.supplier_product_id, current);
@@ -261,23 +269,34 @@ async function fetchPackUnitsBySupplierProductIds(ids: string[]) {
   }
 
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("supplier_product_pack_units")
-    .select("*")
-    .in("supplier_product_id", ids)
-    .eq("is_active", true)
-    .order("is_default", { ascending: false })
-    .order("label", { ascending: true });
+  let missingSchema = false;
+  // REP6-05: por lotes de ids y páginas con orden estable (PostgREST corta en 1000 filas).
+  const data = await fetchAllRowsByIds<DbSupplierProductPackUnitRow>(ids, async (chunk, from, to) => {
+    const page = await supabase
+      .from("supplier_product_pack_units")
+      .select("*")
+      .in("supplier_product_id", chunk)
+      .eq("is_active", true)
+      .order("is_default", { ascending: false })
+      .order("label", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
 
-  if (error && isMissingPackUnitsSchema(error)) {
+    if (page.error && isMissingPackUnitsSchema(page.error)) {
+      missingSchema = true;
+      return { data: [], error: null };
+    }
+
+    return { data: page.data as DbSupplierProductPackUnitRow[] | null, error: page.error, status: page.status };
+  });
+
+  if (missingSchema) {
     return new Map<string, ReturnType<typeof mapSupplierProductPackUnit>[]>();
   }
 
-  throwIfSupabaseError(error);
-
   const grouped = new Map<string, ReturnType<typeof mapSupplierProductPackUnit>[]>();
 
-  for (const row of (data ?? []) as DbSupplierProductPackUnitRow[]) {
+  for (const row of data) {
     const current = grouped.get(row.supplier_product_id) ?? [];
     current.push(mapSupplierProductPackUnit(row));
     grouped.set(row.supplier_product_id, current);

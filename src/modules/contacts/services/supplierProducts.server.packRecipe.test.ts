@@ -23,7 +23,7 @@ function chain(result: Result, listResult: Result = result) {
     then: (resolve: (value: Result) => unknown, reject: (reason: unknown) => unknown) =>
       Promise.resolve(listResult).then(resolve, reject),
   };
-  for (const method of ["select", "eq", "neq", "in", "order", "insert", "update"]) {
+  for (const method of ["select", "eq", "neq", "in", "order", "range", "insert", "update"]) {
     target[method] = jest.fn(() => target);
   }
   target.single = jest.fn(() => Promise.resolve(result));

@@ -19,6 +19,7 @@ import {
   getUnitConversion,
   isExplicitChoiceIssue,
   isPendingStatus,
+  linePackWord,
   MAX_REVIEW_QUANTITY,
   type InvoiceReviewAction,
   type InvoiceReviewLine,
@@ -29,11 +30,14 @@ import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
 import {
   formatInvoiceMoney,
   getChoiceChips,
+  lineIssueText,
   lineNeedMessages,
   REVIEW_STATUS_META,
 } from "./invoiceReviewView";
 
 const PACK_UNITS = new Set(["caja", "bulto", "paquete", "display"]);
+
+const ARROW_KEYS = new Set(["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"]);
 
 export type InvoiceReviewLineRowProps = {
   state: InvoiceReviewState;
@@ -92,6 +96,8 @@ export function InvoiceReviewLineRow({
     fractional ||
     (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
     line.issues.some(isExplicitChoiceIssue);
+  // D33-a (C6-M1): con aviso y sin elección, ninguna opción viene marcada; la primera es la enfocable.
+  const checkedMode = line.issues.some(isExplicitChoiceIssue) && !line.choiceMade ? undefined : line.entryMode;
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
   const marked = pending ? enterTargetProductId(line) : undefined;
@@ -168,6 +174,7 @@ export function InvoiceReviewLineRow({
                         ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                         : "border-outline-variant bg-surface-container-lowest text-foreground hover:bg-surface-container-low",
                     )}
+                    data-candidate
                     key={candidate.productId}
                     onClick={() => onAction({ type: "acceptCandidate", index, productId: candidate.productId })}
                     onKeyDown={(event) => {
@@ -266,20 +273,36 @@ export function InvoiceReviewLineRow({
               <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="radiogroup">
                 {(["unit", "pack"] as const).map((mode) => (
                   <button
-                    aria-checked={line.entryMode === mode}
+                    aria-checked={checkedMode === mode}
                     className={cn(
                       "h-8 cursor-pointer rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      line.entryMode === mode
+                      checkedMode === mode
                         ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                         : "border-outline-variant text-foreground hover:bg-surface-container-low",
                     )}
                     data-choice={mode}
                     key={mode}
                     onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
+                    onKeyDown={(event) => {
+                      if (!ARROW_KEYS.has(event.key)) {
+                        return;
+                      }
+                      event.preventDefault();
+                      if (event.repeat) {
+                        return;
+                      }
+                      // Dos opciones: cualquier flecha va a la otra y la elige (radiogrupo).
+                      const other = mode === "unit" ? "pack" : "unit";
+                      event.currentTarget.parentElement
+                        ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
+                        ?.focus();
+                      onAction({ type: "editEntryMode", index, entryMode: other });
+                    }}
                     role="radio"
+                    tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
                     type="button"
                   >
-                    {mode === "unit" ? "Por unidad" : `Por ${line.packLabel.toLowerCase()}`}
+                    {mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}
                   </button>
                 ))}
               </div>
@@ -323,7 +346,7 @@ export function InvoiceReviewLineRow({
               {issues.map((issue) => (
                 <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue}`}>
                   <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {issue}
+                  {lineIssueText(line, issue)}
                 </li>
               ))}
               {needs.map((need) => (

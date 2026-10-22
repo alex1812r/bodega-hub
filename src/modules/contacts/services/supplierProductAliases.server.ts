@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api/apiError";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { fetchAllRows, fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
 
 import type {
   RemovedSupplierProductAlias,
@@ -14,9 +15,6 @@ import type {
  * el borrado va por la RPC `remove_supplier_product_alias` (20261020a), que vuelve
  * a comprobar tienda y rol. Paridad: `supplierProductAliases.mock-server.ts`.
  */
-
-/** Tope defensivo de filas: un proveedor real tiene decenas de alias, no miles. */
-export const SUPPLIER_PRODUCT_ALIASES_LIMIT = 500;
 
 export const SUPPLIER_PRODUCT_ALIAS_NOT_FOUND_MESSAGE = "Alias no encontrado";
 
@@ -58,31 +56,35 @@ export async function listSupplierProductAliases(
   }
 
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("supplier_product_aliases")
-    .select("id, alias_norm, pack_label, units_per_pack, hits, last_seen_at, product_id, products(name)")
-    .eq("store_id", storeId)
-    .eq("supplier_id", supplierId)
-    .order("last_seen_at", { ascending: false })
-    .limit(SUPPLIER_PRODUCT_ALIASES_LIMIT);
+  // REP6-05: todos los alias, por páginas (PostgREST corta en 1000) con orden estable.
+  const rows = await fetchAllRows<DbSupplierProductAliasRow>(
+    async (from, to) => {
+      const { data, error } = await supabase
+        .from("supplier_product_aliases")
+        .select("id, alias_norm, pack_label, units_per_pack, hits, last_seen_at, product_id, products(name)")
+        .eq("store_id", storeId)
+        .eq("supplier_id", supplierId)
+        .order("last_seen_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to);
 
-  throwIfSupabaseError(error);
-
-  const rows = (data ?? []) as unknown as DbSupplierProductAliasRow[];
+      return { data: data as unknown as DbSupplierProductAliasRow[] | null, error };
+    },
+    { getKey: (row) => row.id },
+  );
   const productIds = [...new Set(rows.map((row) => row.product_id))];
-  let linked = new Set<string>();
-
-  if (productIds.length > 0) {
-    const { data: links, error: linksError } = await supabase
+  // Ids por lotes: con cientos de productos el filtro `in` no cabe en la URL.
+  const links = await fetchAllRowsByIds<{ product_id: string }>(productIds, (chunk, from, to) =>
+    supabase
       .from("supplier_products")
       .select("product_id")
       .eq("store_id", storeId)
       .eq("supplier_id", supplierId)
-      .in("product_id", productIds);
-
-    throwIfSupabaseError(linksError);
-    linked = new Set(((links ?? []) as { product_id: string }[]).map((link) => link.product_id));
-  }
+      .in("product_id", chunk)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const linked = new Set(links.map((link) => link.product_id));
 
   return {
     items: rows.map(

@@ -120,6 +120,7 @@ export function InvoiceReviewFooter({
         aria-controls={detailId}
         aria-expanded={detailOpen}
         aria-label={detailOpen ? "Ocultar detalle del total" : "Ver detalle del total"}
+        data-guarded-activation
         className="col-start-3 row-start-1 inline-flex size-9 cursor-pointer items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:hidden"
         onClick={() => setDetailOpen((open) => !open)}
         type="button"
@@ -165,7 +166,7 @@ export function InvoiceReviewFooter({
           collapsible ?? "flex",
         )}
       >
-        <Button onClick={onDiscard} variant="ghost">
+        <Button data-guarded-activation onClick={onDiscard} variant="ghost">
           Descartar escaneo
         </Button>
       </div>

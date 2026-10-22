@@ -453,6 +453,68 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
       state = pressEnter(state, 0).state;
       expect(state.lines[0].status).toBe("resolved");
     });
+
+    // REP6-02 (D33-b, C6-M2): cambiar de producto reinicia la elección explícita.
+    const otherId = productUuid(101);
+    const pickUnit = (): InvoiceReviewState => {
+      let state = reviewReducer(lineWith(issue), { type: "acceptCandidate", index: 0, productId });
+      state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" });
+      expect(state.lines[0]).toMatchObject({ status: "resolved", entryMode: "unit", choiceMade: true });
+      return state;
+    };
+    const expectPendingChoice = (state: InvoiceReviewState) => {
+      expect(state.lines[0]).toMatchObject({ status: "pending_doubtful", accepted: true, productId, choiceMade: false });
+      expect(state.lines[0].entryMode).toBe("pack");
+      expect(needsExplicitChoice(state.lines[0])).toBe(true);
+      expect(canLoad(state)).toBe(false);
+    };
+
+    it("R3 · Por unidad → producto B (buscador) → vuelve a A (buscador): pide elegir otra vez", () => {
+      let state = pickUnit();
+      state = reviewReducer(state, { type: "chooseProduct", index: 0, product: { productId: otherId, name: "Otro 1" } });
+      expect(state.lines[0]).toMatchObject({ productId: otherId, choiceMade: false, status: "pending_doubtful" });
+      state = reviewReducer(state, { type: "chooseProduct", index: 0, product: { productId, name: "Producto 1" } });
+      expectPendingChoice(state);
+    });
+
+    it("R3b · Por unidad → chip B → chip A (acceptCandidate): pide elegir otra vez", () => {
+      let state = pickUnit();
+      state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: otherId });
+      expect(state.lines[0]).toMatchObject({ productId: otherId, choiceMade: false, status: "pending_doubtful" });
+      state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId });
+      expectPendingChoice(state);
+    });
+
+    it("R5 · Por unidad → Esc → chip A: pide elegir otra vez", () => {
+      let state = pickUnit();
+      state = pressEscape(state, 0).state;
+      expect(state.lines[0].productId).toBeUndefined();
+      state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId });
+      expectPendingChoice(state);
+    });
+
+    it("REP6-05 · Por unidad → Esc (leaveUnmatched): la línea sin producto no conserva la elección", () => {
+      let state = pickUnit();
+      state = reviewReducer(state, { type: "leaveUnmatched", index: 0 });
+      expect(state.lines[0]).toMatchObject({ productId: undefined, leftUnmatched: true, choiceMade: false });
+      expect(state.lines[0].status).toBe("pending_unmatched");
+    });
+
+    it("tras el cambio, elegir el modo vuelve a resolverla", () => {
+      let state = pickUnit();
+      state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: otherId });
+      state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" });
+      expect(state.lines[0]).toMatchObject({ status: "resolved", choiceMade: true, productId: otherId });
+    });
+  });
+
+  it("REP6-02 · sin aviso, cambiar de producto sigue resolviendo la línea", () => {
+    let state = stateOf([doubtfulLine(1, 1, { match: { entryMode: "unit" } })]);
+    state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" });
+    state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: productUuid(101) });
+    expect(state.lines[0]).toMatchObject({ status: "resolved", choiceMade: false });
+    state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: productUuid(1) });
+    expect(state.lines[0]).toMatchObject({ status: "resolved", choiceMade: false });
   });
 
   it("6.19 sin tamaño: escribir las unidades ya es la elección", () => {
