@@ -572,34 +572,60 @@ function stripJpeg(data: Uint8Array): Uint8Array {
   return unsanitizable();
 }
 
-/**
- * Lista blanca de chunks PNG: los críticos que se decodifican y los auxiliares
- * de color/transparencia/densidad, con la longitud que fija la norma (máxima
- * en los de longitud variable). Fuera todo lo demás: tEXt/iTXt/zTXt, eXIf,
- * iCCP (lleva un nombre libre), tIME, APNG y los privados.
- */
-const PNG_KEPT: Readonly<Record<string, (length: number) => boolean>> = {
-  IDAT: () => true,
-  IEND: (length) => length === 0,
-  IHDR: (length) => length === 13,
-  PLTE: (length) => length > 0 && length <= 768 && length % 3 === 0,
-  bKGD: (length) => length === 1 || length === 2 || length === 6,
-  cHRM: (length) => length === 32,
-  gAMA: (length) => length === 4,
-  pHYs: (length) => length === 9,
-  sBIT: (length) => length >= 1 && length <= 4,
-  sRGB: (length) => length === 1,
-  tRNS: (length) => length <= 256,
-};
+/** Tamaño exacto de tRNS por tipo de color (el 3 se mide contra el PLTE; 4 y 6 no lo admiten). */
+const PNG_TRNS_LENGTH: Readonly<Record<number, number>> = { 0: 2, 2: 6 };
 
 /**
- * Copia el PNG con solo los chunks de `PNG_KEPT` (íntegros, con su CRC) y sin
- * lo que siga al IEND. Falla cerrado: un tipo no ASCII, un CRC roto, un chunk
- * crítico desconocido o mal medido, o la falta de IEND dan 400.
+ * Lista blanca estricta de chunks PNG (D29): solo lo imprescindible para
+ * decodificar, medido contra el IHDR para que no quepa texto.
+ * - IHDR (13 B), IDAT, IEND (0 B).
+ * - PLTE solo en paleta (tipo 3), múltiplo de 3, ≤ 256 y ≤ 2^bitdepth entradas,
+ *   antes del IDAT; en otros tipos es opcional y se descarta.
+ * - tRNS solo con el tamaño del tipo: 2 B (gris), 6 B (RGB), ≤ entradas de PLTE
+ *   (paleta, tras el PLTE); en gris+alfa y RGBA no se admite.
+ * Fuera todo lo demás, también gAMA/cHRM/sRGB/iCCP/bKGD/pHYs/sBIT: sharp
+ * decodifica igual sin ellos (los píxeles no cambian).
+ */
+function pngChunkKept(
+  type: string,
+  length: number,
+  state: { bitDepth: number; colorType: number; paletteEntries: number; sawData: boolean },
+): boolean {
+  switch (type) {
+    case "IHDR":
+      return length === 13;
+    case "IDAT":
+      return true;
+    case "IEND":
+      return length === 0;
+    case "PLTE":
+      return (
+        state.colorType === 3 &&
+        !state.sawData &&
+        state.paletteEntries === 0 &&
+        length > 0 &&
+        length % 3 === 0 &&
+        length / 3 <= Math.min(256, 2 ** state.bitDepth)
+      );
+    case "tRNS":
+      return state.colorType === 3
+        ? !state.sawData && length > 0 && length <= state.paletteEntries
+        : !state.sawData && length === PNG_TRNS_LENGTH[state.colorType];
+    default:
+      return false;
+  }
+}
+
+/**
+ * Copia el PNG con solo los chunks de `pngChunkKept` (íntegros, con su CRC) y
+ * sin lo que siga al IEND. Falla cerrado: un tipo no ASCII, un CRC roto, un
+ * chunk crítico desconocido o mal medido (PLTE inválido en paleta incluido),
+ * una imagen de paleta sin PLTE o la falta de IEND dan 400.
  */
 function stripPng(data: Uint8Array): Uint8Array {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const parts: Uint8Array[] = [data.subarray(0, PNG_SIGNATURE.length)];
+  const state = { bitDepth: 0, colorType: -1, paletteEntries: 0, sawData: false };
   let offset = PNG_SIGNATURE.length;
 
   while (offset + 12 <= data.length) {
@@ -616,8 +642,13 @@ function stripPng(data: Uint8Array): Uint8Array {
       return unsanitizable();
     }
 
-    const fits = PNG_KEPT[type]?.(length);
-    const critical = (data[offset + 4]! & 0x20) === 0;
+    if ((state.colorType === -1) !== (type === "IHDR")) {
+      return unsanitizable();
+    }
+
+    const fits = pngChunkKept(type, length, state);
+    // PLTE es crítico pero opcional fuera de la paleta: allí se descarta.
+    const critical = (data[offset + 4]! & 0x20) === 0 && !(type === "PLTE" && state.colorType !== 3);
 
     if (fits) {
       parts.push(data.subarray(offset, end));
@@ -625,8 +656,21 @@ function stripPng(data: Uint8Array): Uint8Array {
       return unsanitizable();
     }
 
+    if (type === "IHDR") {
+      state.bitDepth = data[offset + 16]!;
+      state.colorType = data[offset + 17]!;
+    } else if (type === "PLTE" && fits) {
+      state.paletteEntries = length / 3;
+    } else if (type === "IDAT") {
+      if (state.colorType === 3 && state.paletteEntries === 0) {
+        return unsanitizable();
+      }
+
+      state.sawData = true;
+    }
+
     if (type === "IEND") {
-      return concatParts(parts);
+      return state.sawData ? concatParts(parts) : unsanitizable();
     }
 
     offset = end;
@@ -719,7 +763,8 @@ function stripWebp(data: Uint8Array): Uint8Array {
  *   APP14 Adobe reconstruidos en forma canónica; fuera COM, el resto de APPn y
  *   la cola tras el primer EOI. Sin EXIF no hay orientación: el cliente ya la
  *   aplica al redibujar (`createImageBitmap` con `imageOrientation: "from-image"`).
- * - PNG: críticos y auxiliares de `PNG_KEPT`; fuera el resto y la cola tras el IEND.
+ * - PNG: IHDR, PLTE y tRNS coherentes con el IHDR, IDAT e IEND (`pngChunkKept`);
+ *   fuera el resto y la cola tras el IEND.
  * - WebP: solo VP8/VP8L (y en VP8X, ALPH); fuera ICCP/EXIF/XMP y desconocidos.
  * Falla cerrado: si no puede recorrer la estructura con certeza lanza ApiError
  * 400 (la entrada del BFF lo comprueba antes de subir y de cobrar).
