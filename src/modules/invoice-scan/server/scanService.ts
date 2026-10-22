@@ -542,7 +542,9 @@ async function readCachedScan(
  *   o el few-shot (antes de llamar al modelo), o el proveedor rechaza sin
  *   procesar (401/403/429/503, D24-a), se devuelven las páginas cobradas; un corte del
  *   cliente durante la lectura queda como `CLIENT_ABORTED`. El cierre lleva el
- *   `attemptId` de la reserva: si otra reserva tomó la fila, 409.
+ *   `attemptId` de la reserva: si otra reserva tomó la fila, 409. Si falla el
+ *   emparejamiento (la lectura ya está pagada), la fila queda `extracted` sin
+ *   `matched` y el reintento la re-empareja desde el caché (D35).
  * Un escaneo `failed` o `discarded` se vuelve a leer y cobra otra vez.
  */
 export async function scanInvoice(
@@ -653,7 +655,16 @@ export async function scanInvoice(
   try {
     matched = await deps.matcher(extraction, { dataSource: deps.dataSource, scanId, storeId: ctx.storeId });
   } catch (error) {
-    await fail("MATCH_ERROR");
+    // D35: la lectura ya está pagada. Se guarda sin emparejamiento y el reintento de
+    // la misma foto sale del caché y la re-empareja, sin modelo ni cuota.
+    console.warn("[invoice-scan] emparejamiento fallido tras leer", { code: "MATCH_ERROR" });
+    await deps.repo.completeScan(ctx, scanId, attemptId, {
+      durationMs: result.durationMs,
+      extracted: extraction,
+      inputTokens: result.inputTokens,
+      matched: null,
+      outputTokens: result.outputTokens,
+    });
     throw error;
   }
 

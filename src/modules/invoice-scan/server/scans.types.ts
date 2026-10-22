@@ -155,7 +155,11 @@ export type InvoiceScanCompletion = {
   outputTokens: number | null;
   durationMs: number;
   extracted: InvoiceExtraction;
-  matched: InvoiceMatch;
+  /**
+   * null si el emparejamiento falló después de leer (D35): la columna guarda
+   * `{}` y el reintento de la misma foto re-empareja la lectura desde el caché.
+   */
+  matched: InvoiceMatch | null;
 };
 
 /**

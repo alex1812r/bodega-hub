@@ -157,7 +157,7 @@ export async function completeScan(
       p_extracted: completion.extracted,
       p_id: id,
       p_input_tokens: completion.inputTokens,
-      p_matched: completion.matched,
+      p_matched: completion.matched ?? {},
       p_output_tokens: completion.outputTokens,
       p_store_id: ctx.storeId,
       p_user_id: ctx.userId,

@@ -12,9 +12,18 @@ import { getCurrentExchangeRate, readCurrentExchangeRate } from "@/modules/setti
 
 import type { InvoiceExtraction } from "../contracts";
 
-import { loadMatchContext, MATCH_CANDIDATES_RPC, taxRateKind, type MatchContextSupabaseClient } from "./loadMatchContext";
+import {
+  loadMatchContext,
+  MATCH_BARCODE_PRODUCTS_RPC,
+  MATCH_CANDIDATES_RPC,
+  MATCH_EXACT_ALIASES_RPC,
+  MATCH_PREVIOUS_SCANS_RPC,
+  taxRateKind,
+  type MatchContextSupabaseClient,
+} from "./loadMatchContext";
 import { matchInvoice } from "./match";
 import { MISSING_RATE_WARNING, NO_RATE_PRICE_ISSUE } from "./match/money";
+import { normalizeInvoiceNumber } from "./match/text";
 
 // CIE-02: la tasa del día es la del formulario de compra (DolarAPI oficial), no la última fila de exchange_rates.
 // D24-b: el escaneo solo LEE esa tasa (readCurrentExchangeRate); nunca la persiste (getCurrentExchangeRate).
@@ -41,7 +50,47 @@ type Query = { table: string; calls: Call[] };
 type Result = { data: unknown; error: unknown };
 type TableHandler = (query: Query) => Result;
 
-/** Cliente con cadenas thenables: cada consulta queda registrada en `queries`. */
+type RpcParams = Record<string, unknown>;
+
+/**
+ * Las RPC de búsqueda exacta (20261019q) filtran en la base lo que antes iba en
+ * la URL: el stub las responde con el manejador de su tabla, al que pasa esos
+ * mismos filtros como una consulta (que NO entra en `queries`: no va por URL).
+ */
+function rpcAsTableQuery(name: string, params: RpcParams): Query | null {
+  if (name === MATCH_EXACT_ALIASES_RPC) {
+    return {
+      table: "supplier_product_aliases",
+      calls: [
+        { method: "eq", args: ["supplier_id", params.p_supplier_id] },
+        { method: "in", args: ["alias_norm", params.p_alias_keys] },
+      ],
+    };
+  }
+  if (name === MATCH_BARCODE_PRODUCTS_RPC) {
+    return { table: "products", calls: [{ method: "in", args: ["barcode", params.p_barcodes] }] };
+  }
+  if (name === MATCH_PREVIOUS_SCANS_RPC) {
+    const calls: Call[] = [{ method: "not", args: ["status", "in", "(discarded,failed)"] }];
+    if (typeof params.p_number === "string") {
+      // Como la RPC: los caracteres del número normalizado en orden ('%F%A%C%1').
+      calls.push({ method: "ilike", args: ["extracted->>number", `%${[...params.p_number].join("%")}`] });
+    } else {
+      calls.push({ method: "in", args: ["extracted->>total", params.p_totals] });
+      if (typeof params.p_date === "string") {
+        calls.push({ method: "eq", args: ["extracted->>date", params.p_date] });
+      }
+    }
+    if (typeof params.p_exclude_scan_id === "string") {
+      calls.push({ method: "neq", args: ["id", params.p_exclude_scan_id] });
+    }
+    calls.push({ method: "limit", args: [params.p_limit] });
+    return { table: "invoice_scans", calls };
+  }
+  return null;
+}
+
+/** Cliente con cadenas thenables: cada consulta por URL queda registrada en `queries`. */
 function createSupabaseStub(options: {
   candidates: unknown;
   candidatesError?: unknown;
@@ -49,9 +98,15 @@ function createSupabaseStub(options: {
   rpcs?: Record<string, unknown>;
 }) {
   const queries: Query[] = [];
-  const rpc = jest.fn(async (name: string) => {
+  const rpc = jest.fn(async (name: string, params: RpcParams = {}) => {
     if (name === MATCH_CANDIDATES_RPC) {
       return { data: options.candidatesError ? null : options.candidates, error: options.candidatesError ?? null };
+    }
+    const tableQuery = rpcAsTableQuery(name, params);
+    if (tableQuery) {
+      const result = options.tables?.[tableQuery.table]?.(tableQuery) ?? { data: [], error: null };
+      const rows = (result.data ?? []) as Array<{ id: string }>;
+      return { data: name === MATCH_BARCODE_PRODUCTS_RPC ? rows.map((row) => row.id) : rows, error: result.error };
     }
     return { data: options.rpcs?.[name] ?? [], error: null };
   });
@@ -89,6 +144,11 @@ function hasEq(query: Query, column: string, value: unknown): boolean {
 
 function queriesOf(queries: Query[], table: string): Query[] {
   return queries.filter((query) => query.table === table);
+}
+
+/** Parámetros de cada llamada a la RPC `name` (cuerpo POST). */
+function rpcParams(rpc: jest.Mock, name: string): RpcParams[] {
+  return (rpc.mock.calls as Array<[string, RpcParams]>).filter(([called]) => called === name).map(([, params]) => params);
 }
 
 const extraction: InvoiceExtraction = {
@@ -194,14 +254,14 @@ function fullTables(): Record<string, TableHandler> {
       if (byBarcode) {
         return { data: [productRow(MALTA_ID, "Malta Polar", { barcode: "7591234" })], error: null };
       }
-      return {
-        data: [
-          productRow(HARINA_ID, "Harina PAN"),
-          productRow(ARROZ_ID, "Arroz Mary", { is_active: false, category: { tax_rate: null } }),
-          productRow(CAJA_ID, "Caja surtida", { category: null }),
-        ],
-        error: null,
-      };
+      const ids = argsOf(query, "in").find(([column]) => column === "id")?.[1] as string[] | undefined;
+      const rows = [
+        productRow(HARINA_ID, "Harina PAN"),
+        productRow(ARROZ_ID, "Arroz Mary", { is_active: false, category: { tax_rate: null } }),
+        productRow(CAJA_ID, "Caja surtida", { category: null }),
+        productRow(MALTA_ID, "Malta Polar", { barcode: "7591234" }),
+      ];
+      return { data: ids ? rows.filter((row) => ids.includes(row.id)) : rows, error: null };
     },
   };
 }
@@ -312,18 +372,21 @@ describe("loadMatchContext", () => {
     expect(hasEq(catalog, "supplier_id", SUPPLIER_ID)).toBe(true);
     expect(hasEq(catalog, "is_active", true)).toBe(true);
     expect(hasEq(catalog, "supplier_product_pack_units.is_active", true)).toBe(true);
+    // Por URL, los alias solo se piden por ids (los de los productos casados por SKU).
     const [aliases] = queriesOf(stub.queries, "supplier_product_aliases");
     expect(hasEq(aliases, "supplier_id", SUPPLIER_ID)).toBe(true);
+    expect(argsOf(aliases, "in")).toEqual([["product_id", [HARINA_ID]]]);
 
-    const [scans] = queriesOf(stub.queries, "invoice_scans");
-    // Subsecuencia del número normalizado: tolera separadores y ceros en el texto crudo guardado.
-    expect(argsOf(scans, "ilike")).toEqual([["extracted->>number", "%1%2%3"]]);
-    expect(argsOf(scans, "not")).toEqual([["status", "in", "(discarded,failed)"]]);
-
-    const barcodeQuery = queriesOf(stub.queries, "products").find((query) =>
-      argsOf(query, "in").some(([column]) => column === "barcode"),
-    );
-    expect(argsOf(barcodeQuery!, "in")).toEqual([["barcode", ["759 1234", "7591234"]]]);
+    // D35 (P8-M1): claves de alias, número y barcodes van en el cuerpo POST de las RPC de 20261019q.
+    expect(stub.rpc).toHaveBeenCalledWith(MATCH_EXACT_ALIASES_RPC, {
+      p_supplier_id: SUPPLIER_ID,
+      p_alias_keys: expect.arrayContaining(["harina pan 1kg", "malta polar 355ml"]),
+    });
+    // Número normalizado: la RPC busca su subsecuencia (tolera separadores y ceros del texto guardado).
+    expect(stub.rpc).toHaveBeenCalledWith(MATCH_PREVIOUS_SCANS_RPC, { p_number: "123", p_exclude_scan_id: null, p_limit: 200 });
+    expect(stub.rpc).toHaveBeenCalledWith(MATCH_BARCODE_PRODUCTS_RPC, { p_barcodes: ["759 1234", "7591234"] });
+    expect(queriesOf(stub.queries, "invoice_scans")).toEqual([]);
+    expect(stub.queries.some((query) => argsOf(query, "in").some(([column]) => column !== "id" && !String(column).endsWith("product_id")))).toBe(false);
 
     const lastCostQueries = queriesOf(stub.queries, "products").filter((query) =>
       String(argsOf(query, "select")[0]?.[0]).startsWith("id, purchase_items"),
@@ -367,6 +430,10 @@ describe("loadMatchContext", () => {
     expect(tables).not.toContain("supplier_product_aliases");
     expect(tables).not.toContain("invoice_scans");
     expect(tables).not.toContain("products");
+    const rpcs = stub.rpc.mock.calls.map(([name]) => name);
+    expect(rpcs).not.toContain(MATCH_EXACT_ALIASES_RPC);
+    expect(rpcs).not.toContain(MATCH_PREVIOUS_SCANS_RPC);
+    expect(rpcs).not.toContain(MATCH_BARCODE_PRODUCTS_RPC);
   });
 
   it("excludeScanId saca el escaneo actual (ya guardado) de previousScans para que no sea duplicado de sí mismo", async () => {
@@ -384,15 +451,14 @@ describe("loadMatchContext", () => {
 
     const ctx = await loadMatchContext(stub.client, STORE_ID, extraction, { excludeScanId: "scan-1" });
 
-    const [scans] = queriesOf(stub.queries, "invoice_scans");
-    expect(argsOf(scans, "neq")).toEqual([["id", "scan-1"]]);
+    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([expect.objectContaining({ p_exclude_scan_id: "scan-1" })]);
     expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-2"]);
     expect(matchInvoice(extraction, ctx).duplicateOfScanId).not.toBe("scan-1");
 
     // Sin la opción, la firma de tres argumentos no filtra por id.
     const plain = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
     await loadMatchContext(plain.client, STORE_ID, extraction);
-    expect(argsOf(queriesOf(plain.queries, "invoice_scans")[0], "neq")).toEqual([]);
+    expect(rpcParams(plain.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([expect.objectContaining({ p_exclude_scan_id: null })]);
   });
 
   it.each([
@@ -433,10 +499,9 @@ describe("loadMatchContext", () => {
 
       expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-dup"]);
       expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-dup");
-      const [scans] = queriesOf(stub.queries, "invoice_scans");
-      expect(hasEq(scans, "store_id", STORE_ID)).toBe(true);
-      expect(argsOf(scans, "neq")).toEqual([["id", "scan-self"]]);
-      expect(argsOf(scans, "limit").length).toBe(1);
+      expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([
+        { p_number: normalizeInvoiceNumber(readNumber), p_exclude_scan_id: "scan-self", p_limit: 200 },
+      ]);
     },
   );
 
@@ -636,14 +701,11 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
     ]);
     expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-f02");
 
-    const [scans] = queriesOf(stub.queries, "invoice_scans");
-    expect(hasEq(scans, "store_id", STORE_ID)).toBe(true);
-    expect(argsOf(scans, "in")).toEqual([["extracted->>total", ["1200", "1200.01", "1200.02"]]]);
-    expect(hasEq(scans, "extracted->>date", "2026-09-08")).toBe(true);
-    expect(argsOf(scans, "not")).toEqual([["status", "in", "(discarded,failed)"]]);
-    expect(argsOf(scans, "neq")).toEqual([["id", "scan-self"]]);
-    expect(argsOf(scans, "limit")).toHaveLength(1);
-    expect(String(argsOf(scans, "select")[0]?.[0])).not.toMatch(/image|storage/);
+    // Por POST (D35): totales al céntimo, fecha leída, el propio escaneo fuera y acotada.
+    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([
+      { p_totals: ["1200", "1200.01", "1200.02"], p_date: "2026-09-08", p_exclude_scan_id: "scan-self", p_limit: 50 },
+    ]);
+    expect(queriesOf(stub.queries, "invoice_scans")).toEqual([]);
   });
 
   it("número con un carácter distinto: se une a la consulta por número y lo marca", async () => {
@@ -656,7 +718,7 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
 
     const ctx = await loadMatchContext(stub.client, STORE_ID, scanned);
 
-    expect(queriesOf(stub.queries, "invoice_scans")).toHaveLength(2);
+    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toHaveLength(2);
     expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-f02"]);
     expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-f02");
   });
@@ -670,7 +732,7 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
 
     await loadMatchContext(stub.client, STORE_ID, { ...extraction, number: undefined, date: "2026-09-08" });
 
-    expect(queriesOf(stub.queries, "invoice_scans")).toHaveLength(0);
+    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toHaveLength(0);
   });
 });
 
@@ -686,8 +748,6 @@ describe("loadMatchContext · duplicado prefiere el escaneo confirmado (SCN-UI-C
 
     const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
 
-    const [scans] = queriesOf(stub.queries, "invoice_scans");
-    expect(String(argsOf(scans, "select")[0]?.[0])).toContain("purchase_id");
     expect(ctx.previousScans.map((scan) => [scan.scanId, scan.purchaseId])).toEqual([
       ["scan-abandonado", undefined],
       ["scan-confirmado", "purchase-1"],
@@ -708,8 +768,6 @@ describe("loadMatchContext · la compra anulada no es duplicado (REP3-03a, B6)",
 
     const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
 
-    const [scans] = queriesOf(stub.queries, "invoice_scans");
-    expect(String(argsOf(scans, "select")[0]?.[0])).toContain("purchase:purchases(status)");
     expect(ctx.previousScans.map((scan) => [scan.scanId, scan.purchaseStatus])).toEqual([
       ["scan-anulada", "cancelado"],
       ["scan-devuelta", "devuelto"],
