@@ -8,6 +8,7 @@ import { useInvoiceScanImages } from "@/modules/invoice-scan/client/useInvoiceSc
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { Button } from "@/shared/components/Button";
+import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
@@ -42,6 +43,7 @@ import {
   buildReviewTaxRates,
   confirmedToggleLabel,
   getChoiceChips,
+  lineNeedMessages,
 } from "./invoiceReviewView";
 
 export type InvoiceReviewPanelProps = {
@@ -67,7 +69,10 @@ export type InvoiceReviewPanelProps = {
  * repita. `need`: campo que le falta a la línea (con producto) para resolverse.
  */
 /** `needsSupplier`: sin línea pendiente y sin proveedor, Cargar está deshabilitado (REP3-03a). */
-/** `choice`: producto aceptado sin la elección explícita (D31): el foco va a esa opción de la fila. */
+/**
+ * `choice`: producto aceptado sin la elección explícita (D31). D36: el foco va a la FILA y su
+ * aviso se resalta y se anuncia; la opción solo la enfoca el usuario (Tab desde la fila).
+ */
 type FocusRequest = {
   target: number | null;
   need?: string;
@@ -79,9 +84,10 @@ type FocusRequest = {
 const NEED_FOCUS_ORDER = ["unitsPerPack", "quantity", "unitPrice"] as const;
 
 /**
- * D31 (C5-M1): tras plegar/desplegar una fila (o desviar el foco a la opción explícita) se
- * ignoran las activaciones de candidato durante este tiempo: el 2.º Enter de un rebote o el
- * 2.º clic de un doble clic caerían sobre la fila siguiente.
+ * D31 (C5-M1): tras plegar/desplegar una fila (o dejar una línea a la espera de la opción
+ * explícita) se ignoran las activaciones de candidato durante este tiempo: el 2.º Enter de un
+ * rebote o el 2.º clic de un doble clic caerían sobre la fila siguiente. D36: es una defensa
+ * adicional; lo que impide elegir por rebote es que el foco nunca va solo a un control que decide.
  */
 const ACTIVATION_GUARD_MS = 400;
 
@@ -164,6 +170,10 @@ function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
  * Teclado (6.17): `Enter` sobre una línea pendiente acepta el candidato marcado y
  * pasa el foco a la siguiente pendiente; `Tab` abre su buscador; `Esc` la deja sin
  * emparejar; las flechas marcan otro candidato. Las confirmadas no entran en el recorrido.
+ * D36: con aviso de precio/empaque, Enter solo resalta el aviso y `Tab` lleva a «Por unidad»;
+ * la opción se elige con Enter, Espacio o flecha sobre ella. Sin pendientes, el foco va al pie
+ * (contenedor) y Tab llega a Cargar: nunca se enfoca solo una opción, la casilla de diferencia,
+ * «Descartar escaneo» ni Cargar.
  */
 export function InvoiceReviewPanel({
   canCreateProduct = false,
@@ -188,6 +198,7 @@ export function InvoiceReviewPanel({
   const [confirmedOpen, setConfirmedOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [newProduct, setNewProduct] = useState<{ index: number; values: ProductFormInitialValues } | null>(null);
+  const [discardScanOpen, setDiscardScanOpen] = useState(false);
   // Al abrir la revisión el foco va a la primera pendiente: se puede resolver sin ratón.
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(() => {
     const first = nextPendingIndex(state, null);
@@ -212,6 +223,10 @@ export function InvoiceReviewPanel({
   const confirmedMismatches = sections.confirmed.filter((line) =>
     summary.totals.lineMismatches.includes(line.index),
   ).length;
+  // D36: línea a la que se llevó el foco porque le falta la opción explícita; su aviso se resalta.
+  const noticeLine =
+    focusRequest?.choice && focusRequest.target !== null ? state.lines[focusRequest.target] : undefined;
+  const choiceNotice = noticeLine && needsExplicitChoice(noticeLine) ? noticeLine : undefined;
 
   function armActivationGuard() {
     armGuard(guardUntilRef);
@@ -263,8 +278,8 @@ export function InvoiceReviewPanel({
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
     const needs = line?.productId && line.accepted ? getLineNeeds(line) : [];
     const need = NEED_FOCUS_ORDER.find((item) => needs.includes(item));
-    // D31: aceptado por cualquier vía y completo, pero falta la elección explícita: el foco va
-    // a «Por unidad / Por caja» y un rebote no la elige.
+    // D31: aceptado por cualquier vía y completo, pero falta la elección explícita. D36: el foco
+    // se queda en la fila (con el aviso resaltado); nunca va solo a «Por unidad / Por caja».
     const choice =
       !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsExplicitChoice(line);
     if (choice) {
@@ -286,38 +301,14 @@ export function InvoiceReviewPanel({
     }
     const row = focusRequest.target === null ? undefined : rowRefs.current.get(focusRequest.target);
     if (!row) {
-      // Sin pendientes (o sin la fila en el DOM: una confirmada descartada se pliega): Cargar.
-      // Si está deshabilitado (QA B7) el foco no puede quedarse en
-      // BODY: va al buscador de proveedor si falta, si no a la casilla de diferencia (lo que
-      // desbloquea Cargar) o al primer control VISIBLE del pie (QA REP3-03f: «Ver detalle del
-      // total» es display:none en sm+ y focus() no hacía nada), y como último recurso al pie.
-      const footer = footerRef.current;
-      const firstVisible = (selector: string) =>
-        Array.from(footer?.querySelectorAll<HTMLElement>(selector) ?? []).find(
-          (element) => element.getClientRects().length > 0,
-        );
-      const target =
-        footer?.querySelector<HTMLButtonElement>("[data-load-button]:not(:disabled)") ??
-        (focusRequest.needsSupplier
-          ? headerRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]')
-          : null) ??
-        firstVisible('input[type="checkbox"]:not(:disabled)') ??
-        firstVisible("input:not(:disabled), button:not(:disabled)");
-      if (target) {
-        target.focus();
-      } else if (footer) {
-        footer.tabIndex = -1;
-        footer.focus();
-      }
-      return;
-    }
-    // D31: la opción enfocable del radiogrupo (D33-a: sin marcar); sin ella, el costo a corregir.
-    const choice = focusRequest.choice
-      ? (row.querySelector<HTMLElement>('[data-choice][tabindex="0"]') ??
-        row.querySelector<HTMLElement>('[data-need="unitPrice"]'))
-      : null;
-    if (choice) {
-      focusAboveFooter(choice, footerRef.current);
+      // Sin pendientes (o sin la fila en el DOM: una confirmada descartada se pliega). El foco
+      // nunca se queda en BODY (QA B7): va al buscador de proveedor si falta y, si no, al pie
+      // como contenedor (D36: nunca a Cargar, la casilla de diferencia ni «Descartar escaneo»,
+      // donde un 2.º Enter o Espacio de rebote decidiría). Desde el pie, Tab llega a Cargar.
+      const supplier = focusRequest.needsSupplier
+        ? headerRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]')
+        : null;
+      (supplier ?? footerRef.current)?.focus();
       return;
     }
     const field = focusRequest.need
@@ -359,7 +350,8 @@ export function InvoiceReviewPanel({
         requestFocus(isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
         guardChoiceIndexRef.current = action.index;
       } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
-        // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31).
+        // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31);
+        // el foco va a la fila con el aviso resaltado (D36).
         requestFocus(action.index, next);
       } else if (action.type === "acceptCandidate" && line && !isPendingStatus(line.status)) {
         // Resuelta: el chip pulsado desaparece; el foco sigue el recorrido y nunca cae en BODY.
@@ -444,7 +436,14 @@ export function InvoiceReviewPanel({
           return;
         }
         event.preventDefault();
-        if (searchIndex === index) {
+        // D36: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
+        const option =
+          line?.accepted && needsExplicitChoice(line)
+            ? event.currentTarget.querySelector<HTMLElement>('[data-choice][tabindex="0"]')
+            : null;
+        if (option) {
+          focusAboveFooter(option, footerRef.current);
+        } else if (searchIndex === index) {
           event.currentTarget.querySelector<HTMLInputElement>('input[role="combobox"]')?.focus();
         } else {
           setSearchIndex(index);
@@ -507,6 +506,7 @@ export function InvoiceReviewPanel({
         key={line.index}
         line={line}
         mismatch={summary.totals.lineMismatches.includes(line.index)}
+        noticeHighlighted={choiceNotice?.index === line.index}
         onAcceptAndAdvance={(action) => {
           if ("index" in action && !activationGuarded()) {
             applyAndAdvance(action);
@@ -579,6 +579,13 @@ export function InvoiceReviewPanel({
       </div>
 
       <InvoiceReviewConfirmedNotice state={state} />
+
+      {/* D36: Enter sobre una fila con aviso no elige; se anuncia qué falta y cómo llegar a la opción. */}
+      <p aria-live="polite" className="sr-only" data-testid="invoice-review-announcement">
+        {choiceNotice
+          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(choiceNotice).join(" ")} Pulsa Tab para ir a las opciones.`
+          : ""}
+      </p>
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-4">
@@ -655,10 +662,25 @@ export function InvoiceReviewPanel({
       <InvoiceReviewFooter
         footerRef={footerRef}
         onAction={dispatch}
-        onDiscard={onDiscard}
+        onDiscard={() => setDiscardScanOpen(true)}
         onLoad={handleLoad}
         state={state}
         summary={summary}
+      />
+
+      {/* D36 (C7-M3): descartar tira la revisión y volver a escanear cobra otra página. */}
+      <ConfirmActionModal
+        cancelLabel="Seguir revisando"
+        confirmLabel="Descartar escaneo"
+        description="Se cierra la revisión y se pierde lo que hayas corregido. Para usar esta factura habrá que escanearla otra vez, y cuenta como un escaneo nuevo."
+        onConfirm={() => {
+          setDiscardScanOpen(false);
+          onDiscard();
+        }}
+        onOpenChange={setDiscardScanOpen}
+        open={discardScanOpen}
+        title="¿Descartar el escaneo?"
+        variant="danger"
       />
 
       <Modal onOpenChange={setViewerOpen} open={viewerOpen} title="Factura escaneada">

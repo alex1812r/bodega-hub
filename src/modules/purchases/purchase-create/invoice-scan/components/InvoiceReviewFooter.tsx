@@ -70,7 +70,15 @@ export function InvoiceReviewFooter({
     <footer
       aria-label="Resumen de la revisión"
       ref={footerRef}
-      className="sticky bottom-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 border-t border-border bg-surface-container-lowest px-4 py-2 text-sm shadow-lg sm:gap-x-3 sm:py-3 dark:border-slate-800"
+      className="sticky bottom-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 border-t border-border bg-surface-container-lowest px-4 py-2 text-sm shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:gap-x-3 sm:py-3 dark:border-slate-800"
+      // D36: contenedor neutro que recibe el foco al no quedar pendientes (Tab sigue a Cargar);
+      // Espacio sobre él no desplaza la página (como en las filas, B6-1).
+      onKeyDown={(event) => {
+        if (event.target === event.currentTarget && event.key === " ") {
+          event.preventDefault();
+        }
+      }}
+      tabIndex={-1}
     >
       <p
         className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
@@ -166,7 +174,7 @@ export function InvoiceReviewFooter({
           collapsible ?? "flex",
         )}
       >
-        <Button data-guarded-activation onClick={onDiscard} variant="ghost">
+        <Button data-guarded-activation data-testid="invoice-review-discard-scan" onClick={onDiscard} variant="ghost">
           Descartar escaneo
         </Button>
       </div>
