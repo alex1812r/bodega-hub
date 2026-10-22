@@ -15,6 +15,7 @@ import {
   isUsdDocument,
   lineAmount,
   lineEntryCosts,
+  lastUnitCostRefOf,
   lineValueIssues,
   priceCoherenceIssue,
   resolveRate,
@@ -143,6 +144,8 @@ function matchLine(
   }
 
   const costs = state.usd ? {} : lineEntryCosts(line, state.rate);
+  // D38: siempre, con o sin aviso de precio, para comparar cada opción de modo en la revisión.
+  const lastUnitCostRef = lastUnitCostRefOf(packProduct);
   const status = finalStatus(productMatch.status, issues.length > 0, state.usd || !priced);
 
   return {
@@ -156,6 +159,7 @@ function matchLine(
     ...(pack.disassembleOnReceive ? { disassembleOnReceive: true } : {}),
     taxRateCode: resolveTaxRateCode(line, product, ctx.taxRates),
     ...costs,
+    ...(lastUnitCostRef !== undefined ? { lastUnitCostRef } : {}),
     issues,
   };
 }

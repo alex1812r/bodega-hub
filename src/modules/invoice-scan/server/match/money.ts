@@ -7,6 +7,7 @@ import {
   getInvoiceTotalsGap,
   type InvoiceTaxLine,
 } from "../../invoiceTaxCheck";
+import type { MatchProduct } from "../match.types";
 
 import { formatDecimal, isPositive } from "./text";
 
@@ -234,6 +235,23 @@ export function lineEntryCosts(
     unitCostVes: roundMoney(perEntry),
     ...(rate !== undefined ? { unitCostRef: roundMoney(perEntry / rate) } : {}),
   };
+}
+
+/**
+ * D38: último costo por unidad de stock (REF) del producto, el mismo para cualquier modo de
+ * entrada: la revisión lo compara con lo que deja «Por unidad» (precio ÷ 1) y «Por empaque»
+ * (precio ÷ unidades por empaque). Un producto con receta guarda su costo por empaque, así que
+ * se reparte entre las unidades de su conversión; sin conversión conocida no hay referencia.
+ */
+export function lastUnitCostRefOf(product: MatchProduct | undefined): number | undefined {
+  const last = product?.lastUnitCostRef;
+  if (!isPositive(last)) {
+    return undefined;
+  }
+  if (!product?.hasRecipe) {
+    return last;
+  }
+  return isPositive(product.recipeUnitsPerPack) ? last / product.recipeUnitsPerPack : undefined;
 }
 
 /**
