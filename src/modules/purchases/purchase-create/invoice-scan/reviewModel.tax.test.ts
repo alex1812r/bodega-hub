@@ -7,6 +7,7 @@ import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
 import { makeReviewResponse, REVIEW_TAX_RATES, type ReviewFixtureLine } from "./reviewFixtures";
 import {
   createInvoiceReviewState,
+  getInvoiceReviewBlockers,
   getInvoiceTaxAssessment,
   getInvoiceReviewTotals,
   getTaxInclusion,
@@ -172,11 +173,78 @@ const cases: Case[] = [
     read: 23.31,
   },
   {
-    name: "sin ningún total leído (solo IVA): sin referencia, sin casilla",
+    name: "C4-M1 B02: solo subtotal 1000 y línea 1160: la base incluida cuadra el subtotal, se sugiere incluido",
+    lines: [line(1, 1160)],
+    totals: { subtotal: 1000 },
+    suggested: true,
+    registered: 1160,
+    read: 1000,
+  },
+  {
+    name: "C4-M1 B03: solo subtotal 1000 y línea 1000 sin IVA: cuadra la base",
+    lines: [line(1, 1000)],
+    totals: { subtotal: 1000 },
+    suggested: false,
+    registered: 1160,
+    read: 1000,
+  },
+  {
+    name: "C4-M1 u7: solo subtotal 90 y línea 1 × 104,40 al 16 %: incluido cuadra la base 90",
+    lines: [line(1, 104.4)],
+    totals: { subtotal: 90 },
+    suggested: true,
+    registered: 104.4,
+    read: 90,
+  },
+  {
+    name: "C4-M1: solo subtotal que no cuadra con ninguna hipótesis: casilla frente a la base",
+    lines: [line(1, 1300)],
+    totals: { subtotal: 1000 },
+    suggested: false,
+    registered: 1508,
+    read: 1000,
+    difference: -300,
+  },
+  {
+    name: "C4-M1 B04: solo IVA 160 y línea 1160: el IVA incluido cuadra el leído, se sugiere incluido",
     lines: [line(1, 1160)],
     totals: { tax: 160 },
+    suggested: true,
+    registered: 1160,
+    read: 160,
+  },
+  {
+    name: "C4-M1 B05: solo IVA 160 y línea 1000 sin IVA: cuadra el IVA",
+    lines: [line(1, 1000)],
+    totals: { tax: 160 },
     suggested: false,
-    registered: 1345.6,
+    registered: 1160,
+    read: 160,
+  },
+  {
+    name: "C4-M1 u8: solo IVA 14,4 y línea 1 × 104,40 al 16 %: incluido cuadra el IVA 14,40",
+    lines: [line(1, 104.4)],
+    totals: { tax: 14.4 },
+    suggested: true,
+    registered: 104.4,
+    read: 14.4,
+  },
+  {
+    name: "C4-M1 B09e: solo IVA 0,00 con productos de categoría 16 %: nunca incluido (D28), casilla frente al IVA",
+    lines: [line(2, 100), line(1, 300)],
+    totals: { tax: 0 },
+    suggested: false,
+    registered: 580,
+    read: 0,
+    difference: -80,
+  },
+  {
+    name: "C4-M1: solo IVA 0,00 con líneas exentas: cuadra",
+    lines: [line(2, 100, "exento"), line(1, 300, "exento")],
+    totals: { tax: 0 },
+    suggested: false,
+    registered: 500,
+    read: 0,
   },
   {
     name: "sin nada leído: sin referencia, sin casilla",
@@ -228,6 +296,46 @@ describe("REP3-01 · la casilla aparece con cualquier total de referencia que no
       "subtotalPlusTax",
     );
     expect(getInvoiceReviewTotals(review([line(1, 116)], { total: 116 })).readSource).toBe("total");
-    expect(getInvoiceReviewTotals(review([line(1, 116)], { tax: 16 })).readSource).toBeUndefined();
+    expect(getInvoiceReviewTotals(review([line(1, 116)], { tax: 16 })).readSource).toBe("tax");
+    expect(getInvoiceReviewTotals(review([line(1, 116)], { subtotal: 100 })).readSource).toBe("subtotal");
+    expect(getInvoiceReviewTotals(review([line(1, 116)], {})).readSource).toBeUndefined();
+  });
+
+  it("C4-M1 u7: solo subtotal y forzando «sin IVA», la base 104,40 frente al subtotal 90 exige confirmar", () => {
+    let state = review([line(1, 104.4)], { subtotal: 90 });
+    state = reviewReducer(state, { type: "setPricesIncludeTax", included: false });
+
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ base: 104.4, registered: 121.1, read: 90, mismatch: true });
+    expect(getTotalsDifference(state)).toBe(-14.4);
+    expect(needsDifferenceConfirmation(state)).toBe(true);
+    expect(getInvoiceReviewBlockers(state)).toContain(
+      "La base a registrar no cuadra con el subtotal leído: corrige las líneas o confirma la diferencia.",
+    );
+
+    state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
+    expect(needsDifferenceConfirmation(state)).toBe(false);
+  });
+
+  it("C4-M1 u8: solo IVA y forzando «sin IVA», el IVA 16,70 frente al leído 14,40 exige confirmar", () => {
+    let state = review([line(1, 104.4)], { tax: 14.4 });
+    state = reviewReducer(state, { type: "setPricesIncludeTax", included: false });
+
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ tax: 16.7, registered: 121.1, read: 14.4, mismatch: true });
+    expect(getTotalsDifference(state)).toBe(-2.3);
+    expect(needsDifferenceConfirmation(state)).toBe(true);
+    expect(getInvoiceReviewBlockers(state)).toContain(
+      "El IVA a registrar no cuadra con el IVA leído: corrige las líneas o confirma la diferencia.",
+    );
+  });
+
+  it("C4-M1 B18d: factura en dólares con solo subtotal 10 y línea 11,60: se sugiere incluido y registra 11,60", () => {
+    const state = createInvoiceReviewState(
+      makeReviewResponse({ lines: [line(1, 11.6)], extraction: { currency: "USD", subtotal: 10 } }),
+      ctx,
+    );
+
+    expect(getTaxInclusion(state)).toEqual({ suggested: true, included: true });
+    expect(getInvoiceReviewTotals(state)).toMatchObject({ base: 10, registered: 11.6, read: 10, mismatch: false });
+    expect(needsDifferenceConfirmation(state)).toBe(false);
   });
 });

@@ -169,7 +169,7 @@ export type DisplayedTotals = {
   read?: number;
   /** Total que se va a registrar (base + IVA de las alícuotas elegidas). */
   registered: number;
-  /** Leído − a registrar; solo con descuadre y total leído. */
+  /** Cifra leída − su homóloga a registrar (total, base o IVA, D29); solo con descuadre. */
   difference?: number;
   ok: boolean;
 };
@@ -179,12 +179,12 @@ export type DisplayedTotals = {
  * registrar, nunca "el calculado más cercano". El descuadre lo decide el modelo.
  */
 export function getDisplayedTotals(totals: InvoiceReviewTotals): DisplayedTotals {
-  const { read, registered, mismatch } = totals;
+  const { read, registered, mismatch, difference } = totals;
   return {
     ...(read !== undefined ? { read } : {}),
     registered,
     ok: !mismatch,
-    ...(mismatch && read !== undefined ? { difference: roundMoney(read - registered) } : {}),
+    ...(difference !== undefined ? { difference } : {}),
   };
 }
 

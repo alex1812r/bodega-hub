@@ -137,7 +137,12 @@ export function InvoiceReviewLineRow({
 
       {line.discarded ? (
         <div>
-          <Button onClick={() => onAction({ type: "restoreLine", index })} size="sm" variant="outline">
+          <Button
+            data-row-action="restore"
+            onClick={() => onAction({ type: "restoreLine", index })}
+            size="sm"
+            variant="outline"
+          >
             <RotateCcw aria-hidden className="size-4" />
             Restaurar
           </Button>
@@ -204,7 +209,12 @@ export function InvoiceReviewLineRow({
               </Button>
             ) : null}
             {pending ? (
-              <Button onClick={() => onAction({ type: "discardLine", index })} size="sm" variant="ghost">
+              <Button
+                data-row-action="discard"
+                onClick={() => onAction({ type: "discardLine", index })}
+                size="sm"
+                variant="ghost"
+              >
                 <Trash2 aria-hidden className="size-4" />
                 Descartar línea
               </Button>

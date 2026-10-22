@@ -487,10 +487,63 @@ describe("InvoiceReviewPanel", () => {
     expect(loadButton()).toBeDisabled();
   });
 
-  it("REP3-01: sin ningún total leído no hay casilla, se informa que no hay con qué comparar", () => {
-    renderPanel(makeReviewResponse({ lines: [{}], extraction: { tax: 32 } }));
+  it("REP4-01 (C4-M1 u7): solo subtotal leído, el IVA incluido cuadra la base; revertirlo pide confirmar", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 104.4, lineTotal: 104.4 } }],
+        extraction: { subtotal: 90 },
+      }),
+    );
 
-    expect(screen.getByTestId("invoice-review-no-reference")).toHaveTextContent("Sin total leído para comparar");
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "quitándoselo, las líneas dan el subtotal leído (Bs. 90,00)",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
+      /Total a registrar Bs\. 104,40\s*·\s*Base a registrar Bs\. 90,00 · Subtotal leído Bs\. 90,00/,
+    );
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(screen.getByTestId("invoice-review-difference")).toHaveTextContent("Diferencia Bs. -14,40");
+    const confirm = screen.getByRole("checkbox", {
+      name: "Cargar con una diferencia de Bs. -14,40 frente al subtotal leído (base sin IVA)",
+    });
+    expect(loadButton()).toBeDisabled();
+    await user.click(confirm);
+    expect(loadButton()).toBeEnabled();
+  });
+
+  it("REP4-01 (C4-M1 u8): solo IVA leído, el IVA incluido cuadra el leído; revertirlo pide confirmar", async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      makeReviewResponse({
+        lines: [{ read: { quantity: 1, unitPrice: 104.4, lineTotal: 104.4 } }],
+        extraction: { tax: 14.4 },
+      }),
+    );
+
+    expect(screen.getByTestId("invoice-review-tax-notice")).toHaveTextContent(
+      "el IVA que llevan dentro las líneas da el IVA leído (Bs. 14,40)",
+    );
+    expect(screen.getByTestId("invoice-review-totals")).toHaveTextContent(
+      /Total a registrar Bs\. 104,40\s*·\s*IVA a registrar Bs\. 14,40 · IVA leído Bs\. 14,40/,
+    );
+    expect(loadButton()).toBeEnabled();
+
+    await user.click(screen.getByRole("radio", { name: "Los precios no incluyen IVA" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Cargar con una diferencia de Bs. -2,30 frente al IVA leído" }),
+    ).not.toBeChecked();
+    expect(loadButton()).toBeDisabled();
+  });
+
+  it("REP3-01: sin ninguna cifra leída no hay casilla, se informa que no hay con qué comparar", () => {
+    renderPanel(makeReviewResponse({ lines: [{}], extraction: {} }));
+
+    expect(screen.getByTestId("invoice-review-no-reference")).toHaveTextContent(
+      "Sin total, subtotal ni IVA leídos para comparar",
+    );
     expect(screen.queryByTestId("invoice-review-confirm-difference")).not.toBeInTheDocument();
     expect(loadButton()).toBeEnabled();
   });
@@ -736,6 +789,186 @@ describe("InvoiceReviewPanel", () => {
       renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
 
       expect(duplicateNotice()).toHaveTextContent("Esta factura (mismo proveedor y número igual o casi igual) ya se escaneó antes");
+    });
+  });
+
+  describe("REP4-02c (B8, D29): tras «Descartar línea» o «Restaurar» el foco no se pierde", () => {
+    const discardButton = (index: number) => within(row(index)).getByRole("button", { name: "Descartar línea" });
+    const restoreButton = (index: number) => within(row(index)).getByRole("button", { name: "Restaurar" });
+    type Activate = (user: ReturnType<typeof userEvent.setup>, button: HTMLElement) => Promise<void>;
+    const activations: [string, Activate][] = [
+      ["clic", (user, button) => user.click(button)],
+      [
+        "Enter",
+        async (user, button) => {
+          button.focus();
+          await user.keyboard("{Enter}");
+        },
+      ],
+      [
+        "Espacio",
+        async (user, button) => {
+          button.focus();
+          await user.keyboard(" ");
+        },
+      ],
+    ];
+
+    it.each(activations)("con otra pendiente (%s): Descartar lleva el foco a la siguiente pendiente", async (_, activate) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }));
+      await waitFor(() => expect(row(0)).toHaveFocus());
+
+      await activate(user, discardButton(0));
+
+      expect(row(0)).toHaveAttribute("data-status", "discarded");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it.each(activations)("sin más pendientes (%s): Descartar lleva el foco a «Restaurar» de esa línea", async (_, activate) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [{}, unmatchedLine(2, false)] }));
+
+      await activate(user, discardButton(1));
+
+      expect(row(1)).toHaveAttribute("data-status", "discarded");
+      await waitFor(() => expect(restoreButton(1)).toHaveFocus());
+    });
+
+    it.each(activations)("Restaurar (%s) lleva el foco a «Descartar línea» de esa misma línea", async (_, activate) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }));
+      await user.click(discardButton(0));
+      await user.click(discardButton(1));
+      await waitFor(() => expect(restoreButton(1)).toHaveFocus());
+
+      await activate(user, restoreButton(0));
+
+      expect(row(0)).toHaveAttribute("data-status", "pending_unmatched");
+      await waitFor(() => expect(discardButton(0)).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("una confirmada que se descarta con la lista plegada: el foco va a Cargar, no a BODY", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [{}, {}] }));
+      await user.click(screen.getByRole("button", { name: "2 líneas confirmadas · ver" }));
+      await user.clear(within(row(0)).getByLabelText("Cantidad"));
+      expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+      await user.click(screen.getByRole("button", { name: "1 línea confirmada · ocultar" }));
+
+      await user.click(discardButton(0));
+
+      expect(document.querySelector('[data-line-index="0"]')).toBeNull();
+
+      await waitFor(() => expect(loadButton()).toHaveFocus());
+    });
+
+    describe("REP4-02c-F1: el control que recibe el foco queda por encima del pie fijo", () => {
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      const originalScrollBy = window.scrollBy;
+      const originalInnerHeight = window.innerHeight;
+      const scrollIntoView = jest.fn();
+      const scrollBy = jest.fn();
+      let rect: jest.SpyInstance;
+      // Viewport de 800 px y pie de 120 px; `footerBottomGap` = distancia del pie al borde
+      // inferior del viewport (padding-bottom de `main`); `elementBottom` = borde inferior del
+      // control enfocado tras scrollIntoView.
+      let footerBottomGap = 0;
+      let elementBottom = 0;
+
+      beforeEach(() => {
+        footerBottomGap = 0;
+        elementBottom = 0;
+        scrollIntoView.mockReset();
+        scrollBy.mockReset();
+        Element.prototype.scrollIntoView = scrollIntoView;
+        window.scrollBy = scrollBy as unknown as typeof window.scrollBy;
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+        rect = jest
+          .spyOn(Element.prototype, "getBoundingClientRect")
+          .mockImplementation(function (this: Element) {
+            if (this.tagName === "FOOTER") {
+              const top = 800 - footerBottomGap - 120;
+              return { top, bottom: top + 120, height: 120 } as DOMRect;
+            }
+            return { top: elementBottom - 36, bottom: elementBottom } as DOMRect;
+          });
+      });
+
+      afterEach(() => {
+        Element.prototype.scrollIntoView = originalScrollIntoView;
+        window.scrollBy = originalScrollBy;
+        Object.defineProperty(window, "innerHeight", {
+          configurable: true,
+          value: originalInnerHeight,
+        });
+        rect.mockRestore();
+      });
+
+      const lastScrolled = () => scrollIntoView.mock.contexts.at(-1) as HTMLElement | undefined;
+
+      it("Restaurar con teclado y el buscador abierto: «Descartar línea» se desplaza fuera del pie", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), unmatchedLine(2, false)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        await user.keyboard("{Tab}");
+        await user.click(discardButton(1));
+        await user.click(discardButton(0));
+        await waitFor(() => expect(restoreButton(0)).toHaveFocus());
+        scrollIntoView.mockClear();
+
+        await user.keyboard(" ");
+
+        await waitFor(() => expect(discardButton(0)).toHaveFocus());
+        expect(lastScrolled()).toBe(discardButton(0));
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+        // innerHeight 800 − top del pie 680 + 8.
+        expect(discardButton(0).style.scrollMarginBottom).toBe("128px");
+        expect(scrollBy).not.toHaveBeenCalled();
+      });
+
+      it("Enter en la fila (recorrido): la siguiente pendiente se desplaza fuera del pie", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [doubtfulLine(1), doubtfulLine(2)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        scrollIntoView.mockClear();
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        expect(lastScrolled()).toBe(row(1));
+        expect(row(1).style.scrollMarginBottom).toBe("128px");
+      });
+
+      it("pie 24 px por encima del borde del viewport: el margen cubre también ese hueco", async () => {
+        footerBottomGap = 24;
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [doubtfulLine(1), doubtfulLine(2)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        // innerHeight 800 − top del pie 656 + 8 (offsetHeight + 8 daría 128 y lo taparía 16 px).
+        expect(row(1).style.scrollMarginBottom).toBe("152px");
+      });
+
+      it("si tras scrollIntoView el control sigue bajo el pie, desplaza la ventana la diferencia", async () => {
+        footerBottomGap = 24;
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [doubtfulLine(1), doubtfulLine(2)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        scrollBy.mockClear();
+        elementBottom = 759;
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        // 759 − (656 − 8) = 111.
+        expect(scrollBy).toHaveBeenLastCalledWith(0, 111);
+      });
     });
   });
 

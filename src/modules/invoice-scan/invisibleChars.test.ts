@@ -1,4 +1,5 @@
 import { hasInvisibleChar, replaceInvisibleChars } from "./invisibleChars";
+import { sanitizeFewShotText } from "./server/fewShot";
 
 /** Un carácter por extremo de cada rango vetado (REP2-03b, REP3-03b caos N8 / auditoría B16). */
 const INVISIBLES: [string, string][] = [
@@ -66,5 +67,64 @@ describe("invisibleChars · lista única de invisibles", () => {
   ])("deja pasar %s", (_name, text) => {
     expect(hasInvisibleChar(text)).toBe(false);
     expect(replaceInvisibleChars(text)).toBe(text);
+  });
+});
+
+/** REP4-02a (caos p4 N8r / auditoría p5 B16): residuo que la lista dejaba pasar. */
+const RESIDUE = [
+  0x180b, 0x180c, 0x180d, 0x180f, 0x1bca0, 0x1bca1, 0x1bca2, 0x1bca3, 0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605,
+  0x06dd, 0x070f, 0x0890, 0x0891, 0x08e2, 0x110bd, 0x110cd, 0x13430, 0x13438, 0x1343f,
+];
+
+const hex = (cp: number) => `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+
+describe("invisibleChars · veto por propiedades Unicode (REP4-02a)", () => {
+  it.each(RESIDUE.map((cp): [string, number] => [hex(cp), cp]))("veta %s del residuo y lo quita", (_name, cp) => {
+    const text = `HARINA${String.fromCodePoint(cp)}PAN`;
+
+    expect(hasInvisibleChar(text)).toBe(true);
+    expect(replaceInvisibleChars(text)).toBe("HARINAPAN");
+  });
+
+  it("veta todo Cf ∪ Default_Ignorable asignado; fuera de un emoji no hay excepción", () => {
+    const passing: string[] = [];
+    const surviving: string[] = [];
+    let total = 0;
+
+    for (let cp = 0; cp <= 0x10ffff; cp += 1) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const char = String.fromCodePoint(cp);
+
+      if (!/\p{Assigned}/u.test(char) || !/[\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(char)) continue;
+      total += 1;
+      const text = `HARINA${char}PAN`;
+
+      if (!hasInvisibleChar(text)) passing.push(hex(cp));
+      if (hasInvisibleChar(replaceInvisibleChars(text)) || hasInvisibleChar(sanitizeFewShotText(text))) {
+        surviving.push(hex(cp));
+      }
+    }
+
+    expect(total).toBeGreaterThan(400);
+    expect(passing).toEqual([]);
+    expect(surviving).toEqual([]);
+  });
+
+  it("veto y saneo coinciden en todo Unicode asignado: lo que no se veta, el saneo no lo toca", () => {
+    const mismatched: string[] = [];
+
+    for (let cp = 0x20; cp <= 0x10ffff; cp += 1) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const char = String.fromCodePoint(cp);
+
+      if (!/\p{Assigned}/u.test(char)) continue;
+      const text = `A${char}B`;
+      const vetoed = hasInvisibleChar(text);
+      const changed = replaceInvisibleChars(text) !== text;
+
+      if (vetoed !== changed) mismatched.push(hex(cp));
+    }
+
+    expect(mismatched).toEqual([]);
   });
 });

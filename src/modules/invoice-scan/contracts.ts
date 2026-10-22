@@ -66,13 +66,17 @@ export function hasForbiddenInvoiceChar(value: string): boolean {
   return false;
 }
 
+/** REP4-02a (caos N9r / D29): ISO `AAAA-MM-DD` estricto, dígitos ASCII (`[0-9]`, no `\d` de otros sistemas). */
+const ISO_DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
+/** DD/MM/AAAA o DD-MM-AAAA (día y mes de 1 o 2 dígitos, mismo separador), como se imprime en Venezuela. */
+const DAY_FIRST_DATE = /^([0-9]{1,2})([/-])([0-9]{1,2})\2([0-9]{4})$/;
+
 /**
- * REP3-03b (caos N9): AAAA-MM-DD, AAAA/MM/DD o AAAA.MM.DD (mes y día de 1 o 2
- * dígitos, mismo separador).
+ * Rango razonable del año de una factura: fuera de 2000–2100 (9999-12-31,
+ * 0000-01-01, 1899) es una mala lectura o un error de tecleo, no una compra real.
  */
-const YEAR_FIRST_DATE = /^(\d{4})([/.-])(\d{1,2})\2(\d{1,2})$/;
-/** DD/MM/AAAA, DD-MM-AAAA o DD.MM.AAAA (día y mes de 1 o 2 dígitos), como se imprime en Venezuela. */
-const DAY_FIRST_DATE = /^(\d{1,2})([/.-])(\d{1,2})\2(\d{4})$/;
+export const INVOICE_DATE_MIN_YEAR = 2000;
+export const INVOICE_DATE_MAX_YEAR = 2100;
 
 function existsOnCalendar(year: number, month: number, day: number): boolean {
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -80,23 +84,40 @@ function existsOnCalendar(year: number, month: number, day: number): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-/**
- * REP-05 (caos B8) / REP2-03b (caos N3) / REP3-03b (caos N9): una fecha
- * `YYYY-MM-DD`, `DD/MM/YYYY` (o con `-`/`.` en cualquiera de los dos órdenes)
- * que no existe en el calendario (2026-02-31, 31/02/2026, 31.04.2026,
- * 2026/02/31). Otros formatos no se juzgan.
- */
-export function isImpossibleInvoiceDate(value: string): boolean {
-  const trimmed = value.trim();
-  const yearFirst = YEAR_FIRST_DATE.exec(trimmed);
+export type InvoiceDateIssue = "format" | "range" | "calendar";
 
-  if (yearFirst) {
-    return !existsOnCalendar(Number(yearFirst[1]), Number(yearFirst[3]), Number(yearFirst[4]));
+/**
+ * REP4-02a (caos N9r / D29): qué le falta a una fecha de factura para valer.
+ * Solo `AAAA-MM-DD` o `DD/MM/AAAA` / `DD-MM-AAAA` con año de 4 dígitos ASCII
+ * (se ignoran los espacios de los extremos); año entre 2000 y 2100 y día real
+ * de calendario (31/04 no, 29/02 solo en bisiesto). `undefined` si vale.
+ */
+export function getInvoiceDateIssue(value: string): InvoiceDateIssue | undefined {
+  const trimmed = value.trim();
+  const iso = ISO_DATE.exec(trimmed);
+  const dayFirst = DAY_FIRST_DATE.exec(trimmed);
+  const parts = iso ? [iso[1], iso[2], iso[3]] : dayFirst ? [dayFirst[4], dayFirst[3], dayFirst[1]] : undefined;
+
+  if (!parts) {
+    return "format";
   }
 
-  const dayFirst = DAY_FIRST_DATE.exec(trimmed);
+  const [year, month, day] = parts.map(Number) as [number, number, number];
 
-  return dayFirst !== null && !existsOnCalendar(Number(dayFirst[4]), Number(dayFirst[3]), Number(dayFirst[1]));
+  if (year < INVOICE_DATE_MIN_YEAR || year > INVOICE_DATE_MAX_YEAR) {
+    return "range";
+  }
+
+  return existsOnCalendar(year, month, day) ? undefined : "calendar";
+}
+
+/**
+ * REP-05 (caos B8) / REP2-03b (caos N3) / REP3-03b (caos N9) / REP4-02a (caos
+ * N9r): la fecha no vale (`getInvoiceDateIssue`): formato no admitido, año fuera
+ * de rango o día que no existe en el calendario.
+ */
+export function isImpossibleInvoiceDate(value: string): boolean {
+  return getInvoiceDateIssue(value) !== undefined;
 }
 
 /** REP-05 (auditoría B10): tope de líneas de una factura (lectura y corrección). */
@@ -124,6 +145,15 @@ export const INVOICE_CONFIRMED_TOO_LARGE_MESSAGE =
   "La confirmación de la factura es demasiado grande. Vincula menos líneas, acorta las etiquetas de empaque o divide la compra.";
 export const INVOICE_IMPOSSIBLE_DATE_MESSAGE =
   "La fecha de la factura no existe. Corrígela (AAAA-MM-DD) o déjala vacía.";
+export const INVOICE_DATE_FORMAT_MESSAGE =
+  "La fecha de la factura no tiene un formato válido. Escríbela como AAAA-MM-DD o DD/MM/AAAA, o déjala vacía.";
+export const INVOICE_DATE_OUT_OF_RANGE_MESSAGE = `La fecha de la factura debe ser de un año entre ${INVOICE_DATE_MIN_YEAR} y ${INVOICE_DATE_MAX_YEAR}. Corrígela o déjala vacía.`;
+
+const INVOICE_DATE_MESSAGES: Record<InvoiceDateIssue, string> = {
+  format: INVOICE_DATE_FORMAT_MESSAGE,
+  range: INVOICE_DATE_OUT_OF_RANGE_MESSAGE,
+  calendar: INVOICE_IMPOSSIBLE_DATE_MESSAGE,
+};
 
 /**
  * Texto de la factura que acaba en `jsonb`. Solo refinamientos (sin `max`/`regex`):
@@ -272,8 +302,10 @@ export const correctedInvoiceExtractionSchema = invoiceExtractionSchema.superRef
     }
   }
 
-  if (extraction.date !== undefined && isImpossibleInvoiceDate(extraction.date)) {
-    context.addIssue({ code: "custom", message: INVOICE_IMPOSSIBLE_DATE_MESSAGE, path: ["date"] });
+  const dateIssue = extraction.date === undefined ? undefined : getInvoiceDateIssue(extraction.date);
+
+  if (dateIssue) {
+    context.addIssue({ code: "custom", message: INVOICE_DATE_MESSAGES[dateIssue], path: ["date"] });
   }
 
   if (isInvoiceExtractionTooLarge(extraction)) {

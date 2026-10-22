@@ -884,3 +884,15 @@ notify pgrst, 'reload schema';
 -- denied_permissions recibe PT403 en el claim. 'devuelto' sigue bloqueando. No toca stock ni dinero.
 -- OJO: reaplicar 20261019b o 20261019k (o la cadena 19a -> 19g -> 19i -> 19k) devuelve las versiones anteriores: volver
 -- a aplicar este parche despues y correr verify-patches.sql (filas "(20261019m").
+-- -----------------------------------------------------------------------------
+-- 20261019o — escaneo de factura: release con la denegacion de purchases.create y clave del reclamo fuera de PostgREST
+--             (REP4-02b; auditoria p5 B19, resto de B17-ext): release_invoice_scan_claim y SELECT de invoice_scans
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261019o-invoice-scan-release-deny.sql
+-- Requiere 20261019a, 20261019b y 20261019m (va despues de 19m). Idempotente, una transaccion. release_invoice_scan_claim
+-- con la misma firma, retorno y grants: almacen con purchases.create en denied_permissions recibe PT403, como en el
+-- claim (el admin ignora la denegacion). invoice_scans: authenticated pierde el SELECT de tabla y recibe SELECT por
+-- columna de todas menos claim_request_id (anon sigue sin nada; RLS sin cambios). PostgREST con el JWT del usuario:
+-- select=* o select=claim_request_id dan 42501; el BFF nombra columnas y no la lee. No toca stock ni dinero.
+-- OJO: reaplicar 20261019b o 20261019m (release sin la denegacion) o 20261019a / 20261019g (SELECT de tabla de nuevo)
+-- deshace este parche: volver a aplicarlo despues y correr verify-patches.sql (filas "(20261019o").
