@@ -10,7 +10,9 @@ import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
+  getEntryModeOutcome,
   getLineCosts,
+  getLineIssues,
   getLineNeeds,
   getUnitConversion,
   linePackWord,
@@ -177,10 +179,43 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
  * palabra del empaque de la línea, la misma de la opción «Por <empaque>». El texto guardado
  * no cambia (`isExplicitChoiceIssue` lo sigue reconociendo).
  */
-export function lineIssueText(line: InvoiceReviewLine, issue: string): string {
+function lineIssueText(line: InvoiceReviewLine, issue: string): string {
   return issue.startsWith(PRICE_CHOICE_QUESTION)
     ? `¿Precio por ${linePackWord(line)} o por unidad?${issue.slice(PRICE_CHOICE_QUESTION.length)}`
     : issue;
+}
+
+/**
+ * REP7-06 (QA Obs-2): el aviso de precio del servidor se calculó con lo leído (0,50 caja a
+ * 46,08 REF/u). Elegida la opción o corregida la línea (`choiceMade`: «Cargar como N unidades»,
+ * unidades por empaque, cantidad…), se recalcula con lo que deja ahora, con la regla de las
+ * opciones (B-p7-3), y se retira si ya no se aparta del último costo. Sin tasa ni último costo
+ * se muestra el del servidor.
+ */
+function currentIssueText(state: InvoiceReviewState, line: InvoiceReviewLine, issue: string): string | undefined {
+  const outcome =
+    line.choiceMade && issue.startsWith(PRICE_CHOICE_QUESTION)
+      ? getEntryModeOutcome(state, line, line.entryMode)
+      : undefined;
+  const cost = outcome?.unitCost;
+  if (!outcome || cost?.currency !== "REF" || outcome.lastUnitCostRef === undefined) {
+    return lineIssueText(line, issue);
+  }
+  if (!outcome.deviates) {
+    return undefined;
+  }
+  return `¿Precio por ${linePackWord(line)} o por unidad? Sale a ${formatRefAmount(cost.amount)} REF por unidad y el último costo fue ${formatRefAmount(outcome.lastUnitCostRef)} REF.`;
+}
+
+/** Avisos que muestra la fila: `key` es el texto del servidor; `text`, el que aplica ahora. */
+export function getDisplayedLineIssues(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+): { key: string; text: string }[] {
+  return getLineIssues(line).flatMap((issue) => {
+    const text = currentIssueText(state, line, issue);
+    return text === undefined ? [] : [{ key: issue, text }];
+  });
 }
 
 function formatCount(value: number): string {

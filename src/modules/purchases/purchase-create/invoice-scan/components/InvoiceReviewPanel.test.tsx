@@ -76,6 +76,25 @@ jest.mock("../../components/PurchaseNewProductModal", () => ({
 
 const CONTEXT: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES };
 
+/**
+ * REP7-06 (C5-M1, D31/D33): todo cambio de foco programático arma la guarda de 400 ms; la
+ * pulsación deliberada sobre el nuevo destino (la fila siguiente, Cargar) llega después. Los
+ * tests que encadenan acciones avanzan este reloj entre ellas, como un usuario real.
+ */
+let clockSpy: jest.SpyInstance | undefined;
+function manualClock() {
+  let now = 1_000_000;
+  clockSpy = jest.spyOn(Date, "now").mockImplementation(() => now);
+  return (ms = 1000) => {
+    now += ms;
+  };
+}
+
+afterEach(() => {
+  clockSpy?.mockRestore();
+  clockSpy = undefined;
+});
+
 function renderPanel(response: InvoiceScanResponse, overrides: Partial<InvoiceReviewPanelProps> = {}) {
   const props: InvoiceReviewPanelProps = {
     context: CONTEXT,
@@ -166,6 +185,7 @@ describe("InvoiceReviewPanel", () => {
 
   it("un candidato de 0,99 no se acepta solo: Cargar sigue deshabilitado hasta el clic", async () => {
     const user = userEvent.setup();
+    const advance = manualClock();
     const props = renderPanel(makeReviewResponse({ lines: [{}, doubtfulLine(2, 0.99)] }));
 
     expect(within(row(1)).getByText("Dudosa")).toBeInTheDocument();
@@ -176,6 +196,7 @@ describe("InvoiceReviewPanel", () => {
 
     expect(within(row(1)).getByText("Resuelta")).toBeInTheDocument();
     expect(loadButton()).toBeEnabled();
+    advance();
     await user.click(loadButton());
 
     const draft = (props.onLoad as jest.Mock).mock.calls[0][0] as InvoiceReviewDraft;
@@ -190,17 +211,20 @@ describe("InvoiceReviewPanel", () => {
       ...Array.from({ length: 15 }, () => ({})),
       ...Array.from({ length: 5 }, (_, position) => doubtfulLine(16 + position)),
     ];
+    const advance = manualClock();
     const props = renderPanel(makeReviewResponse({ lines }));
 
     const visited: string[] = [];
     for (let step = 0; step < 5; step += 1) {
       await waitFor(() => expect(document.activeElement?.getAttribute("data-status")).toBe("pending_doubtful"));
       visited.push(document.activeElement?.getAttribute("data-line-index") ?? "");
+      advance();
       await user.keyboard("{Enter}");
     }
 
     expect(visited).toEqual(["15", "16", "17", "18", "19"]);
     await waitFor(() => expect(reviewFooter()).toHaveFocus());
+    advance();
     await user.keyboard("{Tab}");
     expect(loadButton()).toHaveFocus();
     await user.keyboard("{Enter}");
@@ -353,6 +377,7 @@ describe("InvoiceReviewPanel", () => {
 
   it("factura en dólares: hay que aceptarla explícitamente", async () => {
     const user = userEvent.setup();
+    const advance = manualClock();
     const props = renderPanel(makeReviewResponse({ lines: [{}], extraction: { currency: "USD" } }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("La factura parece estar en dólares");
@@ -368,6 +393,8 @@ describe("InvoiceReviewPanel", () => {
     expect(screen.getByText(/Factura en dólares aceptada/)).toBeInTheDocument();
     expect(loadButton()).toBeEnabled();
 
+    // Aceptar los dólares lleva el foco al pie: Cargar exige una pulsación nueva (D31/D33).
+    advance();
     await user.click(loadButton());
     const draft = (props.onLoad as jest.Mock).mock.calls[0][0] as InvoiceReviewDraft;
     expect(draft.costCurrency).toBe("ref");
@@ -653,6 +680,7 @@ describe("InvoiceReviewPanel", () => {
 
   it("SCN-08-F1 (6.17): la siguiente dudosa con empaque recibe el foco en la fila; Enter acepta, luego unidades y Enter salta", async () => {
     const user = userEvent.setup();
+    const advance = manualClock();
     const props = renderPanel(
       makeReviewResponse({
         lines: [
@@ -668,6 +696,7 @@ describe("InvoiceReviewPanel", () => {
 
     // Antes de aceptar el producto el foco va a la fila, no al campo de unidades.
     await waitFor(() => expect(row(1)).toHaveFocus());
+    advance();
     await user.keyboard("{Enter}");
 
     const units = within(row(1)).getByLabelText("Unidades por caja");
@@ -678,8 +707,10 @@ describe("InvoiceReviewPanel", () => {
 
     expect(row(1)).toHaveAttribute("data-status", "resolved");
     await waitFor(() => expect(row(2)).toHaveFocus());
+    advance();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(reviewFooter()).toHaveFocus());
+    advance();
     await user.keyboard("{Tab}");
     expect(loadButton()).toHaveFocus();
     await user.keyboard("{Enter}");

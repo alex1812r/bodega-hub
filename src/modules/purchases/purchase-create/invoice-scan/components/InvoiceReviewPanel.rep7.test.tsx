@@ -293,6 +293,7 @@ describe("REP7-03 · 6.17 solo con teclado sigue posible", () => {
     }
 
     await waitFor(() => expect(footer()).toHaveFocus());
+    now += 1000;
     await user.keyboard("{Tab}");
     expect(loadButton()).toHaveFocus();
     await user.keyboard("{Enter}");
