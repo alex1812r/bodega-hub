@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
-import type { KeyboardEvent, Ref } from "react";
+import { type KeyboardEvent, type Ref, useId } from "react";
 
 import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
@@ -46,6 +46,8 @@ export type InvoiceReviewLineRowProps = {
   mismatch: boolean;
   taxRates: TaxRate[];
   searchOpen: boolean;
+  /** D36: Enter sobre la fila con aviso no elige: resalta los avisos (la opción la elige el usuario). */
+  noticeHighlighted?: boolean;
   canCreateProduct: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
@@ -71,6 +73,7 @@ export function InvoiceReviewLineRow({
   canCreateProduct,
   line,
   mismatch,
+  noticeHighlighted = false,
   onAcceptAndAdvance,
   onAction,
   onNewProduct,
@@ -106,9 +109,12 @@ export function InvoiceReviewLineRow({
   const issues = getLineIssues(line);
   const needs = line.discarded ? [] : lineNeedMessages(line);
   const amount = getLineAmount(line);
+  const noticesId = useId();
+  const hasNotices = issues.length > 0 || needs.length > 0;
 
   return (
     <li
+      aria-describedby={hasNotices ? noticesId : undefined}
       aria-label={`Línea ${index + 1}: ${line.description || line.rawText}`}
       className={cn(
         "flex flex-col gap-3 border-l-4 bg-surface-container-lowest px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
@@ -341,8 +347,18 @@ export function InvoiceReviewLineRow({
             </div>
           ) : null}
 
-          {issues.length > 0 || needs.length > 0 ? (
-            <ul className="flex flex-col gap-1 text-xs">
+          {hasNotices ? (
+            <ul
+              className={cn(
+                "flex flex-col gap-1 text-xs",
+                noticeHighlighted
+                  ? "rounded-md bg-amber-50 p-2 ring-2 ring-amber-400 dark:bg-amber-950 dark:ring-amber-500"
+                  : null,
+              )}
+              data-highlighted={noticeHighlighted || undefined}
+              data-testid="invoice-review-line-notices"
+              id={noticesId}
+            >
               {issues.map((issue) => (
                 <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue}`}>
                   <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
