@@ -276,9 +276,9 @@ export const LOW_RES_WARNING = "La imagen tiene poca resolución; revisa cada l�
 export const INCOHERENT_CONFIDENCE_WARNING =
   "La lectura no es fiable; revisa cada línea con la factura en mano.";
 
-export const IMPOSSIBLE_DATE_WARNING = "La fecha leída no existe en el calendario; revísala en la factura.";
+export const IMPOSSIBLE_DATE_WARNING = "La fecha leída no es válida (formato, año o día inexistente); revísala en la factura.";
 
-/** Caos B8/N3: una fecha imposible (2026-02-31, 31/02/2026) leída por el modelo se descarta con aviso; no falla la lectura. */
+/** Caos B8/N3/N9r: una fecha no válida (2026-02-31, 2026/02/28, 9999-12-31) leída por el modelo se descarta con aviso; no falla la lectura. */
 function guardDate(extraction: InvoiceExtraction): InvoiceExtraction {
   if (extraction.date === undefined || !isImpossibleInvoiceDate(extraction.date)) {
     return extraction;
