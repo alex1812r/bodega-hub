@@ -21,7 +21,7 @@ import { mockProducts } from "@/shared/mocks/erp-data";
 import { mockState } from "@/shared/mocks/mockStore";
 import { getCaracasIsoDate, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
-import type { InvoiceScanLimits } from "../contracts";
+import type { InvoiceMatch, InvoiceScanLimits } from "../contracts";
 import { INVOICE_SCAN_CLAIM_TTL_MS } from "./confirmScan.server";
 import {
   DISCARD_CLAIMED_MESSAGE,
@@ -255,6 +255,25 @@ export async function completeScan(
   }
 
   return save({ ...scan, ...completion, error: null, status: "extracted" });
+}
+
+/** Como `save_invoice_scan_match` (20261019q): solo `matched` de un escaneo `extracted` de la tienda; null si no. */
+export async function saveMatch(
+  ctx: InvoiceScanContext,
+  id: string,
+  matched: InvoiceMatch,
+): Promise<InvoiceScanRow | null> {
+  const scan = ownScan(ctx, id);
+
+  if (!scan || scan.status !== "extracted") {
+    return null;
+  }
+
+  if (exceedsPayloadLimit(matched)) {
+    throw new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
+  }
+
+  return save({ ...scan, matched });
 }
 
 export async function failScan(

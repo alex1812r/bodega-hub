@@ -171,6 +171,27 @@ export async function completeScan(
 }
 
 /**
+ * Guarda solo `matched` de un escaneo `extracted` de la tienda (RPC
+ * `save_invoice_scan_match`, 20261019q): el reintento en caché tras un
+ * MATCH_ERROR (D35). Sin cambiar estado ni cobro. null si la fila ya no está o
+ * dejó de estar `extracted`.
+ */
+export async function saveMatch(
+  ctx: InvoiceScanContext,
+  id: string,
+  matched: InvoiceMatch,
+): Promise<InvoiceScanRow | null> {
+  const { data, error } = await createAdminSupabaseClient()
+    .rpc("save_invoice_scan_match", { p_id: id, p_matched: matched, p_store_id: ctx.storeId })
+    .select(scanSelect)
+    .maybeSingle<DbInvoiceScanRow>();
+
+  throwIfSupabaseError(error);
+
+  return data ? mapScan(data) : null;
+}
+
+/**
  * Cierra el intento `attemptId` sin lectura: `failed` con el código, nunca el
  * contenido (RPC `fail_invoice_scan`, 20261019i). Las páginas ya se cobraron;
  * con `refundPages` (fallo anterior a la llamada al modelo) se devuelven. 409
