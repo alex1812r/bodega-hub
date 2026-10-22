@@ -15,7 +15,6 @@ import {
   enterTargetProductId,
   getEntryModeOutcome,
   getLineAmount,
-  getLineIssues,
   getTaxInclusion,
   getUnitConversion,
   isExplicitChoiceIssue,
@@ -33,7 +32,7 @@ import {
   entryModeOutcomeText,
   formatInvoiceMoney,
   getChoiceChips,
-  lineIssueText,
+  getDisplayedLineIssues,
   lineNeedMessages,
   REVIEW_STATUS_META,
 } from "./invoiceReviewView";
@@ -109,7 +108,7 @@ export function InvoiceReviewLineRow({
   const marked = pending ? enterTargetProductId(line) : undefined;
   const chips = pending ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
-  const issues = getLineIssues(line);
+  const issues = getDisplayedLineIssues(state, line);
   const needs = line.discarded ? [] : lineNeedMessages(line);
   const amount = getLineAmount(line);
   const noticesId = useId();
@@ -396,9 +395,9 @@ export function InvoiceReviewLineRow({
               id={noticesId}
             >
               {issues.map((issue) => (
-                <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue}`}>
+                <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue.key}`}>
                   <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {lineIssueText(line, issue)}
+                  {issue.text}
                 </li>
               ))}
               {needs.map((need) => (

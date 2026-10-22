@@ -265,6 +265,19 @@ export function PurchaseCreatePage() {
   // revisión en lugar del formulario.
   const [scannedInvoice, setScannedInvoice] = useState<InvoiceScanResponse | null>(null);
   const reviewingInvoice = scannedInvoice !== null;
+  // REP7-06 (D36/B7): al cerrarse la revisión («Cargar», «Descartar escaneo») el control pulsado
+  // desaparece y el foco caía en BODY; va al encabezado de la compra, contenedor neutro donde
+  // también está «Escanear factura». Solo si nadie lo tiene (el escaneo que se reabre, sí).
+  const pageHeaderRef = useRef<HTMLDivElement>(null);
+  const wasReviewingRef = useRef(reviewingInvoice);
+  useEffect(() => {
+    const closed = wasReviewingRef.current && !reviewingInvoice;
+    wasReviewingRef.current = reviewingInvoice;
+    const focusLost = document.activeElement === null || document.activeElement === document.body;
+    if (closed && focusLost && !invoiceScanOpen) {
+      pageHeaderRef.current?.focus();
+    }
+  }, [invoiceScanOpen, reviewingInvoice]);
   // Escaneo cargado en el formulario: viaja con la compra y en el borrador local.
   const [loadedScan, setLoadedScan] = useState<LoadedInvoiceScan | null>(null);
   // Factura de otro proveedor con una compra en curso: espera «Reemplazar».
@@ -1382,11 +1395,19 @@ export function PurchaseCreatePage() {
 
   return (
     <div className="space-y-6 pb-8">
-      <PurchaseCreateHeader
-        onScanInvoice={
-          canScanInvoice && !reviewingInvoice ? () => setInvoiceScanOpen(true) : undefined
-        }
-      />
+      <div
+        aria-label="Registrar nueva compra"
+        className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        ref={pageHeaderRef}
+        role="group"
+        tabIndex={-1}
+      >
+        <PurchaseCreateHeader
+          onScanInvoice={
+            canScanInvoice && !reviewingInvoice ? () => setInvoiceScanOpen(true) : undefined
+          }
+        />
+      </div>
 
       {scannedInvoice ? (
         <>

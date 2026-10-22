@@ -146,6 +146,10 @@ const FOOTER_GAP = 8;
  */
 function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
   element.focus();
+  scrollAboveFooter(element, footer);
+}
+
+function scrollAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
   // Un pie sin altura (oculto o sin layout) no tapa nada.
   const visibleFooter = footer && footer.getBoundingClientRect().height > 0 ? footer : null;
   const covered = visibleFooter
@@ -270,9 +274,14 @@ export function InvoiceReviewPanel({
     };
   }, []);
 
-  /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
+  /**
+   * Pide el foco para `target` según el estado que resultará de la acción (`next`).
+   * REP7-06 (C5-M1, D31/D33): todo cambio de foco programático arma la guarda; el 2.º Enter o
+   * clic de un rebote no actúa sobre la fila (o el pie) a la que se acaba de llevar el foco.
+   */
   function requestFocus(target: number | null, next: InvoiceReviewState) {
     awaitingReleaseRef.current = pressedRef.current.size > 0;
+    armActivationGuard();
     const line = target === null ? undefined : next.lines[target];
     // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
@@ -282,9 +291,6 @@ export function InvoiceReviewPanel({
     // se queda en la fila (con el aviso resaltado); nunca va solo a «Por unidad / Por caja».
     const choice =
       !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsExplicitChoice(line);
-    if (choice) {
-      armActivationGuard();
-    }
     const needsSupplier = target === null && !next.header.supplier.contactId;
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
@@ -315,6 +321,15 @@ export function InvoiceReviewPanel({
       ? row.querySelector<HTMLInputElement>(`[data-need="${focusRequest.need}"]`)
       : null;
     focusAboveFooter(field ?? row, footerRef.current);
+    // REP7-06 (QA F1, B8 a 390 px): la fila con aviso puede ser más alta que la franja entre la
+    // barra superior y el pie; el aviso resaltado va al final y quedaba bajo el pie. El foco se
+    // queda en la fila, pero lo que se lleva a la vista por encima del pie es su aviso.
+    const notices = focusRequest.choice
+      ? row.querySelector<HTMLElement>('[data-testid="invoice-review-line-notices"]')
+      : null;
+    if (notices) {
+      scrollAboveFooter(notices, footerRef.current);
+    }
   }, [focusRequest]);
 
   /** Aplica la acción y mueve el foco: a la misma línea si sigue pendiente, si no a la siguiente. */
@@ -346,7 +361,6 @@ export function InvoiceReviewPanel({
       const line = next.lines[action.index];
       if (choosing && line) {
         // Elegida la opción: resuelta, a la siguiente pendiente; sin aceptar aún, a la fila.
-        armActivationGuard();
         requestFocus(isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
         guardChoiceIndexRef.current = action.index;
       } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
@@ -364,7 +378,6 @@ export function InvoiceReviewPanel({
       // si sigue pendiente, a la siguiente pendiente o al pie, nunca a un control que decide.
       const next = reviewReducer(state, action);
       dispatch(action);
-      armActivationGuard();
       const line = next.lines[action.index];
       requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
       return;
@@ -375,7 +388,6 @@ export function InvoiceReviewPanel({
     }
     const next = reviewReducer(state, action);
     dispatch(action);
-    armActivationGuard();
     if (action.type === "restoreLine") {
       requestFocus(action.index, next);
       return;
