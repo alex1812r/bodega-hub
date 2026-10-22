@@ -819,6 +819,13 @@ describe("PurchaseCreatePage · revisión y carga de la factura (SCN-08c)", () =
       await waitFor(() => expect(reviewPanel()).not.toBeInTheDocument());
       expect(pageHeader()).not.toHaveFocus();
     });
+
+    it("REP8-03 (B-p8-3): el anillo del encabezado separa con el fondo del tema, no con blanco literal", () => {
+      renderPage();
+
+      // Sin la clase, `ring-offset-2` pinta el hueco con el blanco por defecto también en oscuro.
+      expect(pageHeader()).toHaveClass("focus-visible:ring-offset-background");
+    });
   });
 
   it("REP-01: «Descartar escaneo» de una factura ya confirmada solo cierra la revisión, sin descarte ni error", async () => {

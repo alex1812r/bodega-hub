@@ -119,7 +119,7 @@ type User = ReturnType<typeof userEvent.setup>;
 /** Media caja de f04: «Por bulto» + 12 y Enter sobre «Cargar como 6 unidades» (como la QA). */
 async function convertWithEnter(user: User, line: HTMLElement) {
   now += 1000;
-  await user.click(within(line).getByRole("radio", { name: "Por bulto" }));
+  await user.click(within(line).getByRole("button", { name: "Por bulto" }));
   await user.type(within(line).getByLabelText("Unidades por bulto"), "12");
   const convert = within(line).getByRole("button", {
     name: "Cargar como 6 unidades",
@@ -279,7 +279,7 @@ const f05Line = () =>
   });
 
 function option(line: HTMLElement, name: string) {
-  return within(line).getByRole("radio", { name });
+  return within(line).getByRole("button", { name });
 }
 
 describe("REP7-05 · B-p7-3: cada opción dice qué da antes de elegir", () => {
@@ -310,7 +310,7 @@ describe("REP7-05 · B-p7-3: cada opción dice qué da antes de elegir", () => {
     expect(perUnit).not.toHaveTextContent(/Se aparta/);
     // Nada viene elegido (D33-a): mostrar el resultado no es elegir.
     expect(
-      [perUnit, perPack].map((radio) => radio.getAttribute("aria-checked")),
+      [perUnit, perPack].map((option) => option.getAttribute("aria-pressed")),
     ).toEqual(["false", "false"]);
   });
 

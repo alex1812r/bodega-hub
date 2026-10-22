@@ -101,7 +101,7 @@ export function InvoiceReviewLineRow({
     fractional ||
     (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
     line.issues.some(isExplicitChoiceIssue);
-  // D33-a (C6-M1): con aviso y sin elección, ninguna opción viene marcada; la primera es la enfocable.
+  // D33-a (C6-M1): con aviso y sin elección, ninguna opción viene marcada.
   const checkedMode = line.issues.some(isExplicitChoiceIssue) && !line.choiceMade ? undefined : line.entryMode;
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
@@ -131,8 +131,9 @@ export function InvoiceReviewLineRow({
       onKeyDown={(event) => onRowKeyDown(event, index)}
       ref={rowRef}
       role="group"
-      // D31: la descartada recibe el foco (no «Restaurar») si no queda otra pendiente.
-      tabIndex={pending ? 0 : line.discarded ? -1 : undefined}
+      // D31: la descartada recibe el foco (no «Restaurar») si no queda otra pendiente. D39-6: la
+      // resuelta también, al elegir su opción (el foco no avanza solo a otra fila).
+      tabIndex={pending ? 0 : line.status === "confirmed_by_match" ? undefined : -1}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -281,18 +282,18 @@ export function InvoiceReviewLineRow({
 
           {showPack ? (
             <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
-              <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="radiogroup">
+              <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
                 {(["unit", "pack"] as const).map((mode) => {
                   const outcome = showOutcomes ? getEntryModeOutcome(state, line, mode) : undefined;
                   const deviates = outcome?.deviates === true;
                   const optionId = `${optionsId}-${mode}`;
                   return (
                     <button
-                      aria-checked={checkedMode === mode}
                       aria-describedby={
                         outcome ? `${optionId}-outcome${deviates ? ` ${optionId}-deviation` : ""}` : undefined
                       }
                       aria-labelledby={`${optionId}-label`}
+                      aria-pressed={checkedMode === mode}
                       className={cn(
                         "cursor-pointer border text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         // Con resultado, la opción envuelve el texto (cabe a 390 px).
@@ -317,15 +318,13 @@ export function InvoiceReviewLineRow({
                         if (event.repeat) {
                           return;
                         }
-                        // Dos opciones: cualquier flecha va a la otra y la elige (radiogrupo).
+                        // D39-5: botones de acción, no radios; cualquier flecha lleva el foco a la otra
+                        // opción sin elegirla (eligen Enter, Espacio o clic).
                         const other = mode === "unit" ? "pack" : "unit";
                         event.currentTarget.parentElement
                           ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
                           ?.focus();
-                        onAction({ type: "editEntryMode", index, entryMode: other });
                       }}
-                      role="radio"
-                      tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
                       type="button"
                     >
                       <span id={`${optionId}-label`}>{mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}</span>
