@@ -867,22 +867,44 @@ describe("InvoiceReviewPanel", () => {
 
     describe("REP4-02c-F1: el control que recibe el foco queda por encima del pie fijo", () => {
       const originalScrollIntoView = Element.prototype.scrollIntoView;
+      const originalScrollBy = window.scrollBy;
+      const originalInnerHeight = window.innerHeight;
       const scrollIntoView = jest.fn();
-      let offsetHeight: jest.SpyInstance;
+      const scrollBy = jest.fn();
+      let rect: jest.SpyInstance;
+      // Viewport de 800 px y pie de 120 px; `footerBottomGap` = distancia del pie al borde
+      // inferior del viewport (padding-bottom de `main`); `elementBottom` = borde inferior del
+      // control enfocado tras scrollIntoView.
+      let footerBottomGap = 0;
+      let elementBottom = 0;
 
       beforeEach(() => {
+        footerBottomGap = 0;
+        elementBottom = 0;
         scrollIntoView.mockReset();
+        scrollBy.mockReset();
         Element.prototype.scrollIntoView = scrollIntoView;
-        offsetHeight = jest
-          .spyOn(HTMLElement.prototype, "offsetHeight", "get")
-          .mockImplementation(function (this: HTMLElement) {
-            return this.tagName === "FOOTER" ? 120 : 0;
+        window.scrollBy = scrollBy as unknown as typeof window.scrollBy;
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+        rect = jest
+          .spyOn(Element.prototype, "getBoundingClientRect")
+          .mockImplementation(function (this: Element) {
+            if (this.tagName === "FOOTER") {
+              const top = 800 - footerBottomGap - 120;
+              return { top, bottom: top + 120, height: 120 } as DOMRect;
+            }
+            return { top: elementBottom - 36, bottom: elementBottom } as DOMRect;
           });
       });
 
       afterEach(() => {
         Element.prototype.scrollIntoView = originalScrollIntoView;
-        offsetHeight.mockRestore();
+        window.scrollBy = originalScrollBy;
+        Object.defineProperty(window, "innerHeight", {
+          configurable: true,
+          value: originalInnerHeight,
+        });
+        rect.mockRestore();
       });
 
       const lastScrolled = () => scrollIntoView.mock.contexts.at(-1) as HTMLElement | undefined;
@@ -902,7 +924,9 @@ describe("InvoiceReviewPanel", () => {
         await waitFor(() => expect(discardButton(0)).toHaveFocus());
         expect(lastScrolled()).toBe(discardButton(0));
         expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+        // innerHeight 800 − top del pie 680 + 8.
         expect(discardButton(0).style.scrollMarginBottom).toBe("128px");
+        expect(scrollBy).not.toHaveBeenCalled();
       });
 
       it("Enter en la fila (recorrido): la siguiente pendiente se desplaza fuera del pie", async () => {
@@ -916,6 +940,34 @@ describe("InvoiceReviewPanel", () => {
         await waitFor(() => expect(row(1)).toHaveFocus());
         expect(lastScrolled()).toBe(row(1));
         expect(row(1).style.scrollMarginBottom).toBe("128px");
+      });
+
+      it("pie 24 px por encima del borde del viewport: el margen cubre también ese hueco", async () => {
+        footerBottomGap = 24;
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [doubtfulLine(1), doubtfulLine(2)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        // innerHeight 800 − top del pie 656 + 8 (offsetHeight + 8 daría 128 y lo taparía 16 px).
+        expect(row(1).style.scrollMarginBottom).toBe("152px");
+      });
+
+      it("si tras scrollIntoView el control sigue bajo el pie, desplaza la ventana la diferencia", async () => {
+        footerBottomGap = 24;
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [doubtfulLine(1), doubtfulLine(2)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        scrollBy.mockClear();
+        elementBottom = 759;
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        // 759 − (656 − 8) = 111.
+        expect(scrollBy).toHaveBeenLastCalledWith(0, 111);
       });
     });
   });

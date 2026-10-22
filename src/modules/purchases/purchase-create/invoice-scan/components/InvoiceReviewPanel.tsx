@@ -97,16 +97,32 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
   return <InvoiceImageViewer alt="Factura escaneada" urls={images.urls} />;
 }
 
+/** Separación mínima entre el control enfocado y el pie fijo (px). */
+const FOOTER_GAP = 8;
+
 /**
  * QA REP4-02c F1: `focus()` no desplaza si el elemento está dentro del viewport aunque lo
  * tape el pie fijo (sticky). El margen de scroll con el alto actual del pie (varía al
  * desplegar el detalle en móvil) hace que `scrollIntoView` lo deje por encima del pie.
+ * QA REP4-02c-F1 (intento 2): el pie sticky no está pegado al borde del viewport (padding
+ * inferior de `main`), así que el margen es la zona que tapa realmente desde ese borde.
  */
 function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
   element.focus();
-  element.style.scrollMarginBottom = `${(footer?.offsetHeight ?? 0) + 8}px`;
+  // Un pie sin altura (oculto o sin layout) no tapa nada.
+  const visibleFooter = footer && footer.getBoundingClientRect().height > 0 ? footer : null;
+  const covered = visibleFooter
+    ? Math.max(0, window.innerHeight - visibleFooter.getBoundingClientRect().top + FOOTER_GAP)
+    : 0;
+  element.style.scrollMarginBottom = `${covered}px`;
   // jsdom no implementa scrollIntoView.
   element.scrollIntoView?.({ block: "nearest" });
+  if (!visibleFooter) return;
+  // Cubre contenedores con scroll propio o casos en que scrollIntoView no basta.
+  const overlap =
+    element.getBoundingClientRect().bottom -
+    (visibleFooter.getBoundingClientRect().top - FOOTER_GAP);
+  if (overlap > 0) window.scrollBy(0, overlap);
 }
 
 /**
