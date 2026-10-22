@@ -173,9 +173,12 @@ function scrollAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
  *
  * Teclado (6.17): `Enter` sobre una línea pendiente acepta el candidato marcado y
  * pasa el foco a la siguiente pendiente; `Tab` abre su buscador; `Esc` la deja sin
- * emparejar; las flechas marcan otro candidato. Las confirmadas no entran en el recorrido.
+ * emparejar; las flechas marcan otro candidato (D39-7: con la guarda y solo si el usuario ya
+ * actuó en esa fila). Las confirmadas no entran en el recorrido.
  * D36: con aviso de precio/empaque, Enter solo resalta el aviso y `Tab` lleva a «Por unidad»;
- * la opción se elige con Enter, Espacio o flecha sobre ella. Sin pendientes, el foco va al pie
+ * la opción se elige con Enter o Espacio sobre ella (D39-5: las flechas solo mueven el foco entre
+ * las opciones). D39-6: elegida, el foco queda en la fila resuelta; Enter sobre ella avanza a la
+ * siguiente pendiente. Sin pendientes, el foco va al pie
  * (contenedor) y Tab llega a Cargar: nunca se enfoca solo una opción, la casilla de diferencia,
  * «Descartar escaneo» ni Cargar.
  */
@@ -220,6 +223,9 @@ export function InvoiceReviewPanel({
   // hace falta un keyup/pointerup nuevo antes de aceptar otra activación.
   const pressedRef = useRef(new Set<string>());
   const awaitingReleaseRef = useRef(false);
+  // D39-7 (C8-M1): fila a la que se llevó el foco por programa; sus flechas no marcan candidato
+  // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
+  const autoFocusedRowRef = useRef<number | null>(null);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const sections = getReviewSections(state);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
@@ -314,12 +320,16 @@ export function InvoiceReviewPanel({
       const supplier = focusRequest.needsSupplier
         ? headerRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]')
         : null;
+      autoFocusedRowRef.current = null;
       (supplier ?? footerRef.current)?.focus();
       return;
     }
     const field = focusRequest.need
       ? row.querySelector<HTMLInputElement>(`[data-need="${focusRequest.need}"]`)
       : null;
+    if (document.activeElement !== row) {
+      autoFocusedRowRef.current = field ? null : focusRequest.target;
+    }
     focusAboveFooter(field ?? row, footerRef.current);
     // REP7-06 (QA F1, B8 a 390 px): la fila con aviso puede ser más alta que la franja entre la
     // barra superior y el pie; el aviso resaltado va al final y quedaba bajo el pie. El foco se
@@ -360,8 +370,8 @@ export function InvoiceReviewPanel({
       dispatch(action);
       const line = next.lines[action.index];
       if (choosing && line) {
-        // Elegida la opción: resuelta, a la siguiente pendiente; sin aceptar aún, a la fila.
-        requestFocus(isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+        // D39-6: elegida la opción, el foco queda en su fila (resuelta o no); avanzar es del usuario.
+        requestFocus(action.index, next);
         guardChoiceIndexRef.current = action.index;
       } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
         // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31);
@@ -450,9 +460,20 @@ export function InvoiceReviewPanel({
       return;
     }
     const line = state.lines[index];
+    // D39-7: Enter o Espacio deliberados sobre la fila cuentan como acción del usuario en ella.
+    if ((event.key === "Enter" || event.key === " ") && !activationGuarded() && autoFocusedRowRef.current === index) {
+      autoFocusedRowRef.current = null;
+    }
     switch (event.key) {
       case "Enter": {
         event.preventDefault();
+        if (line && !isPendingStatus(line.status)) {
+          // D39-6: sobre la fila resuelta (foco tras elegir su opción), Enter avanza a la siguiente.
+          if (!activationGuarded()) {
+            requestFocus(nextPendingIndex(state, index), state);
+          }
+          return;
+        }
         acceptMarkedByEnter(index);
         return;
       }
@@ -470,14 +491,15 @@ export function InvoiceReviewPanel({
         return;
       }
       case "Tab": {
-        if (event.shiftKey) {
+        // D39-6: desde una fila resuelta o descartada, Tab sigue el orden normal del documento.
+        if (event.shiftKey || !line || !isPendingStatus(line.status)) {
           return;
         }
         event.preventDefault();
         // D36: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
         const option =
           line?.accepted && needsExplicitChoice(line)
-            ? event.currentTarget.querySelector<HTMLElement>('[data-choice][tabindex="0"]')
+            ? event.currentTarget.querySelector<HTMLElement>('[data-choice]')
             : null;
         if (option) {
           focusAboveFooter(option, footerRef.current);
@@ -492,11 +514,15 @@ export function InvoiceReviewPanel({
       case "ArrowRight":
       case "ArrowUp":
       case "ArrowLeft": {
-        const chips = line ? getChoiceChips(line) : [];
+        const chips = line && isPendingStatus(line.status) ? getChoiceChips(line) : [];
         if (!line || chips.length === 0) {
           return;
         }
         event.preventDefault();
+        // D39-7: la misma guarda que activar, y nunca en una fila a la que el foco llegó solo.
+        if (activationGuarded() || autoFocusedRowRef.current === index) {
+          return;
+        }
         const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
         const marked = enterTargetProductId(line);
         const position = Math.max(
@@ -601,6 +627,20 @@ export function InvoiceReviewPanel({
       }}
       onPointerDownCapture={(event) => {
         pressedRef.current.add(`pointer:${event.pointerId}`);
+        // D39-7: el puntero sobre la fila es acción del usuario en ella.
+        if (
+          event.target instanceof Element &&
+          event.target.closest("[data-line-index]")?.getAttribute("data-line-index") ===
+            String(autoFocusedRowRef.current)
+        ) {
+          autoFocusedRowRef.current = null;
+        }
+      }}
+      onBlur={(event) => {
+        // D39-7: si el foco sale de la fila llevada por programa, volver a ella es del usuario.
+        if (event.target.getAttribute("data-line-index") === String(autoFocusedRowRef.current)) {
+          autoFocusedRowRef.current = null;
+        }
       }}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">

@@ -595,7 +595,7 @@ describe("InvoiceReviewPanel", () => {
 
     const mayonesa = row(0);
     expect(within(mayonesa).getByText(/elige «Por bulto» e indica las unidades/)).toBeInTheDocument();
-    await user.click(within(mayonesa).getByRole("radio", { name: "Por bulto" }));
+    await user.click(within(mayonesa).getByRole("button", { name: "Por bulto" }));
     await user.type(within(mayonesa).getByLabelText("Unidades por bulto"), "12");
     await user.click(within(mayonesa).getByRole("button", { name: "Cargar como 6 unidades" }));
 
@@ -1130,7 +1130,7 @@ describe("InvoiceReviewPanel", () => {
 
       expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
       // D36: el foco no va solo a la opción; el usuario llega con Tab (sin marcarla).
-      const perUnit = within(row(0)).getByRole("radio", { name: "Por unidad" });
+      const perUnit = within(row(0)).getByRole("button", { name: "Por unidad" });
       expect(row(0)).toHaveFocus();
       await user.keyboard("{Tab}");
       expect(perUnit).toHaveFocus();
@@ -1144,7 +1144,8 @@ describe("InvoiceReviewPanel", () => {
       now += 450;
       await user.keyboard("{Enter}");
       expect(row(0)).toHaveAttribute("data-status", "resolved");
-      await waitFor(() => expect(row(1)).toHaveFocus());
+      // D39-6: el foco queda en la fila resuelta.
+      await waitFor(() => expect(row(0)).toHaveFocus());
     });
 
     const PACK_ISSUE = "No hay empaque registrado de 6 unidades para este proveedor: confirma las unidades por empaque.";
@@ -1179,7 +1180,7 @@ describe("InvoiceReviewPanel", () => {
           expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
           expect(within(row(0)).getByText(issue)).toBeInTheDocument();
           // D36: el foco va a la fila con el aviso resaltado, no a la opción; el usuario elige «Por caja».
-          const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
+          const perPack = within(row(0)).getByRole("button", { name: "Por caja" });
           await waitFor(() => expect(row(0)).toHaveFocus());
           expect(within(row(0)).getByTestId("invoice-review-line-notices")).toHaveAttribute("data-highlighted", "true");
           expect(loadButton()).toBeDisabled();
@@ -1188,7 +1189,8 @@ describe("InvoiceReviewPanel", () => {
           await user.click(perPack);
 
           expect(row(0)).toHaveAttribute("data-status", "resolved");
-          await waitFor(() => expect(row(1)).toHaveFocus());
+          // D39-6: el foco queda en la fila resuelta, no avanza solo.
+          await waitFor(() => expect(row(0)).toHaveFocus());
         },
       );
     });
@@ -1200,8 +1202,8 @@ describe("InvoiceReviewPanel", () => {
         }),
       );
 
-      expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "false");
-      expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toHaveAttribute("aria-checked", "false");
+      expect(within(row(0)).getByRole("button", { name: "Por unidad" })).toHaveAttribute("aria-pressed", "false");
+      expect(within(row(0)).getByRole("button", { name: "Por bulto" })).toHaveAttribute("aria-pressed", "false");
     });
 
     describe("REP6-01 (C6-M1, D33-a): ni la autorrepetición ni un doble clic lento resuelven ni cargan", () => {
@@ -1216,19 +1218,19 @@ describe("InvoiceReviewPanel", () => {
           fireEvent.click(target, { detail: 0 });
         }
       };
-      const radios = (index: number) => within(row(index)).getAllByRole("radio");
+      const options = (index: number) => Array.from(row(index).querySelectorAll<HTMLElement>("[data-choice]"));
 
       it.each([
         ["precio", priceLine],
         ["tamaño de empaque", packLine],
-      ])("aviso de %s: ninguna opción viene marcada y la primera es la enfocable", (_, line) => {
+      ])("aviso de %s: ninguna opción viene marcada y ambas son botones enfocables (D39-5)", (_, line) => {
         renderPanel(makeReviewResponse({ lines: [line()] }));
 
-        const [perUnit, perPack] = radios(0);
-        expect(perUnit).toHaveAttribute("aria-checked", "false");
-        expect(perPack).toHaveAttribute("aria-checked", "false");
-        expect(perUnit).toHaveAttribute("tabindex", "0");
-        expect(perPack).toHaveAttribute("tabindex", "-1");
+        const [perUnit, perPack] = options(0);
+        expect(perUnit).toHaveAttribute("aria-pressed", "false");
+        expect(perPack).toHaveAttribute("aria-pressed", "false");
+        expect(perUnit).not.toHaveAttribute("tabindex");
+        expect(perPack).not.toHaveAttribute("tabindex");
       });
 
       it("Enter mantenido desde «Descartar línea»: no acepta la siguiente, no elige opción y no carga", async () => {
@@ -1246,7 +1248,7 @@ describe("InvoiceReviewPanel", () => {
 
         expect(row(0)).toHaveAttribute("data-status", "discarded");
         expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
-        expect(radios(1).map((radio) => radio.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+        expect(options(1).map((option) => option.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
         expect(props.onLoad).not.toHaveBeenCalled();
       });
 
@@ -1278,13 +1280,13 @@ describe("InvoiceReviewPanel", () => {
 
         await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
         now += 1000;
-        const [perUnit] = radios(0);
+        const [perUnit] = options(0);
         // D36: el foco no va solo a la opción; aquí la enfoca el usuario.
         perUnit.focus();
         holdEnter();
         expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
 
-        await user.click(radios(0)[1]);
+        await user.click(options(0)[1]);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
         now += 1000;
         expect(loadButton()).toBeEnabled();
@@ -1310,10 +1312,10 @@ describe("InvoiceReviewPanel", () => {
 
         await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
         now += 1000;
-        fireEvent.click(radios(0)[1], { detail: 2 });
+        fireEvent.click(options(0)[1], { detail: 2 });
         expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
 
-        await user.click(radios(0)[1]);
+        await user.click(options(0)[1]);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
         now += 1000;
         expect(loadButton()).toBeEnabled();
@@ -1332,13 +1334,13 @@ describe("InvoiceReviewPanel", () => {
         expect(row(0)).toHaveAttribute("data-status", "discarded");
       });
 
-      it("6.17 solo teclado: Enter acepta, Tab a la opción, la flecha elige «Por caja» y el foco sigue a la siguiente", async () => {
+      it("6.17 solo teclado: Enter acepta, Tab a la opción, la flecha lleva a «Por caja», Enter la elige y el foco queda en la fila", async () => {
         const user = userEvent.setup();
         renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
         await waitFor(() => expect(row(0)).toHaveFocus());
 
         await user.keyboard("{Enter}");
-        const [perUnit, perPack] = radios(0);
+        const [perUnit, perPack] = options(0);
         // D36: Enter deja el foco en la fila; Tab lleva a «Por unidad» sin marcarla.
         expect(row(0)).toHaveFocus();
         await user.keyboard("{Tab}");
@@ -1347,10 +1349,16 @@ describe("InvoiceReviewPanel", () => {
 
         now += 450;
         await user.keyboard("{ArrowRight}");
+        // D39-5: la flecha solo mueve el foco.
+        expect(perPack).toHaveFocus();
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        now += 450;
+        await user.keyboard("{Enter}");
 
-        expect(perPack).toHaveAttribute("aria-checked", "true");
+        expect(perPack).toHaveAttribute("aria-pressed", "true");
         expect(row(0)).toHaveAttribute("data-status", "resolved");
-        await waitFor(() => expect(row(1)).toHaveFocus());
+        // D39-6: el foco queda en la fila resuelta.
+        await waitFor(() => expect(row(0)).toHaveFocus());
       });
 
       it("6.17 solo teclado: Tab a la opción y Espacio sobre ella (no marcada) la elige", async () => {
@@ -1359,13 +1367,13 @@ describe("InvoiceReviewPanel", () => {
         await waitFor(() => expect(row(0)).toHaveFocus());
 
         await user.keyboard("{Enter}");
-        const [perUnit] = radios(0);
+        const [perUnit] = options(0);
         await user.keyboard("{Tab}");
         expect(perUnit).toHaveFocus();
         now += 450;
         await user.keyboard(" ");
 
-        expect(perUnit).toHaveAttribute("aria-checked", "true");
+        expect(perUnit).toHaveAttribute("aria-pressed", "true");
         expect(row(0)).toHaveAttribute("data-status", "resolved");
       });
 
@@ -1407,7 +1415,7 @@ describe("InvoiceReviewPanel", () => {
         doubtfulLine(seed, 1, { match: { candidates: singleCandidate(seed), issues: [PRICE_ISSUE] } });
       const unitPackLine = (seed = 2) =>
         doubtfulLine(seed, 1, { match: { candidates: singleCandidate(seed), issues: [PACK_ISSUE] } });
-      const radios = (index: number) => within(row(index)).getAllByRole("radio");
+      const options = (index: number) => Array.from(row(index).querySelectorAll<HTMLElement>("[data-choice]"));
       const blockers = () => screen.getByTestId("invoice-review-blockers");
 
       it("B6-1: tras «Restaurar», Espacio ×5 sobre la fila enfocada no desplaza el panel ni hace nada", async () => {
@@ -1434,14 +1442,14 @@ describe("InvoiceReviewPanel", () => {
         await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
         now += 450;
 
-        const [perUnit, perPack] = radios(0);
+        const [perUnit, perPack] = options(0);
         await user.click(perUnit);
-        expect(perUnit).toHaveAttribute("aria-checked", "true");
+        expect(perUnit).toHaveAttribute("aria-pressed", "true");
         now += 150;
         await user.click(perPack);
 
-        expect(perPack).toHaveAttribute("aria-checked", "true");
-        expect(perUnit).toHaveAttribute("aria-checked", "false");
+        expect(perPack).toHaveAttribute("aria-pressed", "true");
+        expect(perUnit).toHaveAttribute("aria-pressed", "false");
         expect(perPack).toHaveFocus();
         expect(row(0)).toHaveAttribute("data-status", "resolved");
       });
@@ -1455,7 +1463,7 @@ describe("InvoiceReviewPanel", () => {
         );
         await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
         now += 450;
-        await user.click(radios(0)[0]);
+        await user.click(options(0)[0]);
         now += 150;
         await user.click(within(row(1)).getByRole("button", { name: /Producto 3/ }));
 
@@ -1508,7 +1516,7 @@ describe("InvoiceReviewPanel", () => {
       it("B-p6-2: el aviso de precio usa la misma palabra que la opción («bulto»)", () => {
         renderPanel(makeReviewResponse({ lines: [unitPriceLine()] }));
 
-        expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toBeInTheDocument();
+        expect(within(row(0)).getByRole("button", { name: "Por bulto" })).toBeInTheDocument();
         expect(
           within(row(0)).getByText(
             "¿Precio por bulto o por unidad? Sale a 0,51 REF por unidad y el último costo fue 0,05 REF.",
