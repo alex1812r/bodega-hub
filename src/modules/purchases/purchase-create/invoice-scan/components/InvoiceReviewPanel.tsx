@@ -98,6 +98,18 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
 }
 
 /**
+ * QA REP4-02c F1: `focus()` no desplaza si el elemento está dentro del viewport aunque lo
+ * tape el pie fijo (sticky). El margen de scroll con el alto actual del pie (varía al
+ * desplegar el detalle en móvil) hace que `scrollIntoView` lo deje por encima del pie.
+ */
+function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
+  element.focus();
+  element.style.scrollMarginBottom = `${(footer?.offsetHeight ?? 0) + 8}px`;
+  // jsdom no implementa scrollIntoView.
+  element.scrollIntoView?.({ block: "nearest" });
+}
+
+/**
  * SCN-08b · Pantalla de revisión del escaneo DENTRO de `/purchases/create` (la
  * página la muestra en lugar del formulario mientras se revisa). Toda la regla
  * es de `reviewModel.ts`: aquí solo se pinta y se despachan acciones.
@@ -195,14 +207,14 @@ export function InvoiceReviewPanel({
           (element) => element.getClientRects().length > 0,
         );
       if (control) {
-        control.focus();
+        focusAboveFooter(control, footerRef.current);
         return;
       }
     }
     const field = focusRequest.need
       ? row.querySelector<HTMLInputElement>(`[data-need="${focusRequest.need}"]`)
       : null;
-    (field ?? row).focus();
+    focusAboveFooter(field ?? row, footerRef.current);
   }, [focusRequest]);
 
   /** Aplica la acción y mueve el foco: a la misma línea si sigue pendiente, si no a la siguiente. */

@@ -864,6 +864,60 @@ describe("InvoiceReviewPanel", () => {
 
       await waitFor(() => expect(loadButton()).toHaveFocus());
     });
+
+    describe("REP4-02c-F1: el control que recibe el foco queda por encima del pie fijo", () => {
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      const scrollIntoView = jest.fn();
+      let offsetHeight: jest.SpyInstance;
+
+      beforeEach(() => {
+        scrollIntoView.mockReset();
+        Element.prototype.scrollIntoView = scrollIntoView;
+        offsetHeight = jest
+          .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+          .mockImplementation(function (this: HTMLElement) {
+            return this.tagName === "FOOTER" ? 120 : 0;
+          });
+      });
+
+      afterEach(() => {
+        Element.prototype.scrollIntoView = originalScrollIntoView;
+        offsetHeight.mockRestore();
+      });
+
+      const lastScrolled = () => scrollIntoView.mock.contexts.at(-1) as HTMLElement | undefined;
+
+      it("Restaurar con teclado y el buscador abierto: «Descartar línea» se desplaza fuera del pie", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), unmatchedLine(2, false)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        await user.keyboard("{Tab}");
+        await user.click(discardButton(1));
+        await user.click(discardButton(0));
+        await waitFor(() => expect(restoreButton(0)).toHaveFocus());
+        scrollIntoView.mockClear();
+
+        await user.keyboard(" ");
+
+        await waitFor(() => expect(discardButton(0)).toHaveFocus());
+        expect(lastScrolled()).toBe(discardButton(0));
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+        expect(discardButton(0).style.scrollMarginBottom).toBe("128px");
+      });
+
+      it("Enter en la fila (recorrido): la siguiente pendiente se desplaza fuera del pie", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [doubtfulLine(1), doubtfulLine(2)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        scrollIntoView.mockClear();
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        expect(lastScrolled()).toBe(row(1));
+        expect(row(1).style.scrollMarginBottom).toBe("128px");
+      });
+    });
   });
 
   describe("REP3-03a (B7): tras «Nuevo producto» el foco no se pierde", () => {
