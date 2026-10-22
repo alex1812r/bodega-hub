@@ -15,6 +15,7 @@
  */
 import type {
   InvoiceExtraction,
+  InvoiceLineMatch,
   InvoiceMatchCandidate,
   InvoiceMatchStatus,
   InvoiceScanConfirmedPurchase,
@@ -209,6 +210,11 @@ type MatchLineDefaults = {
   packUnitId?: string;
   disassembleOnReceive: boolean;
   readUnitsPerPack?: number;
+  /**
+   * D38: último costo unitario (REF) que trajo el emparejamiento y el producto al que pertenece
+   * (el propuesto o, sin él, el primer candidato, como en el servidor).
+   */
+  lastUnitCost?: { productId: string; ref: number };
 };
 
 export type InvoiceReviewAction =
@@ -428,8 +434,8 @@ const PRICE_ISSUE_LAST_COST = /el último costo fue (\d{1,3}(?:\.\d{3})*,\d{2}) 
 const PRICE_DEVIATION_EPSILON = 1e-9;
 
 /**
- * B-p7-3: último costo unitario (REF) con que el servidor comparó la línea. La respuesta no lo
- * trae aparte: sale del aviso de precio, cuyo texto está anclado por test.
+ * B-p7-3: último costo unitario (REF) con que el servidor comparó la línea, leído del aviso de
+ * precio (texto anclado por test). Respaldo de `match.lastUnitCostRef` (D38) si la respuesta no lo trae.
  */
 export function priceIssueLastUnitCostRef(line: Pick<InvoiceReviewLine, "issues">): number | undefined {
   for (const issue of line.issues) {
@@ -454,6 +460,24 @@ export type EntryModeOutcome = {
   deviates: boolean;
 };
 
+function matchLastUnitCost(match: InvoiceLineMatch | undefined): Pick<MatchLineDefaults, "lastUnitCost"> {
+  const productId = match?.productId ?? match?.candidates?.[0]?.productId;
+  return productId && isPositive(match?.lastUnitCostRef) ? { lastUnitCost: { productId, ref: match.lastUnitCostRef } } : {};
+}
+
+/**
+ * D38: último costo unitario (REF) con que comparar las opciones de la línea: el del
+ * emparejamiento si la línea sigue con ese producto (o aún sin producto); si la respuesta no lo
+ * trae (caché anterior a D38), el del aviso de precio.
+ */
+function lineLastUnitCostRef(state: InvoiceReviewState, line: InvoiceReviewLine): number | undefined {
+  const lastUnitCost = state.matchDefaults[line.index]?.lastUnitCost;
+  if (!lastUnitCost) {
+    return priceIssueLastUnitCostRef(line);
+  }
+  return line.productId === undefined || line.productId === lastUnitCost.productId ? lastUnitCost.ref : undefined;
+}
+
 /**
  * B-p7-3: qué deja cada opción «Por unidad / Por empaque» antes de elegirla: unidades al stock
  * y costo por unidad frente al último costo, con la misma regla que el aviso del servidor
@@ -467,7 +491,7 @@ export function getEntryModeOutcome(
   if (!isPositive(line.quantity)) {
     return undefined;
   }
-  const lastUnitCostRef = priceIssueLastUnitCostRef(line);
+  const lastUnitCostRef = lineLastUnitCostRef(state, line);
   const base = { entryMode, quantity: line.quantity, ...(lastUnitCostRef !== undefined ? { lastUnitCostRef } : {}) };
   let unitsPerEntry: number | undefined = 1;
   if (entryMode === "pack") {
@@ -559,6 +583,7 @@ export function createInvoiceReviewState(
       ...(match?.packUnitId ? { packUnitId: match.packUnitId } : {}),
       disassembleOnReceive: match?.disassembleOnReceive === true,
       ...(readUnitsPerPack !== undefined ? { readUnitsPerPack } : {}),
+      ...matchLastUnitCost(match),
     });
 
     const line: InvoiceReviewLine = {

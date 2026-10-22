@@ -346,6 +346,12 @@ export type InvoiceLineMatch = {
   taxRateCode: string;
   unitCostVes?: number;
   unitCostRef?: number;
+  /**
+   * D38: último costo por unidad de stock (REF) del producto propuesto (`productId` o, sin él,
+   * el primer candidato), haya o no aviso de precio. Ausente si no se conoce. La revisión compara
+   * con él cada opción «Por unidad / Por empaque».
+   */
+  lastUnitCostRef?: number;
   /** Avisos en español: tamaño de empaque, coherencia de precio, moneda, etc. */
   issues: string[];
 };

@@ -17,6 +17,7 @@ const lineMatchSchema = z.object({
   entryMode: z.enum(["unit", "pack"]),
   index: z.number().int().nonnegative(),
   issues: z.array(z.string()),
+  lastUnitCostRef: z.number().positive().optional(),
   packUnitId: z.string().optional(),
   productId: z.string().optional(),
   status: z.enum(invoiceMatchStatuses),
