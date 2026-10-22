@@ -203,10 +203,38 @@ export function InvoiceReviewPanel({
     return awaitingReleaseRef.current || isGuarded(guardUntilRef);
   }
 
-  function release(input: string) {
-    pressedRef.current.delete(input);
-    awaitingReleaseRef.current = false;
-  }
+  // D33-a: la tecla o el puntero pueden soltarse fuera del panel (arrastre, Alt+Tab, foco en otro
+  // árbol); se escucha en `window` y se vacía el estado si la ventana pierde el foco o se oculta.
+  useEffect(() => {
+    const pressed = pressedRef.current;
+    const release = (input: string) => {
+      pressed.delete(input);
+      awaitingReleaseRef.current = false;
+    };
+    const releaseAll = () => {
+      pressed.clear();
+      awaitingReleaseRef.current = false;
+    };
+    const onKeyUp = (event: globalThis.KeyboardEvent) => release(`key:${event.key}`);
+    const onPointerUp = (event: PointerEvent) => release(`pointer:${event.pointerId}`);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        releaseAll();
+      }
+    };
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", onPointerUp, true);
+    window.addEventListener("blur", releaseAll);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("pointercancel", onPointerUp, true);
+      window.removeEventListener("blur", releaseAll);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
   function requestFocus(target: number | null, next: InvoiceReviewState) {
@@ -497,12 +525,9 @@ export function InvoiceReviewPanel({
           pressedRef.current.add(`key:${event.key}`);
         }
       }}
-      onKeyUpCapture={(event) => release(`key:${event.key}`)}
-      onPointerCancelCapture={(event) => release(`pointer:${event.pointerId}`)}
       onPointerDownCapture={(event) => {
         pressedRef.current.add(`pointer:${event.pointerId}`);
       }}
-      onPointerUpCapture={(event) => release(`pointer:${event.pointerId}`)}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>

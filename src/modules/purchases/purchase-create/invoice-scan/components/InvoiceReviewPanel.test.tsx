@@ -1317,6 +1317,37 @@ describe("InvoiceReviewPanel", () => {
         expect(perUnit).toHaveAttribute("aria-checked", "true");
         expect(row(0)).toHaveAttribute("data-status", "resolved");
       });
+
+      it("puntero soltado fuera del panel: tras cambiar de fila un Enter normal sí acepta", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        // Toque en un chip arrastrado fuera: el pointerup llega a document.body, no al panel.
+        fireEvent.pointerDown(within(row(1)).getByRole("button", { name: /Producto 2/ }), { pointerId: 7 });
+        fireEvent.pointerUp(document.body, { pointerId: 7 });
+
+        await user.click(discardButton(0));
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 500;
+        await user.keyboard("{Enter}");
+
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("Enter pulsado y la ventana pierde el foco (Alt+Tab): tras cambiar de fila un Enter normal sí acepta", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        fireEvent.keyDown(screen.getByTestId("invoice-review-panel"), { key: "Enter" });
+        fireEvent.blur(window);
+
+        await user.click(discardButton(0));
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 500;
+        await user.keyboard("{Enter}");
+
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
     });
   });
 
