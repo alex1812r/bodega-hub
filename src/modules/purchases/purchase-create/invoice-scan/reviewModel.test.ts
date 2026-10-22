@@ -493,6 +493,13 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
       expectPendingChoice(state);
     });
 
+    it("REP6-05 · Por unidad → Esc (leaveUnmatched): la línea sin producto no conserva la elección", () => {
+      let state = pickUnit();
+      state = reviewReducer(state, { type: "leaveUnmatched", index: 0 });
+      expect(state.lines[0]).toMatchObject({ productId: undefined, leftUnmatched: true, choiceMade: false });
+      expect(state.lines[0].status).toBe("pending_unmatched");
+    });
+
     it("tras el cambio, elegir el modo vuelve a resolverla", () => {
       let state = pickUnit();
       state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: otherId });

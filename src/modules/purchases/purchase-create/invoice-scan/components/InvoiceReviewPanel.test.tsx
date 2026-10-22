@@ -1467,6 +1467,133 @@ describe("InvoiceReviewPanel", () => {
         expect(within(row(0)).queryByText(/Precio por caja/)).not.toBeInTheDocument();
       });
     });
+
+    describe("REP6-05: el filtro de activación de REP6-01 en el selector de tasa y en el pie", () => {
+      const printedResponse = () => makeReviewResponse({ lines: [nameLine()], extraction: { printedRate: 875.65 } });
+      const todayRadio = () => screen.getByRole("radio", { name: "Tasa de hoy (900,00)" });
+      const printedRadio = () => screen.getByRole("radio", { name: "Tasa de la factura (875,65)" });
+      /** Enter sin la marca de repetición; si nadie lo cancela, un botón se activa (como el navegador). */
+      const pressEnterOn = (target: HTMLElement) => {
+        const unprevented = fireEvent.keyDown(target, { key: "Enter" });
+        if (unprevented && target instanceof HTMLButtonElement) {
+          fireEvent.click(target, { detail: 0 });
+        }
+      };
+      /** Enter pulsado sobre la fila: acepta y el foco pasa a otro control con la tecla aún abajo. */
+      const acceptWithEnterHeld = async (user: ReturnType<typeof userEvent.setup>) => {
+        now += 1000;
+        row(0).focus();
+        await user.keyboard("{Enter>}");
+        await waitFor(() => expect(row(0)).toHaveAttribute("data-status", "resolved"));
+        now += 600;
+      };
+
+      it("la tasa preseleccionada es la del sistema, no la impresa", () => {
+        renderPanel(printedResponse());
+
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+        expect(printedRadio()).toHaveAttribute("aria-checked", "false");
+      });
+
+      it("Enter mantenido sobre la tasa de la factura (con y sin marca de repetición tras cambiar de foco) no la elige", async () => {
+        const user = userEvent.setup();
+        renderPanel(printedResponse());
+        await acceptWithEnterHeld(user);
+
+        printedRadio().focus();
+        const unprevented = fireEvent.keyDown(printedRadio(), { key: "Enter", repeat: true });
+        if (unprevented) {
+          fireEvent.click(printedRadio(), { detail: 0 });
+        }
+        pressEnterOn(printedRadio());
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+
+        await user.keyboard("{/Enter}");
+        await user.keyboard("{Enter}");
+        expect(printedRadio()).toHaveAttribute("aria-checked", "true");
+      });
+
+      it("doble clic lento (detail 2) sobre la tasa de la factura no la elige; un clic normal sí", async () => {
+        const user = userEvent.setup();
+        renderPanel(printedResponse());
+        now += 1000;
+
+        fireEvent.click(printedRadio(), { detail: 2 });
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+
+        await user.click(printedRadio());
+        expect(printedRadio()).toHaveAttribute("aria-checked", "true");
+        now += 1000;
+        fireEvent.click(todayRadio(), { detail: 2 });
+        expect(printedRadio()).toHaveAttribute("aria-checked", "true");
+      });
+
+      it("«Descartar escaneo»: el 2.º clic de un doble clic y un Enter sin soltar tras cambiar de foco se ignoran", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [nameLine()] }));
+        const discardScan = screen.getByRole("button", { name: "Descartar escaneo" });
+        now += 1000;
+
+        fireEvent.click(discardScan, { detail: 2 });
+        expect(props.onDiscard).not.toHaveBeenCalled();
+
+        await acceptWithEnterHeld(user);
+        discardScan.focus();
+        pressEnterOn(discardScan);
+        expect(props.onDiscard).not.toHaveBeenCalled();
+
+        await user.keyboard("{/Enter}");
+        await user.click(discardScan);
+        expect(props.onDiscard).toHaveBeenCalledTimes(1);
+      });
+
+      it("«Ver detalle del total»: el 2.º clic de un doble clic no lo vuelve a plegar", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [nameLine()] }));
+        now += 1000;
+
+        await user.click(screen.getByRole("button", { name: "Ver detalle del total" }));
+        fireEvent.click(screen.getByRole("button", { name: "Ocultar detalle del total" }), { detail: 2 });
+
+        expect(screen.getByRole("button", { name: "Ocultar detalle del total" })).toHaveAttribute("aria-expanded", "true");
+      });
+
+      it("la tasa del día que llega después de abrir la revisión pasa a ser la preseleccionada", () => {
+        const props: InvoiceReviewPanelProps = {
+          context: { taxRates: REVIEW_TAX_RATES },
+          onDiscard: jest.fn(),
+          onLoad: jest.fn(),
+          onRescan: jest.fn(),
+          response: printedResponse(),
+        };
+        const { rerender } = render(<InvoiceReviewPanel {...props} />);
+        expect(screen.getByRole("radio", { name: "Tasa de la factura (875,65)" })).toHaveAttribute("aria-checked", "true");
+
+        rerender(<InvoiceReviewPanel {...props} context={CONTEXT} />);
+
+        expect(todayRadio()).toHaveAttribute("aria-checked", "true");
+        expect(printedRadio()).toHaveAttribute("aria-checked", "false");
+      });
+
+      it("con la tasa elegida a mano antes de que llegue la del día, se respeta la elección", async () => {
+        const user = userEvent.setup();
+        const props: InvoiceReviewPanelProps = {
+          context: { taxRates: REVIEW_TAX_RATES },
+          onDiscard: jest.fn(),
+          onLoad: jest.fn(),
+          onRescan: jest.fn(),
+          response: printedResponse(),
+        };
+        const { rerender } = render(<InvoiceReviewPanel {...props} />);
+        now += 1000;
+        await user.click(screen.getByRole("radio", { name: "Escribir la tasa" }));
+
+        rerender(<InvoiceReviewPanel {...props} context={CONTEXT} />);
+
+        expect(screen.getByRole("radio", { name: "Escribir la tasa" })).toHaveAttribute("aria-checked", "true");
+        expect(screen.queryByRole("radio", { name: "Tasa de hoy (900,00)" })).not.toBeInTheDocument();
+      });
+    });
   });
 
   describe("REP3-03a (B7): tras «Nuevo producto» el foco no se pierde", () => {

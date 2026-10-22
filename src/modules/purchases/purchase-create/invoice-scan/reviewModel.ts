@@ -151,6 +151,8 @@ export type InvoiceReviewRate = {
   unverified?: boolean;
   /** Tasa impresa inverosímil (fuera de `PRINTED_RATE_MAX_DEVIATION`…): no se ofrece. */
   ignoredWarning?: string;
+  /** REP6-05: el usuario eligió la tasa; la del día que llegue después no la sustituye. */
+  explicit?: boolean;
 };
 
 export type InvoiceReviewSupplier = {
@@ -229,6 +231,8 @@ export type InvoiceReviewAction =
   | { type: "setSupplier"; supplier: { contactId: string; name: string } }
   | { type: "editHeader"; number?: string; date?: string }
   | { type: "setRateChoice"; choice: InvoiceRateChoice; manualRate?: number }
+  /** REP6-05: la tasa del día llegó después de abrir la revisión (sin elección explícita, pasa a ser la elegida). */
+  | { type: "adoptSystemRate"; systemRateVes: number }
   | { type: "acceptUsdAnomaly" };
 
 function isPositive(value: number | null | undefined): value is number {
@@ -279,6 +283,10 @@ export function isPlausiblePrintedRate(
   return undefined;
 }
 
+function ignoredRateWarning(printedRead: number): string {
+  return `La tasa leída (${formatRateValue(printedRead)}) no parece una tasa Bs/USD; se ignora.`;
+}
+
 function initialRate(response: InvoiceScanResponse, ctx: InvoiceReviewContext): InvoiceReviewRate {
   const system = isPositive(ctx.systemRateVes) ? ctx.systemRateVes : undefined;
   const printedRead = response.extraction.printedRate ?? response.matched.rate?.printed;
@@ -291,7 +299,7 @@ function initialRate(response: InvoiceScanResponse, ctx: InvoiceReviewContext): 
     ...(system !== undefined ? { system } : {}),
     ...(printed !== undefined ? { printed } : {}),
     ...(ignored
-      ? { ignoredWarning: `La tasa leída (${formatRateValue(printedRead)}) no parece una tasa Bs/USD; se ignora.` }
+      ? { ignoredWarning: ignoredRateWarning(printedRead) }
       : {}),
   };
 
@@ -636,9 +644,35 @@ function rateReducer(state: InvoiceReviewState, choice: InvoiceRateChoice, manua
   }
   if (choice === "manual") {
     const manual = isPositive(manualRate) ? manualRate : undefined;
-    return { ...state, rate: { ...rate, choice, manual } };
+    return { ...state, rate: { ...rate, choice, manual, explicit: true } };
   }
-  return { ...state, rate: { ...rate, choice } };
+  return { ...state, rate: { ...rate, choice, explicit: true } };
+}
+
+/**
+ * REP6-05: la revisión se abrió sin tasa del día (aún no había llegado) y ahora la hay. Sin
+ * elección explícita queda como la de `initialRate` con esa tasa: la del día preseleccionada y,
+ * si la impresa difiere, el aviso para elegir; una impresa inverosímil frente a ella se ignora.
+ */
+function adoptSystemRate(state: InvoiceReviewState, system: number): InvoiceReviewState {
+  const { rate } = state;
+  if (!isPositive(system) || rate.system !== undefined || rate.explicit) {
+    return state;
+  }
+  const ignored = rate.printed !== undefined && isPlausiblePrintedRate(rate.printed, { system }) === false;
+  const printed = ignored ? undefined : rate.printed;
+  const ignoredWarning = ignored && rate.printed !== undefined ? ignoredRateWarning(rate.printed) : rate.ignoredWarning;
+  const warning = printed !== undefined ? printedRateWarning(system, printed) : undefined;
+  return {
+    ...state,
+    rate: {
+      system,
+      ...(printed !== undefined ? { printed } : {}),
+      ...(ignoredWarning ? { ignoredWarning } : {}),
+      choice: "system",
+      ...(warning ? { warning } : {}),
+    },
+  };
 }
 
 export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAction): InvoiceReviewState {
@@ -677,6 +711,8 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
               accepted: false,
               leftUnmatched: true,
               markedProductId: undefined,
+              // REP6-05: como al cambiar de producto (D33-b), la elección era sobre el anterior.
+              choiceMade: false,
             },
       );
     case "editQuantity":
@@ -752,6 +788,8 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
     }
     case "setRateChoice":
       return rateReducer(state, action.choice, action.manualRate);
+    case "adoptSystemRate":
+      return adoptSystemRate(state, action.systemRateVes);
     case "acceptUsdAnomaly":
       return state.usd.anomaly ? { ...state, usd: { ...state.usd, accepted: true } } : state;
     default:

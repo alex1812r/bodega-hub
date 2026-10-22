@@ -103,6 +103,13 @@ const ACTIVATION_KEYS = new Set(["Enter", " ", "Escape"]);
 /** D33-a: controles cuyo 2.º clic de un doble clic (`detail > 1`) se ignora. */
 const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-row-action], [data-load-button]";
 
+/**
+ * REP6-05: selector de tasa y botones del pie distintos de Cargar. Filtro de D33-a (sin
+ * `repeat`, sin `detail > 1` y liberación nueva tras mover el foco), aplicado en la captura del
+ * clic porque sus manejadores no pasan por `applyRowAction`. La guarda de 400 ms es de las filas.
+ */
+const GUARDED_CONTROL_SELECTOR = "[data-guarded-activation]";
+
 function InvoiceScanImages({ scanId }: { scanId: string }) {
   const images = useInvoiceScanImages(scanId);
 
@@ -169,6 +176,14 @@ export function InvoiceReviewPanel({
   supplierFetcher,
 }: InvoiceReviewPanelProps) {
   const { dispatch, state, summary } = useInvoiceReview(response, context);
+  // REP6-05: la tasa del día que llega con la revisión ya abierta pasa a ser la preseleccionada
+  // (el reductor la ignora si ya había tasa del día o el usuario eligió una).
+  const lateSystemRate = context.systemRateVes;
+  useEffect(() => {
+    if (lateSystemRate !== undefined) {
+      dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate });
+    }
+  }, [dispatch, lateSystemRate]);
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [confirmedOpen, setConfirmedOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -524,7 +539,14 @@ export function InvoiceReviewPanel({
       // D33-a (C6-M1): la autorrepetición del teclado y el 2.º clic de un doble clic no activan
       // nada (fila, chip, opción, Descartar/Restaurar, Cargar).
       onClickCapture={(event) => {
-        if (event.detail > 1 && event.target instanceof Element && event.target.closest(ACTIVATION_SELECTOR)) {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+        const guardedControl = event.target.closest(GUARDED_CONTROL_SELECTOR);
+        if (
+          (event.detail > 1 && (guardedControl || event.target.closest(ACTIVATION_SELECTOR))) ||
+          (guardedControl && awaitingReleaseRef.current)
+        ) {
           event.preventDefault();
           event.stopPropagation();
         }
