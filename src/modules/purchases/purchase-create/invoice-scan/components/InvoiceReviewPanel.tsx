@@ -94,6 +94,15 @@ function isGuarded(until: { current: number }) {
   return Date.now() < until.current;
 }
 
+/**
+ * D33-a (C6-M1): teclas que activan algo en la revisión. Una tecla mantenida al mover el foco
+ * no actúa sobre el nuevo destino hasta que se suelte (aunque el sistema no marque `repeat`).
+ */
+const ACTIVATION_KEYS = new Set(["Enter", " ", "Escape"]);
+
+/** D33-a: controles cuyo 2.º clic de un doble clic (`detail > 1`) se ignora. */
+const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-row-action], [data-load-button]";
+
 function InvoiceScanImages({ scanId }: { scanId: string }) {
   const images = useInvoiceScanImages(scanId);
 
@@ -174,6 +183,10 @@ export function InvoiceReviewPanel({
   const headerRef = useRef<HTMLDivElement>(null);
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
   const guardUntilRef = useRef(0);
+  // D33-a: teclas de activación y punteros pulsados ahora; al mover el foco con alguno pulsado,
+  // hace falta un keyup/pointerup nuevo antes de aceptar otra activación.
+  const pressedRef = useRef(new Set<string>());
+  const awaitingReleaseRef = useRef(false);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const sections = getReviewSections(state);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
@@ -187,11 +200,17 @@ export function InvoiceReviewPanel({
   }
 
   function activationGuarded() {
-    return isGuarded(guardUntilRef);
+    return awaitingReleaseRef.current || isGuarded(guardUntilRef);
+  }
+
+  function release(input: string) {
+    pressedRef.current.delete(input);
+    awaitingReleaseRef.current = false;
   }
 
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
   function requestFocus(target: number | null, next: InvoiceReviewState) {
+    awaitingReleaseRef.current = pressedRef.current.size > 0;
     const line = target === null ? undefined : next.lines[target];
     // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
@@ -245,9 +264,9 @@ export function InvoiceReviewPanel({
       }
       return;
     }
-    // D31: la opción explícita marcada («Por unidad / Por caja»); sin ella, el costo a corregir.
+    // D31: la opción enfocable del radiogrupo (D33-a: sin marcar); sin ella, el costo a corregir.
     const choice = focusRequest.choice
-      ? (row.querySelector<HTMLElement>('[data-choice][aria-checked="true"]') ??
+      ? (row.querySelector<HTMLElement>('[data-choice][tabindex="0"]') ??
         row.querySelector<HTMLElement>('[data-need="unitPrice"]'))
       : null;
     if (choice) {
@@ -413,6 +432,10 @@ export function InvoiceReviewPanel({
   }
 
   function handleLoad() {
+    // D33-a: el rebote de la elección que resolvió la última línea no carga el borrador.
+    if (activationGuarded()) {
+      return;
+    }
     const draft = buildInvoiceReviewDraft(state);
     if (draft) {
       onLoad(draft);
@@ -453,7 +476,34 @@ export function InvoiceReviewPanel({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-4" data-testid="invoice-review-panel">
+    <div
+      className="flex min-w-0 flex-col gap-4"
+      data-testid="invoice-review-panel"
+      // D33-a (C6-M1): la autorrepetición del teclado y el 2.º clic de un doble clic no activan
+      // nada (fila, chip, opción, Descartar/Restaurar, Cargar).
+      onClickCapture={(event) => {
+        if (event.detail > 1 && event.target instanceof Element && event.target.closest(ACTIVATION_SELECTOR)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onKeyDownCapture={(event) => {
+        if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (ACTIVATION_KEYS.has(event.key)) {
+          pressedRef.current.add(`key:${event.key}`);
+        }
+      }}
+      onKeyUpCapture={(event) => release(`key:${event.key}`)}
+      onPointerCancelCapture={(event) => release(`pointer:${event.pointerId}`)}
+      onPointerDownCapture={(event) => {
+        pressedRef.current.add(`pointer:${event.pointerId}`);
+      }}
+      onPointerUpCapture={(event) => release(`pointer:${event.pointerId}`)}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Revisión de la factura</h2>
