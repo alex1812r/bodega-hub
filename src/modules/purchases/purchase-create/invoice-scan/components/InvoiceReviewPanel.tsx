@@ -359,6 +359,16 @@ export function InvoiceReviewPanel({
       }
       return;
     }
+    if (action.type === "convertPackToUnits") {
+      // B-p7-1: «Cargar como N unidades» deja de existir al pulsarse; D36: el foco va a la fila
+      // si sigue pendiente, a la siguiente pendiente o al pie, nunca a un control que decide.
+      const next = reviewReducer(state, action);
+      dispatch(action);
+      armActivationGuard();
+      const line = next.lines[action.index];
+      requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+      return;
+    }
     if (action.type !== "discardLine" && action.type !== "restoreLine") {
       dispatch(action);
       return;
@@ -371,6 +381,22 @@ export function InvoiceReviewPanel({
       return;
     }
     requestFocus(nextPendingIndex(next, action.index) ?? action.index, next);
+  }
+
+  /**
+   * Acciones del encabezado y de los avisos. B-p7-1: «Sí, la factura está en dólares» y el
+   * proveedor sugerido desaparecen al pulsarse; el foco va a la primera pendiente (o al pie).
+   */
+  function applyPanelAction(action: InvoiceReviewAction) {
+    const focused = document.activeElement;
+    const next = reviewReducer(state, action);
+    dispatch(action);
+    const unmountsFocused =
+      (action.type === "acceptUsdAnomaly" && next !== state) ||
+      (action.type === "setSupplier" && focused instanceof Element && focused.matches("[data-supplier-candidate]"));
+    if (unmountsFocused) {
+      requestFocus(nextPendingIndex(next, null), next);
+    }
   }
 
   /** Enter que acepta el marcado (fila o campo que pide la línea); D31: nunca a ciegas. */
@@ -591,13 +617,13 @@ export function InvoiceReviewPanel({
         <div className="flex min-w-0 flex-col gap-4">
           <div ref={headerRef}>
             <InvoiceReviewHeader
-              onAction={dispatch}
+              onAction={applyPanelAction}
               onRescan={onRescan}
               state={state}
               supplierFetcher={supplierFetcher}
             />
           </div>
-          <InvoiceReviewRateNotice onAction={dispatch} state={state} />
+          <InvoiceReviewRateNotice onAction={applyPanelAction} state={state} />
           <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
 
           <section

@@ -120,6 +120,7 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
               {supplier.candidates.map((candidate) => (
                 <button
                   className="flex cursor-pointer flex-col items-start rounded-lg border border-outline-variant px-3 py-1.5 text-left text-xs transition-colors hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-supplier-candidate
                   key={candidate.contactId}
                   onClick={() =>
                     onAction({

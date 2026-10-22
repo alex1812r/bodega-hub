@@ -13,6 +13,7 @@ import { cn } from "@/shared/utils/cn";
 
 import {
   enterTargetProductId,
+  getEntryModeOutcome,
   getLineAmount,
   getLineIssues,
   getTaxInclusion,
@@ -28,6 +29,8 @@ import {
 } from "../reviewModel";
 import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
 import {
+  ENTRY_MODE_DEVIATION_TEXT,
+  entryModeOutcomeText,
   formatInvoiceMoney,
   getChoiceChips,
   lineIssueText,
@@ -110,6 +113,9 @@ export function InvoiceReviewLineRow({
   const needs = line.discarded ? [] : lineNeedMessages(line);
   const amount = getLineAmount(line);
   const noticesId = useId();
+  const optionsId = useId();
+  // B-p7-3: con aviso de elección, cada opción dice antes qué entra al stock y a qué costo.
+  const showOutcomes = line.issues.some(isExplicitChoiceIssue);
   const hasNotices = issues.length > 0 || needs.length > 0;
 
   return (
@@ -277,40 +283,70 @@ export function InvoiceReviewLineRow({
           {showPack ? (
             <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
               <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="radiogroup">
-                {(["unit", "pack"] as const).map((mode) => (
-                  <button
-                    aria-checked={checkedMode === mode}
-                    className={cn(
-                      "h-8 cursor-pointer rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      checkedMode === mode
-                        ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                        : "border-outline-variant text-foreground hover:bg-surface-container-low",
-                    )}
-                    data-choice={mode}
-                    key={mode}
-                    onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
-                    onKeyDown={(event) => {
-                      if (!ARROW_KEYS.has(event.key)) {
-                        return;
+                {(["unit", "pack"] as const).map((mode) => {
+                  const outcome = showOutcomes ? getEntryModeOutcome(state, line, mode) : undefined;
+                  const deviates = outcome?.deviates === true;
+                  const optionId = `${optionsId}-${mode}`;
+                  return (
+                    <button
+                      aria-checked={checkedMode === mode}
+                      aria-describedby={
+                        outcome ? `${optionId}-outcome${deviates ? ` ${optionId}-deviation` : ""}` : undefined
                       }
-                      event.preventDefault();
-                      if (event.repeat) {
-                        return;
-                      }
-                      // Dos opciones: cualquier flecha va a la otra y la elige (radiogrupo).
-                      const other = mode === "unit" ? "pack" : "unit";
-                      event.currentTarget.parentElement
-                        ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
-                        ?.focus();
-                      onAction({ type: "editEntryMode", index, entryMode: other });
-                    }}
-                    role="radio"
-                    tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
-                    type="button"
-                  >
-                    {mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}
-                  </button>
-                ))}
+                      aria-labelledby={`${optionId}-label`}
+                      className={cn(
+                        "cursor-pointer border text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        // Con resultado, la opción envuelve el texto (cabe a 390 px).
+                        outcome
+                          ? "flex min-h-8 max-w-full flex-col items-start gap-0.5 rounded-lg px-3 py-1.5 text-left break-words whitespace-normal"
+                          : "h-8 rounded-full px-3",
+                        checkedMode === mode
+                          ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                          : "border-outline-variant text-foreground hover:bg-surface-container-low",
+                        deviates ? "border-amber-400 dark:border-amber-500" : null,
+                        deviates && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
+                      )}
+                      data-choice={mode}
+                      data-deviates={deviates || undefined}
+                      key={mode}
+                      onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
+                      onKeyDown={(event) => {
+                        if (!ARROW_KEYS.has(event.key)) {
+                          return;
+                        }
+                        event.preventDefault();
+                        if (event.repeat) {
+                          return;
+                        }
+                        // Dos opciones: cualquier flecha va a la otra y la elige (radiogrupo).
+                        const other = mode === "unit" ? "pack" : "unit";
+                        event.currentTarget.parentElement
+                          ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
+                          ?.focus();
+                        onAction({ type: "editEntryMode", index, entryMode: other });
+                      }}
+                      role="radio"
+                      tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
+                      type="button"
+                    >
+                      <span id={`${optionId}-label`}>{mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}</span>
+                      {outcome ? (
+                        <span className="font-normal tabular-nums" id={`${optionId}-outcome`}>
+                          {entryModeOutcomeText(line, outcome)}
+                        </span>
+                      ) : null}
+                      {deviates ? (
+                        <span
+                          className="flex items-start gap-1 font-normal text-amber-700 dark:text-amber-300"
+                          id={`${optionId}-deviation`}
+                        >
+                          <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
+                          {ENTRY_MODE_DEVIATION_TEXT}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
               {line.entryMode === "pack" ? (
                 // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
