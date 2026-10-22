@@ -1148,7 +1148,7 @@ describe("InvoiceReviewPanel", () => {
       );
     });
 
-    it("6.18 por unidad: la línea sin empaque con aviso de precio ofrece «Por unidad / Por caja»", () => {
+    it("6.18 por unidad: la línea leída por unidad con aviso de precio ofrece «Por unidad / Por bulto» sin marcar", () => {
       renderPanel(
         makeReviewResponse({
           lines: [doubtfulLine(2, 1, { match: { candidates: singleCandidate(2), issues: [PRICE_ISSUE] } })],
@@ -1156,6 +1156,7 @@ describe("InvoiceReviewPanel", () => {
       );
 
       expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "false");
+      expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toHaveAttribute("aria-checked", "false");
     });
 
     describe("REP6-01 (C6-M1, D33-a): ni la autorrepetición ni un doble clic lento resuelven ni cargan", () => {
@@ -1423,7 +1424,7 @@ describe("InvoiceReviewPanel", () => {
         expect(blockers()).not.toHaveTextContent("por resolver");
       });
 
-      it("B-p6-1: con dos líneas así el pie dice «en 2 líneas»; con otra pendiente lo añade al recuento", async () => {
+      it("B-p6-1: con dos líneas así y otra pendiente, el pie dice «en 2 líneas» y cuenta aparte solo la otra", async () => {
         const user = userEvent.setup();
         renderPanel(makeReviewResponse({ lines: [unitPackLine(2), unitPriceLine(3), unmatchedLine(4, false)] }));
 
@@ -1431,13 +1432,27 @@ describe("InvoiceReviewPanel", () => {
         now += 1000;
         await user.click(within(row(1)).getByRole("button", { name: /Producto 3/ }));
 
-        expect(blockers()).toHaveTextContent("Quedan 3 líneas por resolver.");
+        expect(blockers()).toHaveTextContent("Queda 1 línea por resolver.");
+        expect(blockers()).not.toHaveTextContent("Quedan 3");
         expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 2 líneas.");
 
         now += 1000;
         await user.click(within(row(2)).getByRole("button", { name: "Descartar línea" }));
         expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 2 líneas.");
         expect(blockers()).not.toHaveTextContent("por resolver");
+      });
+
+      it("B-p6-1: con una línea así y dos pendientes más, el genérico cuenta solo las otras dos", async () => {
+        const user = userEvent.setup();
+        renderPanel(
+          makeReviewResponse({ lines: [unitPackLine(2), unmatchedLine(3, false), unmatchedLine(4, false)] }),
+        );
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+        expect(blockers()).toHaveTextContent("Quedan 2 líneas por resolver.");
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 1 línea.");
+        expect(blockers()).not.toHaveTextContent("Quedan 3");
       });
 
       it("B-p6-2: el aviso de precio usa la misma palabra que la opción («bulto»)", () => {

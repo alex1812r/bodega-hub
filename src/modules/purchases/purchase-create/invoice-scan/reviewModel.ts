@@ -349,6 +349,11 @@ function formatQuantity(value: number): string {
   return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
 }
 
+/** Palabra del empaque de la línea («bulto», «caja»…): la misma en la opción y en los textos (REP6-04). */
+export function linePackWord(line: Pick<InvoiceReviewLine, "packLabel">): string {
+  return line.packLabel.trim().toLowerCase() || "empaque";
+}
+
 /**
  * SCN-UI-Q1 (MEDIO-3): la compra solo admite cantidades enteras
  * (`purchaseItemInputSchema`: `quantity`/`packCount` int). Una cantidad fraccionaria
@@ -356,11 +361,6 @@ function formatQuantity(value: number): string {
  * cantidad = empaques × unidades, costo = precio ÷ unidades. Si el producto no da
  * entero o faltan las unidades, `reason` dice qué editar.
  */
-/** Palabra del empaque de la línea («bulto», «caja»…): la misma en la opción y en los textos (REP6-04). */
-export function linePackWord(line: Pick<InvoiceReviewLine, "packLabel">): string {
-  return line.packLabel.trim().toLowerCase() || "empaque";
-}
-
 export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversion {
   const pack = linePackWord(line);
   if (!isPositive(line.quantity) || Number.isInteger(line.quantity)) {
@@ -1168,8 +1168,11 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
       getLineNeeds(line).length === 0 &&
       needsExplicitChoice(line),
   ).length;
-  if (pending > choiceOnly) {
-    blockers.push(pending === 1 ? "Queda 1 línea por resolver." : `Quedan ${pending} líneas por resolver.`);
+  const otherPending = pending - choiceOnly;
+  if (otherPending > 0) {
+    blockers.push(
+      otherPending === 1 ? "Queda 1 línea por resolver." : `Quedan ${otherPending} líneas por resolver.`,
+    );
   }
   if (choiceOnly > 0) {
     blockers.push(
