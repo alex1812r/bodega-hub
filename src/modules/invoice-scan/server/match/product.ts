@@ -78,14 +78,19 @@ function bySupplierSku(line: InvoiceExtractionLine, lookup: ProductLookup): stri
  * Alias exactos de la línea (puede haber uno por texto, de productos distintos):
  * la clave con la que se aprenden (`invoiceAliasKey`, SCN-UI-Q2), la description y
  * el rawText entero normalizados (clave de los alias aprendidos antes).
+ * `loadMatchContext` pide a la base solo los alias con estas claves (C6-M3).
  */
+export function exactAliasTexts(line: InvoiceExtractionLine): string[] {
+  return unique(
+    [invoiceAliasKey(line), normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean),
+  );
+}
+
 function byExactAlias(line: InvoiceExtractionLine, lookup: ProductLookup): MatchAlias[] {
   if (!lookup.catalog) {
     return [];
   }
-  const texts = unique(
-    [invoiceAliasKey(line), normalizeAlias(line.description), normalizeAlias(line.rawText)].filter(Boolean),
-  );
+  const texts = exactAliasTexts(line);
   return lookup.catalog.aliases.filter((alias) => texts.includes(alias.aliasNorm));
 }
 
