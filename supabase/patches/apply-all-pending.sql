@@ -896,3 +896,15 @@ notify pgrst, 'reload schema';
 -- select=* o select=claim_request_id dan 42501; el BFF nombra columnas y no la lee. No toca stock ni dinero.
 -- OJO: reaplicar 20261019b o 20261019m (release sin la denegacion) o 20261019a / 20261019g (SELECT de tabla de nuevo)
 -- deshace este parche: volver a aplicarlo despues y correr verify-patches.sql (filas "(20261019o").
+-- -----------------------------------------------------------------------------
+-- 20261019q — escaneo de factura: busquedas exactas por POST, sin texto de la factura en la URL (REP7-01; auditoria p8
+--             P8-M1, caos p7 C7-M1, D35): invoice_match_exact_aliases, invoice_match_barcode_products e
+--             invoice_match_previous_scans
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261019q-invoice-match-exact.sql
+-- Requiere 20261019a, 20261019b y 20261019o (va despues de 19o). Idempotente, una transaccion. SOLO LECTURA: tres RPC
+-- nuevas (jsonb, security invoker con RLS, tienda de assert_store_context(), rol admin | almacen, arrays acotados,
+-- execute solo authenticated). El BFF nuevo deja de pedir alias / barcodes / numero / fecha de la factura por la URL
+-- (414 con facturas de >=55 lineas); sin el parche el emparejamiento del BFF nuevo falla (PGRST202). No toca stock,
+-- dinero ni filas.
+-- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP7-01, y correr verify-patches.sql (filas "(20261019q").

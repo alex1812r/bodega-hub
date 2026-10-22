@@ -157,7 +157,7 @@ export async function completeScan(
       p_extracted: completion.extracted,
       p_id: id,
       p_input_tokens: completion.inputTokens,
-      p_matched: completion.matched,
+      p_matched: completion.matched ?? {},
       p_output_tokens: completion.outputTokens,
       p_store_id: ctx.storeId,
       p_user_id: ctx.userId,
@@ -365,15 +365,18 @@ export async function getDailyUsage(
   const { endUtcExclusive, startUtc } = caracasDateToUtcRange(getCaracasIsoDate(now));
   const supabase = await createRouteSupabaseClient();
   // REP6-05: con un límite diario de hasta 10.000 páginas el día puede pasar de 1000 filas.
-  const rows = await fetchAllRows<{ usage_pages: number }>((from, to) =>
-    supabase
-      .from("invoice_scans")
-      .select("usage_pages")
-      .eq("store_id", ctx.storeId)
-      .gte("created_at", startUtc)
-      .lt("created_at", endUtcExclusive)
-      .order("id")
-      .range(from, to),
+  // P8-B1: un escaneo que entra entre dos páginas repite la fila del borde; se descarta por id.
+  const rows = await fetchAllRows<{ id: string; usage_pages: number }>(
+    (from, to) =>
+      supabase
+        .from("invoice_scans")
+        .select("id, usage_pages")
+        .eq("store_id", ctx.storeId)
+        .gte("created_at", startUtc)
+        .lt("created_at", endUtcExclusive)
+        .order("id")
+        .range(from, to),
+    { getKey: (row) => row.id },
   );
 
   const used = rows.reduce((sum, row) => sum + row.usage_pages, 0);

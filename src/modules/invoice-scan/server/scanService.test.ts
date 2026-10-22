@@ -1355,3 +1355,28 @@ describe("scanInvoice · lectura sobre el tope de bytes (REP2-02 · auditoría B
     expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
   });
 });
+
+describe("scanInvoice · fallo del emparejamiento tras leer (P8-M1, D35)", () => {
+  it("guarda la lectura: el reintento de la misma foto re-empareja sin volver a llamar al modelo ni cobrar", async () => {
+    const ctx = newContext();
+    let matches = 0;
+    // El primer emparejamiento falla como el 414 de la URL larga (500 sin mapear); el segundo funciona.
+    const matcher = jest.fn(async (...args: Parameters<typeof matchScan>) => {
+      matches += 1;
+      if (matches === 1) {
+        throw new ApiError(500, "INTERNAL_ERROR", "URI too long");
+      }
+      return matchScan(...args);
+    });
+    const { built, extract } = deps({ matcher });
+    const pages = [page("emparejamiento fallido")];
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 500 });
+    const retry = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(matcher).toHaveBeenCalledTimes(2);
+    expect(retry).toMatchObject({ cached: true, extraction: singlePageExtraction, limits: { used: 1 } });
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
+  });
+});

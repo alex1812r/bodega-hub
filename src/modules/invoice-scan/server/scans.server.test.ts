@@ -311,7 +311,13 @@ describe("scans.server · getScan", () => {
 
 describe("scans.server · getDailyUsage", () => {
   it("suma usage_pages (cada intento cobrado) en el rango [00:00, 24:00) de Caracas del día de `now`", async () => {
-    const { calls } = useRouteClient([ok([{ usage_pages: 2 }, { usage_pages: 1 }, { usage_pages: 3 }])]);
+    const { calls } = useRouteClient([
+      ok([
+        { id: "s1", usage_pages: 2 },
+        { id: "s2", usage_pages: 1 },
+        { id: "s3", usage_pages: 3 },
+      ]),
+    ]);
 
     // 23:30 del 14-oct en Caracas.
     const usage = await getDailyUsage(ctx, 5, new Date("2026-10-15T03:30:00.000Z"));
@@ -319,7 +325,7 @@ describe("scans.server · getDailyUsage", () => {
     expect(usage).toEqual({ limit: 5, remaining: 0, used: 6 });
     expect(calls[0]).toEqual(
       expect.arrayContaining([
-        ["select", "usage_pages"],
+        ["select", "id, usage_pages"],
         ["eq", "store_id", ctx.storeId],
         ["gte", "created_at", "2026-10-14T04:00:00.000Z"],
         ["lt", "created_at", "2026-10-15T04:00:00.000Z"],

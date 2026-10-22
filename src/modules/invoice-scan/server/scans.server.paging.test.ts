@@ -37,6 +37,51 @@ describe("scans.server · más de 1000 filas / ids (REP6-05)", () => {
     expect(usage).toEqual({ limit: 5000, remaining: 3500, used: 1500 });
   });
 
+  it("getDailyUsage no cuenta dos veces la fila del borde si entra un escaneo entre dos páginas (P8-B1)", async () => {
+    // La fila 999 (última de la página 1) vale 3 páginas para que contarla dos veces se note.
+    const scans: Array<Record<string, unknown>> = Array.from({ length: 1500 }, (_, index) => ({
+      created_at: new Date(Date.UTC(2026, 9, 14, 12, 0, 0) + index * 1000).toISOString(),
+      id: uuid("aaaaaaaa", index),
+      store_id: ctx.storeId,
+      usage_pages: index === 999 ? 3 : 1,
+    }));
+    const fake = createFakePostgrest({ invoice_scans: scans });
+    let ranges = 0;
+    // Entre la página 1 y la 2 entra un escaneo cuyo uuid ordena antes que todos:
+    // desplaza el corte una fila y la fila 999 vuelve a salir al principio de la página 2.
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+      from: (table: string) => {
+        const query = fake.client.from(table);
+        const range = query.range.bind(query);
+
+        query.range = (from: number, to: number) => {
+          ranges += 1;
+
+          if (ranges === 2) {
+            scans.push({
+              created_at: new Date(Date.UTC(2026, 9, 14, 18, 0, 0)).toISOString(),
+              id: uuid("00000000", 0),
+              store_id: ctx.storeId,
+              usage_pages: 1,
+            });
+          }
+
+          return range(from, to);
+        };
+
+        return query;
+      },
+    });
+
+    const usage = await getDailyUsage(ctx, 5000, new Date("2026-10-14T20:00:00.000Z"));
+    const finalTotal = scans.reduce((sum, row) => sum + Number(row.usage_pages), 0);
+
+    expect(ranges).toBeGreaterThanOrEqual(2);
+    // Lo leído es la foto de antes de la inserción (1502), nunca más que el total real.
+    expect(usage.used).toBe(1502);
+    expect(usage.used).toBeLessThanOrEqual(finalTotal);
+  });
+
   it("getProductNames resuelve los nombres de una factura con el máximo de líneas sin pasarse del largo de URL", async () => {
     const products = Array.from({ length: INVOICE_MAX_LINES }, (_, index) => ({
       id: uuid("bbbbbbbb", index),

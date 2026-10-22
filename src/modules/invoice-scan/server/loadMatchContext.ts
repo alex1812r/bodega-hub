@@ -8,15 +8,20 @@
  * 1. RPC `invoice_match_candidates` (20261019d: proveedores por RIF / trigram,
  *    proveedor más probable y candidatos difusos por línea), alícuotas
  *    (`tax_rates_for_store` + `app_settings.default_tax_rate_id`), tasa del día
- *    (`getCurrentExchangeRate`, la del formulario de compra), escaneos previos con el mismo número y productos por código de barras.
+ *    (`getCurrentExchangeRate`, la del formulario de compra), escaneos previos con el mismo número
+ *    (`invoice_match_previous_scans`) y productos por código de barras (`invoice_match_barcode_products`).
  * 2. Catálogo del proveedor elegido por la RPC: `supplier_products` activos con
- *    sus `supplier_product_pack_units` activos (paginados) y los `supplier_product_aliases`
- *    exactos de la factura y de los productos casados por SKU (C6-M3); en
+ *    sus `supplier_product_pack_units` activos (paginados), los alias exactos de la
+ *    factura (`invoice_match_exact_aliases`) y los de los productos casados por SKU (C6-M3); en
  *    paralelo, la misma RPC con textos limpios (`searchTextVariants`) para las
  *    líneas que no trajeron ningún candidato difuso.
  * 3. Detalle de los productos referenciados (candidatos + catálogo + alias +
  *    barcode): alícuota de la categoría, receta activa, tamaños de las recetas
  *    de las que es componente y último costo recibido (o `current_cost_ref`, D24-c).
+ *
+ * D35 (P8-M1): ningún texto de la factura (claves de alias, barcodes, número,
+ * fecha) va en la URL: viaja en el cuerpo POST de las RPC (20261019q). Las
+ * consultas por URL filtran solo por ids internos.
  */
 import { normalizeAlias } from "@bodega/core/invoice";
 import { invoiceAliasKey } from "../invoiceAliasKey";
@@ -53,6 +58,12 @@ export const MATCH_CANDIDATES_RPC = "invoice_match_candidates";
 export const MATCH_CANDIDATES_PER_LINE = 5;
 /** Textos máximos por llamada a la RPC (por encima responde PT400). */
 export const MATCH_CANDIDATES_MAX_TEXTS = 500;
+/** RPC de alias exactos del proveedor (20261019q). */
+export const MATCH_EXACT_ALIASES_RPC = "invoice_match_exact_aliases";
+/** RPC de productos por código de barras (20261019q). */
+export const MATCH_BARCODE_PRODUCTS_RPC = "invoice_match_barcode_products";
+/** RPC de escaneos previos por número o por fecha y total (20261019q). */
+export const MATCH_PREVIOUS_SCANS_RPC = "invoice_match_previous_scans";
 /** Escaneos previos con el mismo número normalizado que se pasan a `matchInvoice`. */
 export const PREVIOUS_SCANS_LIMIT = 50;
 /** Candidatos que se piden a la base antes de filtrar por número normalizado. */
@@ -73,8 +84,6 @@ const PRODUCT_SELECT =
 const LAST_LINE_SELECT = "id, purchase_items(unit_cost_ref, purchases!inner(created_at))";
 const SUPPLIER_PRODUCT_SELECT =
   "id, product_id, supplier_sku, is_preferred, supplier_product_pack_units(id, label, units_per_pack, is_default, is_active)";
-const PREVIOUS_SCAN_SELECT =
-  "id, supplier_id, number:extracted->>number, supplier_tax_id:extracted->supplier->>taxId, matched_contact_id:matched->supplier->>contactId, date:extracted->>date, total:extracted->>total, purchase_id, purchase:purchases(status)";
 
 type CandidatesRpcResult = {
   suppliers?: Array<{
@@ -284,13 +293,12 @@ async function loadSystemRate(): Promise<number | undefined> {
  */
 async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
-  storeId: string,
   extraction: InvoiceExtraction,
   excludeScanId?: string,
 ): Promise<MatchPreviousScan[]> {
   const [byNumber, byDateTotal] = await Promise.all([
-    loadPreviousScansByNumber(supabase, storeId, extraction, excludeScanId),
-    loadPreviousScansByDateTotal(supabase, storeId, extraction, excludeScanId),
+    loadPreviousScansByNumber(supabase, extraction, excludeScanId),
+    loadPreviousScansByDateTotal(supabase, extraction, excludeScanId),
   ]);
   const seen = new Set(byNumber.map((row) => row.id));
   return [...byNumber, ...byDateTotal.filter((row) => !seen.has(row.id))].map((row) => ({
@@ -315,7 +323,6 @@ async function loadPreviousScans(
  */
 async function loadPreviousScansByDateTotal(
   supabase: MatchContextSupabaseClient,
-  storeId: string,
   extraction: InvoiceExtraction,
   excludeScanId?: string,
 ): Promise<PreviousScanRow[]> {
@@ -330,26 +337,18 @@ async function loadPreviousScansByDateTotal(
 
   const cents = Math.round(total * 100);
   const totals = [cents - 1, cents, cents + 1].map((value) => String(value / 100));
-  let query = supabase
-    .from("invoice_scans")
-    .select(PREVIOUS_SCAN_SELECT)
-    .eq("store_id", storeId)
-    .not("status", "in", "(discarded,failed)")
-    .in("extracted->>total", totals);
-  if (date) {
-    query = query.eq("extracted->>date", date);
-  }
-  if (excludeScanId) {
-    query = query.neq("id", excludeScanId);
-  }
-  const { data, error } = await query.order("created_at", { ascending: false }).limit(PREVIOUS_SCANS_LIMIT);
+  const { data, error } = await supabase.rpc(MATCH_PREVIOUS_SCANS_RPC, {
+    p_totals: totals,
+    p_date: date || null,
+    p_exclude_scan_id: excludeScanId ?? null,
+    p_limit: PREVIOUS_SCANS_LIMIT,
+  });
   throwIfSupabaseError(error);
-  return (data ?? []) as unknown as PreviousScanRow[];
+  return (data ?? []) as PreviousScanRow[];
 }
 
 async function loadPreviousScansByNumber(
   supabase: MatchContextSupabaseClient,
-  storeId: string,
   extraction: InvoiceExtraction,
   excludeScanId?: string,
 ): Promise<PreviousScanRow[]> {
@@ -358,41 +357,62 @@ async function loadPreviousScansByNumber(
     return [];
   }
 
-  let query = supabase
-    .from("invoice_scans")
-    .select(PREVIOUS_SCAN_SELECT)
-    .eq("store_id", storeId)
-    .not("status", "in", "(discarded,failed)")
-    // `number` solo tiene [A-Z0-9]: no hay comodines de LIKE que escapar.
-    .ilike("extracted->>number", `%${[...number].join("%")}`);
-  if (excludeScanId) {
-    query = query.neq("id", excludeScanId);
-  }
-  const { data, error } = await query
-    .order("created_at", { ascending: false })
-    .limit(PREVIOUS_SCAN_CANDIDATES_LIMIT);
+  // La RPC busca `%F%A%C%1` (los caracteres en orden) con `number` en el cuerpo POST.
+  const { data, error } = await supabase.rpc(MATCH_PREVIOUS_SCANS_RPC, {
+    p_number: number,
+    p_exclude_scan_id: excludeScanId ?? null,
+    p_limit: PREVIOUS_SCAN_CANDIDATES_LIMIT,
+  });
   throwIfSupabaseError(error);
 
-  return ((data ?? []) as unknown as PreviousScanRow[])
+  return ((data ?? []) as PreviousScanRow[])
     .filter((row) => normalizeInvoiceNumber(row.number) === number)
     .slice(0, PREVIOUS_SCANS_LIMIT);
 }
 
-async function loadProductsWhere(
+async function loadProductsByIds(
   supabase: MatchContextSupabaseClient,
   storeId: string,
-  column: "id" | "barcode",
-  values: string[],
+  ids: string[],
 ): Promise<ProductRow[]> {
-  return fetchAllIn<ProductRow>(values, (chunk, from, to) =>
+  return fetchAllIn<ProductRow>(ids, (chunk, from, to) =>
     supabase
       .from("products")
       .select(PRODUCT_SELECT)
       .eq("store_id", storeId)
-      .in(column, chunk)
+      .in("id", chunk)
       .order("id")
       .range(from, to),
   );
+}
+
+/** ids de los productos con alguno de los barcodes leídos (RPC por POST, D35). */
+async function loadBarcodeProductIds(
+  supabase: MatchContextSupabaseClient,
+  extraction: InvoiceExtraction,
+): Promise<string[]> {
+  const barcodes = barcodeVariants(extraction);
+  if (barcodes.length === 0) {
+    return [];
+  }
+  const { data, error } = await supabase.rpc(MATCH_BARCODE_PRODUCTS_RPC, { p_barcodes: barcodes });
+  throwIfSupabaseError(error);
+  return (data ?? []) as string[];
+}
+
+/** Alias del proveedor con alguna de las claves exactas de la factura (RPC por POST, D35). */
+async function loadExactAliases(
+  supabase: MatchContextSupabaseClient,
+  supplierId: string,
+  extraction: InvoiceExtraction,
+): Promise<AliasRow[]> {
+  const keys = [...new Set(extraction.lines.flatMap(exactAliasTexts))];
+  if (keys.length === 0) {
+    return [];
+  }
+  const { data, error } = await supabase.rpc(MATCH_EXACT_ALIASES_RPC, { p_supplier_id: supplierId, p_alias_keys: keys });
+  throwIfSupabaseError(error);
+  return (data ?? []) as AliasRow[];
 }
 
 const ALIAS_SELECT = "id, alias_norm, product_id, pack_label, units_per_pack, hits";
@@ -400,8 +420,9 @@ const ALIAS_SELECT = "id, alias_norm, product_id, pack_label, units_per_pack, hi
 /**
  * Catálogo del proveedor. Vínculos (`supplier_products`) completos, paginados.
  * Alias (C6-M3, D33-c): NO todos los del proveedor (pueden ser miles), sino
- * los exactos de la factura (`alias_norm in` las claves de `exactAliasTexts`)
- * y los de los productos casados por SKU del proveedor (`aliasForPack`). Los
+ * los exactos de la factura (claves de `exactAliasTexts` por POST a
+ * `invoice_match_exact_aliases`, D35) y los de los productos casados por SKU
+ * del proveedor (`aliasForPack`, por ids). Los
  * difusos los da la RPC `invoice_match_candidates` (trigram, acotada por línea).
  */
 async function loadCatalog(
@@ -424,9 +445,7 @@ async function loadCatalog(
         .order("id")
         .range(from, to),
     ),
-    fetchAllIn<AliasRow>(extraction.lines.flatMap(exactAliasTexts), (chunk, from, to) =>
-      aliasQuery().in("alias_norm", chunk).order("id").range(from, to),
-    ),
+    loadExactAliases(supabase, supplierId, extraction),
   ]);
 
   const lineSkus = new Set(extraction.lines.map((line) => normalizeCode(line.supplierSku)).filter(Boolean));
@@ -679,12 +698,12 @@ export async function loadMatchContext(
   extraction: InvoiceExtraction,
   options?: { excludeScanId?: string },
 ): Promise<MatchContext> {
-  const [candidates, taxRates, systemRate, previousScans, barcodeRows] = await Promise.all([
+  const [candidates, taxRates, systemRate, previousScans, barcodeProductIds] = await Promise.all([
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
     loadSystemRate(),
-    loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
-    loadProductsWhere(supabase, storeId, "barcode", barcodeVariants(extraction)),
+    loadPreviousScans(supabase, extraction, options?.excludeScanId),
+    loadBarcodeProductIds(supabase, extraction),
   ]);
 
   const supplierCandidates = toSupplierCandidates(candidates);
@@ -696,26 +715,22 @@ export async function loadMatchContext(
   ]);
   const fuzzy = { ...firstFuzzy, ...variantFuzzy };
 
-  const loaded = new Map(barcodeRows.map((row) => [row.id, row]));
   const referenced = new Set<string>([
-    ...loaded.keys(),
+    ...barcodeProductIds,
     ...Object.values(fuzzy).flatMap((list) => list.map((candidate) => candidate.productId)),
     ...(catalog?.supplierProducts.map((link) => link.productId) ?? []),
     ...(catalog?.aliases.map((alias) => alias.productId) ?? []),
   ]);
   const productIds = [...referenced];
-  const missing = productIds.filter((id) => !loaded.has(id));
 
-  const [extraRows, recipes, componentSizes, supplierCosts, anyCosts] = await Promise.all([
-    loadProductsWhere(supabase, storeId, "id", missing),
+  const [productRows, recipes, componentSizes, supplierCosts, anyCosts] = await Promise.all([
+    loadProductsByIds(supabase, storeId, productIds),
     loadRecipeConversions(supabase, storeId, productIds),
     loadComponentPackSizes(supabase, storeId, productIds),
     supplierId ? loadLastLines(supabase, storeId, productIds, supplierId) : Promise.resolve(new Map<string, number>()),
     loadLastLines(supabase, storeId, productIds),
   ]);
-  for (const row of extraRows) {
-    loaded.set(row.id, row);
-  }
+  const loaded = new Map(productRows.map((row) => [row.id, row]));
 
   const linkedIds = new Set(catalog?.supplierProducts.map((link) => link.productId) ?? []);
   const products: MatchProduct[] = [...loaded.values()].map((row) => {

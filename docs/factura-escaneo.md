@@ -634,6 +634,7 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 | 7 | `20261019i-invoice-scan-service-only.sql` | RPCs de escritura solo para `service_role`, `attempt_id` y tope de 512 KB; redefine reserve, complete, fail y discard |
 | 8 | `20261019k-invoice-scan-claim-guard.sql` | El descarte respeta el reclamo de la compra en curso (PT409) y la reserva exige usuario de la tienda; redefine reserve y discard. CIE-06: el descarte también da PT409 "Esta factura ya tiene una compra registrada y no se puede descartar." si la clave del reclamo ya creó su compra, aunque el reclamo haya caducado |
 | 9 | `20261020a-supplier-alias-remove.sql` | `remove_supplier_product_alias` (quitar un alias desde el proveedor) |
+| 10 | `20261019q-invoice-match-exact.sql` | Va después de 19o (la lista de arriba omite 19m y 19o; ver `apply-all-pending.sql`) y **antes** del BFF de REP7-01. `invoice_match_exact_aliases`, `invoice_match_barcode_products` e `invoice_match_previous_scans`: claves de alias, barcodes, número y fecha de la factura por el cuerpo POST, nunca en la URL (P8-M1 / D35: 414 con facturas de ≥55 líneas). Solo lectura, `security invoker`, execute solo `authenticated` |
 
 **Cadena de reaplicación.** Varias funciones se redefinen en parches posteriores; la versión vigente es la del último:
 
