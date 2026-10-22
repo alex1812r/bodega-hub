@@ -260,13 +260,13 @@ describe("REP7-06 · Obs-2: el aviso de precio sigue a la línea tras convertir 
     renderPanel(makeReviewResponse({ lines: [ketchupLine()] }));
     expect(notices(0)).toHaveTextContent("Sale a 46,08 REF por unidad");
     now += 1000;
-    await user.click(within(row(0)).getByRole("radio", { name: "Por bulto" }));
+    await user.click(within(row(0)).getByRole("button", { name: "Por bulto" }));
     await user.type(within(row(0)).getByLabelText("Unidades por bulto"), "12");
     now += 1000;
 
     await user.click(within(row(0)).getByRole("button", { name: "Cargar como 6 unidades" }));
 
-    expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAccessibleDescription("6 u · 3,84 REF/u");
+    expect(within(row(0)).getByRole("button", { name: "Por unidad" })).toHaveAccessibleDescription("6 u · 3,84 REF/u");
     expect(row(0)).not.toHaveTextContent(/Sale a 46,08/);
     expect(row(0)).not.toHaveTextContent(/¿Precio por/);
   });
@@ -275,7 +275,7 @@ describe("REP7-06 · Obs-2: el aviso de precio sigue a la línea tras convertir 
     const user = userEvent.setup();
     renderPanel(makeReviewResponse({ lines: [glupLine()] }));
     now += 1000;
-    await user.click(within(row(0)).getByRole("radio", { name: "Por caja" }));
+    await user.click(within(row(0)).getByRole("button", { name: "Por caja" }));
     const units = within(row(0)).getByLabelText("Unidades por caja");
 
     await user.clear(units);
@@ -291,7 +291,7 @@ describe("REP7-06 · Obs-2: el aviso de precio sigue a la línea tras convertir 
     renderPanel(makeReviewResponse({ lines: [glupLine()] }));
     now += 1000;
 
-    await user.click(within(row(0)).getByRole("radio", { name: "Por unidad" }));
+    await user.click(within(row(0)).getByRole("button", { name: "Por unidad" }));
 
     expect(row(0)).not.toHaveTextContent(/¿Precio por/);
   });

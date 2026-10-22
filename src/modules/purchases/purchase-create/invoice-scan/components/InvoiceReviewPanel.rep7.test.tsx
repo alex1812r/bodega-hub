@@ -109,7 +109,7 @@ function row(index: number) {
   return element;
 }
 
-const radios = (index: number) => within(row(index)).getAllByRole("radio");
+const options = (index: number) => Array.from(row(index).querySelectorAll<HTMLElement>("[data-choice]"));
 const loadButton = () => screen.getByRole("button", { name: "Cargar en la compra" });
 const footer = () => screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
 const differenceBox = () => screen.getByRole("checkbox", { name: /Cargar con una diferencia de/ });
@@ -142,7 +142,7 @@ describe("REP7-03 · C7-M2: Enter sobre la fila 6.18 no elige «Por unidad»", (
     await burst(user, Array.from({ length: 6 }, () => "{Enter}"), gap);
 
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
-    expect(radios(1).map((radio) => radio.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+    expect(options(1).map((option) => option.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
     expect(row(1)).toHaveFocus();
     expect(autoFocused).toEqual([]);
   });
@@ -156,7 +156,7 @@ describe("REP7-03 · C7-M2: Enter sobre la fila 6.18 no elige «Por unidad»", (
     await burst(user, ["{Enter}", " ", " ", " ", "{Enter}", "{Enter}", " ", "{Enter}"], 60);
 
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
-    expect(radios(1).map((radio) => radio.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+    expect(options(1).map((option) => option.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
     expect(autoFocused).toEqual([]);
   });
 
@@ -230,11 +230,11 @@ describe("REP7-03 · C7-M2: Enter sobre la fila 6.18 no elige «Por unidad»", (
 });
 
 describe("REP7-03 · 6.17 solo con teclado sigue posible", () => {
-  it("Enter, Tab a «Por unidad», flecha a «Por caja» (la elige), Enter en la siguiente, Tab a Cargar, Enter", async () => {
+  it("Enter, Tab a «Por unidad», flecha a «Por caja» (sin elegirla), Enter la elige, Enter avanza, Enter en la siguiente, Tab a Cargar, Enter", async () => {
     const user = userEvent.setup();
     const props = renderPanel(makeReviewResponse({ lines: [priceLine(), nameLine(3)] }));
     await waitFor(() => expect(row(0)).toHaveFocus());
-    const [perUnit, perPack] = radios(0);
+    const [perUnit, perPack] = options(0);
 
     now += 1000;
     await user.keyboard("{Enter}");
@@ -242,12 +242,21 @@ describe("REP7-03 · 6.17 solo con teclado sigue posible", () => {
     now += 1000;
     await user.keyboard("{Tab}");
     expect(perUnit).toHaveFocus();
-    expect(perUnit).toHaveAttribute("aria-checked", "false");
+    expect(perUnit).toHaveAttribute("aria-pressed", "false");
     now += 1000;
     await user.keyboard("{ArrowRight}");
+    // D39-5: la flecha solo mueve el foco; Enter sobre la opción la elige.
+    expect(perPack).toHaveFocus();
+    expect(perPack).toHaveAttribute("aria-pressed", "false");
+    now += 1000;
+    await user.keyboard("{Enter}");
 
-    expect(perPack).toHaveAttribute("aria-checked", "true");
+    expect(perPack).toHaveAttribute("aria-pressed", "true");
     expect(row(0)).toHaveAttribute("data-status", "resolved");
+    // D39-6: el foco queda en la fila resuelta; Enter sobre ella avanza a la siguiente.
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    now += 1000;
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(row(1)).toHaveFocus());
 
     now += 1000;
@@ -276,9 +285,10 @@ describe("REP7-03 · 6.17 solo con teclado sigue posible", () => {
     now += 1000;
     await user.keyboard(key);
 
-    expect(radios(0)[0]).toHaveAttribute("aria-checked", "true");
+    expect(options(0)[0]).toHaveAttribute("aria-pressed", "true");
     expect(row(0)).toHaveAttribute("data-status", "resolved");
-    await waitFor(() => expect(row(1)).toHaveFocus());
+    // D39-6: el foco no avanza solo a la siguiente fila.
+    await waitFor(() => expect(row(0)).toHaveFocus());
   });
 
   it("20 líneas (15 confirmadas): Enter por fila y, al terminar, Tab lleva a Cargar", async () => {
