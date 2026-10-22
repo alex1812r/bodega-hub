@@ -384,6 +384,27 @@ export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversio
   return { ok: true, units, unitPrice: roundMoney(line.unitPrice / line.unitsPerPack) };
 }
 
+/**
+ * D31: avisos del emparejamiento que piden una elección explícita. Textos de
+ * `server/match/money.ts` (`priceCoherenceIssue`, 6.18) y de `server/match/pack.ts` /
+ * `server/match.ts` (tamaño de empaque: todos terminan pidiendo confirmar); anclados por test.
+ */
+const PRICE_CHOICE_ISSUE = /^¿Precio por caja o por unidad?/;
+const PACK_CHOICE_ISSUE = /: confirma (las unidades por empaque|si son )/;
+
+export function isExplicitChoiceIssue(issue: string): boolean {
+  return PRICE_CHOICE_ISSUE.test(issue) || PACK_CHOICE_ISSUE.test(issue);
+}
+
+/**
+ * D31: la línea trae un aviso de precio o de tamaño de empaque y el usuario aún no eligió
+ * «Por unidad / Por empaque» ni corrigió cantidad, costo o unidades. Aunque el producto esté
+ * aceptado (Enter, chip, buscador, alta), no se resuelve.
+ */
+export function needsExplicitChoice(line: InvoiceReviewLine): boolean {
+  return !line.discarded && !line.choiceMade && line.issues.some(isExplicitChoiceIssue);
+}
+
 function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefined): InvoiceReviewLineStatus {
   if (line.discarded) {
     return "discarded";
@@ -394,7 +415,7 @@ function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefine
   }
   const complete = getLineNeeds(line).length === 0;
   if (line.accepted) {
-    return complete ? "resolved" : "pending_doubtful";
+    return complete && !needsExplicitChoice(line) ? "resolved" : "pending_doubtful";
   }
   if (line.origin === "confirmed" && line.productId === matchProductId) {
     return complete ? "confirmed_by_match" : "pending_doubtful";
@@ -613,38 +634,6 @@ function rateReducer(state: InvoiceReviewState, choice: InvoiceRateChoice, manua
   return { ...state, rate: { ...rate, choice } };
 }
 
-/**
- * D31: avisos del emparejamiento que piden una elección explícita antes de aceptar con Enter.
- * Textos de `server/match/money.ts` (`priceCoherenceIssue`, 6.18) y `server/match/pack.ts`
- * (tamaño leído distinto del registrado, 6.8; antes por unidad y ahora por empaque).
- */
-const PRICE_CHOICE_ISSUE = /^¿Precio por caja o por unidad\?/;
-const PACK_CHOICE_ISSUES = [/el empaque registrado es de \d/, /^Antes este proveedor lo facturó por unidad;/];
-
-/** 6.18: la línea trae el aviso "¿Precio por caja o por unidad?". */
-export function hasPriceChoiceIssue(line: InvoiceReviewLine): boolean {
-  return line.issues.some((issue) => PRICE_CHOICE_ISSUE.test(issue));
-}
-
-/**
- * D31: Enter sobre la línea la resolvería a ciegas (aceptar el marcado la deja completa) y
- * trae un aviso de precio o de empaque sin que el usuario haya elegido ni corregido nada.
- */
-export function awaitsExplicitChoice(state: InvoiceReviewState, index: number): boolean {
-  const line = state.lines[index];
-  if (!line || line.discarded || line.choiceMade) {
-    return false;
-  }
-  const choiceIssue =
-    hasPriceChoiceIssue(line) || line.issues.some((issue) => PACK_CHOICE_ISSUES.some((rule) => rule.test(issue)));
-  if (!choiceIssue) {
-    return false;
-  }
-  const target = enterTargetProductId(line);
-  const product = target ? candidateProduct(line, target) : undefined;
-  return product !== undefined && getLineNeeds(setProduct(state, line, product)).length === 0;
-}
-
 export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAction): InvoiceReviewState {
   switch (action.type) {
     case "acceptCandidate":
@@ -661,9 +650,6 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
         candidateProduct(line, action.productId) ? { ...line, markedProductId: action.productId } : line,
       );
     case "acceptMarked":
-      if (awaitsExplicitChoice(state, action.index)) {
-        return state;
-      }
       return updateLine(state, action.index, (line) => {
         const target = enterTargetProductId(line);
         const product = target ? candidateProduct(line, target) : undefined;

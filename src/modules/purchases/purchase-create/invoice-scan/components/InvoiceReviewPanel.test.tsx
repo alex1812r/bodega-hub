@@ -1048,6 +1048,26 @@ describe("InvoiceReviewPanel", () => {
       expect(row(1)).toHaveAttribute("data-status", "resolved");
     });
 
+    it("clic en el chip que resuelve la línea: el foco va a la siguiente pendiente, no a BODY", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [nameLine(), doubtfulLine(3)] }));
+
+      await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+    });
+
+    it("clic en el chip que resuelve la última pendiente: el foco va a Cargar, no a BODY", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [{}, nameLine()] }));
+
+      await user.click(within(row(1)).getByRole("button", { name: /Producto 2/ }));
+
+      expect(row(1)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(loadButton()).toHaveFocus());
+    });
+
     it("pasados los 400 ms, un clic en el chip sí lo acepta", async () => {
       const user = userEvent.setup();
       renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
@@ -1059,7 +1079,7 @@ describe("InvoiceReviewPanel", () => {
       expect(row(1)).toHaveAttribute("data-status", "resolved");
     });
 
-    it("6.18: Enter en la fila no acepta a ciegas; lleva el foco a la opción explícita y, elegida, Enter acepta", async () => {
+    it("6.18: Enter en la fila no la resuelve a ciegas; lleva el foco a la opción explícita y, elegida, resuelve", async () => {
       const user = userEvent.setup();
       renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
       await waitFor(() => expect(row(0)).toHaveFocus());
@@ -1078,13 +1098,52 @@ describe("InvoiceReviewPanel", () => {
 
       now += 450;
       await user.keyboard("{Enter}");
-      await waitFor(() => expect(row(0)).toHaveFocus());
-      expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
-
-      now += 450;
-      await user.keyboard("{Enter}");
       expect(row(0)).toHaveAttribute("data-status", "resolved");
       await waitFor(() => expect(row(1)).toHaveFocus());
+    });
+
+    const PACK_ISSUE = "No hay empaque registrado de 6 unidades para este proveedor: confirma las unidades por empaque.";
+    const packLine = () =>
+      doubtfulLine(2, 1, {
+        read: { unit: "caja", quantity: 1, unitPrice: 2700, lineTotal: 2700, unitsPerPack: 6 },
+        match: { entryMode: "pack", unitsPerPack: 6, candidates: singleCandidate(2), issues: [PACK_ISSUE] },
+      });
+    const chipActivations: [string, (user: ReturnType<typeof userEvent.setup>, chip: HTMLElement) => Promise<void>][] = [
+      ["clic", (user, chip) => user.click(chip)],
+      [
+        "Enter en el chip",
+        async (user, chip) => {
+          chip.focus();
+          await user.keyboard("{Enter}");
+        },
+      ],
+    ];
+
+    describe.each([
+      ["6.18 precio", priceLine, PRICE_ISSUE],
+      ["tamaño de empaque", packLine, PACK_ISSUE],
+    ])("aceptación deliberada del candidato con aviso de %s", (_, line, issue) => {
+      it.each(chipActivations)(
+        "%s: elige el producto pero no la resuelve; foco en la opción, aviso visible; elegida, resuelve",
+        async (__, activate) => {
+          const user = userEvent.setup();
+          renderPanel(makeReviewResponse({ lines: [line(), doubtfulLine(3)] }));
+
+          await activate(user, within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+          expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+          expect(within(row(0)).getByText(issue)).toBeInTheDocument();
+          const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
+          await waitFor(() => expect(perPack).toHaveFocus());
+          expect(loadButton()).toBeDisabled();
+
+          now += 450;
+          await user.click(perPack);
+
+          expect(row(0)).toHaveAttribute("data-status", "resolved");
+          await waitFor(() => expect(row(1)).toHaveFocus());
+        },
+      );
     });
 
     it("6.18 por unidad: la línea sin empaque con aviso de precio ofrece «Por unidad / Por caja»", () => {

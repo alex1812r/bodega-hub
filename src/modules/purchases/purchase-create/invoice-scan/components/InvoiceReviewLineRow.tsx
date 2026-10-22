@@ -17,7 +17,7 @@ import {
   getLineIssues,
   getTaxInclusion,
   getUnitConversion,
-  hasPriceChoiceIssue,
+  isExplicitChoiceIssue,
   isPendingStatus,
   MAX_REVIEW_QUANTITY,
   type InvoiceReviewAction,
@@ -86,12 +86,12 @@ export function InvoiceReviewLineRow({
   const readUnit = state.extraction.lines[index]?.unit;
   // Una cantidad fraccionaria (0,50) también ofrece "Por bulto": así se puede cargar como unidades.
   const fractional = Number.isFinite(line.quantity) && line.quantity > 0 && !Number.isInteger(line.quantity);
-  // D31: "¿Precio por caja o por unidad?" se responde eligiendo la opción, aunque se leyera por unidad.
+  // D31: un aviso de precio o de empaque se responde eligiendo la opción, aunque se leyera por unidad.
   const showPack =
     line.entryMode === "pack" ||
     fractional ||
     (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
-    hasPriceChoiceIssue(line);
+    line.issues.some(isExplicitChoiceIssue);
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
   const marked = pending ? enterTargetProductId(line) : undefined;

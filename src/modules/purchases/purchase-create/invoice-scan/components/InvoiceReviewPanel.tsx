@@ -16,11 +16,11 @@ import { Modal } from "@/shared/components/Modal";
 import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModal";
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
 import {
-  awaitsExplicitChoice,
   enterTargetProductId,
   getLineNeeds,
   getReviewSections,
   isPendingStatus,
+  needsExplicitChoice,
   nextPendingIndex,
   pressEnter,
   pressEscape,
@@ -67,7 +67,7 @@ export type InvoiceReviewPanelProps = {
  * repita. `need`: campo que le falta a la línea (con producto) para resolverse.
  */
 /** `needsSupplier`: sin línea pendiente y sin proveedor, Cargar está deshabilitado (REP3-03a). */
-/** `choice`: Enter no aceptó a ciegas (D31): el foco va a la opción explícita de la fila. */
+/** `choice`: producto aceptado sin la elección explícita (D31): el foco va a esa opción de la fila. */
 type FocusRequest = {
   target: number | null;
   need?: string;
@@ -191,12 +191,19 @@ export function InvoiceReviewPanel({
   }
 
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
-  function requestFocus(target: number | null, next: InvoiceReviewState, choice?: boolean) {
+  function requestFocus(target: number | null, next: InvoiceReviewState) {
     const line = target === null ? undefined : next.lines[target];
     // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
     const needs = line?.productId && line.accepted ? getLineNeeds(line) : [];
     const need = NEED_FOCUS_ORDER.find((item) => needs.includes(item));
+    // D31: aceptado por cualquier vía y completo, pero falta la elección explícita: el foco va
+    // a «Por unidad / Por caja» y un rebote no la elige.
+    const choice =
+      !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsExplicitChoice(line);
+    if (choice) {
+      armActivationGuard();
+    }
     const needsSupplier = target === null && !next.header.supplier.contactId;
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
@@ -271,13 +278,21 @@ export function InvoiceReviewPanel({
       if (activationGuarded()) {
         return;
       }
-      const choosing = action.type === "editEntryMode" && awaitsExplicitChoice(state, action.index);
+      const current = state.lines[action.index];
+      const choosing = action.type === "editEntryMode" && current !== undefined && needsExplicitChoice(current);
       const next = reviewReducer(state, action);
       dispatch(action);
-      if (choosing) {
-        // Elegida la opción, el foco vuelve a la fila: Enter acepta el marcado.
+      const line = next.lines[action.index];
+      if (choosing && line) {
+        // Elegida la opción: resuelta, a la siguiente pendiente; sin aceptar aún, a la fila.
         armActivationGuard();
+        requestFocus(isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+      } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
+        // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31).
         requestFocus(action.index, next);
+      } else if (action.type === "acceptCandidate" && line && !isPendingStatus(line.status)) {
+        // Resuelta: el chip pulsado desaparece; el foco sigue el recorrido y nunca cae en BODY.
+        requestFocus(nextPendingIndex(next, action.index), next);
       }
       return;
     }
@@ -300,16 +315,12 @@ export function InvoiceReviewPanel({
     if (activationGuarded()) {
       return;
     }
-    const blind = awaitsExplicitChoice(state, index);
     const result = pressEnter(state, index);
     dispatch({ type: "acceptMarked", index });
     if (result.next !== index) {
       setSearchIndex(null);
     }
-    if (blind) {
-      armActivationGuard();
-    }
-    requestFocus(result.next, result.state, blind);
+    requestFocus(result.next, result.state);
   }
 
   function handleRowKeyDown(event: KeyboardEvent<HTMLLIElement>, index: number) {
