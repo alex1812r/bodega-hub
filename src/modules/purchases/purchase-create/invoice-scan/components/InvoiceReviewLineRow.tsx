@@ -19,6 +19,7 @@ import {
   getUnitConversion,
   isExplicitChoiceIssue,
   isPendingStatus,
+  linePackWord,
   MAX_REVIEW_QUANTITY,
   type InvoiceReviewAction,
   type InvoiceReviewLine,
@@ -29,6 +30,7 @@ import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
 import {
   formatInvoiceMoney,
   getChoiceChips,
+  lineIssueText,
   lineNeedMessages,
   REVIEW_STATUS_META,
 } from "./invoiceReviewView";
@@ -300,7 +302,7 @@ export function InvoiceReviewLineRow({
                     tabIndex={mode === (checkedMode ?? "unit") ? 0 : -1}
                     type="button"
                   >
-                    {mode === "unit" ? "Por unidad" : `Por ${line.packLabel.toLowerCase()}`}
+                    {mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}
                   </button>
                 ))}
               </div>
@@ -344,7 +346,7 @@ export function InvoiceReviewLineRow({
               {issues.map((issue) => (
                 <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue}`}>
                   <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {issue}
+                  {lineIssueText(line, issue)}
                 </li>
               ))}
               {needs.map((need) => (
