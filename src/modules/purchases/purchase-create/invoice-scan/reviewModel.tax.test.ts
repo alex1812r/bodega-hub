@@ -7,6 +7,7 @@ import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
 import { makeReviewResponse, REVIEW_TAX_RATES, type ReviewFixtureLine } from "./reviewFixtures";
 import {
   createInvoiceReviewState,
+  getInvoiceReviewBlockers,
   getInvoiceTaxAssessment,
   getInvoiceReviewTotals,
   getTaxInclusion,
@@ -307,6 +308,9 @@ describe("REP3-01 · la casilla aparece con cualquier total de referencia que no
     expect(getInvoiceReviewTotals(state)).toMatchObject({ base: 104.4, registered: 121.1, read: 90, mismatch: true });
     expect(getTotalsDifference(state)).toBe(-14.4);
     expect(needsDifferenceConfirmation(state)).toBe(true);
+    expect(getInvoiceReviewBlockers(state)).toContain(
+      "La base a registrar no cuadra con el subtotal leído: corrige las líneas o confirma la diferencia.",
+    );
 
     state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
     expect(needsDifferenceConfirmation(state)).toBe(false);
@@ -319,6 +323,9 @@ describe("REP3-01 · la casilla aparece con cualquier total de referencia que no
     expect(getInvoiceReviewTotals(state)).toMatchObject({ tax: 16.7, registered: 121.1, read: 14.4, mismatch: true });
     expect(getTotalsDifference(state)).toBe(-2.3);
     expect(needsDifferenceConfirmation(state)).toBe(true);
+    expect(getInvoiceReviewBlockers(state)).toContain(
+      "El IVA a registrar no cuadra con el IVA leído: corrige las líneas o confirma la diferencia.",
+    );
   });
 
   it("C4-M1 B18d: factura en dólares con solo subtotal 10 y línea 11,60: se sugiere incluido y registra 11,60", () => {

@@ -1102,6 +1102,14 @@ export function confirmedPurchaseMessage(purchase: InvoiceScanConfirmedPurchase)
     : "Esta factura ya se registró en una compra";
 }
 
+/** D29: el bloqueo nombra la cifra registrada y la leída que se comparan (`readSource`). */
+function differenceBlocker(source: InvoiceReviewTotals["readSource"]): string {
+  const fix = ": corrige las líneas o confirma la diferencia.";
+  if (source === "subtotal") return `La base a registrar no cuadra con el subtotal leído${fix}`;
+  if (source === "tax") return `El IVA a registrar no cuadra con el IVA leído${fix}`;
+  return `El total a registrar no cuadra con el leído${fix}`;
+}
+
 /**
  * Por qué "Cargar en la compra" está deshabilitado, en español. Vacío = se puede cargar.
  * Además de las líneas pendientes exige proveedor confirmado, al menos una línea,
@@ -1129,7 +1137,7 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
     blockers.push("Escribe la tasa para convertir los costos a REF.");
   }
   if (needsDifferenceConfirmation(state)) {
-    blockers.push("El total a registrar no cuadra con el leído: corrige las líneas o confirma la diferencia.");
+    blockers.push(differenceBlocker(getInvoiceReviewTotals(state).readSource));
   }
   return blockers;
 }
