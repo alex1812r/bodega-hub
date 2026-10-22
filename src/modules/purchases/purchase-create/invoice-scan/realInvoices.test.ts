@@ -28,6 +28,7 @@ import {
   getRateOptions,
   getTaxInclusion,
   getUnitConversion,
+  needsExplicitChoice,
   reviewReducer,
   type InvoiceReviewContext,
   type InvoiceReviewState,
@@ -41,9 +42,19 @@ function response(fixture: unknown): InvoiceScanResponse {
   return fixture as InvoiceScanResponse;
 }
 
-/** Acepta el producto propuesto (o el primer candidato) de cada línea, como en qa-final. */
+/**
+ * Acepta el producto propuesto (o el primer candidato) de cada línea, como en qa-final. D31
+ * (REP5-01): si la línea trae aviso de precio o de empaque, el usuario además elige el modo
+ * propuesto («Por caja» / «Por unidad»); sin esa elección la línea no se resuelve.
+ */
 function acceptAll(state: InvoiceReviewState): InvoiceReviewState {
-  return state.lines.reduce((next, line) => reviewReducer(next, { type: "acceptMarked", index: line.index }), state);
+  return state.lines.reduce((next, line) => {
+    const accepted = reviewReducer(next, { type: "acceptMarked", index: line.index });
+    const current = accepted.lines[line.index];
+    return needsExplicitChoice(current)
+      ? reviewReducer(accepted, { type: "editEntryMode", index: line.index, entryMode: current.entryMode })
+      : accepted;
+  }, state);
 }
 
 /** La elección explícita "los precios incluyen IVA" (f01/f02 no la traen preseleccionada). */

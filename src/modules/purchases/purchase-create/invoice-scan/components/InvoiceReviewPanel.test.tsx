@@ -826,27 +826,29 @@ describe("InvoiceReviewPanel", () => {
       expect(document.activeElement).not.toBe(document.body);
     });
 
-    it.each(activations)("sin más pendientes (%s): Descartar lleva el foco a «Restaurar» de esa línea", async (_, activate) => {
+    // D31 (REP5-01) sustituye el destino de D29: el contenedor de la fila, no un botón de acción.
+    it.each(activations)("sin más pendientes (%s): Descartar lleva el foco a la fila descartada", async (_, activate) => {
       const user = userEvent.setup();
       renderPanel(makeReviewResponse({ lines: [{}, unmatchedLine(2, false)] }));
 
       await activate(user, discardButton(1));
 
       expect(row(1)).toHaveAttribute("data-status", "discarded");
-      await waitFor(() => expect(restoreButton(1)).toHaveFocus());
+      await waitFor(() => expect(row(1)).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
     });
 
-    it.each(activations)("Restaurar (%s) lleva el foco a «Descartar línea» de esa misma línea", async (_, activate) => {
+    it.each(activations)("Restaurar (%s) lleva el foco a la fila restaurada", async (_, activate) => {
       const user = userEvent.setup();
       renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }));
       await user.click(discardButton(0));
       await user.click(discardButton(1));
-      await waitFor(() => expect(restoreButton(1)).toHaveFocus());
+      await waitFor(() => expect(row(1)).toHaveFocus());
 
       await activate(user, restoreButton(0));
 
       expect(row(0)).toHaveAttribute("data-status", "pending_unmatched");
-      await waitFor(() => expect(discardButton(0)).toHaveFocus());
+      await waitFor(() => expect(row(0)).toHaveFocus());
       expect(document.activeElement).not.toBe(document.body);
     });
 
@@ -909,23 +911,24 @@ describe("InvoiceReviewPanel", () => {
 
       const lastScrolled = () => scrollIntoView.mock.contexts.at(-1) as HTMLElement | undefined;
 
-      it("Restaurar con teclado y el buscador abierto: «Descartar línea» se desplaza fuera del pie", async () => {
+      it("Restaurar con teclado y el buscador abierto: la fila restaurada se desplaza fuera del pie", async () => {
         const user = userEvent.setup();
         renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), unmatchedLine(2, false)] }));
         await waitFor(() => expect(row(0)).toHaveFocus());
         await user.keyboard("{Tab}");
         await user.click(discardButton(1));
         await user.click(discardButton(0));
-        await waitFor(() => expect(restoreButton(0)).toHaveFocus());
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        restoreButton(0).focus();
         scrollIntoView.mockClear();
 
         await user.keyboard(" ");
 
-        await waitFor(() => expect(discardButton(0)).toHaveFocus());
-        expect(lastScrolled()).toBe(discardButton(0));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        expect(lastScrolled()).toBe(row(0));
         expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
         // innerHeight 800 − top del pie 680 + 8.
-        expect(discardButton(0).style.scrollMarginBottom).toBe("128px");
+        expect(row(0).style.scrollMarginBottom).toBe("128px");
         expect(scrollBy).not.toHaveBeenCalled();
       });
 
@@ -969,6 +972,188 @@ describe("InvoiceReviewPanel", () => {
         // 759 − (656 − 8) = 111.
         expect(scrollBy).toHaveBeenLastCalledWith(0, 111);
       });
+    });
+  });
+
+  describe("REP5-01 (C5-M1, D31): una doble pulsación en «Descartar línea» no resuelve la siguiente dudosa", () => {
+    const PRICE_ISSUE = "¿Precio por caja o por unidad? Sale a 0,51 REF por unidad y el último costo fue 0,05 REF.";
+    const singleCandidate = (seed: number) => [
+      { productId: productUuid(seed), name: `Producto ${seed}`, score: 1, reason: "nombre parecido · vinculado" },
+    ];
+    // 6.16: dudosa con un único candidato de 1,00 (foco2).
+    const nameLine = () => doubtfulLine(2, 1, { match: { candidates: singleCandidate(2) } });
+    // 6.18: caja x6 con aviso de coherencia de precio (foco4).
+    const priceLine = () =>
+      doubtfulLine(2, 1, {
+        read: { unit: "caja", quantity: 1, unitPrice: 2700, lineTotal: 2700, unitsPerPack: 6 },
+        match: { entryMode: "pack", unitsPerPack: 6, candidates: singleCandidate(2), issues: [PRICE_ISSUE] },
+      });
+    const discardButton = (index: number) => within(row(index)).getByRole("button", { name: "Descartar línea" });
+    let now = 1_000_000;
+    let dateNow: jest.SpyInstance;
+
+    beforeEach(() => {
+      now = 1_000_000;
+      dateNow = jest.spyOn(Date, "now").mockImplementation(() => now);
+    });
+
+    afterEach(() => {
+      dateNow.mockRestore();
+    });
+
+    it.each([
+      ["6.16 nombre parecido", nameLine],
+      ["6.18 precio por caja", priceLine],
+    ])("Enter ×2 sobre «Descartar línea» (%s): la siguiente queda dudosa y con el foco en su fila", async (_, line) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), line()] }));
+      await waitFor(() => expect(row(0)).toHaveFocus());
+      discardButton(0).focus();
+
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+      now += 30;
+      await user.keyboard("{Enter}");
+
+      expect(row(0)).toHaveAttribute("data-status", "discarded");
+      expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      expect(loadButton()).toBeDisabled();
+    });
+
+    it.each([
+      ["6.16 nombre parecido", nameLine],
+      ["6.18 precio por caja", priceLine],
+    ])("el 2.º clic cae sobre el chip de la siguiente (%s): no la acepta", async (_, line) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), line()] }));
+
+      await user.click(discardButton(0));
+      now += 40;
+      await user.click(within(row(1)).getByRole("button", { name: /Producto 2/ }));
+
+      expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      expect(loadButton()).toBeDisabled();
+    });
+
+    it("pasados los 400 ms, Enter en la fila sí acepta el marcado (6.17)", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+      discardButton(0).focus();
+
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+      now += 450;
+      await user.keyboard("{Enter}");
+
+      expect(row(1)).toHaveAttribute("data-status", "resolved");
+    });
+
+    it("clic en el chip que resuelve la línea: el foco va a la siguiente pendiente, no a BODY", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [nameLine(), doubtfulLine(3)] }));
+
+      await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+    });
+
+    it("clic en el chip que resuelve la última pendiente: el foco va a Cargar, no a BODY", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [{}, nameLine()] }));
+
+      await user.click(within(row(1)).getByRole("button", { name: /Producto 2/ }));
+
+      expect(row(1)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(loadButton()).toHaveFocus());
+    });
+
+    it("pasados los 400 ms, un clic en el chip sí lo acepta", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+      await user.click(discardButton(0));
+      now += 450;
+      await user.click(within(row(1)).getByRole("button", { name: /Producto 2/ }));
+
+      expect(row(1)).toHaveAttribute("data-status", "resolved");
+    });
+
+    it("6.18: Enter en la fila no la resuelve a ciegas; lleva el foco a la opción explícita y, elegida, resuelve", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
+      await waitFor(() => expect(row(0)).toHaveFocus());
+
+      await user.keyboard("{Enter}");
+
+      expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+      const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
+      await waitFor(() => expect(perPack).toHaveFocus());
+
+      // Un rebote del Enter no elige la opción.
+      now += 30;
+      await user.keyboard("{Enter}");
+      expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+      expect(perPack).toHaveFocus();
+
+      now += 450;
+      await user.keyboard("{Enter}");
+      expect(row(0)).toHaveAttribute("data-status", "resolved");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+    });
+
+    const PACK_ISSUE = "No hay empaque registrado de 6 unidades para este proveedor: confirma las unidades por empaque.";
+    const packLine = () =>
+      doubtfulLine(2, 1, {
+        read: { unit: "caja", quantity: 1, unitPrice: 2700, lineTotal: 2700, unitsPerPack: 6 },
+        match: { entryMode: "pack", unitsPerPack: 6, candidates: singleCandidate(2), issues: [PACK_ISSUE] },
+      });
+    const chipActivations: [string, (user: ReturnType<typeof userEvent.setup>, chip: HTMLElement) => Promise<void>][] = [
+      ["clic", (user, chip) => user.click(chip)],
+      [
+        "Enter en el chip",
+        async (user, chip) => {
+          chip.focus();
+          await user.keyboard("{Enter}");
+        },
+      ],
+    ];
+
+    describe.each([
+      ["6.18 precio", priceLine, PRICE_ISSUE],
+      ["tamaño de empaque", packLine, PACK_ISSUE],
+    ])("aceptación deliberada del candidato con aviso de %s", (_, line, issue) => {
+      it.each(chipActivations)(
+        "%s: elige el producto pero no la resuelve; foco en la opción, aviso visible; elegida, resuelve",
+        async (__, activate) => {
+          const user = userEvent.setup();
+          renderPanel(makeReviewResponse({ lines: [line(), doubtfulLine(3)] }));
+
+          await activate(user, within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+          expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+          expect(within(row(0)).getByText(issue)).toBeInTheDocument();
+          const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
+          await waitFor(() => expect(perPack).toHaveFocus());
+          expect(loadButton()).toBeDisabled();
+
+          now += 450;
+          await user.click(perPack);
+
+          expect(row(0)).toHaveAttribute("data-status", "resolved");
+          await waitFor(() => expect(row(1)).toHaveFocus());
+        },
+      );
+    });
+
+    it("6.18 por unidad: la línea sin empaque con aviso de precio ofrece «Por unidad / Por caja»", () => {
+      renderPanel(
+        makeReviewResponse({
+          lines: [doubtfulLine(2, 1, { match: { candidates: singleCandidate(2), issues: [PRICE_ISSUE] } })],
+        }),
+      );
+
+      expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "true");
     });
   });
 

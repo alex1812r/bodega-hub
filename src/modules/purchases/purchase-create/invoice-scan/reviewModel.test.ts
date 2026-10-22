@@ -2,7 +2,10 @@
  * SCN-08a · Modelo de la revisión del escaneo (plan factura-escaneo §5.3 SCN-08;
  * caos 6.7, 6.8, 6.16, 6.17, 6.19, 6.20, 6.21).
  */
-import { USD_DOCUMENT_ISSUE, resolveRate } from "@/modules/invoice-scan/server/match/money";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { USD_DOCUMENT_ISSUE, priceCoherenceIssue, resolveRate } from "@/modules/invoice-scan/server/match/money";
 
 import {
   makeReviewResponse,
@@ -24,13 +27,16 @@ import {
   getRateOptions,
   getTaxInclusion,
   getReviewSections,
+  isExplicitChoiceIssue,
   isLineMismatch,
+  needsExplicitChoice,
   nextPendingIndex,
   orderedLineIndices,
   pressEnter,
   pressEscape,
   reviewReducer,
   summarizeInvoiceReview,
+  type InvoiceReviewAction,
   type InvoiceReviewContext,
   type InvoiceReviewState,
 } from "./reviewModel";
@@ -380,6 +386,114 @@ describe("6.21 · factura en dólares", () => {
     state = reviewReducer(state, { type: "acceptMarked", index: 0 });
     state = reviewReducer(state, { type: "acceptUsdAnomaly" });
     expect(canLoad(state)).toBe(true);
+  });
+});
+
+describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resuelve sin la elección explícita", () => {
+  // El aviso sale de la función del servidor: si cambia su texto, este test lo detecta.
+  const priceIssue = priceCoherenceIssue({
+    line: {
+      rawText: "GALLETA MARIA CAJA X6",
+      description: "GALLETA MARIA CAJA X6",
+      quantity: 1,
+      unitPrice: 2700,
+      lineTotal: 2700,
+      confidence: 0.95,
+    },
+    unitsPerPack: 6,
+    entryMode: "pack",
+    rate: 880,
+    lastUnitCostRef: 0.05,
+  });
+  const packIssue =
+    'Antes este proveedor lo facturó por unidad; ahora dice caja: confirma si son empaques "Caja x6" de 6 unidades o unidades sueltas.';
+  const productId = productUuid(1);
+  const acceptances: [string, InvoiceReviewAction][] = [
+    ["Enter (acceptMarked)", { type: "acceptMarked", index: 0 }],
+    ["chip (acceptCandidate)", { type: "acceptCandidate", index: 0, productId }],
+    ["buscador o alta (chooseProduct)", { type: "chooseProduct", index: 0, product: { productId, name: "Producto 1" } }],
+  ];
+  const choices: [string, InvoiceReviewAction][] = [
+    ["Por caja", { type: "editEntryMode", index: 0, entryMode: "pack" }],
+    ["Por unidad", { type: "editEntryMode", index: 0, entryMode: "unit" }],
+    ["corrige el costo", { type: "editUnitPrice", index: 0, unitPrice: 270 }],
+    ["corrige la cantidad", { type: "editQuantity", index: 0, quantity: 2 }],
+    ["corrige las unidades", { type: "editUnitsPerPack", index: 0, unitsPerPack: 12 }],
+  ];
+  const lineWith = (issue: string) =>
+    stateOf([
+      doubtfulLine(1, 1, {
+        read: { unit: "caja", quantity: 1, unitPrice: 2700, lineTotal: 2700, unitsPerPack: 6 },
+        match: { entryMode: "pack", unitsPerPack: 6, issues: [issue] },
+      }),
+    ]);
+
+  describe.each([
+    ["6.18 precio por caja", priceIssue as string],
+    ["empaque nuevo frente a unidades", packIssue],
+  ])("%s", (_, issue) => {
+    it.each(acceptances)("%s elige el producto pero la línea sigue dudosa", (__, action) => {
+      expect(issue).toBeDefined();
+      const state = reviewReducer(lineWith(issue), action);
+      expect(state.lines[0]).toMatchObject({ status: "pending_doubtful", accepted: true, productId });
+      expect(needsExplicitChoice(state.lines[0])).toBe(true);
+      expect(canLoad(state)).toBe(false);
+    });
+
+    it.each(choices)("aceptada y luego «%s»: resuelta", (__, choice) => {
+      let state = reviewReducer(lineWith(issue), { type: "acceptMarked", index: 0 });
+      state = reviewReducer(state, choice);
+      expect(needsExplicitChoice(state.lines[0])).toBe(false);
+      expect(state.lines[0].status).toBe("resolved");
+    });
+
+    it("elegida antes de aceptar: aceptar la resuelve", () => {
+      let state = reviewReducer(lineWith(issue), { type: "editEntryMode", index: 0, entryMode: "pack" });
+      expect(state.lines[0].status).toBe("pending_doubtful");
+      state = pressEnter(state, 0).state;
+      expect(state.lines[0].status).toBe("resolved");
+    });
+  });
+
+  it("6.19 sin tamaño: escribir las unidades ya es la elección", () => {
+    let state = stateOf([
+      doubtfulLine(1, 1, {
+        read: { unit: "bulto" },
+        match: { entryMode: "pack", issues: ["La factura no dice cuántas unidades trae cada bulto: indícalo."] },
+      }),
+    ]);
+    state = reviewReducer(state, { type: "acceptMarked", index: 0 });
+    state = reviewReducer(state, { type: "editUnitsPerPack", index: 0, unitsPerPack: 20 });
+    expect(state.lines[0].status).toBe("resolved");
+  });
+
+  /**
+   * Ancla de las plantillas de aviso de empaque (`server/match/pack.ts` y la de empaque no
+   * registrado de `server/match.ts`): cada una debe reconocerse como aviso de elección, o
+   * figurar aquí como excepción deliberada. Un texto nuevo o cambiado rompe este test.
+   */
+  it("toda plantilla de aviso de empaque del servidor se reconoce (o es excepción declarada)", () => {
+    const server = path.join(__dirname, "../../../invoice-scan/server");
+    const sources = [
+      readFileSync(path.join(server, "match/pack.ts"), "utf8"),
+      readFileSync(path.join(server, "match.ts"), "utf8"),
+    ].join("\n");
+    // Literales de aviso: plantillas `...` y cadenas "..." que terminan en punto, con los ${} rellenados.
+    const literals = [
+      ...Array.from(sources.matchAll(/`([^`]*\.\)?)`/g), (match) => match[1]),
+      ...Array.from(sources.matchAll(/"([^"\n]*[a-z]: [^"\n]*\.)"/g), (match) => match[1]),
+    ]
+      .map((text) => text.replace(/\$\{[^}]*\}/g, "6"))
+      .filter((text) => /unidades|empaque/.test(text) && /: /.test(text));
+    // 6.19: falta el tamaño; aceptar no resuelve la línea y escribirlo ya es la elección.
+    const exceptions = [/^La factura no dice cuántas unidades trae cada 6: indícalo\.$/];
+
+    expect(literals.length).toBeGreaterThanOrEqual(12);
+    const unrecognized = literals.filter(
+      (text) => !isExplicitChoiceIssue(text) && !exceptions.some((rule) => rule.test(text)),
+    );
+    expect(unrecognized).toEqual([]);
+    expect(isExplicitChoiceIssue(priceIssue as string)).toBe(true);
   });
 });
 

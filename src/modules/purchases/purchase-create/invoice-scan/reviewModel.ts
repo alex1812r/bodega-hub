@@ -125,6 +125,11 @@ export type InvoiceReviewLine = {
   disassembleOnReceive: boolean;
   /** Avisos en español del emparejamiento (más el de dólares si aplica). */
   issues: string[];
+  /**
+   * D31: el usuario eligió «Por unidad / Por empaque» o corrigió cantidad, costo o unidades
+   * por empaque. Sin esto, una línea con aviso de precio o de empaque no se acepta con Enter.
+   */
+  choiceMade?: boolean;
 };
 
 export type InvoiceRateChoice = "system" | "printed" | "manual";
@@ -379,6 +384,27 @@ export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversio
   return { ok: true, units, unitPrice: roundMoney(line.unitPrice / line.unitsPerPack) };
 }
 
+/**
+ * D31: avisos del emparejamiento que piden una elección explícita. Textos de
+ * `server/match/money.ts` (`priceCoherenceIssue`, 6.18) y de `server/match/pack.ts` /
+ * `server/match.ts` (tamaño de empaque: todos terminan pidiendo confirmar); anclados por test.
+ */
+const PRICE_CHOICE_ISSUE = /^¿Precio por caja o por unidad?/;
+const PACK_CHOICE_ISSUE = /: confirma (las unidades por empaque|si son )/;
+
+export function isExplicitChoiceIssue(issue: string): boolean {
+  return PRICE_CHOICE_ISSUE.test(issue) || PACK_CHOICE_ISSUE.test(issue);
+}
+
+/**
+ * D31: la línea trae un aviso de precio o de tamaño de empaque y el usuario aún no eligió
+ * «Por unidad / Por empaque» ni corrigió cantidad, costo o unidades. Aunque el producto esté
+ * aceptado (Enter, chip, buscador, alta), no se resuelve.
+ */
+export function needsExplicitChoice(line: InvoiceReviewLine): boolean {
+  return !line.discarded && !line.choiceMade && line.issues.some(isExplicitChoiceIssue);
+}
+
 function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefined): InvoiceReviewLineStatus {
   if (line.discarded) {
     return "discarded";
@@ -389,7 +415,7 @@ function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefine
   }
   const complete = getLineNeeds(line).length === 0;
   if (line.accepted) {
-    return complete ? "resolved" : "pending_doubtful";
+    return complete && !needsExplicitChoice(line) ? "resolved" : "pending_doubtful";
   }
   if (line.origin === "confirmed" && line.productId === matchProductId) {
     return complete ? "confirmed_by_match" : "pending_doubtful";
@@ -647,9 +673,9 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
             },
       );
     case "editQuantity":
-      return updateLine(state, action.index, (line) => ({ ...line, quantity: action.quantity }));
+      return updateLine(state, action.index, (line) => ({ ...line, quantity: action.quantity, choiceMade: true }));
     case "editUnitPrice":
-      return updateLine(state, action.index, (line) => ({ ...line, unitPrice: action.unitPrice }));
+      return updateLine(state, action.index, (line) => ({ ...line, unitPrice: action.unitPrice, choiceMade: true }));
     case "editTaxRate":
       return action.taxRateCode in state.taxRates
         ? updateLine(state, action.index, (line) => ({ ...line, taxRateCode: action.taxRateCode }))
@@ -666,11 +692,15 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
           ...line,
           unitsPerPack: action.unitsPerPack,
           packUnitId: keepsRegistered ? defaults.packUnitId : undefined,
+          choiceMade: true,
         };
       });
     case "editEntryMode":
       return updateLine(state, action.index, (line) =>
-        line.entryMode === action.entryMode ? line : { ...line, entryMode: action.entryMode },
+        // Elegir el modo ya marcado también es la elección explícita de D31.
+        line.entryMode === action.entryMode && line.choiceMade
+          ? line
+          : { ...line, entryMode: action.entryMode, choiceMade: true },
       );
     case "editPackLabel":
       return updateLine(state, action.index, (line) => ({ ...line, packLabel: action.packLabel }));
@@ -685,6 +715,7 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
               unitPrice: conversion.unitPrice,
               packUnitId: undefined,
               disassembleOnReceive: false,
+              choiceMade: true,
             }
           : line;
       });
