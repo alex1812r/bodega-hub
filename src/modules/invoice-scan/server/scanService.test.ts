@@ -1379,4 +1379,38 @@ describe("scanInvoice · fallo del emparejamiento tras leer (P8-M1, D35)", () =>
     expect(retry).toMatchObject({ cached: true, extraction: singlePageExtraction, limits: { used: 1 } });
     expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
   });
+
+  it("el reintento guarda el emparejamiento nuevo: el detalle lo devuelve y la revisión se puede retomar (QA REP7-01 F2)", async () => {
+    const ctx = newContext();
+    let matches = 0;
+    const matcher = jest.fn(async (...args: Parameters<typeof matchScan>) => {
+      matches += 1;
+      if (matches === 1) {
+        throw new ApiError(403, "FORBIDDEN", "No autorizado para esta operación");
+      }
+      return matchScan(...args);
+    });
+    const { built } = deps({ matcher });
+    const pages = [page("emparejamiento fallido y retomado")];
+
+    await expect(scanInvoice(built, ctx, { pages, source: "upload" })).rejects.toMatchObject({ status: 403 });
+    const retry = await scanInvoice(built, ctx, { pages, source: "upload" });
+    const detail = await getInvoiceScanDetail(built, ctx, retry.scanId);
+
+    expect(detail).toMatchObject({ status: "extracted", matched: retry.matched });
+    expect(await mockRepo.getDailyUsage(ctx, 50)).toMatchObject({ used: 1 });
+  });
+
+  it("con el emparejamiento guardado válido, el reintento en caché no lo reescribe", async () => {
+    const ctx = newContext();
+    const saveMatch = jest.fn(mockRepo.saveMatch);
+    const { built } = deps({ repo: { ...mockRepo, saveMatch } });
+    const pages = [page("emparejamiento guardado válido")];
+
+    await scanInvoice(built, ctx, { pages, source: "upload" });
+    const again = await scanInvoice(built, ctx, { pages, source: "upload" });
+
+    expect(again).toMatchObject({ cached: true });
+    expect(saveMatch).not.toHaveBeenCalled();
+  });
 });

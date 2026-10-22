@@ -23,6 +23,7 @@ import {
   listExpiredScans,
   removeScanObjects,
   reserveScan,
+  saveMatch,
   seedScanForTest,
   seedScanObjectForTest,
 } from "./scans.mock-server";
@@ -264,6 +265,22 @@ describe("scans.mock-server · reserveScan (paridad con reserve_invoice_scan)", 
       status: 400,
     });
     expect(store().get(id)).toMatchObject({ status: "processing" });
+  });
+
+  it("saveMatch (save_invoice_scan_match) solo guarda matched de una fila extracted de la propia tienda (QA REP7-01 F2)", async () => {
+    const { attemptId, id } = await reserved();
+    const rematched = { ...completion.matched, totals: { computed: 5, mismatch: false } };
+
+    expect(await saveMatch(storeA, id, rematched)).toBeNull();
+    await completeScan(storeA, id, attemptId, { ...completion, matched: null });
+
+    expect(await saveMatch(storeB, id, rematched)).toBeNull();
+    expect(await saveMatch(storeA, id, rematched)).toMatchObject({ matched: rematched, status: "extracted", usagePages: 1 });
+    expect(await getScan(storeA, id)).toMatchObject({ matched: rematched, status: "extracted" });
+
+    confirm(id, new Date().toISOString());
+    expect(await saveMatch(storeA, id, completion.matched)).toBeNull();
+    expect(store().get(id)).toMatchObject({ matched: rematched });
   });
 });
 

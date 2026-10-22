@@ -22,6 +22,7 @@ import {
   listExpiredScanObjects,
   listExpiredScans,
   reserveScan,
+  saveMatch,
 } from "./scans.server";
 
 type Result = { data: unknown; error: { code?: string; message: string } | null };
@@ -295,6 +296,19 @@ describe("scans.server · completeScan / failScan / discardScan por RPC service 
     useRpcClient({ data: null, error: { code: "PT409", message } });
 
     await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
+  });
+
+  it("saveMatch llama a save_invoice_scan_match con la tienda y devuelve la fila; null si ya no está extracted (QA REP7-01 F2)", async () => {
+    const calls = useRpcClient(ok(dbRow({ matched: completion.matched })));
+    expect(await saveMatch(ctx, scanId, completion.matched)).toMatchObject({ matched: completion.matched, status: "extracted" });
+    expect(calls[0]).toEqual([
+      "rpc",
+      "save_invoice_scan_match",
+      { p_id: scanId, p_matched: completion.matched, p_store_id: ctx.storeId },
+    ]);
+
+    useRpcClient(ok(null));
+    expect(await saveMatch(ctx, scanId, completion.matched)).toBeNull();
   });
 });
 

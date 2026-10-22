@@ -75,6 +75,7 @@ export type InvoiceScanRepo = Pick<
   | "getScan"
   | "listFewShotExamples"
   | "reserveScan"
+  | "saveMatch"
 >;
 
 /** Bucket privado `invoice-scans`; las rutas ya vienen validadas bajo la tienda de la sesión. */
@@ -512,12 +513,19 @@ async function readCachedScan(
 
   // Una fila guardada antes de SCN-13a puede traer textos opcionales vacíos.
   const extraction = normalizeExtractionForMatch(parsed.data);
-  if (!cached.matched || !invoiceMatchSchema.safeParse(cached.matched).success) {
+  const storedMatchValid = cached.matched !== null && invoiceMatchSchema.safeParse(cached.matched).success;
+  if (!storedMatchValid) {
     console.warn("[invoice-scan] emparejamiento en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHED_MATCH });
   }
 
   const chosenSupplierId = supplierId ?? (cached.status === "confirmed" ? (cached.supplierId ?? undefined) : undefined);
   const matched = await rematchCachedScan(deps, ctx, cached.id, extraction, chosenSupplierId);
+
+  // QA REP7-01 F2: tras un MATCH_ERROR la fila quedó `extracted` sin `matched`; se guarda
+  // el nuevo para que el detalle lo devuelva y la revisión se pueda retomar.
+  if (!storedMatchValid && cached.status === "extracted") {
+    await deps.repo.saveMatch(ctx, cached.id, matched);
+  }
 
   return {
     cached: true,
