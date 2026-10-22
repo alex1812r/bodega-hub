@@ -17,6 +17,7 @@ import {
   getLineIssues,
   getTaxInclusion,
   getUnitConversion,
+  hasPriceChoiceIssue,
   isPendingStatus,
   MAX_REVIEW_QUANTITY,
   type InvoiceReviewAction,
@@ -85,8 +86,12 @@ export function InvoiceReviewLineRow({
   const readUnit = state.extraction.lines[index]?.unit;
   // Una cantidad fraccionaria (0,50) también ofrece "Por bulto": así se puede cargar como unidades.
   const fractional = Number.isFinite(line.quantity) && line.quantity > 0 && !Number.isInteger(line.quantity);
+  // D31: "¿Precio por caja o por unidad?" se responde eligiendo la opción, aunque se leyera por unidad.
   const showPack =
-    line.entryMode === "pack" || fractional || (readUnit !== undefined && PACK_UNITS.has(readUnit));
+    line.entryMode === "pack" ||
+    fractional ||
+    (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
+    hasPriceChoiceIssue(line);
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
   const marked = pending ? enterTargetProductId(line) : undefined;
@@ -109,7 +114,8 @@ export function InvoiceReviewLineRow({
       onKeyDown={(event) => onRowKeyDown(event, index)}
       ref={rowRef}
       role="group"
-      tabIndex={pending ? 0 : undefined}
+      // D31: la descartada recibe el foco (no «Restaurar») si no queda otra pendiente.
+      tabIndex={pending ? 0 : line.discarded ? -1 : undefined}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -267,6 +273,7 @@ export function InvoiceReviewLineRow({
                         ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                         : "border-outline-variant text-foreground hover:bg-surface-container-low",
                     )}
+                    data-choice={mode}
                     key={mode}
                     onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
                     role="radio"

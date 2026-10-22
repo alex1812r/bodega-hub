@@ -2,7 +2,7 @@
  * SCN-08a · Modelo de la revisión del escaneo (plan factura-escaneo §5.3 SCN-08;
  * caos 6.7, 6.8, 6.16, 6.17, 6.19, 6.20, 6.21).
  */
-import { USD_DOCUMENT_ISSUE, resolveRate } from "@/modules/invoice-scan/server/match/money";
+import { USD_DOCUMENT_ISSUE, priceCoherenceIssue, resolveRate } from "@/modules/invoice-scan/server/match/money";
 
 import {
   makeReviewResponse,
@@ -13,6 +13,7 @@ import {
   type ReviewFixtureLine,
 } from "./reviewFixtures";
 import {
+  awaitsExplicitChoice,
   canLoad,
   createInvoiceReviewState,
   getEffectiveRate,
@@ -380,6 +381,60 @@ describe("6.21 · factura en dólares", () => {
     state = reviewReducer(state, { type: "acceptMarked", index: 0 });
     state = reviewReducer(state, { type: "acceptUsdAnomaly" });
     expect(canLoad(state)).toBe(true);
+  });
+});
+
+describe("REP5-01 (D31): Enter no acepta a ciegas una línea con aviso de precio o de empaque", () => {
+  // El aviso sale de la función del servidor: si cambia su texto, este test lo detecta.
+  const priceIssue = priceCoherenceIssue({
+    line: {
+      rawText: "GALLETA MARIA CAJA X6",
+      description: "GALLETA MARIA CAJA X6",
+      quantity: 1,
+      unitPrice: 2700,
+      lineTotal: 2700,
+      confidence: 0.95,
+    },
+    unitsPerPack: 6,
+    entryMode: "pack",
+    rate: 880,
+    lastUnitCostRef: 0.05,
+  });
+  const packIssue =
+    'Antes este proveedor lo facturó por unidad; ahora dice caja: confirma si son empaques "Caja x6" de 6 unidades o unidades sueltas.';
+
+  it.each([
+    ["6.18 precio por caja", priceIssue],
+    ["empaque nuevo frente a unidades", packIssue],
+  ])("%s: acceptMarked no la resuelve hasta elegir la opción; elegida, sí", (_, issue) => {
+    expect(issue).toBeDefined();
+    let state = stateOf([
+      doubtfulLine(1, 1, {
+        read: { unit: "caja", quantity: 1, unitPrice: 2700, lineTotal: 2700, unitsPerPack: 6 },
+        match: { entryMode: "pack", unitsPerPack: 6, issues: [issue as string] },
+      }),
+    ]);
+    expect(awaitsExplicitChoice(state, 0)).toBe(true);
+
+    const entered = pressEnter(state, 0);
+    expect(entered.state.lines[0]).toMatchObject({ status: "pending_doubtful", accepted: false });
+    expect(entered.next).toBe(0);
+
+    state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "pack" });
+    expect(awaitsExplicitChoice(state, 0)).toBe(false);
+    state = reviewReducer(state, { type: "acceptMarked", index: 0 });
+    expect(state.lines[0].status).toBe("resolved");
+  });
+
+  it("6.19 sin tamaño: aceptar no la resuelve, así que Enter sigue aceptando el producto", () => {
+    const state = stateOf([
+      doubtfulLine(1, 1, {
+        read: { unit: "bulto" },
+        match: { entryMode: "pack", issues: ["La factura no dice cuántas unidades trae cada bulto: indícalo."] },
+      }),
+    ]);
+    expect(awaitsExplicitChoice(state, 0)).toBe(false);
+    expect(pressEnter(state, 0).state.lines[0].accepted).toBe(true);
   });
 });
 

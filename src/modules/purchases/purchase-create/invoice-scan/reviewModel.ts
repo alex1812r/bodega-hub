@@ -125,6 +125,11 @@ export type InvoiceReviewLine = {
   disassembleOnReceive: boolean;
   /** Avisos en español del emparejamiento (más el de dólares si aplica). */
   issues: string[];
+  /**
+   * D31: el usuario eligió «Por unidad / Por empaque» o corrigió cantidad, costo o unidades
+   * por empaque. Sin esto, una línea con aviso de precio o de empaque no se acepta con Enter.
+   */
+  choiceMade?: boolean;
 };
 
 export type InvoiceRateChoice = "system" | "printed" | "manual";
@@ -608,6 +613,38 @@ function rateReducer(state: InvoiceReviewState, choice: InvoiceRateChoice, manua
   return { ...state, rate: { ...rate, choice } };
 }
 
+/**
+ * D31: avisos del emparejamiento que piden una elección explícita antes de aceptar con Enter.
+ * Textos de `server/match/money.ts` (`priceCoherenceIssue`, 6.18) y `server/match/pack.ts`
+ * (tamaño leído distinto del registrado, 6.8; antes por unidad y ahora por empaque).
+ */
+const PRICE_CHOICE_ISSUE = /^¿Precio por caja o por unidad\?/;
+const PACK_CHOICE_ISSUES = [/el empaque registrado es de \d/, /^Antes este proveedor lo facturó por unidad;/];
+
+/** 6.18: la línea trae el aviso "¿Precio por caja o por unidad?". */
+export function hasPriceChoiceIssue(line: InvoiceReviewLine): boolean {
+  return line.issues.some((issue) => PRICE_CHOICE_ISSUE.test(issue));
+}
+
+/**
+ * D31: Enter sobre la línea la resolvería a ciegas (aceptar el marcado la deja completa) y
+ * trae un aviso de precio o de empaque sin que el usuario haya elegido ni corregido nada.
+ */
+export function awaitsExplicitChoice(state: InvoiceReviewState, index: number): boolean {
+  const line = state.lines[index];
+  if (!line || line.discarded || line.choiceMade) {
+    return false;
+  }
+  const choiceIssue =
+    hasPriceChoiceIssue(line) || line.issues.some((issue) => PACK_CHOICE_ISSUES.some((rule) => rule.test(issue)));
+  if (!choiceIssue) {
+    return false;
+  }
+  const target = enterTargetProductId(line);
+  const product = target ? candidateProduct(line, target) : undefined;
+  return product !== undefined && getLineNeeds(setProduct(state, line, product)).length === 0;
+}
+
 export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAction): InvoiceReviewState {
   switch (action.type) {
     case "acceptCandidate":
@@ -624,6 +661,9 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
         candidateProduct(line, action.productId) ? { ...line, markedProductId: action.productId } : line,
       );
     case "acceptMarked":
+      if (awaitsExplicitChoice(state, action.index)) {
+        return state;
+      }
       return updateLine(state, action.index, (line) => {
         const target = enterTargetProductId(line);
         const product = target ? candidateProduct(line, target) : undefined;
@@ -647,9 +687,9 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
             },
       );
     case "editQuantity":
-      return updateLine(state, action.index, (line) => ({ ...line, quantity: action.quantity }));
+      return updateLine(state, action.index, (line) => ({ ...line, quantity: action.quantity, choiceMade: true }));
     case "editUnitPrice":
-      return updateLine(state, action.index, (line) => ({ ...line, unitPrice: action.unitPrice }));
+      return updateLine(state, action.index, (line) => ({ ...line, unitPrice: action.unitPrice, choiceMade: true }));
     case "editTaxRate":
       return action.taxRateCode in state.taxRates
         ? updateLine(state, action.index, (line) => ({ ...line, taxRateCode: action.taxRateCode }))
@@ -666,11 +706,15 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
           ...line,
           unitsPerPack: action.unitsPerPack,
           packUnitId: keepsRegistered ? defaults.packUnitId : undefined,
+          choiceMade: true,
         };
       });
     case "editEntryMode":
       return updateLine(state, action.index, (line) =>
-        line.entryMode === action.entryMode ? line : { ...line, entryMode: action.entryMode },
+        // Elegir el modo ya marcado también es la elección explícita de D31.
+        line.entryMode === action.entryMode && line.choiceMade
+          ? line
+          : { ...line, entryMode: action.entryMode, choiceMade: true },
       );
     case "editPackLabel":
       return updateLine(state, action.index, (line) => ({ ...line, packLabel: action.packLabel }));
@@ -685,6 +729,7 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
               unitPrice: conversion.unitPrice,
               packUnitId: undefined,
               disassembleOnReceive: false,
+              choiceMade: true,
             }
           : line;
       });

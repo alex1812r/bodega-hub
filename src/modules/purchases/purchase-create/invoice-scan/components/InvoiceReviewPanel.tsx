@@ -16,6 +16,7 @@ import { Modal } from "@/shared/components/Modal";
 import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModal";
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
 import {
+  awaitsExplicitChoice,
   enterTargetProductId,
   getLineNeeds,
   getReviewSections,
@@ -66,18 +67,32 @@ export type InvoiceReviewPanelProps = {
  * repita. `need`: campo que le falta a la línea (con producto) para resolverse.
  */
 /** `needsSupplier`: sin línea pendiente y sin proveedor, Cargar está deshabilitado (REP3-03a). */
-/** `control`: botón de la fila (`data-row-action`) que recibe el foco tras Descartar/Restaurar (REP4-02c). */
+/** `choice`: Enter no aceptó a ciegas (D31): el foco va a la opción explícita de la fila. */
 type FocusRequest = {
   target: number | null;
   need?: string;
   needsSupplier?: boolean;
-  control?: RowControl;
+  choice?: boolean;
   seq: number;
 };
 
-type RowControl = "discard" | "restore";
-
 const NEED_FOCUS_ORDER = ["unitsPerPack", "quantity", "unitPrice"] as const;
+
+/**
+ * D31 (C5-M1): tras plegar/desplegar una fila (o desviar el foco a la opción explícita) se
+ * ignoran las activaciones de candidato durante este tiempo: el 2.º Enter de un rebote o el
+ * 2.º clic de un doble clic caerían sobre la fila siguiente.
+ */
+const ACTIVATION_GUARD_MS = 400;
+
+/** Solo desde manejadores de eventos (nunca en render). */
+function armGuard(until: { current: number }) {
+  until.current = Date.now() + ACTIVATION_GUARD_MS;
+}
+
+function isGuarded(until: { current: number }) {
+  return Date.now() < until.current;
+}
 
 function InvoiceScanImages({ scanId }: { scanId: string }) {
   const images = useInvoiceScanImages(scanId);
@@ -158,6 +173,7 @@ export function InvoiceReviewPanel({
   const footerRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
+  const guardUntilRef = useRef(0);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const sections = getReviewSections(state);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
@@ -166,8 +182,16 @@ export function InvoiceReviewPanel({
     summary.totals.lineMismatches.includes(line.index),
   ).length;
 
+  function armActivationGuard() {
+    armGuard(guardUntilRef);
+  }
+
+  function activationGuarded() {
+    return isGuarded(guardUntilRef);
+  }
+
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
-  function requestFocus(target: number | null, next: InvoiceReviewState, control?: RowControl) {
+  function requestFocus(target: number | null, next: InvoiceReviewState, choice?: boolean) {
     const line = target === null ? undefined : next.lines[target];
     // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
@@ -179,7 +203,7 @@ export function InvoiceReviewPanel({
       target,
       ...(need ? { need } : {}),
       ...(needsSupplier ? { needsSupplier } : {}),
-      ...(control ? { control } : {}),
+      ...(choice ? { choice } : {}),
     }));
   }
 
@@ -214,18 +238,14 @@ export function InvoiceReviewPanel({
       }
       return;
     }
-    if (focusRequest.control) {
-      // Tras Descartar/Restaurar el botón pulsado desaparece (QA B8): el foco va al botón
-      // pedido de la fila o, si no lo hay, a su primer botón visible; nunca a BODY.
-      const control =
-        row.querySelector<HTMLButtonElement>(`[data-row-action="${focusRequest.control}"]`) ??
-        Array.from(row.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")).find(
-          (element) => element.getClientRects().length > 0,
-        );
-      if (control) {
-        focusAboveFooter(control, footerRef.current);
-        return;
-      }
+    // D31: la opción explícita marcada («Por unidad / Por caja»); sin ella, el costo a corregir.
+    const choice = focusRequest.choice
+      ? (row.querySelector<HTMLElement>('[data-choice][aria-checked="true"]') ??
+        row.querySelector<HTMLElement>('[data-need="unitPrice"]'))
+      : null;
+    if (choice) {
+      focusAboveFooter(choice, footerRef.current);
+      return;
     }
     const field = focusRequest.need
       ? row.querySelector<HTMLInputElement>(`[data-need="${focusRequest.need}"]`)
@@ -241,20 +261,55 @@ export function InvoiceReviewPanel({
     requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
   }
 
-  /** Descartar/Restaurar mueven el foco (D29): el botón pulsado deja de existir. */
+  /**
+   * Descartar/Restaurar mueven el foco (D29): el botón pulsado deja de existir. D31: va al
+   * contenedor de la fila (la siguiente pendiente, la restaurada o, sin pendientes, la
+   * descartada), nunca a un botón de acción, y se ignoran activaciones de candidato un rato.
+   */
   function applyRowAction(action: InvoiceReviewAction) {
+    if (action.type === "acceptCandidate" || action.type === "editEntryMode") {
+      if (activationGuarded()) {
+        return;
+      }
+      const choosing = action.type === "editEntryMode" && awaitsExplicitChoice(state, action.index);
+      const next = reviewReducer(state, action);
+      dispatch(action);
+      if (choosing) {
+        // Elegida la opción, el foco vuelve a la fila: Enter acepta el marcado.
+        armActivationGuard();
+        requestFocus(action.index, next);
+      }
+      return;
+    }
     if (action.type !== "discardLine" && action.type !== "restoreLine") {
       dispatch(action);
       return;
     }
     const next = reviewReducer(state, action);
     dispatch(action);
+    armActivationGuard();
     if (action.type === "restoreLine") {
-      requestFocus(action.index, next, "discard");
+      requestFocus(action.index, next);
       return;
     }
-    const pending = nextPendingIndex(next, action.index);
-    requestFocus(pending ?? action.index, next, pending === null ? "restore" : undefined);
+    requestFocus(nextPendingIndex(next, action.index) ?? action.index, next);
+  }
+
+  /** Enter que acepta el marcado (fila o campo que pide la línea); D31: nunca a ciegas. */
+  function acceptMarkedByEnter(index: number) {
+    if (activationGuarded()) {
+      return;
+    }
+    const blind = awaitsExplicitChoice(state, index);
+    const result = pressEnter(state, index);
+    dispatch({ type: "acceptMarked", index });
+    if (result.next !== index) {
+      setSearchIndex(null);
+    }
+    if (blind) {
+      armActivationGuard();
+    }
+    requestFocus(result.next, result.state, blind);
   }
 
   function handleRowKeyDown(event: KeyboardEvent<HTMLLIElement>, index: number) {
@@ -275,9 +330,7 @@ export function InvoiceReviewPanel({
       ) {
         const current = state.lines[index];
         if (current && isPendingStatus(current.status) && !current.accepted) {
-          const result = pressEnter(state, index);
-          dispatch({ type: "acceptMarked", index });
-          requestFocus(result.next, result.state);
+          acceptMarkedByEnter(index);
         } else if (current && !isPendingStatus(current.status)) {
           requestFocus(nextPendingIndex(state, index), state);
         }
@@ -288,12 +341,7 @@ export function InvoiceReviewPanel({
     switch (event.key) {
       case "Enter": {
         event.preventDefault();
-        const result = pressEnter(state, index);
-        dispatch({ type: "acceptMarked", index });
-        if (result.next !== index) {
-          setSearchIndex(null);
-        }
-        requestFocus(result.next, result.state);
+        acceptMarkedByEnter(index);
         return;
       }
       case "Escape": {
@@ -369,7 +417,7 @@ export function InvoiceReviewPanel({
         line={line}
         mismatch={summary.totals.lineMismatches.includes(line.index)}
         onAcceptAndAdvance={(action) => {
-          if ("index" in action) {
+          if ("index" in action && !activationGuarded()) {
             applyAndAdvance(action);
           }
         }}
