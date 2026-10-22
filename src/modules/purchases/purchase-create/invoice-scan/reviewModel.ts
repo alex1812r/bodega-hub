@@ -26,7 +26,11 @@ import {
   type InvoiceTaxAssessment,
   type InvoiceTaxReference,
 } from "@/modules/invoice-scan/invoiceTaxCheck";
-import { DECIMAL_QUANTITY_ISSUE, USD_DOCUMENT_ISSUE } from "@/modules/invoice-scan/server/match/money";
+import {
+  DECIMAL_QUANTITY_ISSUE,
+  PRICE_DEVIATION_LIMIT,
+  USD_DOCUMENT_ISSUE,
+} from "@/modules/invoice-scan/server/match/money";
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 /** Diferencia relativa tasa impresa vs del sistema por encima de la cual se avisa (D8: 2 %). */
@@ -416,6 +420,78 @@ export function isExplicitChoiceIssue(issue: string): boolean {
  */
 export function needsExplicitChoice(line: InvoiceReviewLine): boolean {
   return !line.discarded && !line.choiceMade && line.issues.some(isExplicitChoiceIssue);
+}
+
+/** Cola del aviso de precio (`priceCoherenceIssue`, 6.18): «… y el último costo fue 0,59 REF.». */
+const PRICE_ISSUE_LAST_COST = /el último costo fue (\d{1,3}(?:\.\d{3})*,\d{2}) REF\.$/;
+/** El mismo margen de coma flotante con que el servidor compara la desviación. */
+const PRICE_DEVIATION_EPSILON = 1e-9;
+
+/**
+ * B-p7-3: último costo unitario (REF) con que el servidor comparó la línea. La respuesta no lo
+ * trae aparte: sale del aviso de precio, cuyo texto está anclado por test.
+ */
+export function priceIssueLastUnitCostRef(line: Pick<InvoiceReviewLine, "issues">): number | undefined {
+  for (const issue of line.issues) {
+    const match = issue.startsWith(PRICE_CHOICE_QUESTION) ? PRICE_ISSUE_LAST_COST.exec(issue) : null;
+    if (match) {
+      return Number(match[1].replaceAll(".", "").replace(",", "."));
+    }
+  }
+  return undefined;
+}
+
+export type EntryModeOutcome = {
+  entryMode: "unit" | "pack";
+  /** Cantidad en la unidad de entrada (empaques en «Por empaque»). */
+  quantity: number;
+  /** Unidades que entran al stock; sin unidades por empaque válidas, `undefined`. */
+  units?: number;
+  /** Costo por unidad de stock: REF con tasa (o dólares aceptados); Bs sin tasa. */
+  unitCost?: { amount: number; currency: "REF" | "VES" };
+  lastUnitCostRef?: number;
+  /** El costo por unidad se aparta del último más que el límite del aviso de precio (6.18). */
+  deviates: boolean;
+};
+
+/**
+ * B-p7-3: qué deja cada opción «Por unidad / Por empaque» antes de elegirla: unidades al stock
+ * y costo por unidad frente al último costo, con la misma regla que el aviso del servidor
+ * (precio ÷ unidades ÷ tasa, desviación > 40 %). No cambia el estado.
+ */
+export function getEntryModeOutcome(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+  entryMode: "unit" | "pack",
+): EntryModeOutcome | undefined {
+  if (!isPositive(line.quantity)) {
+    return undefined;
+  }
+  const lastUnitCostRef = priceIssueLastUnitCostRef(line);
+  const base = { entryMode, quantity: line.quantity, ...(lastUnitCostRef !== undefined ? { lastUnitCostRef } : {}) };
+  let unitsPerEntry: number | undefined = 1;
+  if (entryMode === "pack") {
+    unitsPerEntry = isValidUnitsPerPack(line.unitsPerPack) ? line.unitsPerPack : undefined;
+  }
+  if (unitsPerEntry === undefined) {
+    return { ...base, deviates: false };
+  }
+  const perUnit = getLineBasePrice(state, line) / unitsPerEntry;
+  const rate = state.usd.anomaly ? (isUsdAccepted(state) ? 1 : undefined) : getEffectiveRate(state);
+  let unitCost: EntryModeOutcome["unitCost"];
+  if (Number.isFinite(perUnit) && perUnit >= 0) {
+    if (isPositive(rate)) {
+      unitCost = { amount: perUnit / rate, currency: "REF" };
+    } else if (!state.usd.anomaly) {
+      unitCost = { amount: perUnit, currency: "VES" };
+    }
+  }
+  const deviates =
+    unitCost?.currency === "REF" &&
+    lastUnitCostRef !== undefined &&
+    lastUnitCostRef > 0 &&
+    Math.abs(unitCost.amount - lastUnitCostRef) / lastUnitCostRef > PRICE_DEVIATION_LIMIT + PRICE_DEVIATION_EPSILON;
+  return { ...base, units: line.quantity * unitsPerEntry, ...(unitCost ? { unitCost } : {}), deviates };
 }
 
 function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefined): InvoiceReviewLineStatus {
