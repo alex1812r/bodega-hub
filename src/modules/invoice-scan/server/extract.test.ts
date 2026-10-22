@@ -507,7 +507,7 @@ describe("extractInvoice: fecha imposible leída por el modelo (caos B8)", () =>
 
     expect(result.extraction.date).toBeUndefined();
     expect(result.extraction.warnings).toContain(IMPOSSIBLE_DATE_WARNING);
-    expect(IMPOSSIBLE_DATE_WARNING).toBe("La fecha leída no existe en el calendario; revísala en la factura.");
+    expect(IMPOSSIBLE_DATE_WARNING).toBe("La fecha leída no es válida (formato, año o día inexistente); revísala en la factura.");
   });
 
   it("si la página 1 trae una fecha imposible, usa la válida de la página 2", async () => {
