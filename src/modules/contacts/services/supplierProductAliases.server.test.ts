@@ -23,6 +23,8 @@ function chain(result: { data: unknown; error: unknown }) {
     builder[method] = jest.fn(self);
   }
   builder.limit = jest.fn().mockResolvedValue(result);
+  // Una página con las filas y después la vacía que cierra la lectura paginada.
+  builder.range = jest.fn().mockResolvedValueOnce(result).mockResolvedValue({ data: [], error: null });
   builder.maybeSingle = jest.fn().mockResolvedValue(result);
   (builder as unknown as { then: unknown }).then = (resolve: (value: unknown) => unknown) =>
     Promise.resolve(result).then(resolve);

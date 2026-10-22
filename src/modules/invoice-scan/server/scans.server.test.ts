@@ -72,7 +72,7 @@ function fakeClient(results: Result[]) {
     const builder: Record<string, unknown> = {
       then: (resolve: (value: Result) => unknown) => Promise.resolve(result).then(resolve),
     };
-    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "order", "limit"]) {
+    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "order", "limit", "range"]) {
       builder[method] = (...args: unknown[]) => {
         chain.push([method, ...args]);
         return builder;
@@ -522,8 +522,10 @@ describe("scans.server · escaneo de una compra (SCN-09a)", () => {
     expect(calls[0]).toEqual(
       expect.arrayContaining([["from", "products"], ["eq", "store_id", ctx.storeId], ["in", "id", [productId]]]),
     );
+    // La lectura paginada cierra con una página vacía; sin ids válidos no se añade ninguna consulta.
+    const queried = calls.length;
     expect(await getProductNames(ctx, ["no-uuid"])).toEqual({});
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(queried);
   });
 });
 

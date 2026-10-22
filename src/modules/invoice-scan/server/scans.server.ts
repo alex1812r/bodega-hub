@@ -14,6 +14,7 @@ import { z } from "zod";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { fetchAllRows, fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
 import { caracasDateToUtcRange, getCaracasIsoDate } from "@/shared/utils/caracasBusinessDay";
 
 import type { InvoiceExtraction, InvoiceMatch, InvoiceScanLimits } from "../contracts";
@@ -316,15 +317,12 @@ export async function getProductNames(
   }
 
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("products")
-    .select("id, name")
-    .eq("store_id", ctx.storeId)
-    .in("id", ids);
+  // REP6-05: hasta 300 líneas; los ids van por lotes para que el filtro `in` quepa en la URL.
+  const rows = await fetchAllRowsByIds<{ id: string; name: string }>(ids, (chunk, from, to) =>
+    supabase.from("products").select("id, name").eq("store_id", ctx.storeId).in("id", chunk).order("id").range(from, to),
+  );
 
-  throwIfSupabaseError(error);
-
-  return Object.fromEntries(((data ?? []) as { id: string; name: string }[]).map((row) => [row.id, row.name]));
+  return Object.fromEntries(rows.map((row) => [row.id, row.name]));
 }
 
 /**
@@ -366,16 +364,19 @@ export async function getDailyUsage(
 ): Promise<InvoiceScanLimits> {
   const { endUtcExclusive, startUtc } = caracasDateToUtcRange(getCaracasIsoDate(now));
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("invoice_scans")
-    .select("usage_pages")
-    .eq("store_id", ctx.storeId)
-    .gte("created_at", startUtc)
-    .lt("created_at", endUtcExclusive);
+  // REP6-05: con un límite diario de hasta 10.000 páginas el día puede pasar de 1000 filas.
+  const rows = await fetchAllRows<{ usage_pages: number }>((from, to) =>
+    supabase
+      .from("invoice_scans")
+      .select("usage_pages")
+      .eq("store_id", ctx.storeId)
+      .gte("created_at", startUtc)
+      .lt("created_at", endUtcExclusive)
+      .order("id")
+      .range(from, to),
+  );
 
-  throwIfSupabaseError(error);
-
-  const used = ((data ?? []) as { usage_pages: number }[]).reduce((sum, row) => sum + row.usage_pages, 0);
+  const used = rows.reduce((sum, row) => sum + row.usage_pages, 0);
 
   return { limit, remaining: Math.max(0, limit - used), used };
 }

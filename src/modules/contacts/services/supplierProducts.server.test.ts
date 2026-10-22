@@ -125,6 +125,7 @@ describe("supplierProducts.server", () => {
       error: null,
     });
     const historyChain = createChain({ data: [], error: null });
+    historyChain.order.mockReturnValue(historyChain);
     const packUnitsChain = createChain({ data: [], error: null });
     packUnitsChain.order.mockReturnValue(packUnitsChain);
     const detailChain = createChain({
