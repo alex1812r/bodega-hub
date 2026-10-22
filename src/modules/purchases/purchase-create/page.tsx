@@ -1397,7 +1397,7 @@ export function PurchaseCreatePage() {
     <div className="space-y-6 pb-8">
       <div
         aria-label="Registrar nueva compra"
-        className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         ref={pageHeaderRef}
         role="group"
         tabIndex={-1}

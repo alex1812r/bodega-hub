@@ -3,18 +3,21 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
-import { PRICE_DEVIATION_LIMIT } from "@/modules/invoice-scan/server/match/money";
+import { PRICE_DEVIATION_LIMIT, UNIT_PRICE_MISMATCH_ISSUE } from "@/modules/invoice-scan/server/match/money";
 import { normalizeInvoiceNumber } from "@/modules/invoice-scan/server/match/text";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
+  awaitsProductConfirmation,
+  enterTargetProductId,
   getEntryModeOutcome,
   getLineCosts,
   getLineIssues,
   getLineNeeds,
   getUnitConversion,
+  isLineMismatch,
   linePackWord,
   MAX_REVIEW_UNITS_PER_PACK,
   needsExplicitChoice,
@@ -148,7 +151,20 @@ export function confirmedToggleLabel(count: number, expanded: boolean): string {
   return `${noun} · ${expanded ? "ocultar" : "ver"}`;
 }
 
-/** Qué le falta a la línea para quedar resuelta, en español (sin contar el producto). */
+/**
+ * B-p8-1: el chip que Enter aceptaría (el marcado) dice a qué tocar para confirmar el producto
+ * propuesto cuando es lo único que falta.
+ */
+function productConfirmationMessage(line: InvoiceReviewLine): string[] {
+  if (!awaitsProductConfirmation(line)) {
+    return [];
+  }
+  const target = enterTargetProductId(line);
+  const chip = getChoiceChips(line).find((item) => item.productId === target);
+  return [`Falta confirmar el producto: toca «${chip?.name ?? "Producto propuesto"}» o pulsa Enter.`];
+}
+
+/** Qué le falta a la línea para quedar resuelta, en español (el producto, solo si es lo único). */
 export function lineNeedMessages(line: InvoiceReviewLine): string[] {
   // REP6-04 (B-p6-1): sin preselección (D33-a), la línea dice qué opción falta elegir.
   const choice = needsExplicitChoice(line) ? [`Elige cómo viene: Por unidad o Por ${linePackWord(line)}.`] : [];
@@ -171,7 +187,7 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
       return ["Revisa el costo: no puede ser negativo ni estar vacío."];
     }
     return [];
-  }).concat(choice);
+  }).concat(choice, productConfirmationMessage(line));
 }
 
 /**
@@ -193,6 +209,11 @@ function lineIssueText(line: InvoiceReviewLine, issue: string): string {
  * se muestra el del servidor.
  */
 function currentIssueText(state: InvoiceReviewState, line: InvoiceReviewLine, issue: string): string | undefined {
+  // B-p8-2: el de precio unitario frente al total leído, igual: corregida la línea, cantidad ×
+  // costo de ahora contra el total leído (`isLineMismatch`); se retira si cuadra y vuelve si no.
+  if (line.choiceMade && issue === UNIT_PRICE_MISMATCH_ISSUE) {
+    return isLineMismatch(state, line) ? issue : undefined;
+  }
   const outcome =
     line.choiceMade && issue.startsWith(PRICE_CHOICE_QUESTION)
       ? getEntryModeOutcome(state, line, line.entryMode)
