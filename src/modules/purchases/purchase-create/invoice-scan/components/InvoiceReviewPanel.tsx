@@ -97,6 +97,9 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
   return <InvoiceImageViewer alt="Factura escaneada" urls={images.urls} />;
 }
 
+/** Separación mínima entre el control enfocado y el pie fijo (px). */
+const FOOTER_GAP = 8;
+
 /**
  * QA REP4-02c F1: `focus()` no desplaza si el elemento está dentro del viewport aunque lo
  * tape el pie fijo (sticky). El margen de scroll con el alto actual del pie (varía al
@@ -104,8 +107,6 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
  * QA REP4-02c-F1 (intento 2): el pie sticky no está pegado al borde del viewport (padding
  * inferior de `main`), así que el margen es la zona que tapa realmente desde ese borde.
  */
-const FOOTER_GAP = 8;
-
 function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
   element.focus();
   // Un pie sin altura (oculto o sin layout) no tapa nada.
