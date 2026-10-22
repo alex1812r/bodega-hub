@@ -183,6 +183,9 @@ export function InvoiceReviewPanel({
   const headerRef = useRef<HTMLDivElement>(null);
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
   const guardUntilRef = useRef(0);
+  // REP6-04 (B6-2): línea cuya opción explícita armó la guarda; corregir la opción en esa misma
+  // línea no es un rebote sobre otra fila y se aplica. Cualquier otro armado lo anula.
+  const guardChoiceIndexRef = useRef<number | null>(null);
   // D33-a: teclas de activación y punteros pulsados ahora; al mover el foco con alguno pulsado,
   // hace falta un keyup/pointerup nuevo antes de aceptar otra activación.
   const pressedRef = useRef(new Set<string>());
@@ -197,6 +200,7 @@ export function InvoiceReviewPanel({
 
   function armActivationGuard() {
     armGuard(guardUntilRef);
+    guardChoiceIndexRef.current = null;
   }
 
   function activationGuarded() {
@@ -322,7 +326,11 @@ export function InvoiceReviewPanel({
    */
   function applyRowAction(action: InvoiceReviewAction) {
     if (action.type === "acceptCandidate" || action.type === "editEntryMode") {
-      if (activationGuarded()) {
+      const sameLineChoiceFix =
+        action.type === "editEntryMode" &&
+        !awaitingReleaseRef.current &&
+        guardChoiceIndexRef.current === action.index;
+      if (activationGuarded() && !sameLineChoiceFix) {
         return;
       }
       const current = state.lines[action.index];
@@ -334,6 +342,7 @@ export function InvoiceReviewPanel({
         // Elegida la opción: resuelta, a la siguiente pendiente; sin aceptar aún, a la fila.
         armActivationGuard();
         requestFocus(isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+        guardChoiceIndexRef.current = action.index;
       } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
         // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31).
         requestFocus(action.index, next);
@@ -400,6 +409,11 @@ export function InvoiceReviewPanel({
       case "Enter": {
         event.preventDefault();
         acceptMarkedByEnter(index);
+        return;
+      }
+      case " ": {
+        // REP6-04 (B6-1): Espacio no tiene acción en la fila; sin esto desplaza el panel.
+        event.preventDefault();
         return;
       }
       case "Escape": {

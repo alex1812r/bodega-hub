@@ -12,7 +12,10 @@ import {
   getLineCosts,
   getLineNeeds,
   getUnitConversion,
+  linePackWord,
   MAX_REVIEW_UNITS_PER_PACK,
+  needsExplicitChoice,
+  PRICE_CHOICE_QUESTION,
   type InvoiceReviewLine,
   type InvoiceReviewLineStatus,
   type InvoiceReviewState,
@@ -143,6 +146,8 @@ export function confirmedToggleLabel(count: number, expanded: boolean): string {
 
 /** Qué le falta a la línea para quedar resuelta, en español (sin contar el producto). */
 export function lineNeedMessages(line: InvoiceReviewLine): string[] {
+  // REP6-04 (B-p6-1): sin preselección (D33-a), la línea dice qué opción falta elegir.
+  const choice = needsExplicitChoice(line) ? [`Elige cómo viene: Por unidad o Por ${linePackWord(line)}.`] : [];
   return getLineNeeds(line).flatMap((need) => {
     if (need === "unitsPerPack" && line.unitsPerPack !== undefined && line.unitsPerPack > MAX_REVIEW_UNITS_PER_PACK) {
       return [`Máximo ${MAX_REVIEW_UNITS_PER_PACK.toLocaleString("es-VE")} unidades por empaque.`];
@@ -162,7 +167,18 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
       return ["Revisa el costo: no puede ser negativo ni estar vacío."];
     }
     return [];
-  });
+  }).concat(choice);
+}
+
+/**
+ * REP6-04 (B-p6-2): el aviso de precio del servidor pregunta por «caja»; se muestra con la
+ * palabra del empaque de la línea, la misma de la opción «Por <empaque>». El texto guardado
+ * no cambia (`isExplicitChoiceIssue` lo sigue reconociendo).
+ */
+export function lineIssueText(line: InvoiceReviewLine, issue: string): string {
+  return issue.startsWith(PRICE_CHOICE_QUESTION)
+    ? `¿Precio por ${linePackWord(line)} o por unidad?${issue.slice(PRICE_CHOICE_QUESTION.length)}`
+    : issue;
 }
 
 export type DisplayedTotals = {

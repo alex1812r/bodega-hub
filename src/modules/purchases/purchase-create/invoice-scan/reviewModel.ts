@@ -349,6 +349,11 @@ function formatQuantity(value: number): string {
   return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
 }
 
+/** Palabra del empaque de la línea («bulto», «caja»…): la misma en la opción y en los textos (REP6-04). */
+export function linePackWord(line: Pick<InvoiceReviewLine, "packLabel">): string {
+  return line.packLabel.trim().toLowerCase() || "empaque";
+}
+
 /**
  * SCN-UI-Q1 (MEDIO-3): la compra solo admite cantidades enteras
  * (`purchaseItemInputSchema`: `quantity`/`packCount` int). Una cantidad fraccionaria
@@ -357,7 +362,7 @@ function formatQuantity(value: number): string {
  * entero o faltan las unidades, `reason` dice qué editar.
  */
 export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversion {
-  const pack = line.packLabel.trim().toLowerCase() || "empaque";
+  const pack = linePackWord(line);
   if (!isPositive(line.quantity) || Number.isInteger(line.quantity)) {
     return { ok: false, reason: "La cantidad debe ser un número entero mayor que 0." };
   }
@@ -389,11 +394,11 @@ export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversio
  * `server/match/money.ts` (`priceCoherenceIssue`, 6.18) y de `server/match/pack.ts` /
  * `server/match.ts` (tamaño de empaque: todos terminan pidiendo confirmar); anclados por test.
  */
-const PRICE_CHOICE_ISSUE = /^¿Precio por caja o por unidad?/;
+export const PRICE_CHOICE_QUESTION = "¿Precio por caja o por unidad?";
 const PACK_CHOICE_ISSUE = /: confirma (las unidades por empaque|si son )/;
 
 export function isExplicitChoiceIssue(issue: string): boolean {
-  return PRICE_CHOICE_ISSUE.test(issue) || PACK_CHOICE_ISSUE.test(issue);
+  return issue.startsWith(PRICE_CHOICE_QUESTION) || PACK_CHOICE_ISSUE.test(issue);
 }
 
 /**
@@ -1154,8 +1159,25 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
     blockers.push(confirmedPurchaseMessage(state.confirmedPurchase) + ".");
   }
   const pending = getPendingCount(state);
-  if (pending > 0) {
-    blockers.push(pending === 1 ? "Queda 1 línea por resolver." : `Quedan ${pending} líneas por resolver.`);
+  // REP6-04 (B-p6-1): líneas con el producto aceptado y completas a las que solo les falta elegir
+  // «Por unidad / Por <empaque>» (D31); el pie lo dice en vez de un «por resolver» genérico.
+  const choiceOnly = state.lines.filter(
+    (line) =>
+      isPendingStatus(line.status) &&
+      line.accepted &&
+      getLineNeeds(line).length === 0 &&
+      needsExplicitChoice(line),
+  ).length;
+  const otherPending = pending - choiceOnly;
+  if (otherPending > 0) {
+    blockers.push(
+      otherPending === 1 ? "Queda 1 línea por resolver." : `Quedan ${otherPending} líneas por resolver.`,
+    );
+  }
+  if (choiceOnly > 0) {
+    blockers.push(
+      choiceOnly === 1 ? "Falta elegir cómo viene en 1 línea." : `Falta elegir cómo viene en ${choiceOnly} líneas.`,
+    );
   }
   if (!state.lines.some((line) => !line.discarded)) {
     blockers.push("No queda ninguna línea para cargar.");

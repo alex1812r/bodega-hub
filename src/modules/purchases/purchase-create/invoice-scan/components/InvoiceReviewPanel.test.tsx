@@ -1148,7 +1148,7 @@ describe("InvoiceReviewPanel", () => {
       );
     });
 
-    it("6.18 por unidad: la línea sin empaque con aviso de precio ofrece «Por unidad / Por caja»", () => {
+    it("6.18 por unidad: la línea leída por unidad con aviso de precio ofrece «Por unidad / Por bulto» sin marcar", () => {
       renderPanel(
         makeReviewResponse({
           lines: [doubtfulLine(2, 1, { match: { candidates: singleCandidate(2), issues: [PRICE_ISSUE] } })],
@@ -1156,6 +1156,7 @@ describe("InvoiceReviewPanel", () => {
       );
 
       expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "false");
+      expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toHaveAttribute("aria-checked", "false");
     });
 
     describe("REP6-01 (C6-M1, D33-a): ni la autorrepetición ni un doble clic lento resuelven ni cargan", () => {
@@ -1347,6 +1348,123 @@ describe("InvoiceReviewPanel", () => {
         await user.keyboard("{Enter}");
 
         expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+    });
+
+    describe("REP6-04: bajos de la pasada 6 (B6-1, B6-2, B-p6-1, B-p6-2)", () => {
+      // Línea leída por unidad (sin `unit`): su empaque es «Bulto» por defecto.
+      const unitPriceLine = (seed = 2) =>
+        doubtfulLine(seed, 1, { match: { candidates: singleCandidate(seed), issues: [PRICE_ISSUE] } });
+      const unitPackLine = (seed = 2) =>
+        doubtfulLine(seed, 1, { match: { candidates: singleCandidate(seed), issues: [PACK_ISSUE] } });
+      const radios = (index: number) => within(row(index)).getAllByRole("radio");
+      const blockers = () => screen.getByTestId("invoice-review-blockers");
+
+      it("B6-1: tras «Restaurar», Espacio ×5 sobre la fila enfocada no desplaza el panel ni hace nada", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+        await user.click(discardButton(0));
+        now += 1000;
+        await user.click(within(row(0)).getByRole("button", { name: "Restaurar" }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        for (let step = 0; step < 5; step += 1) {
+          // `fireEvent` devuelve false si alguien llamó a preventDefault (sin él, el navegador desplaza).
+          expect(fireEvent.keyDown(row(0), { key: " " })).toBe(false);
+        }
+
+        expect(row(0)).toHaveFocus();
+        expect(row(0)).toHaveAttribute("data-status", "pending_unmatched");
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      });
+
+      it("B6-2: «Por unidad» y a 150 ms «Por caja» en la misma línea: se aplica la corrección", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [priceLine(), nameLine()] }));
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 450;
+
+        const [perUnit, perPack] = radios(0);
+        await user.click(perUnit);
+        expect(perUnit).toHaveAttribute("aria-checked", "true");
+        now += 150;
+        await user.click(perPack);
+
+        expect(perPack).toHaveAttribute("aria-checked", "true");
+        expect(perUnit).toHaveAttribute("aria-checked", "false");
+        expect(perPack).toHaveFocus();
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("B6-2: la guarda sigue bloqueando otra fila tras elegir la opción", async () => {
+        const user = userEvent.setup();
+        renderPanel(
+          makeReviewResponse({
+            lines: [priceLine(), doubtfulLine(3, 1, { match: { candidates: singleCandidate(3) } })],
+          }),
+        );
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 450;
+        await user.click(radios(0)[0]);
+        now += 150;
+        await user.click(within(row(1)).getByRole("button", { name: /Producto 3/ }));
+
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      });
+
+      it("B-p6-1: tras tocar el candidato, la línea y el pie dicen qué falta elegir", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unitPackLine(), {}] }));
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        expect(within(row(0)).getByText("Elige cómo viene: Por unidad o Por bulto.")).toBeInTheDocument();
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 1 línea.");
+        expect(blockers()).not.toHaveTextContent("por resolver");
+      });
+
+      it("B-p6-1: con dos líneas así y otra pendiente, el pie dice «en 2 líneas» y cuenta aparte solo la otra", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unitPackLine(2), unitPriceLine(3), unmatchedLine(4, false)] }));
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 1000;
+        await user.click(within(row(1)).getByRole("button", { name: /Producto 3/ }));
+
+        expect(blockers()).toHaveTextContent("Queda 1 línea por resolver.");
+        expect(blockers()).not.toHaveTextContent("Quedan 3");
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 2 líneas.");
+
+        now += 1000;
+        await user.click(within(row(2)).getByRole("button", { name: "Descartar línea" }));
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 2 líneas.");
+        expect(blockers()).not.toHaveTextContent("por resolver");
+      });
+
+      it("B-p6-1: con una línea así y dos pendientes más, el genérico cuenta solo las otras dos", async () => {
+        const user = userEvent.setup();
+        renderPanel(
+          makeReviewResponse({ lines: [unitPackLine(2), unmatchedLine(3, false), unmatchedLine(4, false)] }),
+        );
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+
+        expect(blockers()).toHaveTextContent("Quedan 2 líneas por resolver.");
+        expect(blockers()).toHaveTextContent("Falta elegir cómo viene en 1 línea.");
+        expect(blockers()).not.toHaveTextContent("Quedan 3");
+      });
+
+      it("B-p6-2: el aviso de precio usa la misma palabra que la opción («bulto»)", () => {
+        renderPanel(makeReviewResponse({ lines: [unitPriceLine()] }));
+
+        expect(within(row(0)).getByRole("radio", { name: "Por bulto" })).toBeInTheDocument();
+        expect(
+          within(row(0)).getByText(
+            "¿Precio por bulto o por unidad? Sale a 0,51 REF por unidad y el último costo fue 0,05 REF.",
+          ),
+        ).toBeInTheDocument();
+        expect(within(row(0)).queryByText(/Precio por caja/)).not.toBeInTheDocument();
       });
     });
   });
