@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
@@ -1087,14 +1087,15 @@ describe("InvoiceReviewPanel", () => {
       await user.keyboard("{Enter}");
 
       expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
-      const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
-      await waitFor(() => expect(perPack).toHaveFocus());
+      // D33-a: el foco va a la primera opción del radiogrupo, sin marcar.
+      const perUnit = within(row(0)).getByRole("radio", { name: "Por unidad" });
+      await waitFor(() => expect(perUnit).toHaveFocus());
 
       // Un rebote del Enter no elige la opción.
       now += 30;
       await user.keyboard("{Enter}");
       expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
-      expect(perPack).toHaveFocus();
+      expect(perUnit).toHaveFocus();
 
       now += 450;
       await user.keyboard("{Enter}");
@@ -1133,8 +1134,9 @@ describe("InvoiceReviewPanel", () => {
 
           expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
           expect(within(row(0)).getByText(issue)).toBeInTheDocument();
+          // D33-a: foco en la primera opción, sin marcar; el usuario elige «Por caja».
           const perPack = within(row(0)).getByRole("radio", { name: "Por caja" });
-          await waitFor(() => expect(perPack).toHaveFocus());
+          await waitFor(() => expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveFocus());
           expect(loadButton()).toBeDisabled();
 
           now += 450;
@@ -1153,7 +1155,199 @@ describe("InvoiceReviewPanel", () => {
         }),
       );
 
-      expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "true");
+      expect(within(row(0)).getByRole("radio", { name: "Por unidad" })).toHaveAttribute("aria-checked", "false");
+    });
+
+    describe("REP6-01 (C6-M1, D33-a): ni la autorrepetición ni un doble clic lento resuelven ni cargan", () => {
+      /** Repetición del SO sobre el control enfocado; si nadie la cancela, un botón se activa (como el navegador). */
+      const holdEnter = () => {
+        const target = document.activeElement;
+        if (!(target instanceof HTMLElement)) {
+          throw new Error("Sin foco");
+        }
+        const unprevented = fireEvent.keyDown(target, { key: "Enter", repeat: true });
+        if (unprevented && target instanceof HTMLButtonElement) {
+          fireEvent.click(target, { detail: 0 });
+        }
+      };
+      const radios = (index: number) => within(row(index)).getAllByRole("radio");
+
+      it.each([
+        ["precio", priceLine],
+        ["tamaño de empaque", packLine],
+      ])("aviso de %s: ninguna opción viene marcada y la primera es la enfocable", (_, line) => {
+        renderPanel(makeReviewResponse({ lines: [line()] }));
+
+        const [perUnit, perPack] = radios(0);
+        expect(perUnit).toHaveAttribute("aria-checked", "false");
+        expect(perPack).toHaveAttribute("aria-checked", "false");
+        expect(perUnit).toHaveAttribute("tabindex", "0");
+        expect(perPack).toHaveAttribute("tabindex", "-1");
+      });
+
+      it("Enter mantenido desde «Descartar línea»: no acepta la siguiente, no elige opción y no carga", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), priceLine()] }));
+        discardButton(0).focus();
+
+        await user.keyboard("{Enter>}");
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        for (let step = 0; step < 30; step += 1) {
+          now += step === 0 ? 500 : 33;
+          holdEnter();
+        }
+        await user.keyboard("{/Enter}");
+
+        expect(row(0)).toHaveAttribute("data-status", "discarded");
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+        expect(radios(1).map((radio) => radio.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+        expect(props.onLoad).not.toHaveBeenCalled();
+      });
+
+      it("Enter mantenido sin la marca de repetición: tras cambiar de fila exige un keyup nuevo", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+        discardButton(0).focus();
+
+        await user.keyboard("{Enter>}");
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 600;
+        fireEvent.keyDown(row(1), { key: "Enter" });
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+
+        await user.keyboard("{/Enter}");
+        await user.keyboard("{Enter}");
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("Enter repetido sobre el chip, sobre la opción y sobre Cargar se ignora", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [priceLine()] }));
+        now += 1000;
+
+        within(row(0)).getByRole("button", { name: /Producto 2/ }).focus();
+        holdEnter();
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        expect(within(row(0)).queryByText("Producto elegido")).not.toBeInTheDocument();
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 1000;
+        const [perUnit] = radios(0);
+        await waitFor(() => expect(perUnit).toHaveFocus());
+        holdEnter();
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+        await user.click(radios(0)[1]);
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        now += 1000;
+        expect(loadButton()).toBeEnabled();
+        loadButton().focus();
+        holdEnter();
+        expect(props.onLoad).not.toHaveBeenCalled();
+      });
+
+      it("doble clic lento (2.º clic a 420 ms, detail 2) tras Descartar: no acepta el chip de la siguiente", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        await user.click(discardButton(0));
+        now += 420;
+        fireEvent.click(within(row(1)).getByRole("button", { name: /Producto 2/ }), { detail: 2 });
+
+        expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
+      });
+
+      it("clic con detail 2 sobre la opción, Restaurar y Cargar se ignora", async () => {
+        const user = userEvent.setup();
+        const props = renderPanel(makeReviewResponse({ lines: [priceLine(), {}] }));
+
+        await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
+        now += 1000;
+        fireEvent.click(radios(0)[1], { detail: 2 });
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+        await user.click(radios(0)[1]);
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        now += 1000;
+        expect(loadButton()).toBeEnabled();
+        fireEvent.click(loadButton(), { detail: 2 });
+        expect(props.onLoad).not.toHaveBeenCalled();
+      });
+
+      it("el 2.º clic de un doble clic en «Descartar línea» no restaura la línea", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        await user.click(discardButton(0));
+        now += 1000;
+        fireEvent.click(within(row(0)).getByRole("button", { name: "Restaurar" }), { detail: 2 });
+
+        expect(row(0)).toHaveAttribute("data-status", "discarded");
+      });
+
+      it("6.17 solo teclado: Enter acepta, la flecha elige «Por caja» y el foco sigue a la siguiente", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        await user.keyboard("{Enter}");
+        const [perUnit, perPack] = radios(0);
+        await waitFor(() => expect(perUnit).toHaveFocus());
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+        now += 450;
+        await user.keyboard("{ArrowRight}");
+
+        expect(perPack).toHaveAttribute("aria-checked", "true");
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+        await waitFor(() => expect(row(1)).toHaveFocus());
+      });
+
+      it("6.17 solo teclado: Espacio sobre la opción no marcada la elige", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [priceLine(), doubtfulLine(3)] }));
+        await waitFor(() => expect(row(0)).toHaveFocus());
+
+        await user.keyboard("{Enter}");
+        const [perUnit] = radios(0);
+        await waitFor(() => expect(perUnit).toHaveFocus());
+        now += 450;
+        await user.keyboard(" ");
+
+        expect(perUnit).toHaveAttribute("aria-checked", "true");
+        expect(row(0)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("puntero soltado fuera del panel: tras cambiar de fila un Enter normal sí acepta", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        // Toque en un chip arrastrado fuera: el pointerup llega a document.body, no al panel.
+        fireEvent.pointerDown(within(row(1)).getByRole("button", { name: /Producto 2/ }), { pointerId: 7 });
+        fireEvent.pointerUp(document.body, { pointerId: 7 });
+
+        await user.click(discardButton(0));
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 500;
+        await user.keyboard("{Enter}");
+
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
+
+      it("Enter pulsado y la ventana pierde el foco (Alt+Tab): tras cambiar de fila un Enter normal sí acepta", async () => {
+        const user = userEvent.setup();
+        renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), nameLine()] }));
+
+        fireEvent.keyDown(screen.getByTestId("invoice-review-panel"), { key: "Enter" });
+        fireEvent.blur(window);
+
+        await user.click(discardButton(0));
+        await waitFor(() => expect(row(1)).toHaveFocus());
+        now += 500;
+        await user.keyboard("{Enter}");
+
+        expect(row(1)).toHaveAttribute("data-status", "resolved");
+      });
     });
   });
 
