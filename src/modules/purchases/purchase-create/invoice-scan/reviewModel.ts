@@ -551,6 +551,8 @@ function setProduct(state: InvoiceReviewState, line: InvoiceReviewLine, product:
   if (!productChanged) {
     return base;
   }
+  // D33-b: la elección «Por unidad / Por empaque» (o la corrección) era sobre el producto anterior.
+  base.choiceMade = false;
   if (sameAsMatch && defaults) {
     return {
       ...base,
