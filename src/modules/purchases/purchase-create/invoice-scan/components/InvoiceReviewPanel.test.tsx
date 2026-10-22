@@ -792,6 +792,80 @@ describe("InvoiceReviewPanel", () => {
     });
   });
 
+  describe("REP4-02c (B8, D29): tras «Descartar línea» o «Restaurar» el foco no se pierde", () => {
+    const discardButton = (index: number) => within(row(index)).getByRole("button", { name: "Descartar línea" });
+    const restoreButton = (index: number) => within(row(index)).getByRole("button", { name: "Restaurar" });
+    type Activate = (user: ReturnType<typeof userEvent.setup>, button: HTMLElement) => Promise<void>;
+    const activations: [string, Activate][] = [
+      ["clic", (user, button) => user.click(button)],
+      [
+        "Enter",
+        async (user, button) => {
+          button.focus();
+          await user.keyboard("{Enter}");
+        },
+      ],
+      [
+        "Espacio",
+        async (user, button) => {
+          button.focus();
+          await user.keyboard(" ");
+        },
+      ],
+    ];
+
+    it.each(activations)("con otra pendiente (%s): Descartar lleva el foco a la siguiente pendiente", async (_, activate) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }));
+      await waitFor(() => expect(row(0)).toHaveFocus());
+
+      await activate(user, discardButton(0));
+
+      expect(row(0)).toHaveAttribute("data-status", "discarded");
+      await waitFor(() => expect(row(1)).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it.each(activations)("sin más pendientes (%s): Descartar lleva el foco a «Restaurar» de esa línea", async (_, activate) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [{}, unmatchedLine(2, false)] }));
+
+      await activate(user, discardButton(1));
+
+      expect(row(1)).toHaveAttribute("data-status", "discarded");
+      await waitFor(() => expect(restoreButton(1)).toHaveFocus());
+    });
+
+    it.each(activations)("Restaurar (%s) lleva el foco a «Descartar línea» de esa misma línea", async (_, activate) => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }));
+      await user.click(discardButton(0));
+      await user.click(discardButton(1));
+      await waitFor(() => expect(restoreButton(1)).toHaveFocus());
+
+      await activate(user, restoreButton(0));
+
+      expect(row(0)).toHaveAttribute("data-status", "pending_unmatched");
+      await waitFor(() => expect(discardButton(0)).toHaveFocus());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("una confirmada que se descarta con la lista plegada: el foco va a Cargar, no a BODY", async () => {
+      const user = userEvent.setup();
+      renderPanel(makeReviewResponse({ lines: [{}, {}] }));
+      await user.click(screen.getByRole("button", { name: "2 líneas confirmadas · ver" }));
+      await user.clear(within(row(0)).getByLabelText("Cantidad"));
+      expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+      await user.click(screen.getByRole("button", { name: "1 línea confirmada · ocultar" }));
+
+      await user.click(discardButton(0));
+
+      expect(document.querySelector('[data-line-index="0"]')).toBeNull();
+
+      await waitFor(() => expect(loadButton()).toHaveFocus());
+    });
+  });
+
   describe("REP3-03a (B7): tras «Nuevo producto» el foco no se pierde", () => {
     const created = async (response: InvoiceScanResponse) => {
       const user = userEvent.setup();

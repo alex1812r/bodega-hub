@@ -66,7 +66,16 @@ export type InvoiceReviewPanelProps = {
  * repita. `need`: campo que le falta a la línea (con producto) para resolverse.
  */
 /** `needsSupplier`: sin línea pendiente y sin proveedor, Cargar está deshabilitado (REP3-03a). */
-type FocusRequest = { target: number | null; need?: string; needsSupplier?: boolean; seq: number };
+/** `control`: botón de la fila (`data-row-action`) que recibe el foco tras Descartar/Restaurar (REP4-02c). */
+type FocusRequest = {
+  target: number | null;
+  need?: string;
+  needsSupplier?: boolean;
+  control?: RowControl;
+  seq: number;
+};
+
+type RowControl = "discard" | "restore";
 
 const NEED_FOCUS_ORDER = ["unitsPerPack", "quantity", "unitPrice"] as const;
 
@@ -130,7 +139,7 @@ export function InvoiceReviewPanel({
   ).length;
 
   /** Pide el foco para `target` según el estado que resultará de la acción (`next`). */
-  function requestFocus(target: number | null, next: InvoiceReviewState) {
+  function requestFocus(target: number | null, next: InvoiceReviewState, control?: RowControl) {
     const line = target === null ? undefined : next.lines[target];
     // Con el producto ya aceptado pero sin poder resolverse (falta el tamaño del empaque,
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
@@ -142,6 +151,7 @@ export function InvoiceReviewPanel({
       target,
       ...(need ? { need } : {}),
       ...(needsSupplier ? { needsSupplier } : {}),
+      ...(control ? { control } : {}),
     }));
   }
 
@@ -149,8 +159,10 @@ export function InvoiceReviewPanel({
     if (!focusRequest) {
       return;
     }
-    if (focusRequest.target === null) {
-      // Sin pendientes: Cargar. Si está deshabilitado (QA B7) el foco no puede quedarse en
+    const row = focusRequest.target === null ? undefined : rowRefs.current.get(focusRequest.target);
+    if (!row) {
+      // Sin pendientes (o sin la fila en el DOM: una confirmada descartada se pliega): Cargar.
+      // Si está deshabilitado (QA B7) el foco no puede quedarse en
       // BODY: va al buscador de proveedor si falta, si no a la casilla de diferencia (lo que
       // desbloquea Cargar) o al primer control VISIBLE del pie (QA REP3-03f: «Ver detalle del
       // total» es display:none en sm+ y focus() no hacía nada), y como último recurso al pie.
@@ -174,9 +186,18 @@ export function InvoiceReviewPanel({
       }
       return;
     }
-    const row = rowRefs.current.get(focusRequest.target);
-    if (!row) {
-      return;
+    if (focusRequest.control) {
+      // Tras Descartar/Restaurar el botón pulsado desaparece (QA B8): el foco va al botón
+      // pedido de la fila o, si no lo hay, a su primer botón visible; nunca a BODY.
+      const control =
+        row.querySelector<HTMLButtonElement>(`[data-row-action="${focusRequest.control}"]`) ??
+        Array.from(row.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")).find(
+          (element) => element.getClientRects().length > 0,
+        );
+      if (control) {
+        control.focus();
+        return;
+      }
     }
     const field = focusRequest.need
       ? row.querySelector<HTMLInputElement>(`[data-need="${focusRequest.need}"]`)
@@ -190,6 +211,22 @@ export function InvoiceReviewPanel({
     dispatch(action);
     const line = next.lines[action.index];
     requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+  }
+
+  /** Descartar/Restaurar mueven el foco (D29): el botón pulsado deja de existir. */
+  function applyRowAction(action: InvoiceReviewAction) {
+    if (action.type !== "discardLine" && action.type !== "restoreLine") {
+      dispatch(action);
+      return;
+    }
+    const next = reviewReducer(state, action);
+    dispatch(action);
+    if (action.type === "restoreLine") {
+      requestFocus(action.index, next, "discard");
+      return;
+    }
+    const pending = nextPendingIndex(next, action.index);
+    requestFocus(pending ?? action.index, next, pending === null ? "restore" : undefined);
   }
 
   function handleRowKeyDown(event: KeyboardEvent<HTMLLIElement>, index: number) {
@@ -308,7 +345,7 @@ export function InvoiceReviewPanel({
             applyAndAdvance(action);
           }
         }}
-        onAction={dispatch}
+        onAction={applyRowAction}
         onNewProduct={handleNewProduct}
         onOpenSearch={(target) => setSearchIndex((current) => (current === target ? null : target))}
         onPickProduct={handlePickProduct}
