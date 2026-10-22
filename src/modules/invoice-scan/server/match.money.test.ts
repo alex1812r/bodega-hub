@@ -223,6 +223,24 @@ describe("matchInvoice · totales", () => {
         totals: { subtotal: 900, tax: 144, total: 1044 },
         mismatch: true,
       },
+      {
+        name: "REP4-01 (D29) u7: solo subtotal 90 y línea 104,40 con IVA incluido: la base cuadra",
+        lines: [priced(104.4)],
+        totals: { subtotal: 90 },
+        mismatch: false,
+      },
+      {
+        name: "REP4-01 (D29) u8: solo IVA 14,4 y línea 104,40 con IVA incluido: el IVA cuadra",
+        lines: [priced(104.4)],
+        totals: { tax: 14.4 },
+        mismatch: false,
+      },
+      {
+        name: "REP4-01 (D29) B09e: solo IVA 0,00 con líneas gravadas: no cuadra",
+        lines: [priced(500)],
+        totals: { tax: 0 },
+        mismatch: true,
+      },
     ])("$name", ({ lines, totals, mismatch }) => {
       const result = matchInvoice(buildExtraction({ lines, ...totals }), buildContext());
 

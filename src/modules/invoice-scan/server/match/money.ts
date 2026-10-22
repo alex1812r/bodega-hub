@@ -1,7 +1,12 @@
 import { roundMoney } from "@bodega/core/currency";
 
 import type { InvoiceExtraction, InvoiceExtractionLine, InvoiceMatch } from "../../contracts";
-import { assessInvoiceTax, getInvoiceTotalsGap } from "../../invoiceTaxCheck";
+import {
+  assessInvoiceTax,
+  getInvoiceRegisteredAmounts,
+  getInvoiceTotalsGap,
+  type InvoiceTaxLine,
+} from "../../invoiceTaxCheck";
 
 import { formatDecimal, isPositive } from "./text";
 
@@ -259,43 +264,26 @@ export function priceCoherenceIssue(input: {
   return `¿Precio por caja o por unidad? Sale a ${formatDecimal(perUnitRef)} REF por unidad y el último costo fue ${formatDecimal(lastUnitCostRef)} REF.`;
 }
 
-function withinTolerance(read: number, computed: number): boolean {
-  const tolerance = Math.max(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TOTALS_MIN_TOLERANCE_VES);
-  return Math.abs(read - computed) <= tolerance;
-}
-
 /**
- * Totales. `computed` = suma de importes de línea tal como se leyeron. REP3-01 (D27):
- * misma regla que la revisión (`assessInvoiceTax`): si los precios parecen incluir IVA,
- * lo que se registraría es `computedNet`; si no, `computedWithTax` (IVA de las alícuotas
- * resueltas). Eso se compara con el total de referencia (leído o subtotal + IVA). Sin
- * referencia, solo el subtotal leído frente a `computedNet` (máx(1 %, 1 Bs)); sin nada
- * leído, no hay descuadre.
+ * Totales. `computed` = Σ importes de línea tal como se leyeron (`lineAmount`). REP3-01
+ * (D27) · REP4-01 (D29): misma regla que la revisión (`assessInvoiceTax`): la cifra leída
+ * de referencia (total; subtotal + IVA; subtotal; IVA) frente a su homóloga registrada,
+ * con IVA incluido si se sugiere. Sin nada leído, no hay descuadre. Los importes por línea
+ * no son los de la revisión (N14: aquí `lineTotal` conciliado por empaque; allí cantidad ×
+ * precio leído), así que el cliente puede ser más estricto.
  */
-export function computeTotals(
-  extraction: InvoiceExtraction,
-  computedNet: number,
-  computedWithTax: number,
-): InvoiceMatch["totals"] {
-  const computed = roundMoney(computedNet);
+export function computeTotals(extraction: InvoiceExtraction, lines: InvoiceTaxLine[]): InvoiceMatch["totals"] {
   const read = Number.isFinite(extraction.total) ? extraction.total : undefined;
-  const subtotal = Number.isFinite(extraction.subtotal) ? extraction.subtotal : undefined;
   const assessment = assessInvoiceTax({
-    linesAmount: computed,
-    linesAmountWithTax: roundMoney(computedWithTax),
+    lines,
     subtotal: extraction.subtotal,
     tax: extraction.tax,
     total: extraction.total,
     minTolerance: TOTALS_MIN_TOLERANCE_VES,
   });
+  const notIncluded = getInvoiceRegisteredAmounts(lines, false);
+  const registered = assessment.includedSuggested ? getInvoiceRegisteredAmounts(lines, true) : notIncluded;
+  const mismatch = getInvoiceTotalsGap(assessment, registered) !== undefined;
 
-  let mismatch = false;
-  if (assessment.reference) {
-    const registered = assessment.includedSuggested ? computed : roundMoney(computedWithTax);
-    mismatch = getInvoiceTotalsGap(assessment, registered) !== undefined;
-  } else if (subtotal !== undefined) {
-    mismatch = !withinTolerance(subtotal, computed);
-  }
-
-  return { ...(read !== undefined ? { read } : {}), computed, mismatch };
+  return { ...(read !== undefined ? { read } : {}), computed: notIncluded.base, mismatch };
 }
