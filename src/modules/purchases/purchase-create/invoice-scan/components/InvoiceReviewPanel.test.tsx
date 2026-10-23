@@ -1090,24 +1090,25 @@ describe("InvoiceReviewPanel", () => {
       expect(row(1)).toHaveAttribute("data-status", "resolved");
     });
 
-    it("clic en el chip que resuelve la línea: el foco va a la siguiente pendiente, no a BODY", async () => {
+    // D41-c (B-p9-1): el chip que resuelve sigue D39-6; el foco queda en su fila.
+    it("clic en el chip que resuelve la línea: el foco queda en su fila, no en BODY ni en la siguiente", async () => {
       const user = userEvent.setup();
       renderPanel(makeReviewResponse({ lines: [nameLine(), doubtfulLine(3)] }));
 
       await user.click(within(row(0)).getByRole("button", { name: /Producto 2/ }));
 
       expect(row(0)).toHaveAttribute("data-status", "resolved");
-      await waitFor(() => expect(row(1)).toHaveFocus());
+      await waitFor(() => expect(row(0)).toHaveFocus());
     });
 
-    it("clic en el chip que resuelve la última pendiente: el foco va al pie (D36: no a Cargar), no a BODY", async () => {
+    it("clic en el chip que resuelve la última pendiente: el foco queda en su fila (D36: no a Cargar), no en BODY", async () => {
       const user = userEvent.setup();
       renderPanel(makeReviewResponse({ lines: [{}, nameLine()] }));
 
       await user.click(within(row(1)).getByRole("button", { name: /Producto 2/ }));
 
       expect(row(1)).toHaveAttribute("data-status", "resolved");
-      await waitFor(() => expect(reviewFooter()).toHaveFocus());
+      await waitFor(() => expect(row(1)).toHaveFocus());
     });
 
     it("pasados los 400 ms, un clic en el chip sí lo acepta", async () => {

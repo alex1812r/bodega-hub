@@ -378,18 +378,20 @@ export function InvoiceReviewPanel({
         // el foco va a la fila con el aviso resaltado (D36).
         requestFocus(action.index, next);
       } else if (action.type === "acceptCandidate" && line && !isPendingStatus(line.status)) {
-        // Resuelta: el chip pulsado desaparece; el foco sigue el recorrido y nunca cae en BODY.
-        requestFocus(nextPendingIndex(next, action.index), next);
+        // Resuelta: el chip pulsado desaparece y el foco nunca cae en BODY. D39-6 (B-p9-1): queda
+        // en su fila; avanzar es del usuario.
+        requestFocus(action.index, next);
       }
       return;
     }
     if (action.type === "convertPackToUnits") {
-      // B-p7-1: «Cargar como N unidades» deja de existir al pulsarse; D36: el foco va a la fila
-      // si sigue pendiente, a la siguiente pendiente o al pie, nunca a un control que decide.
+      // B-p7-1: «Cargar como N unidades» deja de existir al pulsarse; D36: el foco va a la fila,
+      // nunca a un control que decide. D39-6 (B-p9-1): también si la deja resuelta. Una confirmada
+      // por el emparejamiento no recibe foco: sigue el recorrido.
       const next = reviewReducer(state, action);
       dispatch(action);
       const line = next.lines[action.index];
-      requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+      requestFocus(line?.status === "confirmed_by_match" ? nextPendingIndex(next, action.index) : action.index, next);
       return;
     }
     if (action.type !== "discardLine" && action.type !== "restoreLine") {
@@ -571,9 +573,12 @@ export function InvoiceReviewPanel({
         line={line}
         mismatch={summary.totals.lineMismatches.includes(line.index)}
         noticeHighlighted={choiceNotice?.index === line.index}
-        onAcceptAndAdvance={(action) => {
+        onAcceptByKey={(action) => {
           if ("index" in action && !activationGuarded()) {
-            applyAndAdvance(action);
+            // D39-6 (B-p9-1): resuelta o no, el foco queda en su fila (o en el campo que falta).
+            const next = reviewReducer(state, action);
+            dispatch(action);
+            requestFocus(action.index, next);
           }
         }}
         onAction={applyRowAction}

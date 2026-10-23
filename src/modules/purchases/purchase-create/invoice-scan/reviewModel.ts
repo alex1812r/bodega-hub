@@ -714,7 +714,8 @@ function candidateProduct(line: InvoiceReviewLine, productId: string): InvoiceRe
 }
 
 /**
- * Producto que acepta Enter: el marcado, o el primer candidato, o el propuesto.
+ * Producto que acepta Enter: el marcado, o el que el usuario ya eligió (chip, buscador, alta;
+ * D41-b), o el primer candidato, o el propuesto.
  * D24-d: si los dos primeros candidatos empatan sin desempate (mismo motivo y
  * mismo score a la vista) y el emparejamiento no propuso ninguno, no se
  * premarca nada: Enter elegiría al azar sin información.
@@ -722,6 +723,9 @@ function candidateProduct(line: InvoiceReviewLine, productId: string): InvoiceRe
 export function enterTargetProductId(line: InvoiceReviewLine): string | undefined {
   if (line.markedProductId) {
     return line.markedProductId;
+  }
+  if (line.accepted && line.productId) {
+    return line.productId;
   }
   const [first, second] = line.candidates;
   const tied =

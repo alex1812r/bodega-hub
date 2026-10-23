@@ -195,10 +195,12 @@ export function applyInvoiceReviewDraft(
 
 /**
  * Aviso junto a la tasa mientras el escaneo esté cargado y su tasa no sea la del día:
- * «Tasa de la factura 875,65 (hoy 900,00)». `null` si coinciden o no hay tasa elegida.
+ * «Tasa de la factura 875,65 (hoy 900,00)». B9-1: si no es la impresa en la factura, la
+ * escribió el usuario: «Tasa escrita a mano 900,00 (sin tasa del día)». `null` si coincide
+ * con la del día o no hay tasa elegida.
  */
 export function describeLoadedInvoiceRate(
-  loaded: Pick<LoadedInvoiceScan, "invoiceRateVes"> | null,
+  loaded: Pick<LoadedInvoiceScan, "extraction" | "invoiceRateVes"> | null,
   systemRateVes: number | undefined,
 ) {
   const rate = loaded?.invoiceRateVes;
@@ -207,9 +209,13 @@ export function describeLoadedInvoiceRate(
     return null;
   }
 
+  const printed = loaded?.extraction.printedRate;
+  const label =
+    printed !== undefined && roundMoney(printed) === roundMoney(rate) ? "Tasa de la factura" : "Tasa escrita a mano";
+
   return systemRateVes === undefined
-    ? `Tasa de la factura ${formatRate(rate)} (sin tasa del día)`
-    : `Tasa de la factura ${formatRate(rate)} (hoy ${formatRate(systemRateVes)})`;
+    ? `${label} ${formatRate(rate)} (sin tasa del día)`
+    : `${label} ${formatRate(rate)} (hoy ${formatRate(systemRateVes)})`;
 }
 
 /** `2026-10-14` → `14/10/2026`; otro formato se muestra tal cual. */

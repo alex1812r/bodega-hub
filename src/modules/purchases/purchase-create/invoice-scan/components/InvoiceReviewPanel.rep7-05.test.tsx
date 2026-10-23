@@ -104,9 +104,6 @@ function row(index: number) {
   return element;
 }
 
-const footer = () =>
-  screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
-
 /** El foco quedó en un contenedor neutro: ni BODY ni un control que decide. */
 function expectNeutralFocus() {
   const focused = document.activeElement;
@@ -144,7 +141,8 @@ describe("REP7-05 · B-p7-1: el foco no cae en BODY cuando desaparece el control
     expectNeutralFocus();
   });
 
-  it("f04 (L0 aceptada): la conversión la resuelve y el foco va a la fila de la siguiente pendiente", async () => {
+  // D41-c (B-p9-1): la conversión que resuelve sigue D39-6; el foco queda en su fila.
+  it("f04 (L0 aceptada): la conversión la resuelve y el foco queda en su fila", async () => {
     const user = userEvent.setup();
     renderPanel(f04 as unknown as InvoiceScanResponse, {
       context: F04_CONTEXT,
@@ -156,16 +154,11 @@ describe("REP7-05 · B-p7-1: el foco no cae en BODY cuando desaparece el control
     await convertWithEnter(user, row(0));
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
-    await waitFor(() =>
-      expect(document.activeElement?.getAttribute("data-status")).toMatch(
-        /^pending_/,
-      ),
-    );
-    expect(document.activeElement).toHaveAttribute("role", "group");
+    await waitFor(() => expect(row(0)).toHaveFocus());
     expectNeutralFocus();
   });
 
-  it("última pendiente convertida: el foco va al pie (contenedor), no a Cargar", async () => {
+  it("última pendiente convertida: el foco queda en su fila (contenedor), no en Cargar", async () => {
     const user = userEvent.setup();
     renderPanel(
       makeReviewResponse({
@@ -183,7 +176,7 @@ describe("REP7-05 · B-p7-1: el foco no cae en BODY cuando desaparece el control
     await convertWithEnter(user, row(0));
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
-    await waitFor(() => expect(footer()).toHaveFocus());
+    await waitFor(() => expect(row(0)).toHaveFocus());
     expectNeutralFocus();
   });
 
