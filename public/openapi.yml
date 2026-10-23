@@ -2940,6 +2940,55 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/purchases/invoice-scan/last-unit-costs:
+    get:
+      tags: [Purchases]
+      summary: Ultimo costo por unidad de productos elegidos en la revision del escaneo
+      description: >-
+        Para un producto elegido en la revision fuera de los candidatos (buscador o
+        alta): su ultimo costo por unidad de stock en REF, con el mismo criterio que
+        `lastUnitCostRef` del emparejamiento (ultima linea recibida de `supplierId`,
+        si no de cualquier proveedor, si no el costo de referencia del producto; un
+        producto con receta lo reparte entre las unidades de su conversion). Solo ids
+        en la URL, nunca texto de la factura. Un elemento por id pedido (sin
+        repetidos), con null si no se conoce. Se autoriza con `purchases.create`.
+      x-permission: purchases.create
+      parameters:
+        - name: productIds
+          in: query
+          required: true
+          description: >-
+            Ids de producto separados por coma, entre 1 y 50. Mas de 50, uno vacio
+            o con caracteres no validos responde 400.
+          schema:
+            type: string
+          example: prod-drill,prod-cigar-pack
+        - name: supplierId
+          in: query
+          required: false
+          description: Proveedor de la compra. Vacio o con caracteres no validos responde 400.
+          schema:
+            type: string
+            maxLength: 64
+      responses:
+        "200":
+          description: Un elemento por producto pedido.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InvoiceLastUnitCost"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/purchases/invoice-scan/upload-url:
     get:
       tags: [Purchases]
@@ -7723,6 +7772,27 @@ components:
           type: number
         reason:
           type: string
+        lastUnitCostRef:
+          type: number
+          description: >-
+            Ultimo costo por unidad de stock (REF) de este candidato: ultima linea
+            de compra recibida del proveedor, si no de cualquiera, si no el costo de
+            referencia del producto; un producto con receta lo reparte entre las
+            unidades de su conversion. Ausente si no se conoce.
+    InvoiceLastUnitCost:
+      type: object
+      additionalProperties: false
+      required: [productId, lastUnitCostRef]
+      properties:
+        productId:
+          type: string
+        lastUnitCostRef:
+          type: number
+          nullable: true
+          description: >-
+            Ultimo costo por unidad de stock (REF), con el mismo criterio que
+            `InvoiceMatchCandidate.lastUnitCostRef`; null si no se conoce o el
+            producto no es de la tienda.
     InvoiceLineMatch:
       type: object
       required: [index, status, entryMode, taxRateCode, issues]

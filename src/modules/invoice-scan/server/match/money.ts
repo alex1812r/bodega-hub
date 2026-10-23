@@ -243,7 +243,9 @@ export function lineEntryCosts(
  * (precio ÷ unidades por empaque). Un producto con receta guarda su costo por empaque, así que
  * se reparte entre las unidades de su conversión; sin conversión conocida no hay referencia.
  */
-export function lastUnitCostRefOf(product: MatchProduct | undefined): number | undefined {
+export function lastUnitCostRefOf(
+  product: Pick<MatchProduct, "lastUnitCostRef" | "hasRecipe" | "recipeUnitsPerPack"> | undefined,
+): number | undefined {
   const last = product?.lastUnitCostRef;
   if (!isPositive(last)) {
     return undefined;

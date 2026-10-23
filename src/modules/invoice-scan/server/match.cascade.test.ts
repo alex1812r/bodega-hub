@@ -13,7 +13,7 @@ describe("matchInvoice · cascada de producto", () => {
     expect(line.status).toBe("confirmed");
     expect(line.productId).toBe("p-malta");
     expect(line.candidates).toEqual([
-      { productId: "p-malta", name: "Malta Polar 355 ml", score: 1, reason: "alias visto 4 veces" },
+      { productId: "p-malta", name: "Malta Polar 355 ml", score: 1, reason: "alias visto 4 veces", lastUnitCostRef: 0.5 },
     ]);
     expect(line.issues).toEqual([]);
   });
@@ -65,6 +65,7 @@ describe("matchInvoice · cascada de producto", () => {
         name: "Malta Polar 355 ml",
         score: 0.72,
         reason: "alias parecido 0,72 · vinculado al proveedor",
+        lastUnitCostRef: 0.5,
       },
     ]);
   });

@@ -11,7 +11,15 @@ const score = z.number();
 
 const lineMatchSchema = z.object({
   candidates: z
-    .array(z.object({ name: z.string(), productId: z.string(), reason: z.string(), score }))
+    .array(
+      z.object({
+        lastUnitCostRef: z.number().positive().optional(),
+        name: z.string(),
+        productId: z.string(),
+        reason: z.string(),
+        score,
+      }),
+    )
     .optional(),
   disassembleOnReceive: z.boolean().optional(),
   entryMode: z.enum(["unit", "pack"]),

@@ -146,13 +146,18 @@ function matchLine(
   const costs = state.usd ? {} : lineEntryCosts(line, state.rate);
   // D38: siempre, con o sin aviso de precio, para comparar cada opción de modo en la revisión.
   const lastUnitCostRef = lastUnitCostRefOf(packProduct);
+  // D41-a: también el de cada candidato, para comparar con ESE producto si la revisión lo elige.
+  const candidates = productMatch.candidates.map((candidate) => {
+    const candidateCost = lastUnitCostRefOf(state.productsById.get(candidate.productId));
+    return candidateCost !== undefined ? { ...candidate, lastUnitCostRef: candidateCost } : candidate;
+  });
   const status = finalStatus(productMatch.status, issues.length > 0, state.usd || !priced);
 
   return {
     index,
     status,
     ...(productMatch.productId ? { productId: productMatch.productId } : {}),
-    ...(productMatch.candidates.length > 0 ? { candidates: productMatch.candidates } : {}),
+    ...(candidates.length > 0 ? { candidates } : {}),
     entryMode: pack.entryMode,
     ...(pack.packUnitId ? { packUnitId: pack.packUnitId } : {}),
     ...(pack.unitsPerPack !== undefined ? { unitsPerPack: pack.unitsPerPack } : {}),
