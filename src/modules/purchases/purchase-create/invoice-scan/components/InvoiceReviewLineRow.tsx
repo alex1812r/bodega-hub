@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { type KeyboardEvent, type Ref, useId } from "react";
 
 import { Badge } from "@/shared/components/Badge/Badge";
@@ -15,12 +15,15 @@ import {
   enterTargetProductId,
   getEntryModeOutcome,
   getLineAmount,
+  getLineCostReview,
+  getLineLastCost,
   getTaxInclusion,
   getUnitConversion,
   isExplicitChoiceIssue,
   isPendingStatus,
   linePackWord,
   MAX_REVIEW_QUANTITY,
+  needsExplicitChoice,
   type InvoiceReviewAction,
   type InvoiceReviewLine,
   type InvoiceReviewProduct,
@@ -28,6 +31,7 @@ import {
 } from "../reviewModel";
 import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
 import {
+  costAcknowledgementTexts,
   ENTRY_MODE_DEVIATION_TEXT,
   entryModeOutcomeText,
   formatInvoiceMoney,
@@ -53,9 +57,11 @@ export type InvoiceReviewLineRowProps = {
   canCreateProduct: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
+  /** D43 (B-r9-1): alto mínimo tras una acción con el puntero en la fila (no encoge bajo el dedo). */
+  minHeight?: number;
   onAction: (action: InvoiceReviewAction) => void;
-  /** Elegir candidato o producto y saltar a la siguiente pendiente (teclado). */
-  onAcceptAndAdvance: (action: InvoiceReviewAction) => void;
+  /** Elegir candidato con Enter (teclado); D39-6: el foco queda en la fila. */
+  onAcceptByKey: (action: InvoiceReviewAction) => void;
   onRowKeyDown: (event: KeyboardEvent<HTMLLIElement>, index: number) => void;
   onOpenSearch: (index: number) => void;
   onPickProduct: (index: number, product: InvoiceReviewProduct) => void;
@@ -74,9 +80,10 @@ function finiteOrNull(value: number): number | null {
 export function InvoiceReviewLineRow({
   canCreateProduct,
   line,
+  minHeight,
   mismatch,
   noticeHighlighted = false,
-  onAcceptAndAdvance,
+  onAcceptByKey,
   onAction,
   onNewProduct,
   onOpenSearch,
@@ -101,20 +108,33 @@ export function InvoiceReviewLineRow({
     fractional ||
     (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
     line.issues.some(isExplicitChoiceIssue);
-  // D33-a (C6-M1): con aviso y sin elección, ninguna opción viene marcada.
-  const checkedMode = line.issues.some(isExplicitChoiceIssue) && !line.choiceMade ? undefined : line.entryMode;
+  // D42: el costo de ESE producto con su modo frente a su último costo. Desviado o sin poder
+  // comparar, se elige la opción y se reconoce aparte (D43): aunque solo tenga un modo, se muestra.
+  const costReview = getLineCostReview(state, line);
+  const lastCost = getLineLastCost(state, line);
+  const costUnconfirmed =
+    costReview.kind === "loading" || (costReview.kind === "acknowledge" && !costReview.acknowledged);
+  const showOptions = showPack || costReview.kind !== "clear";
+  // D33-a (C6-M1): con aviso (o costo por reconocer) y sin elección, ninguna opción viene marcada.
+  // D43: elegida la opción, queda marcada aunque falte reconocer su costo (botón aparte).
+  const checkedMode =
+    needsExplicitChoice(line) || (costUnconfirmed && !line.choiceMade) ? undefined : line.entryMode;
+  // D43 (B-r9-1): reconocer el costo es un paso aparte que solo aparece tras elegir la opción.
+  const costAck =
+    costReview.kind === "acknowledge" && line.choiceMade ? costAcknowledgementTexts(state, line) : undefined;
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
-  const marked = pending ? enterTargetProductId(line) : undefined;
-  const chips = pending ? getChoiceChips(line) : [];
+  // D43 (B-r9-1): la resuelta conserva sus candidatos (el elegido, marcado). Si desaparecieran al
+  // resolverse, la fila subiría y otro control de decisión quedaría bajo el dedo que la resolvió.
+  const showChips = pending || line.status === "resolved";
+  const marked = showChips ? enterTargetProductId(line) : undefined;
+  const chips = showChips ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
   const issues = getDisplayedLineIssues(state, line);
-  const needs = line.discarded ? [] : lineNeedMessages(line);
+  const needs = line.discarded ? [] : lineNeedMessages(state, line);
   const amount = getLineAmount(line);
   const noticesId = useId();
   const optionsId = useId();
-  // B-p7-3: con aviso de elección, cada opción dice antes qué entra al stock y a qué costo.
-  const showOutcomes = line.issues.some(isExplicitChoiceIssue);
   const hasNotices = issues.length > 0 || needs.length > 0;
 
   return (
@@ -131,6 +151,7 @@ export function InvoiceReviewLineRow({
       onKeyDown={(event) => onRowKeyDown(event, index)}
       ref={rowRef}
       role="group"
+      style={minHeight ? { minHeight } : undefined}
       // D31: la descartada recibe el foco (no «Restaurar») si no queda otra pendiente. D39-6: la
       // resuelta también, al elegir su opción (el foco no avanza solo a otra fila).
       tabIndex={pending ? 0 : line.status === "confirmed_by_match" ? undefined : -1}
@@ -193,7 +214,7 @@ export function InvoiceReviewLineRow({
                       if (event.key === "Enter") {
                         event.preventDefault();
                         event.stopPropagation();
-                        onAcceptAndAdvance({ type: "acceptCandidate", index, productId: candidate.productId });
+                        onAcceptByKey({ type: "acceptCandidate", index, productId: candidate.productId });
                       }
                     }}
                     type="button"
@@ -243,6 +264,13 @@ export function InvoiceReviewLineRow({
                 <Trash2 aria-hidden className="size-4" />
                 Descartar línea
               </Button>
+            ) : line.status === "resolved" ? (
+              // D43 (B-r9-1): resuelta, el hueco se conserva (a 390 px la fila de acciones no se pliega
+              // y nada sube bajo el dedo); no es un control.
+              <span aria-hidden className="invisible inline-flex h-9 items-center gap-2 px-3 text-sm font-medium">
+                <Trash2 className="size-4" />
+                Descartar línea
+              </span>
             ) : null}
           </div>
 
@@ -280,12 +308,14 @@ export function InvoiceReviewLineRow({
             </div>
           </div>
 
-          {showPack ? (
+          {showOptions ? (
             <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
               <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
-                {(["unit", "pack"] as const).map((mode) => {
-                  const outcome = showOutcomes ? getEntryModeOutcome(state, line, mode) : undefined;
+                {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
+                  // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.
+                  const outcome = getEntryModeOutcome(state, line, mode);
                   const deviates = outcome?.deviates === true;
+                  const unverified = outcome?.lastCost === "error";
                   const optionId = `${optionsId}-${mode}`;
                   return (
                     <button
@@ -303,8 +333,8 @@ export function InvoiceReviewLineRow({
                         checkedMode === mode
                           ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                           : "border-outline-variant text-foreground hover:bg-surface-container-low",
-                        deviates ? "border-amber-400 dark:border-amber-500" : null,
-                        deviates && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
+                        deviates || unverified ? "border-amber-400 dark:border-amber-500" : null,
+                        (deviates || unverified) && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
                       )}
                       data-choice={mode}
                       data-deviates={deviates || undefined}
@@ -346,6 +376,27 @@ export function InvoiceReviewLineRow({
                   );
                 })}
               </div>
+              {/* D43 (B-r9-1): debajo de las opciones (nunca en el sitio del control recién pulsado);
+                  reconocido, lo sustituye un texto del mismo tamaño para que nada se mueva. */}
+              {costAck && costReview.kind === "acknowledge" && !costReview.acknowledged ? (
+                <button
+                  className="flex min-h-8 max-w-full cursor-pointer items-center gap-1 self-start rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-left text-xs font-medium break-words whitespace-normal text-amber-800 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-500 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
+                  data-cost-ack
+                  onClick={() => onAction({ type: "acknowledgeCost", index })}
+                  type="button"
+                >
+                  <AlertTriangle aria-hidden className="size-3 shrink-0" />
+                  {costAck.ask}
+                </button>
+              ) : costAck ? (
+                <p
+                  className="flex min-h-8 max-w-full items-center gap-1 self-start rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium break-words text-on-surface-variant"
+                  data-testid="invoice-review-cost-acknowledged"
+                >
+                  <Check aria-hidden className="size-3 shrink-0" />
+                  {costAck.done}
+                </p>
+              ) : null}
               {line.entryMode === "pack" ? (
                 // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
                 // corrige solo; la línea queda sin resolver y lo dice.
@@ -364,6 +415,11 @@ export function InvoiceReviewLineRow({
                 />
               ) : null}
             </div>
+          ) : lastCost?.status === "none" ? (
+            // D42: sin opciones a la vista, la fila dice que no hay con qué comparar el costo.
+            <p className="text-xs text-on-surface-variant" data-testid="invoice-review-no-last-cost">
+              Sin costo previo de este producto.
+            </p>
           ) : null}
 
           {conversion?.ok && !line.discarded ? (

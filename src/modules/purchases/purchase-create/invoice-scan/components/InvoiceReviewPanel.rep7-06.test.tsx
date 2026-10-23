@@ -188,18 +188,20 @@ describe("REP7-06 · F2: un rebote tras mover el foco a otra fila no confirma es
     expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
-  it("Enter en el chip que resuelve la línea + Enter a 90 ms: la siguiente sigue pendiente", async () => {
+  // D41-c (B-p9-1): el chip deja el foco en su fila resuelta; el rebote no avanza ni resuelve otra.
+  it("Enter en el chip que resuelve la línea + Enter a 90 ms: el foco sigue en su fila y la siguiente sigue pendiente", async () => {
     const user = userEvent.setup();
     renderPanel(makeReviewResponse({ lines: [nameLine(1), nameLine(2)] }));
     within(row(0)).getByRole("button", { name: /Producto 1/ }).focus();
     now += 1000;
 
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(row(1)).toHaveFocus());
+    await waitFor(() => expect(row(0)).toHaveFocus());
     now += 90;
     await user.keyboard("{Enter}");
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
+    expect(row(0)).toHaveFocus();
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
@@ -281,9 +283,12 @@ describe("REP7-06 · Obs-2: el aviso de precio sigue a la línea tras convertir 
     await user.clear(units);
     await user.type(units, "12");
 
+    // REP9-02 (D42): 12 por caja cambia el costo reconocido y sigue desviado: la fila lo dice con lo
+    // que deja ahora, sin repetir el aviso del servidor, y pide confirmarlo (D43: con su botón).
     expect(notices(0)).toHaveTextContent(
-      "¿Precio por caja o por unidad? Sale a 0,05 REF por unidad y el último costo fue 0,59 REF.",
+      "El costo sale a 0,05 REF por unidad y el último fue 0,59 REF (se aparta más del 40 %): si es correcto, confírmalo con «Sí, el costo es…».",
     );
+    expect(notices(0)).not.toHaveTextContent(/¿Precio por/);
   });
 
   it("f05: al elegir «Por unidad» (0,58 frente a 0,59) el aviso de precio se retira", async () => {

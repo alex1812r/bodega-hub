@@ -135,6 +135,39 @@ export type InvoiceReviewLine = {
    * por empaque. Sin esto, una línea con aviso de precio o de empaque no se acepta con Enter.
    */
   choiceMade?: boolean;
+  /** D42: último costo consultado de un producto elegido fuera de los candidatos (buscador o alta). */
+  lastCostLookup?: InvoiceLastCostLookup;
+  /**
+   * D42/D43: el usuario reconoció el costo desviado (o el que no se pudo comparar) con su botón
+   * propio («Sí, el costo es…»), tras elegir la opción. Solo vale mientras siga siendo ESE costo
+   * (`sameCostAck`) y se retira al cambiar de opción.
+   */
+  costAck?: InvoiceCostAcknowledgement;
+};
+
+/** D42: último costo unitario (REF) del producto de la línea, o por qué no se conoce. */
+export type InvoiceLineLastCost =
+  | { status: "known"; ref: number }
+  | { status: "none" }
+  | { status: "loading" }
+  | { status: "error" };
+
+/** D42: consulta (`fetchLastUnitCostRef`) del último costo de un producto fuera de los candidatos. */
+export type InvoiceLastCostLookup =
+  | { productId: string; status: "loading" }
+  | { productId: string; status: "error" }
+  | { productId: string; status: "done"; ref: number | null };
+
+/**
+ * D42: lo que el usuario reconoció: producto, modo, unidades por empaque, costo unitario REF
+ * resultante y el último costo con que se comparó (o que no se pudo consultar).
+ */
+export type InvoiceCostAcknowledgement = {
+  productId: string;
+  entryMode: "unit" | "pack";
+  unitsPerPack?: number;
+  unitCostRef?: number;
+  lastUnitCostRef: number | "error";
 };
 
 export type InvoiceRateChoice = "system" | "printed" | "manual";
@@ -219,7 +252,10 @@ type MatchLineDefaults = {
 
 export type InvoiceReviewAction =
   | { type: "acceptCandidate"; index: number; productId: string }
-  | { type: "chooseProduct"; index: number; product: InvoiceReviewProduct }
+  /** Buscador o alta (`created`: producto recién creado, sin costo previo). */
+  | { type: "chooseProduct"; index: number; product: InvoiceReviewProduct; created?: boolean }
+  /** D42: llegó la consulta del último costo del producto elegido en el buscador. */
+  | { type: "setLastUnitCost"; index: number; productId: string; result: number | null | "error" }
   | { type: "markCandidate"; index: number; productId: string }
   /** Enter: acepta el candidato marcado, o el primero, o el producto propuesto. */
   | { type: "acceptMarked"; index: number }
@@ -232,6 +268,11 @@ export type InvoiceReviewAction =
   | { type: "editTaxRate"; index: number; taxRateCode: string }
   | { type: "editUnitsPerPack"; index: number; unitsPerPack: number | undefined }
   | { type: "editEntryMode"; index: number; entryMode: "unit" | "pack" }
+  /**
+   * D43 (B-r9-1): reconoce el costo desviado (o sin poder comparar) de la opción ya elegida. Es
+   * un paso aparte: elegir la opción nunca lo reconoce.
+   */
+  | { type: "acknowledgeCost"; index: number }
   | { type: "editPackLabel"; index: number; packLabel: string }
   /** Cantidad fraccionaria de empaques → unidades enteras (`getUnitConversion`). */
   | { type: "convertPackToUnits"; index: number }
@@ -456,6 +497,8 @@ export type EntryModeOutcome = {
   /** Costo por unidad de stock: REF con tasa (o dólares aceptados); Bs sin tasa. */
   unitCost?: { amount: number; currency: "REF" | "VES" };
   lastUnitCostRef?: number;
+  /** D42: si hay último costo del producto («sin costo previo», consultando o consulta fallida). */
+  lastCost?: InvoiceLineLastCost["status"];
   /** El costo por unidad se aparta del último más que el límite del aviso de precio (6.18). */
   deviates: boolean;
 };
@@ -466,22 +509,71 @@ function matchLastUnitCost(match: InvoiceLineMatch | undefined): Pick<MatchLineD
 }
 
 /**
- * D38: último costo unitario (REF) con que comparar las opciones de la línea: el del
- * emparejamiento si la línea sigue con ese producto (o aún sin producto); si la respuesta no lo
- * trae (caché anterior a D38), el del aviso de precio.
+ * D42: último costo que ya trae la respuesta para `productId`: el del producto propuesto (D38;
+ * en caché anterior, el del aviso de precio) o el de su candidato (D41-a). `undefined` si el
+ * producto no salió en el emparejamiento (buscador): hay que consultarlo.
  */
-function lineLastUnitCostRef(state: InvoiceReviewState, line: InvoiceReviewLine): number | undefined {
-  const lastUnitCost = state.matchDefaults[line.index]?.lastUnitCost;
-  if (!lastUnitCost) {
-    return priceIssueLastUnitCostRef(line);
+function matchedLastCost(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+  productId: string,
+): InvoiceLineLastCost | undefined {
+  const defaults = state.matchDefaults[line.index];
+  if (defaults?.lastUnitCost?.productId === productId) {
+    return { status: "known", ref: defaults.lastUnitCost.ref };
   }
-  return line.productId === undefined || line.productId === lastUnitCost.productId ? lastUnitCost.ref : undefined;
+  const candidate = line.candidates.find((item) => item.productId === productId);
+  if (candidate && isPositive(candidate.lastUnitCostRef)) {
+    return { status: "known", ref: candidate.lastUnitCostRef };
+  }
+  const proposed = defaults?.productId ?? line.candidates[0]?.productId;
+  if (productId !== proposed && !candidate) {
+    return undefined;
+  }
+  const fromIssue = productId === proposed && !defaults?.lastUnitCost ? priceIssueLastUnitCostRef(line) : undefined;
+  return fromIssue !== undefined ? { status: "known", ref: fromIssue } : { status: "none" };
+}
+
+/** Producto con el que se compara la línea: el elegido o, sin él, el que aceptaría Enter. */
+function costProductId(line: InvoiceReviewLine): string | undefined {
+  return line.productId ?? enterTargetProductId(line);
+}
+
+/**
+ * D42: último costo unitario (REF) de ESE producto: el consultado para el buscador o el alta, o
+ * el que trae la respuesta (propuesto o candidato). Un producto de fuera sin consulta, en curso.
+ */
+export function getLineLastCost(state: InvoiceReviewState, line: InvoiceReviewLine): InvoiceLineLastCost | undefined {
+  const productId = costProductId(line);
+  if (!productId) {
+    return undefined;
+  }
+  const lookup = line.lastCostLookup;
+  if (lookup?.productId === productId) {
+    if (lookup.status !== "done") {
+      return { status: lookup.status };
+    }
+    return isPositive(lookup.ref) ? { status: "known", ref: lookup.ref } : { status: "none" };
+  }
+  return matchedLastCost(state, line, productId) ?? { status: "loading" };
+}
+
+function unitsPerEntryOf(line: InvoiceReviewLine, entryMode: "unit" | "pack"): number | undefined {
+  if (entryMode === "unit") {
+    return 1;
+  }
+  return isValidUnitsPerPack(line.unitsPerPack) ? line.unitsPerPack : undefined;
+}
+
+/** Tasa con que el costo pasa a REF: la elegida, o 1 en una factura en dólares aceptada. */
+function refRate(state: InvoiceReviewState): number | undefined {
+  return state.usd.anomaly ? (isUsdAccepted(state) ? 1 : undefined) : getEffectiveRate(state);
 }
 
 /**
  * B-p7-3: qué deja cada opción «Por unidad / Por empaque» antes de elegirla: unidades al stock
- * y costo por unidad frente al último costo, con la misma regla que el aviso del servidor
- * (precio ÷ unidades ÷ tasa, desviación > 40 %). No cambia el estado.
+ * y costo por unidad frente al último costo de ESE producto (D42), con la misma regla que el
+ * aviso del servidor (precio ÷ unidades ÷ tasa, desviación > 40 %). No cambia el estado.
  */
 export function getEntryModeOutcome(
   state: InvoiceReviewState,
@@ -491,17 +583,20 @@ export function getEntryModeOutcome(
   if (!isPositive(line.quantity)) {
     return undefined;
   }
-  const lastUnitCostRef = lineLastUnitCostRef(state, line);
-  const base = { entryMode, quantity: line.quantity, ...(lastUnitCostRef !== undefined ? { lastUnitCostRef } : {}) };
-  let unitsPerEntry: number | undefined = 1;
-  if (entryMode === "pack") {
-    unitsPerEntry = isValidUnitsPerPack(line.unitsPerPack) ? line.unitsPerPack : undefined;
-  }
+  const lastCost = getLineLastCost(state, line);
+  const lastUnitCostRef = lastCost?.status === "known" ? lastCost.ref : undefined;
+  const base = {
+    entryMode,
+    quantity: line.quantity,
+    ...(lastUnitCostRef !== undefined ? { lastUnitCostRef } : {}),
+    ...(lastCost ? { lastCost: lastCost.status } : {}),
+  };
+  const unitsPerEntry = unitsPerEntryOf(line, entryMode);
   if (unitsPerEntry === undefined) {
     return { ...base, deviates: false };
   }
   const perUnit = getLineBasePrice(state, line) / unitsPerEntry;
-  const rate = state.usd.anomaly ? (isUsdAccepted(state) ? 1 : undefined) : getEffectiveRate(state);
+  const rate = refRate(state);
   let unitCost: EntryModeOutcome["unitCost"];
   if (Number.isFinite(perUnit) && perUnit >= 0) {
     if (isPositive(rate)) {
@@ -513,9 +608,110 @@ export function getEntryModeOutcome(
   const deviates =
     unitCost?.currency === "REF" &&
     lastUnitCostRef !== undefined &&
-    lastUnitCostRef > 0 &&
     Math.abs(unitCost.amount - lastUnitCostRef) / lastUnitCostRef > PRICE_DEVIATION_LIMIT + PRICE_DEVIATION_EPSILON;
   return { ...base, units: line.quantity * unitsPerEntry, ...(unitCost ? { unitCost } : {}), deviates };
+}
+
+/**
+ * D42: costo unitario REF que identifica lo reconocido, sin el reparto del residuo de IVA
+ * (`settleTaxResidual`), para que corregir o descartar OTRA línea no lo invalide.
+ */
+function acknowledgedUnitCostRef(state: InvoiceReviewState, line: InvoiceReviewLine): number | undefined {
+  const unitsPerEntry = unitsPerEntryOf(line, line.entryMode);
+  const rate = refRate(state);
+  if (unitsPerEntry === undefined || !isPositive(rate) || !Number.isFinite(line.unitPrice)) {
+    return undefined;
+  }
+  const price = getTaxInclusion(state).included ? line.unitPrice / (1 + linePct(state, line) / 100) : line.unitPrice;
+  return price / unitsPerEntry / rate;
+}
+
+const ACK_COST_EPSILON = 1e-9;
+
+function sameCostAck(left: InvoiceCostAcknowledgement | undefined, right: InvoiceCostAcknowledgement): boolean {
+  if (!left) {
+    return false;
+  }
+  const sameCost =
+    left.unitCostRef === undefined || right.unitCostRef === undefined
+      ? left.unitCostRef === right.unitCostRef
+      : Math.abs(left.unitCostRef - right.unitCostRef) <= ACK_COST_EPSILON * Math.max(1, Math.abs(right.unitCostRef));
+  return (
+    sameCost &&
+    left.productId === right.productId &&
+    left.entryMode === right.entryMode &&
+    left.unitsPerPack === right.unitsPerPack &&
+    left.lastUnitCostRef === right.lastUnitCostRef
+  );
+}
+
+type CostEvaluation =
+  | { kind: "clear" }
+  | { kind: "loading" }
+  | { kind: "acknowledge"; reason: "deviates" | "error"; key: InvoiceCostAcknowledgement };
+
+function evaluateCost(state: InvoiceReviewState, line: InvoiceReviewLine): CostEvaluation {
+  const productId = costProductId(line);
+  const lastCost = getLineLastCost(state, line);
+  if (line.discarded || !productId || !lastCost || lastCost.status === "none") {
+    return { kind: "clear" };
+  }
+  if (lastCost.status === "loading") {
+    return { kind: "loading" };
+  }
+  if (lastCost.status === "known" && !getEntryModeOutcome(state, line, line.entryMode)?.deviates) {
+    return { kind: "clear" };
+  }
+  const unitCostRef = acknowledgedUnitCostRef(state, line);
+  return {
+    kind: "acknowledge",
+    reason: lastCost.status === "error" ? "error" : "deviates",
+    key: {
+      productId,
+      entryMode: line.entryMode,
+      ...(line.entryMode === "pack" && line.unitsPerPack !== undefined ? { unitsPerPack: line.unitsPerPack } : {}),
+      ...(unitCostRef !== undefined ? { unitCostRef } : {}),
+      lastUnitCostRef: lastCost.status === "known" ? lastCost.ref : "error",
+    },
+  };
+}
+
+export type InvoiceLineCostReview =
+  | { kind: "clear" }
+  | { kind: "loading" }
+  | { kind: "acknowledge"; reason: "deviates" | "error"; acknowledged: boolean };
+
+/**
+ * D42 (invariante única): el costo unitario REF de la línea con su producto (o el que aceptaría
+ * Enter) y su modo frente al último costo de ESE producto. `clear`: coherente, sin costo previo o
+ * aún sin REF (sin tasa); `loading`: se está consultando; `acknowledge`: desviado > 40 % o sin
+ * poder consultarse, y si el usuario ya reconoció exactamente ese costo.
+ */
+export function getLineCostReview(state: InvoiceReviewState, line: InvoiceReviewLine): InvoiceLineCostReview {
+  const evaluation = evaluateCost(state, line);
+  if (evaluation.kind !== "acknowledge") {
+    return evaluation;
+  }
+  return { kind: "acknowledge", reason: evaluation.reason, acknowledged: sameCostAck(line.costAck, evaluation.key) };
+}
+
+/** D42/D43: la línea espera que el usuario reconozca su costo (botón propio, tras elegir la opción). */
+export function awaitsCostAcknowledgement(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
+  const review = getLineCostReview(state, line);
+  return review.kind === "acknowledge" && !review.acknowledged;
+}
+
+/** D42: el costo impide resolver la línea (consulta en curso o costo sin reconocer). */
+export function costBlocksResolution(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
+  return getLineCostReview(state, line).kind === "loading" || awaitsCostAcknowledgement(state, line);
+}
+
+/**
+ * La línea solo se resuelve eligiendo «Por unidad / Por empaque»: por el aviso del servidor
+ * (D31) o porque su costo pide reconocimiento (D42).
+ */
+export function needsOptionChoice(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
+  return needsExplicitChoice(line) || awaitsCostAcknowledgement(state, line);
 }
 
 /**
@@ -524,7 +720,7 @@ export function getEntryModeOutcome(
  * opción no acepta el producto (6.9: nunca elige sola); hay que tocar el chip o pulsar Enter en
  * la fila. Un producto sin aceptar solo puede ser el propuesto (`setProduct` siempre acepta).
  */
-export function awaitsProductConfirmation(line: InvoiceReviewLine): boolean {
+export function awaitsProductConfirmation(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
   return (
     line.choiceMade === true &&
     !line.discarded &&
@@ -532,11 +728,12 @@ export function awaitsProductConfirmation(line: InvoiceReviewLine): boolean {
     !line.accepted &&
     line.origin !== "confirmed" &&
     getLineNeeds(line).length === 0 &&
-    !needsExplicitChoice(line)
+    !needsExplicitChoice(line) &&
+    !costBlocksResolution(state, line)
   );
 }
 
-function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefined): InvoiceReviewLineStatus {
+function deriveStatus(state: InvoiceReviewState, line: InvoiceReviewLine): InvoiceReviewLineStatus {
   if (line.discarded) {
     return "discarded";
   }
@@ -545,17 +742,36 @@ function deriveStatus(line: InvoiceReviewLine, matchProductId: string | undefine
     return line.origin === "doubtful" && !line.leftUnmatched ? "pending_doubtful" : "pending_unmatched";
   }
   const complete = getLineNeeds(line).length === 0;
+  // D42: ni aceptada ni confirmada por el emparejamiento con un costo sin reconocer.
+  const costPending = costBlocksResolution(state, line);
   if (line.accepted) {
-    return complete && !needsExplicitChoice(line) ? "resolved" : "pending_doubtful";
+    return complete && !needsExplicitChoice(line) && !costPending ? "resolved" : "pending_doubtful";
   }
-  if (line.origin === "confirmed" && line.productId === matchProductId) {
-    return complete ? "confirmed_by_match" : "pending_doubtful";
+  if (line.origin === "confirmed" && line.productId === state.matchDefaults[line.index]?.productId) {
+    if (!complete || costPending) {
+      return "pending_doubtful";
+    }
+    // Reconocido por el usuario: ya no es una confirmación del emparejamiento.
+    return getLineCostReview(state, line).kind === "acknowledge" ? "resolved" : "confirmed_by_match";
   }
   return "pending_doubtful";
 }
 
-function withStatus(state: InvoiceReviewState, line: InvoiceReviewLine): InvoiceReviewLine {
-  return { ...line, status: deriveStatus(line, state.matchDefaults[line.index]?.productId) };
+/**
+ * Recalcula el estado de TODAS las líneas: el costo REF de una depende de la tasa, del IVA
+ * incluido y del último costo consultado, no solo de la propia línea (D42).
+ */
+function withStatuses(state: InvoiceReviewState): InvoiceReviewState {
+  let changed = false;
+  const lines = state.lines.map((line) => {
+    const status = deriveStatus(state, line);
+    if (status === line.status) {
+      return line;
+    }
+    changed = true;
+    return { ...line, status };
+  });
+  return changed ? { ...state, lines } : state;
 }
 
 /**
@@ -654,7 +870,7 @@ export function createInvoiceReviewState(
     ...(response.confirmedPurchase ? { confirmedPurchase: response.confirmedPurchase } : {}),
     matchDefaults,
   };
-  return { ...state, lines: lines.map((line) => withStatus(state, line)) };
+  return withStatuses(state);
 }
 
 function withName(candidates: InvoiceMatchCandidate[], productId: string): { productName?: string } {
@@ -702,6 +918,27 @@ function setProduct(state: InvoiceReviewState, line: InvoiceReviewLine, product:
   };
 }
 
+/**
+ * D42: producto del buscador o del alta. Recién creado: sin costo previo. Fuera de lo que trae
+ * la respuesta: se consulta su último costo (la línea no se resuelve mientras tanto); una
+ * consulta fallida se repite al volver a elegirlo.
+ */
+function withLastCostLookup(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+  productId: string,
+  created: boolean | undefined,
+): InvoiceReviewLine {
+  if (created) {
+    return { ...line, lastCostLookup: { productId, status: "done", ref: null } };
+  }
+  const lookup = line.lastCostLookup;
+  if ((lookup?.productId === productId && lookup.status !== "error") || matchedLastCost(state, line, productId)) {
+    return line;
+  }
+  return { ...line, lastCostLookup: { productId, status: "loading" } };
+}
+
 function candidateProduct(line: InvoiceReviewLine, productId: string): InvoiceReviewProduct | undefined {
   const candidate = line.candidates.find((item) => item.productId === productId);
   if (candidate) {
@@ -714,7 +951,8 @@ function candidateProduct(line: InvoiceReviewLine, productId: string): InvoiceRe
 }
 
 /**
- * Producto que acepta Enter: el marcado, o el primer candidato, o el propuesto.
+ * Producto que acepta Enter: el marcado, o el que el usuario ya eligió (chip, buscador, alta;
+ * D41-b), o el primer candidato, o el propuesto.
  * D24-d: si los dos primeros candidatos empatan sin desempate (mismo motivo y
  * mismo score a la vista) y el emparejamiento no propuso ninguno, no se
  * premarca nada: Enter elegiría al azar sin información.
@@ -722,6 +960,9 @@ function candidateProduct(line: InvoiceReviewLine, productId: string): InvoiceRe
 export function enterTargetProductId(line: InvoiceReviewLine): string | undefined {
   if (line.markedProductId) {
     return line.markedProductId;
+  }
+  if (line.accepted && line.productId) {
+    return line.productId;
   }
   const [first, second] = line.candidates;
   const tied =
@@ -749,7 +990,7 @@ function updateLine(
     return state;
   }
   const lines = state.lines.slice();
-  lines[index] = withStatus(state, next);
+  lines[index] = next;
   return { ...state, lines };
 }
 
@@ -794,7 +1035,13 @@ function adoptSystemRate(state: InvoiceReviewState, system: number): InvoiceRevi
   };
 }
 
+/** D42: tras cada acción se recalculan los estados de todas las líneas (`withStatuses`). */
 export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAction): InvoiceReviewState {
+  const next = applyAction(state, action);
+  return next === state ? state : withStatuses(next);
+}
+
+function applyAction(state: InvoiceReviewState, action: InvoiceReviewAction): InvoiceReviewState {
   switch (action.type) {
     case "acceptCandidate":
       return updateLine(state, action.index, (line) => {
@@ -803,8 +1050,24 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
       });
     case "chooseProduct":
       return updateLine(state, action.index, (line) =>
-        line.discarded ? line : setProduct(state, line, action.product),
+        line.discarded
+          ? line
+          : withLastCostLookup(state, setProduct(state, line, action.product), action.product.productId, action.created),
       );
+    case "setLastUnitCost":
+      return updateLine(state, action.index, (line) => {
+        const { productId, result } = action;
+        if (line.lastCostLookup?.productId !== productId || line.lastCostLookup.status !== "loading") {
+          return line;
+        }
+        return {
+          ...line,
+          lastCostLookup:
+            result === "error"
+              ? { productId, status: "error" }
+              : { productId, status: "done", ref: isPositive(result) ? result : null },
+        };
+      });
     case "markCandidate":
       return updateLine(state, action.index, (line) =>
         candidateProduct(line, action.productId) ? { ...line, markedProductId: action.productId } : line,
@@ -858,12 +1121,24 @@ export function reviewReducer(state: InvoiceReviewState, action: InvoiceReviewAc
         };
       });
     case "editEntryMode":
-      return updateLine(state, action.index, (line) =>
-        // Elegir el modo ya marcado también es la elección explícita de D31.
-        line.entryMode === action.entryMode && line.choiceMade
-          ? line
-          : { ...line, entryMode: action.entryMode, choiceMade: true },
-      );
+      return updateLine(state, action.index, (line) => {
+        // Elegir el modo ya marcado también es la elección explícita de D31. D43 (B-r9-1): elegir
+        // NUNCA reconoce el costo (un 2.º toque puede caer en la opción); cambiar de opción retira
+        // el reconocimiento anterior.
+        if (line.entryMode === action.entryMode) {
+          return line.choiceMade ? line : { ...line, choiceMade: true };
+        }
+        return { ...line, entryMode: action.entryMode, choiceMade: true, costAck: undefined };
+      });
+    case "acknowledgeCost":
+      return updateLine(state, action.index, (line) => {
+        // D43: solo tras elegir la opción (o corregir la línea) y para el costo que se ve ahora.
+        const evaluation = line.choiceMade && !line.discarded ? evaluateCost(state, line) : undefined;
+        if (evaluation?.kind !== "acknowledge" || sameCostAck(line.costAck, evaluation.key)) {
+          return line;
+        }
+        return { ...line, costAck: evaluation.key };
+      });
     case "editPackLabel":
       return updateLine(state, action.index, (line) => ({ ...line, packLabel: action.packLabel }));
     case "convertPackToUnits":
@@ -920,7 +1195,7 @@ export function isPendingStatus(status: InvoiceReviewLineStatus): boolean {
   return status === "pending_unmatched" || status === "pending_doubtful";
 }
 
-function urgencyRank(line: InvoiceReviewLine): number {
+function urgencyRank(state: InvoiceReviewState, line: InvoiceReviewLine): number {
   if (line.origin === "unmatched") {
     return 0;
   }
@@ -928,7 +1203,8 @@ function urgencyRank(line: InvoiceReviewLine): number {
     return 1;
   }
   // Una confirmada que el usuario dejó pendiente (Esc, cantidad inválida) sube con las dudosas.
-  return isPendingStatus(line.status) ? 1 : 2;
+  // D42: también la de costo desviado, y sigue ahí una vez reconocido (no vuelve a plegarse).
+  return isPendingStatus(line.status) || getLineCostReview(state, line).kind !== "clear" ? 1 : 2;
 }
 
 /**
@@ -938,7 +1214,7 @@ function urgencyRank(line: InvoiceReviewLine): number {
  */
 export function orderedLineIndices(state: InvoiceReviewState): number[] {
   return state.lines
-    .map((line) => ({ index: line.index, rank: urgencyRank(line) }))
+    .map((line) => ({ index: line.index, rank: urgencyRank(state, line) }))
     .sort((left, right) => left.rank - right.rank || left.index - right.index)
     .map((entry) => entry.index);
 }
@@ -956,7 +1232,7 @@ export function getReviewSections(state: InvoiceReviewState): InvoiceReviewSecti
   const confirmed: InvoiceReviewLine[] = [];
   for (const index of orderedLineIndices(state)) {
     const line = state.lines[index];
-    (urgencyRank(line) === 2 ? confirmed : review).push(line);
+    (urgencyRank(state, line) === 2 ? confirmed : review).push(line);
   }
   return {
     review,
@@ -1327,9 +1603,19 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   ).length;
   // B-p8-1: líneas a las que solo les falta confirmar el producto propuesto.
   const productOnly = state.lines.filter(
-    (line) => isPendingStatus(line.status) && awaitsProductConfirmation(line),
+    (line) => isPendingStatus(line.status) && awaitsProductConfirmation(state, line),
   ).length;
-  const otherPending = pending - choiceOnly - productOnly;
+  // D42: con el producto en su sitio y completas, solo esperan el último costo o reconocer el costo.
+  const costPending = state.lines.filter(
+    (line) =>
+      isPendingStatus(line.status) &&
+      (line.accepted || line.origin === "confirmed") &&
+      getLineNeeds(line).length === 0 &&
+      !needsExplicitChoice(line),
+  );
+  const lookupOnly = costPending.filter((line) => getLineCostReview(state, line).kind === "loading").length;
+  const costOnly = costPending.filter((line) => awaitsCostAcknowledgement(state, line)).length;
+  const otherPending = pending - choiceOnly - productOnly - lookupOnly - costOnly;
   if (otherPending > 0) {
     blockers.push(
       otherPending === 1 ? "Queda 1 línea por resolver." : `Quedan ${otherPending} líneas por resolver.`,
@@ -1338,6 +1624,20 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   if (choiceOnly > 0) {
     blockers.push(
       choiceOnly === 1 ? "Falta elegir cómo viene en 1 línea." : `Falta elegir cómo viene en ${choiceOnly} líneas.`,
+    );
+  }
+  if (lookupOnly > 0) {
+    blockers.push(
+      lookupOnly === 1
+        ? "Consultando el costo previo de 1 línea."
+        : `Consultando el costo previo de ${lookupOnly} líneas.`,
+    );
+  }
+  if (costOnly > 0) {
+    blockers.push(
+      costOnly === 1
+        ? "Falta confirmar el costo en 1 línea."
+        : `Falta confirmar el costo en ${costOnly} líneas.`,
     );
   }
   if (productOnly > 0) {

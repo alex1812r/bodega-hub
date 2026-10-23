@@ -1,9 +1,10 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FileImage } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FocusEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
+import { fetchLastUnitCostRef } from "@/modules/invoice-scan/client/fetchLastUnitCost";
 import { useInvoiceScanImages } from "@/modules/invoice-scan/client/useInvoiceScanImages";
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
@@ -17,11 +18,12 @@ import { Modal } from "@/shared/components/Modal";
 import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModal";
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
 import {
+  awaitsCostAcknowledgement,
   enterTargetProductId,
   getLineNeeds,
   getReviewSections,
   isPendingStatus,
-  needsExplicitChoice,
+  needsOptionChoice,
   nextPendingIndex,
   pressEnter,
   pressEscape,
@@ -29,6 +31,7 @@ import {
   type InvoiceReviewAction,
   type InvoiceReviewContext,
   type InvoiceReviewProduct,
+  type InvoiceReviewSections,
   type InvoiceReviewState,
 } from "../reviewModel";
 import { useInvoiceReview } from "../useInvoiceReview";
@@ -62,6 +65,11 @@ export type InvoiceReviewPanelProps = {
   productFetcher?: EntityFetcher<"product">;
   /** Búsqueda de proveedores; por defecto `GET /api/purchases/suppliers`. */
   supplierFetcher?: EntityFetcher<"contact">;
+  /**
+   * D42: último costo unitario (REF) de un producto elegido en el buscador; por defecto
+   * `fetchLastUnitCostRef` (`GET /api/purchases/invoice-scan/last-unit-costs`, solo ids).
+   */
+  lastUnitCostFetcher?: (productId: string, supplierId?: string) => Promise<number | null>;
 };
 
 /**
@@ -78,6 +86,11 @@ type FocusRequest = {
   need?: string;
   needsSupplier?: boolean;
   choice?: boolean;
+  /**
+   * D43 (B-r9-1): la acción vino del puntero en esa misma fila. El foco va a la fila sin desplazar
+   * la página: un desplazamiento dejaría otro control bajo el dedo que acaba de pulsar.
+   */
+  keepScroll?: boolean;
   seq: number;
 };
 
@@ -107,7 +120,7 @@ function isGuarded(until: { current: number }) {
 const ACTIVATION_KEYS = new Set(["Enter", " ", "Escape"]);
 
 /** D33-a: controles cuyo 2.º clic de un doble clic (`detail > 1`) se ignora. */
-const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-row-action], [data-load-button]";
+const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-cost-ack], [data-row-action], [data-load-button]";
 
 /**
  * REP6-05: selector de tasa y botones del pie distintos de Cargar. Filtro de D33-a (sin
@@ -136,6 +149,22 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
 
 /** Separación mínima entre el control enfocado y el pie fijo (px). */
 const FOOTER_GAP = 8;
+
+/**
+ * REP9-02: mantiene la fila `index` en el grupo de confirmadas (orden por índice, como el modelo)
+ * aunque el modelo ya la mande a revisar; su estado no cambia, solo dónde se monta.
+ */
+function keepInConfirmed(sections: InvoiceReviewSections, index: number | null): InvoiceReviewSections {
+  const line = index === null ? undefined : sections.review.find((item) => item.index === index);
+  if (!line) {
+    return sections;
+  }
+  return {
+    ...sections,
+    review: sections.review.filter((item) => item !== line),
+    confirmed: [...sections.confirmed, line].sort((left, right) => left.index - right.index),
+  };
+}
 
 /**
  * QA REP4-02c F1: `focus()` no desplaza si el elemento está dentro del viewport aunque lo
@@ -185,6 +214,7 @@ function scrollAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
 export function InvoiceReviewPanel({
   canCreateProduct = false,
   context,
+  lastUnitCostFetcher = fetchLastUnitCostRef,
   onDiscard,
   onLoad,
   onRescan,
@@ -201,8 +231,36 @@ export function InvoiceReviewPanel({
       dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate });
     }
   }, [dispatch, lateSystemRate]);
+  // D42: consulta el último costo de cada producto elegido en el buscador, una vez por (línea,
+  // producto) en curso; la respuesta para un producto que ya no es el de la línea se ignora.
+  const lastCostRequestsRef = useRef(new Set<string>());
+  const supplierId = state.header.supplier.contactId;
+  useEffect(() => {
+    for (const line of state.lines) {
+      const lookup = line.lastCostLookup;
+      if (lookup?.status !== "loading" || lookup.productId !== line.productId) {
+        continue;
+      }
+      const { index } = line;
+      const { productId } = lookup;
+      const key = `${index}:${productId}`;
+      if (lastCostRequestsRef.current.has(key)) {
+        continue;
+      }
+      lastCostRequestsRef.current.add(key);
+      lastUnitCostFetcher(productId, supplierId)
+        .then(
+          (result) => dispatch({ type: "setLastUnitCost", index, productId, result }),
+          () => dispatch({ type: "setLastUnitCost", index, productId, result: "error" }),
+        )
+        .finally(() => lastCostRequestsRef.current.delete(key));
+    }
+  }, [dispatch, lastUnitCostFetcher, state.lines, supplierId]);
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [confirmedOpen, setConfirmedOpen] = useState(false);
+  // REP9-02: confirmada en cuyo campo se está escribiendo; no cambia de lista hasta que el foco salga
+  // de su fila (su estado sí cambia con cada tecla: D42 no se relaja).
+  const [heldConfirmedIndex, setHeldConfirmedIndex] = useState<number | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [newProduct, setNewProduct] = useState<{ index: number; values: ProductFormInitialValues } | null>(null);
   const [discardScanOpen, setDiscardScanOpen] = useState(false);
@@ -226,8 +284,14 @@ export function InvoiceReviewPanel({
   // D39-7 (C8-M1): fila a la que se llevó el foco por programa; sus flechas no marcan candidato
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
+  // D43 (B-r9-1): fila del último puntero pulsado (null tras una tecla): su foco no desplaza.
+  const pointerRowRef = useRef<number | null>(null);
+  // D43 (B-r9-1): fila en la que se actuó con el puntero; no encoge (lo de debajo no sube bajo el
+  // dedo) hasta que el usuario desplace la página o use el teclado.
+  const [heldRow, setHeldRow] = useState<{ index: number; minHeight: number } | null>(null);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
-  const sections = getReviewSections(state);
+  const modelSections = getReviewSections(state);
+  const sections = keepInConfirmed(modelSections, heldConfirmedIndex);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
   // modelo), pero el botón lo dice para que se abra a revisarla.
   const confirmedMismatches = sections.confirmed.filter((line) =>
@@ -236,7 +300,7 @@ export function InvoiceReviewPanel({
   // D36: línea a la que se llevó el foco porque le falta la opción explícita; su aviso se resalta.
   const noticeLine =
     focusRequest?.choice && focusRequest.target !== null ? state.lines[focusRequest.target] : undefined;
-  const choiceNotice = noticeLine && needsExplicitChoice(noticeLine) ? noticeLine : undefined;
+  const choiceNotice = noticeLine && needsOptionChoice(state, noticeLine) ? noticeLine : undefined;
 
   function armActivationGuard() {
     armGuard(guardUntilRef);
@@ -261,6 +325,7 @@ export function InvoiceReviewPanel({
     };
     const onKeyUp = (event: globalThis.KeyboardEvent) => release(`key:${event.key}`);
     const onPointerUp = (event: PointerEvent) => release(`pointer:${event.pointerId}`);
+    const releaseHeldRow = () => setHeldRow(null);
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         releaseAll();
@@ -270,12 +335,18 @@ export function InvoiceReviewPanel({
     window.addEventListener("pointerup", onPointerUp, true);
     window.addEventListener("pointercancel", onPointerUp, true);
     window.addEventListener("blur", releaseAll);
+    window.addEventListener("scroll", releaseHeldRow, true);
+    window.addEventListener("wheel", releaseHeldRow, { passive: true });
+    window.addEventListener("touchmove", releaseHeldRow, { passive: true });
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("pointercancel", onPointerUp, true);
       window.removeEventListener("blur", releaseAll);
+      window.removeEventListener("scroll", releaseHeldRow, true);
+      window.removeEventListener("wheel", releaseHeldRow);
+      window.removeEventListener("touchmove", releaseHeldRow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
@@ -293,17 +364,19 @@ export function InvoiceReviewPanel({
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
     const needs = line?.productId && line.accepted ? getLineNeeds(line) : [];
     const need = NEED_FOCUS_ORDER.find((item) => needs.includes(item));
-    // D31: aceptado por cualquier vía y completo, pero falta la elección explícita. D36: el foco
+    // D31/D42: aceptado por cualquier vía y completo, pero falta la elección explícita. D36: el foco
     // se queda en la fila (con el aviso resaltado); nunca va solo a «Por unidad / Por caja».
     const choice =
-      !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsExplicitChoice(line);
+      !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsOptionChoice(next, line);
     const needsSupplier = target === null && !next.header.supplier.contactId;
+    const keepScroll = target !== null && pointerRowRef.current === target;
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
       target,
       ...(need ? { need } : {}),
       ...(needsSupplier ? { needsSupplier } : {}),
       ...(choice ? { choice } : {}),
+      ...(keepScroll ? { keepScroll } : {}),
     }));
   }
 
@@ -330,6 +403,10 @@ export function InvoiceReviewPanel({
     if (document.activeElement !== row) {
       autoFocusedRowRef.current = field ? null : focusRequest.target;
     }
+    if (focusRequest.keepScroll) {
+      (field ?? row).focus({ preventScroll: true });
+      return;
+    }
     focusAboveFooter(field ?? row, footerRef.current);
     // REP7-06 (QA F1, B8 a 390 px): la fila con aviso puede ser más alta que la franja entre la
     // barra superior y el pie; el aviso resaltado va al final y quedaba bajo el pie. El foco se
@@ -342,12 +419,14 @@ export function InvoiceReviewPanel({
     }
   }, [focusRequest]);
 
-  /** Aplica la acción y mueve el foco: a la misma línea si sigue pendiente, si no a la siguiente. */
-  function applyAndAdvance(action: InvoiceReviewAction & { index: number }) {
+  /**
+   * Producto elegido en el buscador o creado con «Nuevo producto». D39-6: resuelta o no, el foco
+   * queda en su fila (o en el campo que falta); avanzar es del usuario.
+   */
+  function applyProductChoice(action: InvoiceReviewAction & { index: number }) {
     const next = reviewReducer(state, action);
     dispatch(action);
-    const line = next.lines[action.index];
-    requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+    requestFocus(action.index, next);
   }
 
   /**
@@ -365,31 +444,55 @@ export function InvoiceReviewPanel({
         return;
       }
       const current = state.lines[action.index];
-      const choosing = action.type === "editEntryMode" && current !== undefined && needsExplicitChoice(current);
       const next = reviewReducer(state, action);
       dispatch(action);
       const line = next.lines[action.index];
-      if (choosing && line) {
+      // D43: también la elección que deja el costo por reconocer (p. ej. de resuelta a «Por bulto»
+      // desviada): arma la guarda antes de que «Sí, el costo es…» pueda activarse.
+      const choosing =
+        action.type === "editEntryMode" &&
+        current !== undefined &&
+        (needsOptionChoice(state, current) || (line !== undefined && awaitsCostAcknowledgement(next, line)));
+      // D42: una confirmada cuyo costo pasa a desviarse sale del grupo de confirmadas; su opción se
+      // desmonta y el foco nunca cae en BODY: va a la fila, ya en la lista por revisar.
+      const inConfirmed = (from: InvoiceReviewState) =>
+        getReviewSections(from).confirmed.some((item) => item.index === action.index);
+      const movedSection = action.type === "editEntryMode" && inConfirmed(state) !== inConfirmed(next);
+      if ((choosing || movedSection) && line) {
         // D39-6: elegida la opción, el foco queda en su fila (resuelta o no); avanzar es del usuario.
         requestFocus(action.index, next);
         guardChoiceIndexRef.current = action.index;
-      } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
+      } else if (action.type === "acceptCandidate" && line && needsOptionChoice(next, line)) {
         // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31);
         // el foco va a la fila con el aviso resaltado (D36).
         requestFocus(action.index, next);
       } else if (action.type === "acceptCandidate" && line && !isPendingStatus(line.status)) {
-        // Resuelta: el chip pulsado desaparece; el foco sigue el recorrido y nunca cae en BODY.
-        requestFocus(nextPendingIndex(next, action.index), next);
+        // Resuelta: el chip pulsado desaparece y el foco nunca cae en BODY. D39-6 (B-p9-1): queda
+        // en su fila; avanzar es del usuario.
+        requestFocus(action.index, next);
       }
       return;
     }
+    if (action.type === "acknowledgeCost") {
+      // D43 (B-r9-1): reconocer el costo es una activación más (guarda, liberación nueva, sin
+      // `detail > 1`), sin la excepción de corregir la opción de la misma línea. El botón deja de
+      // existir: el foco va a su fila.
+      if (activationGuarded()) {
+        return;
+      }
+      const next = reviewReducer(state, action);
+      dispatch(action);
+      requestFocus(action.index, next);
+      return;
+    }
     if (action.type === "convertPackToUnits") {
-      // B-p7-1: «Cargar como N unidades» deja de existir al pulsarse; D36: el foco va a la fila
-      // si sigue pendiente, a la siguiente pendiente o al pie, nunca a un control que decide.
+      // B-p7-1: «Cargar como N unidades» deja de existir al pulsarse; D36: el foco va a la fila,
+      // nunca a un control que decide. D39-6 (B-p9-1): también si la deja resuelta. Una confirmada
+      // por el emparejamiento no recibe foco: sigue el recorrido.
       const next = reviewReducer(state, action);
       dispatch(action);
       const line = next.lines[action.index];
-      requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+      requestFocus(line?.status === "confirmed_by_match" ? nextPendingIndex(next, action.index) : action.index, next);
       return;
     }
     if (action.type !== "discardLine" && action.type !== "restoreLine") {
@@ -496,10 +599,12 @@ export function InvoiceReviewPanel({
           return;
         }
         event.preventDefault();
-        // D36: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
+        // D36/D42: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
+        // D43: ya elegida y con el costo por reconocer, a «Sí, el costo es…», sin activarlo.
         const option =
-          line?.accepted && needsExplicitChoice(line)
-            ? event.currentTarget.querySelector<HTMLElement>('[data-choice]')
+          line?.accepted && needsOptionChoice(state, line)
+            ? (event.currentTarget.querySelector<HTMLElement>("[data-cost-ack]") ??
+              event.currentTarget.querySelector<HTMLElement>("[data-choice]"))
             : null;
         if (option) {
           focusAboveFooter(option, footerRef.current);
@@ -539,7 +644,7 @@ export function InvoiceReviewPanel({
 
   function handlePickProduct(index: number, product: InvoiceReviewProduct) {
     setSearchIndex(null);
-    applyAndAdvance({ type: "chooseProduct", index, product });
+    applyProductChoice({ type: "chooseProduct", index, product });
   }
 
   function handleNewProduct(index: number, opener: HTMLElement) {
@@ -562,6 +667,37 @@ export function InvoiceReviewPanel({
     }
   }
 
+  /** REP9-02: escribir en un campo de una confirmada la fija en su lista (no se desmonta). */
+  function handleConfirmedFocus(event: FocusEvent<HTMLUListElement>) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    const index = Number(target.closest("[data-line-index]")?.getAttribute("data-line-index"));
+    if (Number.isInteger(index)) {
+      setHeldConfirmedIndex(index);
+    }
+  }
+
+  /**
+   * Al salir el foco de la fila fijada, toma la lista que le toca. Si cambia de lista y el foco
+   * no fue a otro control, va a la fila ya movida (nunca a BODY).
+   */
+  function handleConfirmedBlur(event: FocusEvent<HTMLUListElement>) {
+    if (heldConfirmedIndex === null) {
+      return;
+    }
+    const next = event.relatedTarget;
+    if (next instanceof Node && rowRefs.current.get(heldConfirmedIndex)?.contains(next)) {
+      return;
+    }
+    setHeldConfirmedIndex(null);
+    const moves = !modelSections.confirmed.some((line) => line.index === heldConfirmedIndex);
+    if (moves && !(next instanceof Element)) {
+      requestFocus(heldConfirmedIndex, state);
+    }
+  }
+
   function renderRow(index: number) {
     const line = state.lines[index];
     return (
@@ -571,12 +707,26 @@ export function InvoiceReviewPanel({
         line={line}
         mismatch={summary.totals.lineMismatches.includes(line.index)}
         noticeHighlighted={choiceNotice?.index === line.index}
-        onAcceptAndAdvance={(action) => {
+        onAcceptByKey={(action) => {
           if ("index" in action && !activationGuarded()) {
-            applyAndAdvance(action);
+            // D39-6 (B-p9-1): resuelta o no, el foco queda en su fila (o en el campo que falta).
+            const next = reviewReducer(state, action);
+            dispatch(action);
+            requestFocus(action.index, next);
           }
         }}
-        onAction={applyRowAction}
+        minHeight={heldRow?.index === line.index ? heldRow.minHeight : undefined}
+        onAction={(action) => {
+          // D43 (B-r9-1): con el puntero en esta fila, su alto actual queda como mínimo.
+          const element = rowRefs.current.get(line.index);
+          if ("index" in action && action.index === line.index && pointerRowRef.current === line.index && element) {
+            const height = element.getBoundingClientRect().height;
+            setHeldRow((held) =>
+              held?.index === line.index ? { index: line.index, minHeight: Math.max(held.minHeight, height) } : { index: line.index, minHeight: height },
+            );
+          }
+          applyRowAction(action);
+        }}
         onNewProduct={handleNewProduct}
         onOpenSearch={(target) => setSearchIndex((current) => (current === target ? null : target))}
         onPickProduct={handlePickProduct}
@@ -616,6 +766,10 @@ export function InvoiceReviewPanel({
         }
       }}
       onKeyDownCapture={(event) => {
+        pointerRowRef.current = null;
+        if (heldRow) {
+          setHeldRow(null);
+        }
         if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
           event.preventDefault();
           event.stopPropagation();
@@ -627,6 +781,9 @@ export function InvoiceReviewPanel({
       }}
       onPointerDownCapture={(event) => {
         pressedRef.current.add(`pointer:${event.pointerId}`);
+        const pointerRow =
+          event.target instanceof Element ? event.target.closest("[data-line-index]")?.getAttribute("data-line-index") : null;
+        pointerRowRef.current = pointerRow ? Number(pointerRow) : null;
         // D39-7: el puntero sobre la fila es acción del usuario en ella.
         if (
           event.target instanceof Element &&
@@ -661,7 +818,11 @@ export function InvoiceReviewPanel({
       {/* D36: Enter sobre una fila con aviso no elige; se anuncia qué falta y cómo llegar a la opción. */}
       <p aria-live="polite" className="sr-only" data-testid="invoice-review-announcement">
         {choiceNotice
-          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(choiceNotice).join(" ")} Pulsa Tab para ir a las opciones.`
+          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(state, choiceNotice).join(" ")} ${
+              choiceNotice.choiceMade && awaitsCostAcknowledgement(state, choiceNotice)
+                ? "Pulsa Tab para ir a confirmar el costo."
+                : "Pulsa Tab para ir a las opciones."
+            }`
           : ""}
       </p>
 
@@ -691,7 +852,7 @@ export function InvoiceReviewPanel({
               <ul aria-label="Líneas por revisar" className="divide-y divide-border dark:divide-slate-800">
                 {sections.review.map((line) => renderRow(line.index))}
               </ul>
-            ) : state.lines.length > 0 && !state.confirmedPurchase ? (
+            ) : modelSections.review.length === 0 && state.lines.length > 0 && !state.confirmedPurchase ? (
               <p className="px-4 py-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
                 Todas las líneas quedaron emparejadas con tus productos. Revisa los totales y carga la compra.
               </p>
@@ -721,7 +882,12 @@ export function InvoiceReviewPanel({
                   )}
                 </button>
                 {confirmedOpen ? (
-                  <ul aria-label="Líneas confirmadas" className="divide-y divide-border border-t border-border dark:divide-slate-800 dark:border-slate-800">
+                  <ul
+                    aria-label="Líneas confirmadas"
+                    className="divide-y divide-border border-t border-border dark:divide-slate-800 dark:border-slate-800"
+                    onBlur={handleConfirmedBlur}
+                    onFocus={handleConfirmedFocus}
+                  >
                     {sections.confirmed.map((line) => renderRow(line.index))}
                   </ul>
                 ) : null}
@@ -772,7 +938,12 @@ export function InvoiceReviewPanel({
             const index = newProduct?.index;
             setNewProduct(null);
             if (index !== undefined) {
-              applyAndAdvance({ type: "chooseProduct", index, product: { productId: product.id, name: product.name } });
+              applyProductChoice({
+                type: "chooseProduct",
+                index,
+                product: { productId: product.id, name: product.name },
+                created: true,
+              });
             }
           }}
           onOpenChange={(open) => {

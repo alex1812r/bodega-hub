@@ -329,6 +329,11 @@ export type InvoiceMatchCandidate = {
   reason: string;
   /** `products.sku` del candidato, si tiene: distingue candidatos de igual nombre en la revisión (D24-d). */
   sku?: string;
+  /**
+   * D41-a: último costo por unidad de stock (REF) de ESTE candidato, misma semántica que
+   * `InvoiceLineMatch.lastUnitCostRef` (D38). Ausente si no se conoce.
+   */
+  lastUnitCostRef?: number;
 };
 
 export type InvoiceLineMatch = {

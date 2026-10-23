@@ -3,16 +3,22 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
-import { PRICE_DEVIATION_LIMIT, UNIT_PRICE_MISMATCH_ISSUE } from "@/modules/invoice-scan/server/match/money";
+import {
+  NO_RATE_PRICE_ISSUE,
+  PRICE_DEVIATION_LIMIT,
+  UNIT_PRICE_MISMATCH_ISSUE,
+} from "@/modules/invoice-scan/server/match/money";
 import { normalizeInvoiceNumber } from "@/modules/invoice-scan/server/match/text";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
+  awaitsCostAcknowledgement,
   awaitsProductConfirmation,
   enterTargetProductId,
   getEntryModeOutcome,
+  getLineCostReview,
   getLineCosts,
   getLineIssues,
   getLineNeeds,
@@ -155,8 +161,8 @@ export function confirmedToggleLabel(count: number, expanded: boolean): string {
  * B-p8-1: el chip que Enter aceptaría (el marcado) dice a qué tocar para confirmar el producto
  * propuesto cuando es lo único que falta.
  */
-function productConfirmationMessage(line: InvoiceReviewLine): string[] {
-  if (!awaitsProductConfirmation(line)) {
+function productConfirmationMessage(state: InvoiceReviewState, line: InvoiceReviewLine): string[] {
+  if (!awaitsProductConfirmation(state, line)) {
     return [];
   }
   const target = enterTargetProductId(line);
@@ -164,8 +170,63 @@ function productConfirmationMessage(line: InvoiceReviewLine): string[] {
   return [`Falta confirmar el producto: toca «${chip?.name ?? "Producto propuesto"}» o pulsa Enter.`];
 }
 
+/** Nombre de la opción del modo actual de la línea: «Por unidad» / «Por caja». */
+function entryModeLabel(line: InvoiceReviewLine): string {
+  return line.entryMode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`;
+}
+
+/**
+ * D42: qué espera la línea por su costo. Con el aviso del servidor sin responder (D31) la opción
+ * ya se pide y su aviso dice el desvío: no se repite.
+ */
+function costNeedMessages(state: InvoiceReviewState, line: InvoiceReviewLine): string[] {
+  const review = getLineCostReview(state, line);
+  if (review.kind === "loading") {
+    return ["Consultando el costo previo de este producto…"];
+  }
+  if (review.kind !== "acknowledge" || review.acknowledged) {
+    return [];
+  }
+  // D43: elegir la opción no confirma el costo; tras elegirla, se confirma con su botón.
+  const howTo = line.choiceMade
+    ? "si es correcto, confírmalo con «Sí, el costo es…»."
+    : `elige «${entryModeLabel(line)}» y confirma el costo.`;
+  if (review.reason === "error") {
+    return [`No se pudo consultar el costo previo: revisa el costo y, ${howTo}`];
+  }
+  const outcome = needsExplicitChoice(line) ? undefined : getEntryModeOutcome(state, line, line.entryMode);
+  if (outcome?.unitCost === undefined || outcome.lastUnitCostRef === undefined) {
+    return [];
+  }
+  return [
+    `El costo sale a ${formatRefAmount(outcome.unitCost.amount)} REF por unidad y el último fue ${formatRefAmount(outcome.lastUnitCostRef)} REF (se aparta más del ${Math.round(PRICE_DEVIATION_LIMIT * 100)} %): ${howTo}`,
+  ];
+}
+
+/**
+ * D43 (B-r9-1): textos del botón que reconoce el costo de la opción ya elegida («Sí, el costo es
+ * 20,71 REF/u (último 0,84)») y de la confirmación que lo sustituye, del mismo tamaño.
+ */
+export function costAcknowledgementTexts(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+): { ask: string; done: string } {
+  const outcome = getEntryModeOutcome(state, line, line.entryMode);
+  const cost = outcome?.unitCost;
+  const amount = cost
+    ? `${cost.currency === "REF" ? `${formatRefAmount(cost.amount)} REF` : formatVesBs(cost.amount)}/u`
+    : undefined;
+  const last =
+    outcome?.lastUnitCostRef !== undefined
+      ? `(último ${formatRefAmount(outcome.lastUnitCostRef)})`
+      : "(no se pudo consultar el último)";
+  return amount
+    ? { ask: `Sí, el costo es ${amount} ${last}`, done: `Costo confirmado: ${amount} ${last}` }
+    : { ask: `Sí, el costo es correcto ${last}`, done: `Costo confirmado ${last}` };
+}
+
 /** Qué le falta a la línea para quedar resuelta, en español (el producto, solo si es lo único). */
-export function lineNeedMessages(line: InvoiceReviewLine): string[] {
+export function lineNeedMessages(state: InvoiceReviewState, line: InvoiceReviewLine): string[] {
   // REP6-04 (B-p6-1): sin preselección (D33-a), la línea dice qué opción falta elegir.
   const choice = needsExplicitChoice(line) ? [`Elige cómo viene: Por unidad o Por ${linePackWord(line)}.`] : [];
   return getLineNeeds(line).flatMap((need) => {
@@ -187,7 +248,7 @@ export function lineNeedMessages(line: InvoiceReviewLine): string[] {
       return ["Revisa el costo: no puede ser negativo ni estar vacío."];
     }
     return [];
-  }).concat(choice, productConfirmationMessage(line));
+  }).concat(choice, line.discarded ? [] : costNeedMessages(state, line), productConfirmationMessage(state, line));
 }
 
 /**
@@ -213,6 +274,17 @@ function currentIssueText(state: InvoiceReviewState, line: InvoiceReviewLine, is
   // costo de ahora contra el total leído (`isLineMismatch`); se retira si cuadra y vuelve si no.
   if (line.choiceMade && issue === UNIT_PRICE_MISMATCH_ISSUE) {
     return isLineMismatch(state, line) ? issue : undefined;
+  }
+  // D42 (C9-M1 D): con tasa (la del día, la impresa o la escrita a mano) el cliente ya compara el
+  // costo con el último; el genérico «Sin tasa no se verificó…» sobra (el desvío lo dice la fila).
+  if (issue === NO_RATE_PRICE_ISSUE) {
+    const current = getEntryModeOutcome(state, line, line.entryMode);
+    const verified = current?.unitCost?.currency === "REF" && (current.lastCost === "known" || current.lastCost === "none");
+    return verified ? undefined : issue;
+  }
+  // D42: el costo sin reconocer ya lo dice la fila con el resultado de ahora (`costNeedMessages`).
+  if (issue.startsWith(PRICE_CHOICE_QUESTION) && !needsExplicitChoice(line) && awaitsCostAcknowledgement(state, line)) {
+    return undefined;
   }
   const outcome =
     line.choiceMade && issue.startsWith(PRICE_CHOICE_QUESTION)
@@ -256,6 +328,13 @@ function packNoun(word: string, count: number): string {
   return /[aeiouáéíóú]$/.test(word) ? `${word}s` : `${word}es`;
 }
 
+/** D42: lo que dice la opción (o la fila) cuando no hay último costo con qué comparar. */
+const LAST_COST_STATUS_TEXT = {
+  none: "sin costo previo",
+  loading: "consultando el costo previo…",
+  error: "no se pudo consultar el costo previo",
+} as const;
+
 /** B-p7-3: texto (no solo el ámbar) de la opción que deja el costo desviado como el aviso 6.18. */
 export const ENTRY_MODE_DEVIATION_TEXT = `Se aparta más del ${Math.round(PRICE_DEVIATION_LIMIT * 100)} % del último costo`;
 
@@ -279,6 +358,9 @@ export function entryModeOutcomeText(line: InvoiceReviewLine, outcome: EntryMode
   }
   if (outcome.deviates && outcome.lastUnitCostRef !== undefined) {
     text += ` (último ${formatRefAmount(outcome.lastUnitCostRef)})`;
+  } else if (outcome.lastCost && outcome.lastCost !== "known") {
+    // D42: sin último costo con qué comparar, la opción lo dice (nunca neutra en silencio).
+    text += ` · ${LAST_COST_STATUS_TEXT[outcome.lastCost]}`;
   }
   return text;
 }

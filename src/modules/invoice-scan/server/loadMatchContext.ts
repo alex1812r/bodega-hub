@@ -33,6 +33,7 @@ import { readCurrentExchangeRate } from "@/modules/settings/services/exchangeRat
 import type { InvoiceExtraction } from "../contracts";
 
 import type {
+  InvoiceLastUnitCost,
   MatchAlias,
   MatchContext,
   MatchFuzzyCandidate,
@@ -45,6 +46,7 @@ import type {
   MatchTaxRate,
   MatchTaxRateKind,
 } from "./match.types";
+import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
 import { exactAliasTexts } from "./match/product";
 import { normalizeCode, normalizeInvoiceNumber } from "./match/text";
@@ -594,6 +596,15 @@ async function loadLastLines(
   return costs;
 }
 
+/** D24-c: último costo recibido (del proveedor o de cualquiera) y, si no hay, el costo de referencia del producto. */
+function lastReceivedCostRef(
+  row: ProductRow,
+  supplierCosts: Map<string, number>,
+  anyCosts: Map<string, number>,
+): number | null {
+  return supplierCosts.get(row.id) ?? anyCosts.get(row.id) ?? positiveCost(row.current_cost_ref) ?? null;
+}
+
 function toSupplierCandidates(result: CandidatesRpcResult): MatchSupplierCandidate[] {
   return (result.suppliers ?? []).map((row) => ({
     contactId: row.contact_id,
@@ -743,8 +754,7 @@ export async function loadMatchContext(
       barcode: row.barcode,
       active: row.is_active,
       taxRateCode: row.category?.tax_rate?.code ?? null,
-      // D24-c: último costo recibido (del proveedor o de cualquiera) y, si no hay, el costo de referencia del producto.
-      lastUnitCostRef: supplierCosts.get(row.id) ?? anyCosts.get(row.id) ?? positiveCost(row.current_cost_ref) ?? null,
+      lastUnitCostRef: lastReceivedCostRef(row, supplierCosts, anyCosts),
       linkedToSupplier: linkedIds.has(row.id),
       hasRecipe: recipes.has(row.id),
       ...(recipeUnitsPerPack !== undefined ? { recipeUnitsPerPack } : {}),
@@ -762,4 +772,49 @@ export async function loadMatchContext(
     systemRate,
     previousScans,
   };
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * D41-a: último costo por unidad de stock (REF) de unos productos elegidos en la revisión fuera
+ * de los candidatos, con las mismas consultas y el mismo criterio que `loadMatchContext` +
+ * `lastUnitCostRefOf` (D38): última línea recibida de `supplierId`, si no de cualquiera, si no
+ * `current_cost_ref`; un producto con receta lo reparte entre las unidades de su conversión.
+ * Uno por id pedido (sin repetidos), `null` si no se conoce o no es de la tienda. Solo ids en la URL.
+ */
+export async function loadLastUnitCostRefs(
+  supabase: MatchContextSupabaseClient,
+  storeId: string,
+  productIds: string[],
+  supplierId?: string,
+): Promise<InvoiceLastUnitCost[]> {
+  const requested = [...new Set(productIds)];
+  // `products.id` y `contacts.id` son uuid: otro texto no puede existir (y Postgres lo rechazaría).
+  const ids = requested.filter((id) => UUID_PATTERN.test(id));
+  const supplier = supplierId && UUID_PATTERN.test(supplierId) ? supplierId : undefined;
+
+  if (ids.length === 0) {
+    return requested.map((productId) => ({ productId, lastUnitCostRef: null }));
+  }
+
+  const [productRows, recipes, supplierCosts, anyCosts] = await Promise.all([
+    loadProductsByIds(supabase, storeId, ids),
+    loadRecipeConversions(supabase, storeId, ids),
+    supplier ? loadLastLines(supabase, storeId, ids, supplier) : Promise.resolve(new Map<string, number>()),
+    loadLastLines(supabase, storeId, ids),
+  ]);
+  const loaded = new Map(productRows.map((row) => [row.id, row]));
+
+  return requested.map((productId) => {
+    const row = loaded.get(productId);
+    const cost = row
+      ? lastUnitCostRefOf({
+          lastUnitCostRef: lastReceivedCostRef(row, supplierCosts, anyCosts),
+          hasRecipe: recipes.has(row.id),
+          recipeUnitsPerPack: recipes.get(row.id),
+        })
+      : undefined;
+    return { productId, lastUnitCostRef: cost ?? null };
+  });
 }

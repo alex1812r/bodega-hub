@@ -46,6 +46,7 @@ import {
   taxRateKind,
 } from "./loadMatchContext";
 import type {
+  InvoiceLastUnitCost,
   MatchContext,
   MatchFuzzyCandidate,
   MatchPreviousScan,
@@ -53,6 +54,7 @@ import type {
   MatchSupplierCandidate,
   MatchSupplierCatalog,
 } from "./match.types";
+import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
 import { normalizeInvoiceNumber, sameTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
@@ -297,4 +299,18 @@ export function loadMockMatchContext(
     systemRate: systemRate(storeId),
     previousScans: previousScans(storeId, extraction, options?.excludeScanId),
   };
+}
+
+/**
+ * Paridad mock de `loadLastUnitCostRefs` (D41-a): el último costo por unidad de los productos
+ * de la tienda con el mismo criterio que el contexto mock (`currentCostRef`, receta repartida).
+ * Uno por id pedido (sin repetidos), `null` si no se conoce o no es de la tienda.
+ */
+export function listMockLastUnitCostRefs(storeId: string, productIds: string[]): InvoiceLastUnitCost[] {
+  const byId = new Map(products(storeId).map((product) => [product.id, product]));
+
+  return [...new Set(productIds)].map((productId) => ({
+    productId,
+    lastUnitCostRef: lastUnitCostRefOf(byId.get(productId)) ?? null,
+  }));
 }
