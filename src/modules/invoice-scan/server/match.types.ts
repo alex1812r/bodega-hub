@@ -202,3 +202,13 @@ export type MatchContext = {
   /** Escaneos anteriores de la tienda (para `duplicateOfScanId`). */
   previousScans: MatchPreviousScan[];
 };
+
+/**
+ * D41-a: último costo por unidad de stock (REF) de un producto elegido en la revisión fuera de
+ * los candidatos (`GET /api/purchases/invoice-scan/last-unit-costs`); misma semántica que
+ * `InvoiceLineMatch.lastUnitCostRef` (D38). `null` si no se conoce.
+ */
+export type InvoiceLastUnitCost = {
+  productId: string;
+  lastUnitCostRef: number | null;
+};
