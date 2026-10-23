@@ -314,18 +314,22 @@ describe("REP7-05 · B-p7-3: cada opción dice qué da antes de elegir", () => {
     const perPack = option(row(4), "Por bulto");
     const perUnit = option(row(4), "Por unidad");
 
-    expect(perPack).toHaveAccessibleDescription("1 bulto = 12 u · 0,61 REF/u");
-    expect(perUnit).toHaveAccessibleDescription("1 u · 7,28 REF/u");
+    // REP9-02 (D42): sin último costo la opción lo dice («sin costo previo»), nunca neutra en silencio.
+    expect(perPack).toHaveAccessibleDescription("1 bulto = 12 u · 0,61 REF/u · sin costo previo");
+    expect(perUnit).toHaveAccessibleDescription("1 u · 7,28 REF/u · sin costo previo");
     expect(perPack).not.toHaveAttribute("data-deviates");
     expect(perUnit).not.toHaveAttribute("data-deviates");
   });
 
-  it("f04: las líneas sin aviso de elección (media caja) no cambian sus opciones", () => {
+  // REP9-02 (D42): el resultado ya no depende de que haya aviso de elección; toda opción lo muestra.
+  it("f04: las líneas sin aviso de elección (media caja) también dicen qué dejan", () => {
     renderPanel(f04 as unknown as InvoiceScanResponse, {
       context: F04_CONTEXT,
     });
 
-    expect(option(row(0), "Por bulto")).not.toHaveAccessibleDescription();
+    expect(option(row(0), "Por bulto")).toHaveAccessibleDescription(
+      "0,5 bultos · indica las unidades por bulto · sin costo previo",
+    );
   });
 
   it("el resultado sigue al empaque escrito: sin unidades por caja lo pide", async () => {

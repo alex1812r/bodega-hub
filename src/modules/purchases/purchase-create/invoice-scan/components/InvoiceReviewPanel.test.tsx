@@ -251,7 +251,8 @@ describe("InvoiceReviewPanel", () => {
     const fetcher = jest.fn(async () => [productOption("prod-x", "Harina PAN 1 kg (otra)")]);
     renderPanel(
       makeReviewResponse({ lines: [unmatchedLine(1, true, { read: { description: "Harina PAN 1kg" } })] }),
-      { productFetcher: fetcher },
+      // REP9-02 (D42): el producto buscado consulta su último costo (aquí, sin costo previo).
+      { productFetcher: fetcher, lastUnitCostFetcher: jest.fn(async () => null) },
     );
 
     await waitFor(() => expect(row(0)).toHaveFocus());
@@ -268,7 +269,7 @@ describe("InvoiceReviewPanel", () => {
     expect(fetcher).toHaveBeenCalledWith(expect.objectContaining({ query: "Harina PAN 1kg" }));
 
     await user.click(options[1]);
-    expect(within(row(0)).getByText("Resuelta")).toBeInTheDocument();
+    expect(await within(row(0)).findByText("Resuelta")).toBeInTheDocument();
     expect(within(row(0)).getByText("Harina PAN 1 kg (otra)")).toBeInTheDocument();
   });
 
@@ -1659,6 +1660,8 @@ describe("InvoiceReviewPanel", () => {
     });
   });
 
+  // REP9-02 (D39-6 / D42 punto 4): el alta que deja la línea resuelta ya no lleva el foco a la
+  // siguiente pendiente ni al pie: queda en su fila (avanzar es del usuario). Sigue sin caer en BODY.
   describe("REP3-03a (B7): tras «Nuevo producto» el foco no se pierde", () => {
     const created = async (response: InvoiceScanResponse) => {
       const user = userEvent.setup();
@@ -1667,30 +1670,31 @@ describe("InvoiceReviewPanel", () => {
       await user.click(screen.getByRole("button", { name: "Crear producto" }));
     };
 
-    it("con otra línea pendiente: el foco va a esa línea", async () => {
+    it("con otra línea pendiente: el foco queda en la fila resuelta, no salta a la otra", async () => {
       await created(makeReviewResponse({ lines: [unmatchedLine(9, false), doubtfulLine(2)] }));
 
       expect(row(0)).toHaveAttribute("data-status", "resolved");
-      await waitFor(() => expect(row(1)).toHaveFocus());
+      await waitFor(() => expect(row(0)).toHaveFocus());
+      expect(row(1)).not.toHaveFocus();
     });
 
-    it("sin pendientes y Cargar deshabilitado por falta de proveedor: el foco va al buscador de proveedor", async () => {
+    it("sin pendientes y Cargar deshabilitado por falta de proveedor: el foco queda en la fila", async () => {
       await created(
         makeReviewResponse({ lines: [unmatchedLine(9, false)], matched: { supplier: { candidates: [] } } }),
       );
 
       expect(row(0)).toHaveAttribute("data-status", "resolved");
       expect(loadButton()).toBeDisabled();
-      const supplier = within(screen.getByRole("region", { name: "Datos de la factura" })).getByRole("combobox");
-      await waitFor(() => expect(supplier).toHaveFocus());
+      await waitFor(() => expect(row(0)).toHaveFocus());
       expect(document.activeElement).not.toBe(document.body);
     });
 
-    it("sin pendientes y Cargar habilitado: el foco va al pie (D36: no a Cargar)", async () => {
+    it("sin pendientes y Cargar habilitado: el foco queda en la fila (D36: no a Cargar)", async () => {
       await created(makeReviewResponse({ lines: [unmatchedLine(9, false)] }));
 
-      await waitFor(() => expect(reviewFooter()).toHaveFocus());
+      await waitFor(() => expect(row(0)).toHaveFocus());
       expect(loadButton()).toBeEnabled();
+      expect(loadButton()).not.toHaveFocus();
     });
 
     describe("REP3-03f: sin pendientes, con proveedor y Cargar bloqueado por la diferencia", () => {
@@ -1705,22 +1709,23 @@ describe("InvoiceReviewPanel", () => {
 
       afterEach(() => jest.restoreAllMocks());
 
-      it("el foco va al pie (D36: no a la casilla de diferencia), no a «Ver detalle del total» oculto en escritorio", async () => {
+      it("el foco queda en la fila (D36: no a la casilla de diferencia ni a «Ver detalle del total»)", async () => {
         desktopLayout();
         await created(mismatched());
 
         expect(row(0)).toHaveAttribute("data-status", "resolved");
         expect(loadButton()).toBeDisabled();
-        await waitFor(() => expect(reviewFooter()).toHaveFocus());
+        await waitFor(() => expect(row(0)).toHaveFocus());
         expect(screen.getByRole("checkbox", { name: /Cargar con una diferencia de/ })).not.toBeChecked();
       });
 
-      it("si ningún control del pie es visible, el foco va al pie y nunca a BODY", async () => {
+      it("si ningún control del pie es visible, el foco queda en la fila y nunca en BODY", async () => {
         desktopLayout(true);
         await created(mismatched());
 
         expect(loadButton()).toBeDisabled();
-        await waitFor(() => expect(screen.getByRole("contentinfo", { name: "Resumen de la revisión" })).toHaveFocus());
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        expect(document.activeElement).not.toBe(document.body);
       });
     });
   });

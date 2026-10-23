@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, FileImage } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
+import { fetchLastUnitCostRef } from "@/modules/invoice-scan/client/fetchLastUnitCost";
 import { useInvoiceScanImages } from "@/modules/invoice-scan/client/useInvoiceScanImages";
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
@@ -21,7 +22,7 @@ import {
   getLineNeeds,
   getReviewSections,
   isPendingStatus,
-  needsExplicitChoice,
+  needsOptionChoice,
   nextPendingIndex,
   pressEnter,
   pressEscape,
@@ -62,6 +63,11 @@ export type InvoiceReviewPanelProps = {
   productFetcher?: EntityFetcher<"product">;
   /** Búsqueda de proveedores; por defecto `GET /api/purchases/suppliers`. */
   supplierFetcher?: EntityFetcher<"contact">;
+  /**
+   * D42: último costo unitario (REF) de un producto elegido en el buscador; por defecto
+   * `fetchLastUnitCostRef` (`GET /api/purchases/invoice-scan/last-unit-costs`, solo ids).
+   */
+  lastUnitCostFetcher?: (productId: string, supplierId?: string) => Promise<number | null>;
 };
 
 /**
@@ -185,6 +191,7 @@ function scrollAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
 export function InvoiceReviewPanel({
   canCreateProduct = false,
   context,
+  lastUnitCostFetcher = fetchLastUnitCostRef,
   onDiscard,
   onLoad,
   onRescan,
@@ -201,6 +208,31 @@ export function InvoiceReviewPanel({
       dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate });
     }
   }, [dispatch, lateSystemRate]);
+  // D42: consulta el último costo de cada producto elegido en el buscador, una vez por (línea,
+  // producto) en curso; la respuesta para un producto que ya no es el de la línea se ignora.
+  const lastCostRequestsRef = useRef(new Set<string>());
+  const supplierId = state.header.supplier.contactId;
+  useEffect(() => {
+    for (const line of state.lines) {
+      const lookup = line.lastCostLookup;
+      if (lookup?.status !== "loading" || lookup.productId !== line.productId) {
+        continue;
+      }
+      const { index } = line;
+      const { productId } = lookup;
+      const key = `${index}:${productId}`;
+      if (lastCostRequestsRef.current.has(key)) {
+        continue;
+      }
+      lastCostRequestsRef.current.add(key);
+      lastUnitCostFetcher(productId, supplierId)
+        .then(
+          (result) => dispatch({ type: "setLastUnitCost", index, productId, result }),
+          () => dispatch({ type: "setLastUnitCost", index, productId, result: "error" }),
+        )
+        .finally(() => lastCostRequestsRef.current.delete(key));
+    }
+  }, [dispatch, lastUnitCostFetcher, state.lines, supplierId]);
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [confirmedOpen, setConfirmedOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -236,7 +268,7 @@ export function InvoiceReviewPanel({
   // D36: línea a la que se llevó el foco porque le falta la opción explícita; su aviso se resalta.
   const noticeLine =
     focusRequest?.choice && focusRequest.target !== null ? state.lines[focusRequest.target] : undefined;
-  const choiceNotice = noticeLine && needsExplicitChoice(noticeLine) ? noticeLine : undefined;
+  const choiceNotice = noticeLine && needsOptionChoice(state, noticeLine) ? noticeLine : undefined;
 
   function armActivationGuard() {
     armGuard(guardUntilRef);
@@ -293,10 +325,10 @@ export function InvoiceReviewPanel({
     // la cantidad…) el foco va al campo que falta. Sin aceptar, a la fila: Enter acepta primero.
     const needs = line?.productId && line.accepted ? getLineNeeds(line) : [];
     const need = NEED_FOCUS_ORDER.find((item) => needs.includes(item));
-    // D31: aceptado por cualquier vía y completo, pero falta la elección explícita. D36: el foco
+    // D31/D42: aceptado por cualquier vía y completo, pero falta la elección explícita. D36: el foco
     // se queda en la fila (con el aviso resaltado); nunca va solo a «Por unidad / Por caja».
     const choice =
-      !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsExplicitChoice(line);
+      !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsOptionChoice(next, line);
     const needsSupplier = target === null && !next.header.supplier.contactId;
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
@@ -342,12 +374,14 @@ export function InvoiceReviewPanel({
     }
   }, [focusRequest]);
 
-  /** Aplica la acción y mueve el foco: a la misma línea si sigue pendiente, si no a la siguiente. */
-  function applyAndAdvance(action: InvoiceReviewAction & { index: number }) {
+  /**
+   * Producto elegido en el buscador o creado con «Nuevo producto». D39-6: resuelta o no, el foco
+   * queda en su fila (o en el campo que falta); avanzar es del usuario.
+   */
+  function applyProductChoice(action: InvoiceReviewAction & { index: number }) {
     const next = reviewReducer(state, action);
     dispatch(action);
-    const line = next.lines[action.index];
-    requestFocus(line && isPendingStatus(line.status) ? action.index : nextPendingIndex(next, action.index), next);
+    requestFocus(action.index, next);
   }
 
   /**
@@ -365,15 +399,20 @@ export function InvoiceReviewPanel({
         return;
       }
       const current = state.lines[action.index];
-      const choosing = action.type === "editEntryMode" && current !== undefined && needsExplicitChoice(current);
+      const choosing = action.type === "editEntryMode" && current !== undefined && needsOptionChoice(state, current);
       const next = reviewReducer(state, action);
       dispatch(action);
       const line = next.lines[action.index];
-      if (choosing && line) {
+      // D42: una confirmada cuyo costo pasa a desviarse sale del grupo de confirmadas; su opción se
+      // desmonta y el foco nunca cae en BODY: va a la fila, ya en la lista por revisar.
+      const inConfirmed = (from: InvoiceReviewState) =>
+        getReviewSections(from).confirmed.some((item) => item.index === action.index);
+      const movedSection = action.type === "editEntryMode" && inConfirmed(state) !== inConfirmed(next);
+      if ((choosing || movedSection) && line) {
         // D39-6: elegida la opción, el foco queda en su fila (resuelta o no); avanzar es del usuario.
         requestFocus(action.index, next);
         guardChoiceIndexRef.current = action.index;
-      } else if (action.type === "acceptCandidate" && line && needsExplicitChoice(line)) {
+      } else if (action.type === "acceptCandidate" && line && needsOptionChoice(next, line)) {
         // Clic deliberado en el chip: el producto queda elegido, pero falta la opción (D31);
         // el foco va a la fila con el aviso resaltado (D36).
         requestFocus(action.index, next);
@@ -498,9 +537,9 @@ export function InvoiceReviewPanel({
           return;
         }
         event.preventDefault();
-        // D36: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
+        // D36/D42: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
         const option =
-          line?.accepted && needsExplicitChoice(line)
+          line?.accepted && needsOptionChoice(state, line)
             ? event.currentTarget.querySelector<HTMLElement>('[data-choice]')
             : null;
         if (option) {
@@ -541,7 +580,7 @@ export function InvoiceReviewPanel({
 
   function handlePickProduct(index: number, product: InvoiceReviewProduct) {
     setSearchIndex(null);
-    applyAndAdvance({ type: "chooseProduct", index, product });
+    applyProductChoice({ type: "chooseProduct", index, product });
   }
 
   function handleNewProduct(index: number, opener: HTMLElement) {
@@ -666,7 +705,7 @@ export function InvoiceReviewPanel({
       {/* D36: Enter sobre una fila con aviso no elige; se anuncia qué falta y cómo llegar a la opción. */}
       <p aria-live="polite" className="sr-only" data-testid="invoice-review-announcement">
         {choiceNotice
-          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(choiceNotice).join(" ")} Pulsa Tab para ir a las opciones.`
+          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(state, choiceNotice).join(" ")} Pulsa Tab para ir a las opciones.`
           : ""}
       </p>
 
@@ -777,7 +816,12 @@ export function InvoiceReviewPanel({
             const index = newProduct?.index;
             setNewProduct(null);
             if (index !== undefined) {
-              applyAndAdvance({ type: "chooseProduct", index, product: { productId: product.id, name: product.name } });
+              applyProductChoice({
+                type: "chooseProduct",
+                index,
+                product: { productId: product.id, name: product.name },
+                created: true,
+              });
             }
           }}
           onOpenChange={(open) => {

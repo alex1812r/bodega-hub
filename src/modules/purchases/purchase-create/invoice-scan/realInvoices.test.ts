@@ -246,6 +246,13 @@ describe("MEDIO-3 · f04 media caja (0,50)", () => {
     });
     state = acceptAll(state);
     state = reviewReducer(state, { type: "chooseProduct", index: 2, product: { productId: "00000000-0000-4000-8000-000000000078", name: "De Todito" } });
+    // REP9-02 (D42): los productos del buscador esperan su último costo (aquí, sin costo previo).
+    for (const [index, productId] of [
+      [1, "00000000-0000-4000-8000-000000000077"],
+      [2, "00000000-0000-4000-8000-000000000078"],
+    ] as const) {
+      state = reviewReducer(state, { type: "setLastUnitCost", index, productId, result: null });
+    }
     // D25-a: cargar con diferencia frente al total leído exige confirmarla.
     state = reviewReducer(state, { type: "confirmTotalsDifference", confirmed: true });
     const draft = buildInvoiceReviewDraft(state);
