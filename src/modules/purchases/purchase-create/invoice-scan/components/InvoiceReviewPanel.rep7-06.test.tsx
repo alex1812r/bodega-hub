@@ -188,18 +188,20 @@ describe("REP7-06 · F2: un rebote tras mover el foco a otra fila no confirma es
     expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
-  it("Enter en el chip que resuelve la línea + Enter a 90 ms: la siguiente sigue pendiente", async () => {
+  // D41-c (B-p9-1): el chip deja el foco en su fila resuelta; el rebote no avanza ni resuelve otra.
+  it("Enter en el chip que resuelve la línea + Enter a 90 ms: el foco sigue en su fila y la siguiente sigue pendiente", async () => {
     const user = userEvent.setup();
     renderPanel(makeReviewResponse({ lines: [nameLine(1), nameLine(2)] }));
     within(row(0)).getByRole("button", { name: /Producto 1/ }).focus();
     now += 1000;
 
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(row(1)).toHaveFocus());
+    await waitFor(() => expect(row(0)).toHaveFocus());
     now += 90;
     await user.keyboard("{Enter}");
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
+    expect(row(0)).toHaveFocus();
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 

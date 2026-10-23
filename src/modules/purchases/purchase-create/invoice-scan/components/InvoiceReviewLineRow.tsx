@@ -54,8 +54,8 @@ export type InvoiceReviewLineRowProps = {
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
   onAction: (action: InvoiceReviewAction) => void;
-  /** Elegir candidato o producto y saltar a la siguiente pendiente (teclado). */
-  onAcceptAndAdvance: (action: InvoiceReviewAction) => void;
+  /** Elegir candidato con Enter (teclado); D39-6: el foco queda en la fila. */
+  onAcceptByKey: (action: InvoiceReviewAction) => void;
   onRowKeyDown: (event: KeyboardEvent<HTMLLIElement>, index: number) => void;
   onOpenSearch: (index: number) => void;
   onPickProduct: (index: number, product: InvoiceReviewProduct) => void;
@@ -76,7 +76,7 @@ export function InvoiceReviewLineRow({
   line,
   mismatch,
   noticeHighlighted = false,
-  onAcceptAndAdvance,
+  onAcceptByKey,
   onAction,
   onNewProduct,
   onOpenSearch,
@@ -193,7 +193,7 @@ export function InvoiceReviewLineRow({
                       if (event.key === "Enter") {
                         event.preventDefault();
                         event.stopPropagation();
-                        onAcceptAndAdvance({ type: "acceptCandidate", index, productId: candidate.productId });
+                        onAcceptByKey({ type: "acceptCandidate", index, productId: candidate.productId });
                       }
                     }}
                     type="button"
