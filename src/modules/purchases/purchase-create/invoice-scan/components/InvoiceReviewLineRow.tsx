@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { type KeyboardEvent, type Ref, useId } from "react";
 
 import { Badge } from "@/shared/components/Badge/Badge";
@@ -31,6 +31,7 @@ import {
 } from "../reviewModel";
 import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
 import {
+  costAcknowledgementTexts,
   ENTRY_MODE_DEVIATION_TEXT,
   entryModeOutcomeText,
   formatInvoiceMoney,
@@ -56,6 +57,8 @@ export type InvoiceReviewLineRowProps = {
   canCreateProduct: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
+  /** D43 (B-r9-1): alto mínimo tras una acción con el puntero en la fila (no encoge bajo el dedo). */
+  minHeight?: number;
   onAction: (action: InvoiceReviewAction) => void;
   /** Elegir candidato con Enter (teclado); D39-6: el foco queda en la fila. */
   onAcceptByKey: (action: InvoiceReviewAction) => void;
@@ -77,6 +80,7 @@ function finiteOrNull(value: number): number | null {
 export function InvoiceReviewLineRow({
   canCreateProduct,
   line,
+  minHeight,
   mismatch,
   noticeHighlighted = false,
   onAcceptByKey,
@@ -105,18 +109,26 @@ export function InvoiceReviewLineRow({
     (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
     line.issues.some(isExplicitChoiceIssue);
   // D42: el costo de ESE producto con su modo frente a su último costo. Desviado o sin poder
-  // comparar, se reconoce eligiendo la opción: aunque el producto solo tenga un modo, se muestra.
+  // comparar, se elige la opción y se reconoce aparte (D43): aunque solo tenga un modo, se muestra.
   const costReview = getLineCostReview(state, line);
   const lastCost = getLineLastCost(state, line);
   const costUnconfirmed =
     costReview.kind === "loading" || (costReview.kind === "acknowledge" && !costReview.acknowledged);
   const showOptions = showPack || costReview.kind !== "clear";
   // D33-a (C6-M1): con aviso (o costo por reconocer) y sin elección, ninguna opción viene marcada.
-  const checkedMode = needsExplicitChoice(line) || costUnconfirmed ? undefined : line.entryMode;
+  // D43: elegida la opción, queda marcada aunque falte reconocer su costo (botón aparte).
+  const checkedMode =
+    needsExplicitChoice(line) || (costUnconfirmed && !line.choiceMade) ? undefined : line.entryMode;
+  // D43 (B-r9-1): reconocer el costo es un paso aparte que solo aparece tras elegir la opción.
+  const costAck =
+    costReview.kind === "acknowledge" && line.choiceMade ? costAcknowledgementTexts(state, line) : undefined;
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
-  const marked = pending ? enterTargetProductId(line) : undefined;
-  const chips = pending ? getChoiceChips(line) : [];
+  // D43 (B-r9-1): la resuelta conserva sus candidatos (el elegido, marcado). Si desaparecieran al
+  // resolverse, la fila subiría y otro control de decisión quedaría bajo el dedo que la resolvió.
+  const showChips = pending || line.status === "resolved";
+  const marked = showChips ? enterTargetProductId(line) : undefined;
+  const chips = showChips ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
   const issues = getDisplayedLineIssues(state, line);
   const needs = line.discarded ? [] : lineNeedMessages(state, line);
@@ -139,6 +151,7 @@ export function InvoiceReviewLineRow({
       onKeyDown={(event) => onRowKeyDown(event, index)}
       ref={rowRef}
       role="group"
+      style={minHeight ? { minHeight } : undefined}
       // D31: la descartada recibe el foco (no «Restaurar») si no queda otra pendiente. D39-6: la
       // resuelta también, al elegir su opción (el foco no avanza solo a otra fila).
       tabIndex={pending ? 0 : line.status === "confirmed_by_match" ? undefined : -1}
@@ -251,6 +264,13 @@ export function InvoiceReviewLineRow({
                 <Trash2 aria-hidden className="size-4" />
                 Descartar línea
               </Button>
+            ) : line.status === "resolved" ? (
+              // D43 (B-r9-1): resuelta, el hueco se conserva (a 390 px la fila de acciones no se pliega
+              // y nada sube bajo el dedo); no es un control.
+              <span aria-hidden className="invisible inline-flex h-9 items-center gap-2 px-3 text-sm font-medium">
+                <Trash2 className="size-4" />
+                Descartar línea
+              </span>
             ) : null}
           </div>
 
@@ -356,6 +376,27 @@ export function InvoiceReviewLineRow({
                   );
                 })}
               </div>
+              {/* D43 (B-r9-1): debajo de las opciones (nunca en el sitio del control recién pulsado);
+                  reconocido, lo sustituye un texto del mismo tamaño para que nada se mueva. */}
+              {costAck && costReview.kind === "acknowledge" && !costReview.acknowledged ? (
+                <button
+                  className="flex min-h-8 max-w-full cursor-pointer items-center gap-1 self-start rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-left text-xs font-medium break-words whitespace-normal text-amber-800 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-500 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
+                  data-cost-ack
+                  onClick={() => onAction({ type: "acknowledgeCost", index })}
+                  type="button"
+                >
+                  <AlertTriangle aria-hidden className="size-3 shrink-0" />
+                  {costAck.ask}
+                </button>
+              ) : costAck ? (
+                <p
+                  className="flex min-h-8 max-w-full items-center gap-1 self-start rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium break-words text-on-surface-variant"
+                  data-testid="invoice-review-cost-acknowledged"
+                >
+                  <Check aria-hidden className="size-3 shrink-0" />
+                  {costAck.done}
+                </p>
+              ) : null}
               {line.entryMode === "pack" ? (
                 // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
                 // corrige solo; la línea queda sin resolver y lo dice.

@@ -138,8 +138,9 @@ export type InvoiceReviewLine = {
   /** D42: último costo consultado de un producto elegido fuera de los candidatos (buscador o alta). */
   lastCostLookup?: InvoiceLastCostLookup;
   /**
-   * D42: el usuario reconoció el costo desviado (o el que no se pudo comparar) eligiendo la opción
-   * con su resultado a la vista. Solo vale mientras siga siendo ESE costo (`sameCostAck`).
+   * D42/D43: el usuario reconoció el costo desviado (o el que no se pudo comparar) con su botón
+   * propio («Sí, el costo es…»), tras elegir la opción. Solo vale mientras siga siendo ESE costo
+   * (`sameCostAck`) y se retira al cambiar de opción.
    */
   costAck?: InvoiceCostAcknowledgement;
 };
@@ -267,6 +268,11 @@ export type InvoiceReviewAction =
   | { type: "editTaxRate"; index: number; taxRateCode: string }
   | { type: "editUnitsPerPack"; index: number; unitsPerPack: number | undefined }
   | { type: "editEntryMode"; index: number; entryMode: "unit" | "pack" }
+  /**
+   * D43 (B-r9-1): reconoce el costo desviado (o sin poder comparar) de la opción ya elegida. Es
+   * un paso aparte: elegir la opción nunca lo reconoce.
+   */
+  | { type: "acknowledgeCost"; index: number }
   | { type: "editPackLabel"; index: number; packLabel: string }
   /** Cantidad fraccionaria de empaques → unidades enteras (`getUnitConversion`). */
   | { type: "convertPackToUnits"; index: number }
@@ -689,7 +695,7 @@ export function getLineCostReview(state: InvoiceReviewState, line: InvoiceReview
   return { kind: "acknowledge", reason: evaluation.reason, acknowledged: sameCostAck(line.costAck, evaluation.key) };
 }
 
-/** D42: la línea espera que el usuario reconozca su costo eligiendo la opción. */
+/** D42/D43: la línea espera que el usuario reconozca su costo (botón propio, tras elegir la opción). */
 export function awaitsCostAcknowledgement(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
   const review = getLineCostReview(state, line);
   return review.kind === "acknowledge" && !review.acknowledged;
@@ -1116,15 +1122,22 @@ function applyAction(state: InvoiceReviewState, action: InvoiceReviewAction): In
       });
     case "editEntryMode":
       return updateLine(state, action.index, (line) => {
-        // Elegir el modo ya marcado también es la elección explícita de D31. D42: elegir la opción
-        // con su resultado a la vista reconoce ESE costo si se desvía o no se pudo comparar.
-        const chosen: InvoiceReviewLine = { ...line, entryMode: action.entryMode, choiceMade: true };
-        const evaluation = evaluateCost(state, chosen);
-        const costAck = evaluation.kind === "acknowledge" ? evaluation.key : undefined;
-        if (line.entryMode === action.entryMode && line.choiceMade && (!costAck || sameCostAck(line.costAck, costAck))) {
+        // Elegir el modo ya marcado también es la elección explícita de D31. D43 (B-r9-1): elegir
+        // NUNCA reconoce el costo (un 2.º toque puede caer en la opción); cambiar de opción retira
+        // el reconocimiento anterior.
+        if (line.entryMode === action.entryMode) {
+          return line.choiceMade ? line : { ...line, choiceMade: true };
+        }
+        return { ...line, entryMode: action.entryMode, choiceMade: true, costAck: undefined };
+      });
+    case "acknowledgeCost":
+      return updateLine(state, action.index, (line) => {
+        // D43: solo tras elegir la opción (o corregir la línea) y para el costo que se ve ahora.
+        const evaluation = line.choiceMade && !line.discarded ? evaluateCost(state, line) : undefined;
+        if (evaluation?.kind !== "acknowledge" || sameCostAck(line.costAck, evaluation.key)) {
           return line;
         }
-        return { ...chosen, costAck };
+        return { ...line, costAck: evaluation.key };
       });
     case "editPackLabel":
       return updateLine(state, action.index, (line) => ({ ...line, packLabel: action.packLabel }));

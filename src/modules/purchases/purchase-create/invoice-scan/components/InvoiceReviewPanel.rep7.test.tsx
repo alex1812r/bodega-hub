@@ -110,6 +110,15 @@ function row(index: number) {
 }
 
 const options = (index: number) => Array.from(row(index).querySelectorAll<HTMLElement>("[data-choice]"));
+/** D43 (B-r9-1): con teclado, el costo desviado (6.18) se reconoce aparte: Tab al botón y Enter. */
+async function acknowledgeCostByKeyboard(user: ReturnType<typeof userEvent.setup>, index = 0) {
+  expect(row(index)).toHaveAttribute("data-status", "pending_doubtful");
+  await waitFor(() => expect(row(index)).toHaveFocus());
+  await user.keyboard("{Tab}");
+  expect(within(row(index)).getByRole("button", { name: /^Sí, el costo es/ })).toHaveFocus();
+  now += 1000;
+  await user.keyboard("{Enter}");
+}
 const loadButton = () => screen.getByRole("button", { name: "Cargar en la compra" });
 const footer = () => screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
 const differenceBox = () => screen.getByRole("checkbox", { name: /Cargar con una diferencia de/ });
@@ -252,6 +261,7 @@ describe("REP7-03 · 6.17 solo con teclado sigue posible", () => {
     await user.keyboard("{Enter}");
 
     expect(perPack).toHaveAttribute("aria-pressed", "true");
+    await acknowledgeCostByKeyboard(user);
     expect(row(0)).toHaveAttribute("data-status", "resolved");
     // D39-6: el foco queda en la fila resuelta; Enter sobre ella avanza a la siguiente.
     await waitFor(() => expect(row(0)).toHaveFocus());
@@ -286,6 +296,7 @@ describe("REP7-03 · 6.17 solo con teclado sigue posible", () => {
     await user.keyboard(key);
 
     expect(options(0)[0]).toHaveAttribute("aria-pressed", "true");
+    await acknowledgeCostByKeyboard(user);
     expect(row(0)).toHaveAttribute("data-status", "resolved");
     // D39-6: el foco no avanza solo a la siguiente fila.
     await waitFor(() => expect(row(0)).toHaveFocus());

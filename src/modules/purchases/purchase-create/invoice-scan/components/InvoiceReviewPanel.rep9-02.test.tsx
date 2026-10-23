@@ -119,6 +119,8 @@ function row(index: number) {
 }
 
 const option = (index: number, name: string) => within(row(index)).getByRole("button", { name });
+/** D43 (B-r9-1): el costo desviado se reconoce con su botón aparte, nunca al elegir la opción. */
+const ackButton = (index: number) => within(row(index)).queryByRole("button", { name: /^Sí, el costo es/ });
 const loadButton = () => screen.getByRole("button", { name: "Cargar en la compra" });
 const blockers = () => screen.getByTestId("invoice-review-blockers");
 
@@ -160,7 +162,7 @@ describe("REP9-02 · el costo desviado se ve en la opción sin aviso del servido
 });
 
 describe("REP9-02 · reconocer el costo desviado", () => {
-  it("Enter no la resuelve; el pie la cuenta como pendiente con su motivo; el clic en la opción la reconoce", async () => {
+  it("Enter no la resuelve; el pie la cuenta como pendiente con su motivo; elegida la opción, su botón la reconoce", async () => {
     const user = userEvent.setup();
     renderPanel(makeReviewResponse({ lines: [harinaByName()] }));
     await waitFor(() => expect(row(0)).toHaveFocus());
@@ -175,6 +177,10 @@ describe("REP9-02 · reconocer el costo desviado", () => {
 
     later();
     await user.click(option(0, "Por unidad"));
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+    expect(blockers()).toHaveTextContent("Falta confirmar el costo en 1 línea.");
+    later();
+    await user.click(ackButton(0) as HTMLElement);
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
     expect(option(0, "Por unidad")).toHaveAttribute("aria-pressed", "true");
@@ -183,7 +189,7 @@ describe("REP9-02 · reconocer el costo desviado", () => {
     expect(loadButton()).toBeEnabled();
   });
 
-  it("6.17 solo con teclado: Enter, Tab a la opción, las flechas no eligen, Enter reconoce y el foco queda en la fila", async () => {
+  it("6.17 solo con teclado: Enter, Tab a la opción, las flechas no eligen, Enter la elige, Tab al botón, Enter reconoce y el foco queda en la fila", async () => {
     const user = userEvent.setup();
     renderPanel(makeReviewResponse({ lines: [harinaByName(), harinaByName({}, 450)] }));
     await waitFor(() => expect(row(0)).toHaveFocus());
@@ -202,6 +208,12 @@ describe("REP9-02 · reconocer el costo desviado", () => {
 
     later();
     option(0, "Por unidad").focus();
+    await user.keyboard("{Enter}");
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    await user.tab();
+    expect(ackButton(0)).toHaveFocus();
+    later();
     await user.keyboard("{Enter}");
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
@@ -237,8 +249,9 @@ describe("REP9-02 · C9-M1 C: confirmada por SKU cambiada a «Por unidad» desvi
     later();
     await user.click(option(0, "Por unidad"));
 
-    expect(row(0)).not.toHaveAttribute("data-status", "confirmed_by_match");
-    expect(within(screen.getByRole("list", { name: "Líneas por revisar" })).getByText("Galleta María")).toBeInTheDocument();
+    // D43: elegida pero sin reconocer, sigue pendiente (con sus candidatos a la vista).
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+    expect(screen.getByRole("list", { name: "Líneas por revisar" })).toContainElement(row(0));
     await waitFor(() => expect(row(0)).toHaveFocus());
   });
 });
@@ -296,6 +309,9 @@ describe("REP9-02 · buscador: último costo de ESE producto y foco en la fila (
 
     later();
     await user.click(option(0, "Por unidad"));
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+    later();
+    await user.click(ackButton(0) as HTMLElement);
     expect(row(0)).toHaveAttribute("data-status", "resolved");
   });
 
@@ -307,6 +323,9 @@ describe("REP9-02 · buscador: último costo de ESE producto y foco en la fila (
 
     later();
     await user.click(option(0, "Por unidad"));
+    expect(ackButton(0)).toHaveTextContent("(no se pudo consultar el último)");
+    later();
+    await user.click(ackButton(0) as HTMLElement);
     expect(row(0)).toHaveAttribute("data-status", "resolved");
   });
 });

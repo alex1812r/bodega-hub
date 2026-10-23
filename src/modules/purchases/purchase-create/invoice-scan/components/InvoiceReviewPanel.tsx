@@ -18,6 +18,7 @@ import { Modal } from "@/shared/components/Modal";
 import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModal";
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
 import {
+  awaitsCostAcknowledgement,
   enterTargetProductId,
   getLineNeeds,
   getReviewSections,
@@ -85,6 +86,11 @@ type FocusRequest = {
   need?: string;
   needsSupplier?: boolean;
   choice?: boolean;
+  /**
+   * D43 (B-r9-1): la acción vino del puntero en esa misma fila. El foco va a la fila sin desplazar
+   * la página: un desplazamiento dejaría otro control bajo el dedo que acaba de pulsar.
+   */
+  keepScroll?: boolean;
   seq: number;
 };
 
@@ -114,7 +120,7 @@ function isGuarded(until: { current: number }) {
 const ACTIVATION_KEYS = new Set(["Enter", " ", "Escape"]);
 
 /** D33-a: controles cuyo 2.º clic de un doble clic (`detail > 1`) se ignora. */
-const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-row-action], [data-load-button]";
+const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-cost-ack], [data-row-action], [data-load-button]";
 
 /**
  * REP6-05: selector de tasa y botones del pie distintos de Cargar. Filtro de D33-a (sin
@@ -278,6 +284,11 @@ export function InvoiceReviewPanel({
   // D39-7 (C8-M1): fila a la que se llevó el foco por programa; sus flechas no marcan candidato
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
+  // D43 (B-r9-1): fila del último puntero pulsado (null tras una tecla): su foco no desplaza.
+  const pointerRowRef = useRef<number | null>(null);
+  // D43 (B-r9-1): fila en la que se actuó con el puntero; no encoge (lo de debajo no sube bajo el
+  // dedo) hasta que el usuario desplace la página o use el teclado.
+  const [heldRow, setHeldRow] = useState<{ index: number; minHeight: number } | null>(null);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const modelSections = getReviewSections(state);
   const sections = keepInConfirmed(modelSections, heldConfirmedIndex);
@@ -314,6 +325,7 @@ export function InvoiceReviewPanel({
     };
     const onKeyUp = (event: globalThis.KeyboardEvent) => release(`key:${event.key}`);
     const onPointerUp = (event: PointerEvent) => release(`pointer:${event.pointerId}`);
+    const releaseHeldRow = () => setHeldRow(null);
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         releaseAll();
@@ -323,12 +335,18 @@ export function InvoiceReviewPanel({
     window.addEventListener("pointerup", onPointerUp, true);
     window.addEventListener("pointercancel", onPointerUp, true);
     window.addEventListener("blur", releaseAll);
+    window.addEventListener("scroll", releaseHeldRow, true);
+    window.addEventListener("wheel", releaseHeldRow, { passive: true });
+    window.addEventListener("touchmove", releaseHeldRow, { passive: true });
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("pointercancel", onPointerUp, true);
       window.removeEventListener("blur", releaseAll);
+      window.removeEventListener("scroll", releaseHeldRow, true);
+      window.removeEventListener("wheel", releaseHeldRow);
+      window.removeEventListener("touchmove", releaseHeldRow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
@@ -351,12 +369,14 @@ export function InvoiceReviewPanel({
     const choice =
       !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsOptionChoice(next, line);
     const needsSupplier = target === null && !next.header.supplier.contactId;
+    const keepScroll = target !== null && pointerRowRef.current === target;
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
       target,
       ...(need ? { need } : {}),
       ...(needsSupplier ? { needsSupplier } : {}),
       ...(choice ? { choice } : {}),
+      ...(keepScroll ? { keepScroll } : {}),
     }));
   }
 
@@ -382,6 +402,10 @@ export function InvoiceReviewPanel({
       : null;
     if (document.activeElement !== row) {
       autoFocusedRowRef.current = field ? null : focusRequest.target;
+    }
+    if (focusRequest.keepScroll) {
+      (field ?? row).focus({ preventScroll: true });
+      return;
     }
     focusAboveFooter(field ?? row, footerRef.current);
     // REP7-06 (QA F1, B8 a 390 px): la fila con aviso puede ser más alta que la franja entre la
@@ -420,10 +444,15 @@ export function InvoiceReviewPanel({
         return;
       }
       const current = state.lines[action.index];
-      const choosing = action.type === "editEntryMode" && current !== undefined && needsOptionChoice(state, current);
       const next = reviewReducer(state, action);
       dispatch(action);
       const line = next.lines[action.index];
+      // D43: también la elección que deja el costo por reconocer (p. ej. de resuelta a «Por bulto»
+      // desviada): arma la guarda antes de que «Sí, el costo es…» pueda activarse.
+      const choosing =
+        action.type === "editEntryMode" &&
+        current !== undefined &&
+        (needsOptionChoice(state, current) || (line !== undefined && awaitsCostAcknowledgement(next, line)));
       // D42: una confirmada cuyo costo pasa a desviarse sale del grupo de confirmadas; su opción se
       // desmonta y el foco nunca cae en BODY: va a la fila, ya en la lista por revisar.
       const inConfirmed = (from: InvoiceReviewState) =>
@@ -442,6 +471,18 @@ export function InvoiceReviewPanel({
         // en su fila; avanzar es del usuario.
         requestFocus(action.index, next);
       }
+      return;
+    }
+    if (action.type === "acknowledgeCost") {
+      // D43 (B-r9-1): reconocer el costo es una activación más (guarda, liberación nueva, sin
+      // `detail > 1`), sin la excepción de corregir la opción de la misma línea. El botón deja de
+      // existir: el foco va a su fila.
+      if (activationGuarded()) {
+        return;
+      }
+      const next = reviewReducer(state, action);
+      dispatch(action);
+      requestFocus(action.index, next);
       return;
     }
     if (action.type === "convertPackToUnits") {
@@ -559,9 +600,11 @@ export function InvoiceReviewPanel({
         }
         event.preventDefault();
         // D36/D42: aceptada a la espera de la opción explícita: Tab lleva a «Por unidad», sin elegirla.
+        // D43: ya elegida y con el costo por reconocer, a «Sí, el costo es…», sin activarlo.
         const option =
           line?.accepted && needsOptionChoice(state, line)
-            ? event.currentTarget.querySelector<HTMLElement>('[data-choice]')
+            ? (event.currentTarget.querySelector<HTMLElement>("[data-cost-ack]") ??
+              event.currentTarget.querySelector<HTMLElement>("[data-choice]"))
             : null;
         if (option) {
           focusAboveFooter(option, footerRef.current);
@@ -672,7 +715,18 @@ export function InvoiceReviewPanel({
             requestFocus(action.index, next);
           }
         }}
-        onAction={applyRowAction}
+        minHeight={heldRow?.index === line.index ? heldRow.minHeight : undefined}
+        onAction={(action) => {
+          // D43 (B-r9-1): con el puntero en esta fila, su alto actual queda como mínimo.
+          const element = rowRefs.current.get(line.index);
+          if ("index" in action && action.index === line.index && pointerRowRef.current === line.index && element) {
+            const height = element.getBoundingClientRect().height;
+            setHeldRow((held) =>
+              held?.index === line.index ? { index: line.index, minHeight: Math.max(held.minHeight, height) } : { index: line.index, minHeight: height },
+            );
+          }
+          applyRowAction(action);
+        }}
         onNewProduct={handleNewProduct}
         onOpenSearch={(target) => setSearchIndex((current) => (current === target ? null : target))}
         onPickProduct={handlePickProduct}
@@ -712,6 +766,10 @@ export function InvoiceReviewPanel({
         }
       }}
       onKeyDownCapture={(event) => {
+        pointerRowRef.current = null;
+        if (heldRow) {
+          setHeldRow(null);
+        }
         if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
           event.preventDefault();
           event.stopPropagation();
@@ -723,6 +781,9 @@ export function InvoiceReviewPanel({
       }}
       onPointerDownCapture={(event) => {
         pressedRef.current.add(`pointer:${event.pointerId}`);
+        const pointerRow =
+          event.target instanceof Element ? event.target.closest("[data-line-index]")?.getAttribute("data-line-index") : null;
+        pointerRowRef.current = pointerRow ? Number(pointerRow) : null;
         // D39-7: el puntero sobre la fila es acción del usuario en ella.
         if (
           event.target instanceof Element &&
@@ -757,7 +818,11 @@ export function InvoiceReviewPanel({
       {/* D36: Enter sobre una fila con aviso no elige; se anuncia qué falta y cómo llegar a la opción. */}
       <p aria-live="polite" className="sr-only" data-testid="invoice-review-announcement">
         {choiceNotice
-          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(state, choiceNotice).join(" ")} Pulsa Tab para ir a las opciones.`
+          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(state, choiceNotice).join(" ")} ${
+              choiceNotice.choiceMade && awaitsCostAcknowledgement(state, choiceNotice)
+                ? "Pulsa Tab para ir a confirmar el costo."
+                : "Pulsa Tab para ir a las opciones."
+            }`
           : ""}
       </p>
 

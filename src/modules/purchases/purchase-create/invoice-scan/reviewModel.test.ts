@@ -432,6 +432,9 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
         match: { entryMode: "pack", unitsPerPack: 6, issues: [issue] },
       }),
     ]);
+  // D43 (B-r9-1): el costo desviado se reconoce con su botón, nunca al elegir la opción.
+  const ackIfDeviating = (state: InvoiceReviewState): InvoiceReviewState =>
+    awaitsCostAcknowledgement(state, state.lines[0]) ? reviewReducer(state, { type: "acknowledgeCost", index: 0 }) : state;
 
   describe.each([
     ["6.18 precio por caja", priceIssue as string],
@@ -449,15 +452,18 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
       let state = reviewReducer(lineWith(issue), { type: "acceptMarked", index: 0 });
       state = reviewReducer(state, choice);
       expect(needsExplicitChoice(state.lines[0])).toBe(false);
-      // REP9-02 (D42): con el aviso 6.18 (0,50 REF/u frente a 0,05), corregir la cantidad deja el
-      // mismo costo desviado y 12 por caja (0,25) sigue desviado: corregir no reconoce el costo.
-      const stillDeviating = issue === priceIssue && (name === "corrige la cantidad" || name === "corrige las unidades");
+      // REP9-02 (D42): con el aviso 6.18 (0,50 REF/u frente a 0,05), solo corregir el costo lo
+      // deja coherente. D43: ni elegir la opción ni corregir reconocen el costo desviado.
+      const stillDeviating = issue === priceIssue && name !== "corrige el costo";
       expect(awaitsCostAcknowledgement(state, state.lines[0])).toBe(stillDeviating);
       expect(state.lines[0].status).toBe(stillDeviating ? "pending_doubtful" : "resolved");
+      state = ackIfDeviating(state);
+      expect(state.lines[0].status).toBe("resolved");
     });
 
     it("elegida antes de aceptar: aceptar la resuelve", () => {
       let state = reviewReducer(lineWith(issue), { type: "editEntryMode", index: 0, entryMode: "pack" });
+      state = ackIfDeviating(state);
       expect(state.lines[0].status).toBe("pending_doubtful");
       state = pressEnter(state, 0).state;
       expect(state.lines[0].status).toBe("resolved");
@@ -467,7 +473,7 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
     const otherId = productUuid(101);
     const pickUnit = (): InvoiceReviewState => {
       let state = reviewReducer(lineWith(issue), { type: "acceptCandidate", index: 0, productId });
-      state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" });
+      state = ackIfDeviating(reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" }));
       expect(state.lines[0]).toMatchObject({ status: "resolved", entryMode: "unit", choiceMade: true });
       return state;
     };
@@ -512,7 +518,7 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
     it("tras el cambio, elegir el modo vuelve a resolverla", () => {
       let state = pickUnit();
       state = reviewReducer(state, { type: "acceptCandidate", index: 0, productId: otherId });
-      state = reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" });
+      state = ackIfDeviating(reviewReducer(state, { type: "editEntryMode", index: 0, entryMode: "unit" }));
       expect(state.lines[0]).toMatchObject({ status: "resolved", choiceMade: true, productId: otherId });
     });
   });

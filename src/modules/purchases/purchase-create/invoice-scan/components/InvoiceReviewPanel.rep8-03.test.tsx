@@ -98,6 +98,9 @@ describe("REP8-03 · B-p8-1: elegida la opción antes que el producto, la fila y
     renderPanel(makeReviewResponse({ lines: [priceLine()] }));
 
     await user.click(within(row(0)).getByRole("button", { name: "Por caja" }));
+    // D43: el costo desviado (6.18) se reconoce aparte; reconocido, solo falta el producto.
+    now += 500;
+    await user.click(within(row(0)).getByRole("button", { name: /^Sí, el costo es/ }));
 
     expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
     expect(notices(0)).toHaveTextContent("Falta confirmar el producto: toca «Galleta» o pulsa Enter.");

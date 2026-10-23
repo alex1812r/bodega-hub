@@ -270,7 +270,8 @@ describe("InvoiceReviewPanel", () => {
 
     await user.click(options[1]);
     expect(await within(row(0)).findByText("Resuelta")).toBeInTheDocument();
-    expect(within(row(0)).getByText("Harina PAN 1 kg (otra)")).toBeInTheDocument();
+    // D43: la resuelta conserva los candidatos; el título de la fila es el producto elegido.
+    expect(within(row(0)).getByText("Harina PAN 1 kg (otra)", { selector: "span.text-foreground" })).toBeInTheDocument();
   });
 
   it("con línea de empaque sin tamaño, Enter deja el foco en Unidades por bulto", async () => {
@@ -628,7 +629,7 @@ describe("InvoiceReviewPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Crear producto" }));
     expect(within(row(0)).getByText("Resuelta")).toBeInTheDocument();
-    expect(within(row(0)).getByText("Queso blanco", { selector: "span" })).toBeInTheDocument();
+    expect(within(row(0)).getByText("Queso blanco", { selector: "span.text-foreground" })).toBeInTheDocument();
   });
 
   it("descarta y restaura una línea, y avisa de factura duplicada y lectura dudosa", async () => {
@@ -760,7 +761,7 @@ describe("InvoiceReviewPanel", () => {
     await user.keyboard("{Enter}");
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
-    expect(within(row(0)).getByText("Producto 1")).toBeInTheDocument();
+    expect(within(row(0)).getByText("Producto 1", { selector: "span.text-foreground" })).toBeInTheDocument();
     await waitFor(() => expect(row(1)).toHaveFocus());
   });
 
@@ -1045,6 +1046,22 @@ describe("InvoiceReviewPanel", () => {
       dateNow.mockRestore();
     });
 
+    /** D43 (B-r9-1): el costo desviado (6.18) se reconoce con su botón, pasada la guarda. */
+    const ackButton = (index: number) => within(row(index)).queryByRole("button", { name: /^Sí, el costo es/ });
+    async function acknowledgeCost(user: ReturnType<typeof userEvent.setup>, index = 0) {
+      expect(row(index)).toHaveAttribute("data-status", "pending_doubtful");
+      now += 450;
+      await user.click(ackButton(index) as HTMLElement);
+    }
+    /** Igual con teclado (6.17): desde la fila, Tab lleva al botón y Enter lo activa. */
+    async function acknowledgeCostByKeyboard(user: ReturnType<typeof userEvent.setup>, index = 0) {
+      await waitFor(() => expect(row(index)).toHaveFocus());
+      await user.keyboard("{Tab}");
+      expect(ackButton(index)).toHaveFocus();
+      now += 450;
+      await user.keyboard("{Enter}");
+    }
+
     it.each([
       ["6.16 nombre parecido", nameLine],
       ["6.18 precio por caja", priceLine],
@@ -1146,6 +1163,7 @@ describe("InvoiceReviewPanel", () => {
 
       now += 450;
       await user.keyboard("{Enter}");
+      await acknowledgeCostByKeyboard(user);
       expect(row(0)).toHaveAttribute("data-status", "resolved");
       // D39-6: el foco queda en la fila resuelta.
       await waitFor(() => expect(row(0)).toHaveFocus());
@@ -1190,6 +1208,9 @@ describe("InvoiceReviewPanel", () => {
 
           now += 450;
           await user.click(perPack);
+          if (issue === PRICE_ISSUE) {
+            await acknowledgeCost(user);
+          }
 
           expect(row(0)).toHaveAttribute("data-status", "resolved");
           // D39-6: el foco queda en la fila resuelta, no avanza solo.
@@ -1290,6 +1311,7 @@ describe("InvoiceReviewPanel", () => {
         expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
 
         await user.click(options(0)[1]);
+        await acknowledgeCost(user);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
         now += 1000;
         expect(loadButton()).toBeEnabled();
@@ -1319,6 +1341,11 @@ describe("InvoiceReviewPanel", () => {
         expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
 
         await user.click(options(0)[1]);
+        // D43: el 2.º clic de un doble clic tampoco reconoce el costo.
+        now += 450;
+        fireEvent.click(ackButton(0) as HTMLElement, { detail: 2 });
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        await acknowledgeCost(user);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
         now += 1000;
         expect(loadButton()).toBeEnabled();
@@ -1359,6 +1386,9 @@ describe("InvoiceReviewPanel", () => {
         await user.keyboard("{Enter}");
 
         expect(perPack).toHaveAttribute("aria-pressed", "true");
+        // D43: elegir no reconoce el costo desviado; el botón aparte, sí.
+        expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+        await acknowledgeCostByKeyboard(user);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
         // D39-6: el foco queda en la fila resuelta.
         await waitFor(() => expect(row(0)).toHaveFocus());
@@ -1377,6 +1407,7 @@ describe("InvoiceReviewPanel", () => {
         await user.keyboard(" ");
 
         expect(perUnit).toHaveAttribute("aria-pressed", "true");
+        await acknowledgeCostByKeyboard(user);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
       });
 
@@ -1453,7 +1484,9 @@ describe("InvoiceReviewPanel", () => {
 
         expect(perPack).toHaveAttribute("aria-pressed", "true");
         expect(perUnit).toHaveAttribute("aria-pressed", "false");
-        expect(perPack).toHaveFocus();
+        // D43: la corrección deja el costo por reconocer: el foco va a la fila (D39-6).
+        await waitFor(() => expect(row(0)).toHaveFocus());
+        await acknowledgeCost(user);
         expect(row(0)).toHaveAttribute("data-status", "resolved");
       });
 

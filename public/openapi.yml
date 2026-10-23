@@ -7772,6 +7772,11 @@ components:
           type: number
         reason:
           type: string
+        sku:
+          type: string
+          description: >-
+            `products.sku` del candidato, si tiene. Distingue en la revision
+            candidatos de igual nombre. Ausente si el producto no tiene SKU.
         lastUnitCostRef:
           type: number
           description: >-
@@ -7824,6 +7829,15 @@ components:
           type: number
         unitCostRef:
           type: number
+        lastUnitCostRef:
+          type: number
+          description: >-
+            Ultimo costo por unidad de stock (REF) del producto propuesto
+            (`productId` o, sin el, el primer candidato), haya o no aviso de
+            precio; misma regla que `candidates[].lastUnitCostRef`. La revision
+            compara con el el costo de cada opcion (por unidad / por empaque) y,
+            si se aparta mas del 40 %, pide reconocerlo aparte. Ausente si no se
+            conoce.
         issues:
           type: array
           items:

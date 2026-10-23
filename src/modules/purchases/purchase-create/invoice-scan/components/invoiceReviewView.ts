@@ -187,16 +187,42 @@ function costNeedMessages(state: InvoiceReviewState, line: InvoiceReviewLine): s
   if (review.kind !== "acknowledge" || review.acknowledged) {
     return [];
   }
+  // D43: elegir la opción no confirma el costo; tras elegirla, se confirma con su botón.
+  const howTo = line.choiceMade
+    ? "si es correcto, confírmalo con «Sí, el costo es…»."
+    : `elige «${entryModeLabel(line)}» y confirma el costo.`;
   if (review.reason === "error") {
-    return [`No se pudo consultar el costo previo: revisa el costo y elige «${entryModeLabel(line)}» para confirmarlo.`];
+    return [`No se pudo consultar el costo previo: revisa el costo y, ${howTo}`];
   }
   const outcome = needsExplicitChoice(line) ? undefined : getEntryModeOutcome(state, line, line.entryMode);
   if (outcome?.unitCost === undefined || outcome.lastUnitCostRef === undefined) {
     return [];
   }
   return [
-    `El costo sale a ${formatRefAmount(outcome.unitCost.amount)} REF por unidad y el último fue ${formatRefAmount(outcome.lastUnitCostRef)} REF (se aparta más del ${Math.round(PRICE_DEVIATION_LIMIT * 100)} %): elige «${entryModeLabel(line)}» para confirmarlo.`,
+    `El costo sale a ${formatRefAmount(outcome.unitCost.amount)} REF por unidad y el último fue ${formatRefAmount(outcome.lastUnitCostRef)} REF (se aparta más del ${Math.round(PRICE_DEVIATION_LIMIT * 100)} %): ${howTo}`,
   ];
+}
+
+/**
+ * D43 (B-r9-1): textos del botón que reconoce el costo de la opción ya elegida («Sí, el costo es
+ * 20,71 REF/u (último 0,84)») y de la confirmación que lo sustituye, del mismo tamaño.
+ */
+export function costAcknowledgementTexts(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+): { ask: string; done: string } {
+  const outcome = getEntryModeOutcome(state, line, line.entryMode);
+  const cost = outcome?.unitCost;
+  const amount = cost
+    ? `${cost.currency === "REF" ? `${formatRefAmount(cost.amount)} REF` : formatVesBs(cost.amount)}/u`
+    : undefined;
+  const last =
+    outcome?.lastUnitCostRef !== undefined
+      ? `(último ${formatRefAmount(outcome.lastUnitCostRef)})`
+      : "(no se pudo consultar el último)";
+  return amount
+    ? { ask: `Sí, el costo es ${amount} ${last}`, done: `Costo confirmado: ${amount} ${last}` }
+    : { ask: `Sí, el costo es correcto ${last}`, done: `Costo confirmado ${last}` };
 }
 
 /** Qué le falta a la línea para quedar resuelta, en español (el producto, solo si es lo único). */

@@ -103,6 +103,16 @@ const loadButton = () => screen.getByRole("button", { name: "Cargar en la compra
 
 type User = ReturnType<typeof userEvent.setup>;
 
+/** D43 (B-r9-1): elegir la opción desviada no reconoce su costo: Tab al botón propio y Enter. */
+async function acknowledgeCostByKeyboard(user: User, index = 0) {
+  expect(row(index)).toHaveAttribute("data-status", "pending_doubtful");
+  await waitFor(() => expect(row(index)).toHaveFocus());
+  await user.keyboard("{Tab}");
+  expect(within(row(index)).getByRole("button", { name: /^Sí, el costo es/ })).toHaveFocus();
+  now += 1000;
+  await user.keyboard("{Enter}");
+}
+
 /** Pulsaciones (cada una con su keyup) separadas `gap` ms, como `CAOS_STEPS`. */
 async function burst(user: User, keys: string[], gap: number) {
   for (const [position, key] of keys.entries()) {
@@ -135,10 +145,12 @@ describe("REP8-02 · C8-M1: las flechas sobre las opciones no eligen ni sacan el
     await burst(user, keys, gap);
 
     expectTieUntouched();
-    expect(row(0)).toHaveAttribute("data-status", "resolved");
     expect(option(0, "Por unidad")).toHaveAttribute("aria-pressed", "true");
     expect(option(0, "Por caja")).toHaveAttribute("aria-pressed", "false");
     await waitFor(() => expect(row(0)).toHaveFocus());
+    // D43: la ráfaga elige la opción pero no reconoce su costo desviado.
+    await acknowledgeCostByKeyboard(user);
+    expect(row(0)).toHaveAttribute("data-status", "resolved");
   });
 
   it("la flecha solo mueve el foco entre las opciones: ninguna queda elegida", async () => {
@@ -168,8 +180,9 @@ describe("REP8-02 · C8-M1: las flechas sobre las opciones no eligen ni sacan el
 
     await burst(user, ["{Enter}", "{Tab}", "{ArrowRight}", key], 450);
 
-    expect(row(0)).toHaveAttribute("data-status", "resolved");
     expect(option(0, "Por caja")).toHaveAttribute("aria-pressed", "true");
+    await acknowledgeCostByKeyboard(user);
+    expect(row(0)).toHaveAttribute("data-status", "resolved");
     await waitFor(() => expect(row(0)).toHaveFocus());
     // Más flechas y Enter sobre la fila resuelta no tocan L1.
     await burst(user, ["{ArrowRight}", "{ArrowRight}", "{Enter}"], 450);
@@ -224,6 +237,7 @@ describe("REP8-02 · 6.17 solo con teclado sigue posible", () => {
     now += 1000;
 
     await burst(user, ["{Enter}", "{Tab}", "{Enter}"], 1000);
+    await acknowledgeCostByKeyboard(user);
     expect(row(0)).toHaveAttribute("data-status", "resolved");
     await waitFor(() => expect(row(0)).toHaveFocus());
 

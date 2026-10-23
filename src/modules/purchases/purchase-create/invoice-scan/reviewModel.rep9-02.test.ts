@@ -3,7 +3,7 @@
  * Para TODA línea con producto + modo + costo se calcula el costo unitario REF resultante y se
  * compara con el último costo unitario de ESE producto (propuesto, candidato o consultado para
  * el buscador). Desvío > 40 % → la línea no queda resuelta (ni `confirmed_by_match`) hasta que el
- * usuario lo reconozca eligiendo la opción; sin último costo, «sin costo previo» y sin bloqueo.
+ * usuario lo reconozca (D43: con su botón, tras elegir la opción); sin último costo, «sin costo previo» y sin bloqueo.
  * Repros: caos p9 C9-M1 (A–E, fixtures `caos-global/p9/ex/c9-*.json`) y QA p9 M-p9-1.
  */
 import type { InvoiceLineMatch } from "@/modules/invoice-scan/contracts";
@@ -46,6 +46,11 @@ const chooseMode = (entryMode: "unit" | "pack", index = 0): InvoiceReviewAction 
   index,
   entryMode,
 });
+/** D43 (B-r9-1): elegir la opción y, aparte, reconocer su costo con el botón propio. */
+const ackMode = (entryMode: "unit" | "pack", index = 0): InvoiceReviewAction[] => [
+  chooseMode(entryMode, index),
+  { type: "acknowledgeCost", index },
+];
 
 /** C9-M1 A (`c9-cand-unit.json`): por nombre, sin aviso del servidor; 4.500 Bs ÷ 900 = 5,00 frente a 0,50. */
 function harinaByName(match: Partial<InvoiceLineMatch> = {}, unitPrice = 4500): ReviewFixtureLine {
@@ -237,7 +242,7 @@ describe("REP9-02 · C9-M1: un costo desviado no se resuelve sin reconocerlo, ha
     expect(getInvoiceReviewBlockers(afterEnter)).toContain(COST_BLOCKER);
     expect(lineNeedMessages(afterEnter, afterEnter.lines[0]).join(" ")).toMatch(/último/);
 
-    const acknowledged = run(afterEnter, chooseMode("unit"));
+    const acknowledged = run(afterEnter, ...ackMode("unit"));
     expect(status(acknowledged)).toBe("resolved");
     expect(getPendingCount(acknowledged)).toBe(0);
   });
@@ -249,8 +254,8 @@ describe("REP9-02 · C9-M1: un costo desviado no se resuelve sin reconocerlo, ha
     expect(getEntryModeOutcome(state, line, "unit")).toMatchObject({ unitCost: { amount: 3 }, deviates: true });
     expect(status(state)).toBe("pending_doubtful");
 
-    expect(status(run(state, chooseMode("pack")))).toBe("resolved");
-    expect(status(run(state, chooseMode("unit")))).toBe("resolved");
+    expect(status(run(state, ...ackMode("pack")))).toBe("resolved");
+    expect(status(run(state, ...ackMode("unit")))).toBe("resolved");
   });
 
   it("C · confirmada por SKU (coherente) cambiada a unidad (0,30 frente a 0,05): deja de estar confirmada", () => {
@@ -287,7 +292,7 @@ describe("REP9-02 · C9-M1: un costo desviado no se resuelve sin reconocerlo, ha
     expect(issueTexts).not.toContain(NO_RATE_PRICE_ISSUE);
     expect(lineNeedMessages(afterEnter, afterEnter.lines[0]).join(" ")).toMatch(/8,62/);
 
-    expect(status(run(afterEnter, chooseMode("unit")))).toBe("resolved");
+    expect(status(run(afterEnter, ...ackMode("unit")))).toBe("resolved");
   });
 
   it.each([0, 1])("E · homónimos 6.9 a 10×: al elegir el candidato %i no se resuelve sin reconocer", (position) => {
@@ -295,7 +300,7 @@ describe("REP9-02 · C9-M1: un costo desviado no se resuelve sin reconocerlo, ha
     const productId = initial.lines[0].candidates[position].productId;
     const chosen = run(initial, { type: "acceptCandidate", index: 0, productId });
     expect(status(chosen)).toBe("pending_doubtful");
-    expect(status(run(chosen, chooseMode("unit")))).toBe("resolved");
+    expect(status(run(chosen, ...ackMode("unit")))).toBe("resolved");
   });
 });
 
@@ -315,7 +320,7 @@ describe("REP9-02 · M-p9-1: el último costo es el del producto elegido, no el 
     expect(status(looked)).toBe("resolved");
 
     // Al cambiar a Por unidad con el clic queda reconocida; cualquier otra vía hacia unidad pediría reconocerla.
-    expect(status(run(looked, chooseMode("unit")))).toBe("resolved");
+    expect(status(run(looked, ...ackMode("unit")))).toBe("resolved");
   });
 
   it("chip del 2.º candidato Malta Polar (último 2,17): Por bulto 0,79 sale desviada y la línea pide reconocerla", () => {
@@ -328,7 +333,7 @@ describe("REP9-02 · M-p9-1: el último costo es el del producto elegido, no el 
     expect(pack?.unitCost?.amount).toBeCloseTo(0.79, 2);
     expect(pack).toMatchObject({ lastUnitCostRef: 2.17, deviates: true });
     expect(status(polar)).toBe("pending_doubtful");
-    expect(status(run(polar, chooseMode("pack")))).toBe("resolved");
+    expect(status(run(polar, ...ackMode("pack")))).toBe("resolved");
   });
 });
 
@@ -345,7 +350,7 @@ describe("REP9-02 · vías de emparejamiento", () => {
     expect(getReviewSections(initial).confirmed).toHaveLength(0);
     expect(getInvoiceReviewBlockers(initial)).toContain(COST_BLOCKER);
 
-    const acknowledged = run(initial, chooseMode("unit"));
+    const acknowledged = run(initial, ...ackMode("unit"));
     expect(status(acknowledged)).toBe("resolved");
     expect(getReviewSections(acknowledged).confirmed).toHaveLength(0);
   });
@@ -375,7 +380,7 @@ describe("REP9-02 · vías de emparejamiento", () => {
       const state = run(pick(build([harinaByName()])), { type: "setLastUnitCost", index: 0, productId: BUSCADO, result: 0.5 });
       expect(status(state)).toBe("pending_doubtful");
       expect(getEntryModeOutcome(state, state.lines[0], "unit")).toMatchObject({ lastUnitCostRef: 0.5, deviates: true });
-      expect(status(run(state, chooseMode("unit")))).toBe("resolved");
+      expect(status(run(state, ...ackMode("unit")))).toBe("resolved");
     });
 
     it("sin costo previo (null): «sin costo previo» y sin bloqueo", () => {
@@ -388,7 +393,7 @@ describe("REP9-02 · vías de emparejamiento", () => {
       const state = run(pick(build([harinaByName()])), { type: "setLastUnitCost", index: 0, productId: BUSCADO, result: "error" });
       expect(status(state)).toBe("pending_doubtful");
       expect(lineNeedMessages(state, state.lines[0]).join(" ")).toMatch(/No se pudo consultar el costo previo/);
-      expect(status(run(state, chooseMode("unit")))).toBe("resolved");
+      expect(status(run(state, ...ackMode("unit")))).toBe("resolved");
     });
 
     it("una respuesta para otro producto (el usuario ya cambió) se ignora", () => {
@@ -431,12 +436,12 @@ describe("REP9-02 · vías de emparejamiento", () => {
     );
     expect(getEntryModeOutcome(state, state.lines[0], "unit")).toMatchObject({ unitCost: { amount: 5, currency: "REF" }, deviates: true });
     expect(status(state)).toBe("pending_doubtful");
-    expect(status(run(state, chooseMode("unit")))).toBe("resolved");
+    expect(status(run(state, ...ackMode("unit")))).toBe("resolved");
   });
 });
 
 describe("REP9-02 · el reconocimiento queda ligado a (producto, modo, unidades por empaque, costo REF)", () => {
-  const acknowledged = () => run(enter(build([harinaByName()])), chooseMode("unit"));
+  const acknowledged = () => run(enter(build([harinaByName()])), ...ackMode("unit"));
 
   it("cambio de tasa que sigue desviado lo invalida; a una coherente, resuelve sola", () => {
     expect(status(run(acknowledged(), { type: "setRateChoice", choice: "manual", manualRate: 450 }))).toBe("pending_doubtful");
@@ -451,7 +456,7 @@ describe("REP9-02 · el reconocimiento queda ligado a (producto, modo, unidades 
   });
 
   it("cambio de unidades por empaque que sigue desviado lo invalida", () => {
-    const packAck = run(enter(build([galletaCaja()])), chooseMode("pack"));
+    const packAck = run(enter(build([galletaCaja()])), ...ackMode("pack"));
     expect(status(packAck)).toBe("resolved");
     expect(status(run(packAck, { type: "editUnitsPerPack", index: 0, unitsPerPack: 12 }))).toBe("pending_doubtful");
   });
@@ -461,7 +466,7 @@ describe("REP9-02 · el reconocimiento queda ligado a (producto, modo, unidades 
       ...galletaCaja(),
       read: { ...galletaCaja().read, quantity: 0.5, lineTotal: 1350 },
     };
-    const packAck = run(enter(build([half])), chooseMode("pack"));
+    const packAck = run(enter(build([half])), ...ackMode("pack"));
     const converted = run(packAck, { type: "convertPackToUnits", index: 0 });
     expect(converted.lines[0].entryMode).toBe("unit");
     expect(status(converted)).toBe("pending_doubtful");
@@ -470,13 +475,13 @@ describe("REP9-02 · el reconocimiento queda ligado a (producto, modo, unidades 
   it("cambio de producto lo invalida (otro candidato desviado)", () => {
     const initial = build([homonimos()]);
     const [first, second] = initial.lines[0].candidates;
-    const ack = run(initial, { type: "acceptCandidate", index: 0, productId: first.productId }, chooseMode("unit"));
+    const ack = run(initial, { type: "acceptCandidate", index: 0, productId: first.productId }, ...ackMode("unit"));
     expect(status(ack)).toBe("resolved");
     expect(status(run(ack, { type: "acceptCandidate", index: 0, productId: second.productId }))).toBe("pending_doubtful");
   });
 
   it("cambiar la cantidad o descartar otra línea no lo invalida", () => {
-    const two = run(enter(build([harinaByName(), harinaByName({}, 450)])), chooseMode("unit"));
+    const two = run(enter(build([harinaByName(), harinaByName({}, 450)])), ...ackMode("unit"));
     expect(status(two)).toBe("resolved");
     expect(status(run(two, { type: "editQuantity", index: 0, quantity: 3 }))).toBe("resolved");
     expect(status(run(two, { type: "discardLine", index: 1 }))).toBe("resolved");

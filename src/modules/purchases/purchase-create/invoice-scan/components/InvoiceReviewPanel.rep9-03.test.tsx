@@ -103,6 +103,8 @@ function row(index: number) {
 
 const chip = (index: number, name: string) => within(row(index)).getByRole("button", { name: new RegExp(`^${name}`) });
 const option = (index: number, name: string) => within(row(index)).getByRole("button", { name });
+/** D43 (B-r9-1): el costo desviado de la opción elegida se reconoce con su botón aparte. */
+const ackButton = (index: number) => within(row(index)).getByRole("button", { name: /^Sí, el costo es/ });
 
 /** Pasa la guarda de activación (400 ms) del último cambio de foco: pulsación deliberada. */
 function later() {
@@ -138,8 +140,11 @@ describe("REP9-03 · M-p9-2: el producto elegido con el chip manda sobre el cand
     await user.click(option(0, "Por caja"));
 
     expect(row(0)).toHaveAttribute("data-status", "resolved");
-    expect(within(row(0)).getByText("Malta Polar 1.5L")).toBeInTheDocument();
-    expect(within(row(0)).queryByText("MALTA 1.5")).not.toBeInTheDocument();
+    // D43: la resuelta conserva los candidatos (el elegido, marcado); el título es Malta Polar.
+    expect(within(row(0)).getByText("Malta Polar 1.5L", { selector: "span.text-foreground" })).toBeInTheDocument();
+    expect(within(row(0)).queryByText("MALTA 1.5", { selector: "span.text-foreground" })).not.toBeInTheDocument();
+    expect(chip(0, "Malta Polar 1.5L")).toHaveAttribute("aria-pressed", "true");
+    expect(chip(0, "MALTA 1.5")).toHaveAttribute("aria-pressed", "false");
   });
 });
 
@@ -149,6 +154,8 @@ describe("REP9-03 · B-p9-1: el chip y «Cargar como N unidades» dejan el foco 
     renderPanel(makeReviewResponse({ lines: [maltaLine(), flourLine()] }));
     later();
     await user.click(option(0, "Por caja"));
+    later();
+    await user.click(ackButton(0));
 
     later();
     await user.click(chip(0, "MALTA 1.5"));
@@ -163,6 +170,8 @@ describe("REP9-03 · B-p9-1: el chip y «Cargar como N unidades» dejan el foco 
     renderPanel(makeReviewResponse({ lines: [maltaLine(), flourLine()] }));
     later();
     await user.click(option(0, "Por caja"));
+    later();
+    await user.click(ackButton(0));
 
     chip(0, "MALTA 1.5").focus();
     later();
