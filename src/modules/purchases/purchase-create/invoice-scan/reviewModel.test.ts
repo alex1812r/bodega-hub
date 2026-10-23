@@ -16,6 +16,7 @@ import {
   type ReviewFixtureLine,
 } from "./reviewFixtures";
 import {
+  awaitsCostAcknowledgement,
   canLoad,
   createInvoiceReviewState,
   getEffectiveRate,
@@ -225,6 +226,9 @@ describe("canLoad y pendingCount", () => {
       index: 0,
       product: { productId: productUuid(50), name: "Nuevo" },
     });
+    // REP9-02 (D42): hasta que llega su último costo (aquí, sin costo previo) no se resuelve.
+    expect(state.lines[0].status).toBe("pending_doubtful");
+    state = reviewReducer(state, { type: "setLastUnitCost", index: 0, productId: productUuid(50), result: null });
 
     expect(state.lines[0]).toMatchObject({ status: "resolved", productName: "Nuevo" });
   });
@@ -441,11 +445,15 @@ describe("REP5-01 (D31): una línea con aviso de precio o de empaque no se resue
       expect(canLoad(state)).toBe(false);
     });
 
-    it.each(choices)("aceptada y luego «%s»: resuelta", (__, choice) => {
+    it.each(choices)("aceptada y luego «%s»: resuelta", (name, choice) => {
       let state = reviewReducer(lineWith(issue), { type: "acceptMarked", index: 0 });
       state = reviewReducer(state, choice);
       expect(needsExplicitChoice(state.lines[0])).toBe(false);
-      expect(state.lines[0].status).toBe("resolved");
+      // REP9-02 (D42): con el aviso 6.18 (0,50 REF/u frente a 0,05), corregir la cantidad deja el
+      // mismo costo desviado y 12 por caja (0,25) sigue desviado: corregir no reconoce el costo.
+      const stillDeviating = issue === priceIssue && (name === "corrige la cantidad" || name === "corrige las unidades");
+      expect(awaitsCostAcknowledgement(state, state.lines[0])).toBe(stillDeviating);
+      expect(state.lines[0].status).toBe(stillDeviating ? "pending_doubtful" : "resolved");
     });
 
     it("elegida antes de aceptar: aceptar la resuelve", () => {

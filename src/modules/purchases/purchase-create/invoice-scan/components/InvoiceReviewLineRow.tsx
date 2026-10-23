@@ -15,12 +15,15 @@ import {
   enterTargetProductId,
   getEntryModeOutcome,
   getLineAmount,
+  getLineCostReview,
+  getLineLastCost,
   getTaxInclusion,
   getUnitConversion,
   isExplicitChoiceIssue,
   isPendingStatus,
   linePackWord,
   MAX_REVIEW_QUANTITY,
+  needsExplicitChoice,
   type InvoiceReviewAction,
   type InvoiceReviewLine,
   type InvoiceReviewProduct,
@@ -101,20 +104,25 @@ export function InvoiceReviewLineRow({
     fractional ||
     (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
     line.issues.some(isExplicitChoiceIssue);
-  // D33-a (C6-M1): con aviso y sin elección, ninguna opción viene marcada.
-  const checkedMode = line.issues.some(isExplicitChoiceIssue) && !line.choiceMade ? undefined : line.entryMode;
+  // D42: el costo de ESE producto con su modo frente a su último costo. Desviado o sin poder
+  // comparar, se reconoce eligiendo la opción: aunque el producto solo tenga un modo, se muestra.
+  const costReview = getLineCostReview(state, line);
+  const lastCost = getLineLastCost(state, line);
+  const costUnconfirmed =
+    costReview.kind === "loading" || (costReview.kind === "acknowledge" && !costReview.acknowledged);
+  const showOptions = showPack || costReview.kind !== "clear";
+  // D33-a (C6-M1): con aviso (o costo por reconocer) y sin elección, ninguna opción viene marcada.
+  const checkedMode = needsExplicitChoice(line) || costUnconfirmed ? undefined : line.entryMode;
   const conversion = fractional ? getUnitConversion(line) : undefined;
   const taxLabel = getTaxInclusion(state).included ? "con IVA" : "sin IVA";
   const marked = pending ? enterTargetProductId(line) : undefined;
   const chips = pending ? getChoiceChips(line) : [];
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
   const issues = getDisplayedLineIssues(state, line);
-  const needs = line.discarded ? [] : lineNeedMessages(line);
+  const needs = line.discarded ? [] : lineNeedMessages(state, line);
   const amount = getLineAmount(line);
   const noticesId = useId();
   const optionsId = useId();
-  // B-p7-3: con aviso de elección, cada opción dice antes qué entra al stock y a qué costo.
-  const showOutcomes = line.issues.some(isExplicitChoiceIssue);
   const hasNotices = issues.length > 0 || needs.length > 0;
 
   return (
@@ -280,12 +288,14 @@ export function InvoiceReviewLineRow({
             </div>
           </div>
 
-          {showPack ? (
+          {showOptions ? (
             <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
               <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
-                {(["unit", "pack"] as const).map((mode) => {
-                  const outcome = showOutcomes ? getEntryModeOutcome(state, line, mode) : undefined;
+                {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
+                  // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.
+                  const outcome = getEntryModeOutcome(state, line, mode);
                   const deviates = outcome?.deviates === true;
+                  const unverified = outcome?.lastCost === "error";
                   const optionId = `${optionsId}-${mode}`;
                   return (
                     <button
@@ -303,8 +313,8 @@ export function InvoiceReviewLineRow({
                         checkedMode === mode
                           ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                           : "border-outline-variant text-foreground hover:bg-surface-container-low",
-                        deviates ? "border-amber-400 dark:border-amber-500" : null,
-                        deviates && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
+                        deviates || unverified ? "border-amber-400 dark:border-amber-500" : null,
+                        (deviates || unverified) && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
                       )}
                       data-choice={mode}
                       data-deviates={deviates || undefined}
@@ -364,6 +374,11 @@ export function InvoiceReviewLineRow({
                 />
               ) : null}
             </div>
+          ) : lastCost?.status === "none" ? (
+            // D42: sin opciones a la vista, la fila dice que no hay con qué comparar el costo.
+            <p className="text-xs text-on-surface-variant" data-testid="invoice-review-no-last-cost">
+              Sin costo previo de este producto.
+            </p>
           ) : null}
 
           {conversion?.ok && !line.discarded ? (

@@ -283,9 +283,12 @@ describe("REP7-06 · Obs-2: el aviso de precio sigue a la línea tras convertir 
     await user.clear(units);
     await user.type(units, "12");
 
+    // REP9-02 (D42): 12 por caja cambia el costo reconocido y sigue desviado: la fila lo dice con lo
+    // que deja ahora, sin repetir el aviso del servidor, y pide volver a elegir la opción.
     expect(notices(0)).toHaveTextContent(
-      "¿Precio por caja o por unidad? Sale a 0,05 REF por unidad y el último costo fue 0,59 REF.",
+      "El costo sale a 0,05 REF por unidad y el último fue 0,59 REF (se aparta más del 40 %): elige «Por caja» para confirmarlo.",
     );
+    expect(notices(0)).not.toHaveTextContent(/¿Precio por/);
   });
 
   it("f05: al elegir «Por unidad» (0,58 frente a 0,59) el aviso de precio se retira", async () => {
