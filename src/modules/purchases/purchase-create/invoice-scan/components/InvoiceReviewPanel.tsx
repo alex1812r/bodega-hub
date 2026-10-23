@@ -145,13 +145,6 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
 const FOOTER_GAP = 8;
 
 /**
- * QA REP4-02c F1: `focus()` no desplaza si el elemento está dentro del viewport aunque lo
- * tape el pie fijo (sticky). El margen de scroll con el alto actual del pie (varía al
- * desplegar el detalle en móvil) hace que `scrollIntoView` lo deje por encima del pie.
- * QA REP4-02c-F1 (intento 2): el pie sticky no está pegado al borde del viewport (padding
- * inferior de `main`), así que el margen es la zona que tapa realmente desde ese borde.
- */
-/**
  * REP9-02: mantiene la fila `index` en el grupo de confirmadas (orden por índice, como el modelo)
  * aunque el modelo ya la mande a revisar; su estado no cambia, solo dónde se monta.
  */
@@ -167,6 +160,13 @@ function keepInConfirmed(sections: InvoiceReviewSections, index: number | null):
   };
 }
 
+/**
+ * QA REP4-02c F1: `focus()` no desplaza si el elemento está dentro del viewport aunque lo
+ * tape el pie fijo (sticky). El margen de scroll con el alto actual del pie (varía al
+ * desplegar el detalle en móvil) hace que `scrollIntoView` lo deje por encima del pie.
+ * QA REP4-02c-F1 (intento 2): el pie sticky no está pegado al borde del viewport (padding
+ * inferior de `main`), así que el margen es la zona que tapa realmente desde ese borde.
+ */
 function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
   element.focus();
   scrollAboveFooter(element, footer);
