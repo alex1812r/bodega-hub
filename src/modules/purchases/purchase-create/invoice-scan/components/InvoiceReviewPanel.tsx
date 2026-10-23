@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FileImage } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FocusEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
 import { fetchLastUnitCostRef } from "@/modules/invoice-scan/client/fetchLastUnitCost";
@@ -30,6 +30,7 @@ import {
   type InvoiceReviewAction,
   type InvoiceReviewContext,
   type InvoiceReviewProduct,
+  type InvoiceReviewSections,
   type InvoiceReviewState,
 } from "../reviewModel";
 import { useInvoiceReview } from "../useInvoiceReview";
@@ -150,6 +151,22 @@ const FOOTER_GAP = 8;
  * QA REP4-02c-F1 (intento 2): el pie sticky no está pegado al borde del viewport (padding
  * inferior de `main`), así que el margen es la zona que tapa realmente desde ese borde.
  */
+/**
+ * REP9-02: mantiene la fila `index` en el grupo de confirmadas (orden por índice, como el modelo)
+ * aunque el modelo ya la mande a revisar; su estado no cambia, solo dónde se monta.
+ */
+function keepInConfirmed(sections: InvoiceReviewSections, index: number | null): InvoiceReviewSections {
+  const line = index === null ? undefined : sections.review.find((item) => item.index === index);
+  if (!line) {
+    return sections;
+  }
+  return {
+    ...sections,
+    review: sections.review.filter((item) => item !== line),
+    confirmed: [...sections.confirmed, line].sort((left, right) => left.index - right.index),
+  };
+}
+
 function focusAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
   element.focus();
   scrollAboveFooter(element, footer);
@@ -235,6 +252,9 @@ export function InvoiceReviewPanel({
   }, [dispatch, lastUnitCostFetcher, state.lines, supplierId]);
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [confirmedOpen, setConfirmedOpen] = useState(false);
+  // REP9-02: confirmada en cuyo campo se está escribiendo; no cambia de lista hasta que el foco salga
+  // de su fila (su estado sí cambia con cada tecla: D42 no se relaja).
+  const [heldConfirmedIndex, setHeldConfirmedIndex] = useState<number | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [newProduct, setNewProduct] = useState<{ index: number; values: ProductFormInitialValues } | null>(null);
   const [discardScanOpen, setDiscardScanOpen] = useState(false);
@@ -259,7 +279,8 @@ export function InvoiceReviewPanel({
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
-  const sections = getReviewSections(state);
+  const modelSections = getReviewSections(state);
+  const sections = keepInConfirmed(modelSections, heldConfirmedIndex);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
   // modelo), pero el botón lo dice para que se abra a revisarla.
   const confirmedMismatches = sections.confirmed.filter((line) =>
@@ -603,6 +624,37 @@ export function InvoiceReviewPanel({
     }
   }
 
+  /** REP9-02: escribir en un campo de una confirmada la fija en su lista (no se desmonta). */
+  function handleConfirmedFocus(event: FocusEvent<HTMLUListElement>) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    const index = Number(target.closest("[data-line-index]")?.getAttribute("data-line-index"));
+    if (Number.isInteger(index)) {
+      setHeldConfirmedIndex(index);
+    }
+  }
+
+  /**
+   * Al salir el foco de la fila fijada, toma la lista que le toca. Si cambia de lista y el foco
+   * no fue a otro control, va a la fila ya movida (nunca a BODY).
+   */
+  function handleConfirmedBlur(event: FocusEvent<HTMLUListElement>) {
+    if (heldConfirmedIndex === null) {
+      return;
+    }
+    const next = event.relatedTarget;
+    if (next instanceof Node && rowRefs.current.get(heldConfirmedIndex)?.contains(next)) {
+      return;
+    }
+    setHeldConfirmedIndex(null);
+    const moves = !modelSections.confirmed.some((line) => line.index === heldConfirmedIndex);
+    if (moves && !(next instanceof Element)) {
+      requestFocus(heldConfirmedIndex, state);
+    }
+  }
+
   function renderRow(index: number) {
     const line = state.lines[index];
     return (
@@ -735,7 +787,7 @@ export function InvoiceReviewPanel({
               <ul aria-label="Líneas por revisar" className="divide-y divide-border dark:divide-slate-800">
                 {sections.review.map((line) => renderRow(line.index))}
               </ul>
-            ) : state.lines.length > 0 && !state.confirmedPurchase ? (
+            ) : modelSections.review.length === 0 && state.lines.length > 0 && !state.confirmedPurchase ? (
               <p className="px-4 py-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
                 Todas las líneas quedaron emparejadas con tus productos. Revisa los totales y carga la compra.
               </p>
@@ -765,7 +817,12 @@ export function InvoiceReviewPanel({
                   )}
                 </button>
                 {confirmedOpen ? (
-                  <ul aria-label="Líneas confirmadas" className="divide-y divide-border border-t border-border dark:divide-slate-800 dark:border-slate-800">
+                  <ul
+                    aria-label="Líneas confirmadas"
+                    className="divide-y divide-border border-t border-border dark:divide-slate-800 dark:border-slate-800"
+                    onBlur={handleConfirmedBlur}
+                    onFocus={handleConfirmedFocus}
+                  >
                     {sections.confirmed.map((line) => renderRow(line.index))}
                   </ul>
                 ) : null}

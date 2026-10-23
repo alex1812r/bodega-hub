@@ -310,3 +310,112 @@ describe("REP9-02 · buscador: último costo de ESE producto y foco en la fila (
     expect(row(0)).toHaveAttribute("data-status", "resolved");
   });
 });
+
+describe("REP9-02 · editar una confirmada no la cambia de lista bajo el teclado", () => {
+  /** Confirmada por alias: 450 Bs ÷ 900 = 0,50 REF/u, igual al último costo. */
+  function harinaConfirmada(entry: Partial<ReviewFixtureLine["read"]> = {}): ReviewFixtureLine {
+    const pack = entry.unitsPerPack !== undefined;
+    return {
+      read: {
+        rawText: "CAOSG Harina Maiz 1kg 1 450,00 450,00",
+        description: "CAOSG Harina Maiz 1kg",
+        unit: pack ? "caja" : "unidad",
+        quantity: 1,
+        unitPrice: 450,
+        lineTotal: 450,
+        ...entry,
+      },
+      match: {
+        status: "confirmed",
+        productId: HARINA,
+        taxRateCode: "exento",
+        ...(pack ? { entryMode: "pack" as const, unitsPerPack: entry.unitsPerPack } : {}),
+        candidates: [{ productId: HARINA, name: "CAOSG Harina Maiz 1kg", score: 1, reason: "alias", lastUnitCostRef: pack ? 0.5 / (entry.unitsPerPack ?? 1) : 0.5 }],
+        lastUnitCostRef: pack ? 0.5 / (entry.unitsPerPack ?? 1) : 0.5,
+      },
+    };
+  }
+
+  const confirmedList = () => screen.getByRole("list", { name: "Líneas confirmadas" });
+  const reviewList = () => screen.queryByRole("list", { name: "Líneas por revisar" });
+  const field = (label: RegExp) => within(row(0)).getByLabelText(label);
+
+  async function openConfirmed(lines: ReviewFixtureLine[]) {
+    const user = userEvent.setup();
+    renderPanel(makeReviewResponse({ lines }));
+    await user.click(screen.getByRole("button", { name: /1 línea confirmada · ver/ }));
+    expect(confirmedList()).toContainElement(row(0));
+    return user;
+  }
+
+  it("costo tecleado carácter a carácter: el foco y el valor siguen en el campo; al salir pasa a «por revisar» en ámbar y el pie la cuenta", async () => {
+    const user = await openConfirmed([harinaConfirmada()]);
+    const cost = field(/^Costo/);
+
+    await user.clear(cost);
+    expect(cost).toHaveFocus();
+    // D42 no se relaja: desde la primera tecla que la desvía, pendiente aunque la fila no se mueva.
+    await user.type(cost, "4");
+    expect(cost).toHaveFocus();
+    expect(screen.getByText(/^1 línea pendiente/)).toBeInTheDocument();
+    expect(blockers()).toHaveTextContent("Falta confirmar el costo en 1 línea.");
+    expect(loadButton()).toBeDisabled();
+    await user.type(cost, "500");
+
+    expect(document.activeElement).toBe(cost);
+    expect(cost).toHaveValue("4500");
+    expect(confirmedList()).toContainElement(row(0));
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+    later();
+    await user.click(screen.getByRole("heading", { name: "Revisión de la factura" }));
+
+    expect(reviewList()).toContainElement(row(0));
+    expect(option(0, "Por unidad")).toHaveAttribute("data-deviates", "true");
+    expect(blockers()).toHaveTextContent("Falta confirmar el costo en 1 línea.");
+    expect(screen.getByText(/^1 línea pendiente/)).toBeInTheDocument();
+    await waitFor(() => expect(row(0)).toHaveFocus());
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("cantidad tecleada carácter a carácter: el foco y el valor siguen en el campo; vacía cuenta como pendiente; coherente no salta de lista", async () => {
+    const user = await openConfirmed([harinaConfirmada()]);
+    const quantity = field(/^Cantidad/);
+
+    await user.clear(quantity);
+    expect(quantity).toHaveFocus();
+    expect(screen.getByText(/^1 línea pendiente/)).toBeInTheDocument();
+    await user.type(quantity, "12");
+
+    expect(document.activeElement).toBe(quantity);
+    expect(quantity).toHaveValue("12");
+    expect(confirmedList()).toContainElement(row(0));
+
+    later();
+    await user.click(screen.getByRole("heading", { name: "Revisión de la factura" }));
+
+    expect(confirmedList()).toContainElement(row(0));
+    expect(row(0)).toHaveAttribute("data-status", "confirmed_by_match");
+  });
+
+  it("unidades por empaque hasta desviarse: el foco sigue en el campo; al salir pasa a «por revisar» en ámbar y el pie la cuenta", async () => {
+    const user = await openConfirmed([harinaConfirmada({ unitsPerPack: 6 })]);
+    const units = field(/^Unidades por/);
+
+    await user.clear(units);
+    await user.type(units, "60");
+
+    expect(document.activeElement).toBe(units);
+    expect(units).toHaveValue("60");
+    expect(confirmedList()).toContainElement(row(0));
+    expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
+
+    later();
+    await user.click(screen.getByRole("heading", { name: "Revisión de la factura" }));
+
+    expect(reviewList()).toContainElement(row(0));
+    expect(option(0, "Por caja")).toHaveAttribute("data-deviates", "true");
+    expect(blockers()).toHaveTextContent("Falta confirmar el costo en 1 línea.");
+    await waitFor(() => expect(row(0)).toHaveFocus());
+  });
+});

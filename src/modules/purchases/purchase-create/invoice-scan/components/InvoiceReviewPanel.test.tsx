@@ -901,7 +901,8 @@ describe("InvoiceReviewPanel", () => {
       await user.click(screen.getByRole("button", { name: "2 líneas confirmadas · ver" }));
       await user.clear(within(row(0)).getByLabelText("Cantidad"));
       expect(row(0)).toHaveAttribute("data-status", "pending_doubtful");
-      await user.click(screen.getByRole("button", { name: "1 línea confirmada · ocultar" }));
+      // REP9-02: no cambia de lista mientras se escribe; al salir de la fila (el clic en el botón) sí.
+      await user.click(screen.getByRole("button", { name: "2 líneas confirmadas · ocultar" }));
 
       await user.click(discardButton(0));
 
