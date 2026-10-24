@@ -95,8 +95,9 @@ export type ChoiceChip = { productId: string; name: string; detail: string };
 
 /**
  * Chips de elección de una línea pendiente: sus candidatos (≤ 3) con motivo y
- * score y, si el producto propuesto no está entre ellos (confirmada que pasó a
- * dudosa, factura en dólares), también él: Enter lo aceptaría.
+ * score y, si el producto de la línea no está entre ellos, también él: Enter lo aceptaría. Es
+ * el propuesto (confirmada que pasó a dudosa, factura en dólares) o, B-p10-1, uno elegido en el
+ * buscador o creado en el alta: esos llevan su consulta del último costo (`lastCostLookup`, D42).
  */
 export function getChoiceChips(line: InvoiceReviewLine): ChoiceChip[] {
   const chips = line.candidates.map((candidate) => ({
@@ -106,8 +107,9 @@ export function getChoiceChips(line: InvoiceReviewLine): ChoiceChip[] {
     productId: candidate.productId,
   }));
   if (line.productId && !line.candidates.some((candidate) => candidate.productId === line.productId)) {
+    const chosenByUser = line.lastCostLookup?.productId === line.productId;
     chips.unshift({
-      detail: "Propuesto por el emparejamiento",
+      detail: chosenByUser ? "Elegido por ti (buscador o alta)" : "Propuesto por el emparejamiento",
       name: line.productName || "Producto propuesto",
       productId: line.productId,
     });
@@ -192,7 +194,12 @@ function costNeedMessages(state: InvoiceReviewState, line: InvoiceReviewLine): s
     ? "si es correcto, confírmalo con «Sí, el costo es…»."
     : `elige «${entryModeLabel(line)}» y confirma el costo.`;
   if (review.reason === "error") {
-    return [`No se pudo consultar el costo previo: revisa el costo y, ${howTo}`];
+    // B1: «revisa el costo y, elige…» no se lee; sin la opción elegida, primero elegirla.
+    return [
+      line.choiceMade
+        ? `No se pudo consultar el costo previo: revisa el costo y, ${howTo}`
+        : `No se pudo consultar el costo previo: elige «${entryModeLabel(line)}», revisa el costo y confírmalo.`,
+    ];
   }
   const outcome = needsExplicitChoice(line) ? undefined : getEntryModeOutcome(state, line, line.entryMode);
   if (outcome?.unitCost === undefined || outcome.lastUnitCostRef === undefined) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
-import { type Ref, useId, useState } from "react";
+import { type CSSProperties, type Ref, useId, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
@@ -22,6 +22,8 @@ export type InvoiceReviewFooterProps = {
   onAction: (action: InvoiceReviewAction) => void;
   onLoad: () => void;
   onDiscard: () => void;
+  /** D46-a: alto mínimo del detalle (pendientes y bloqueos) con el layout pendiente. */
+  detailStyle?: CSSProperties;
 };
 
 /**
@@ -43,6 +45,7 @@ const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { labe
 };
 
 export function InvoiceReviewFooter({
+  detailStyle,
   footerRef,
   onAction,
   onDiscard,
@@ -138,7 +141,9 @@ export function InvoiceReviewFooter({
 
       <div
         className={cn("col-span-3 row-start-2 min-w-0 flex-col gap-1 sm:col-span-1 sm:col-start-1", collapsible ?? "flex")}
+        data-layout-box="footer-detail"
         id={detailId}
+        style={detailStyle}
       >
         <p className="text-xs text-on-surface-variant sm:hidden">
           {readLabel} {readText}
