@@ -48,6 +48,7 @@ import {
   getChoiceChips,
   lineNeedMessages,
 } from "./invoiceReviewView";
+import { isSpatialRebound, type PointerActivation, readPointerActivation, useLayoutHold } from "./useLayoutHold";
 
 export type InvoiceReviewPanelProps = {
   /** Respuesta de `POST /api/purchases/invoice-scan`. Otro escaneo = montar de nuevo (`key`). */
@@ -87,8 +88,8 @@ type FocusRequest = {
   needsSupplier?: boolean;
   choice?: boolean;
   /**
-   * D43 (B-r9-1): la acción vino del puntero en esa misma fila. El foco va a la fila sin desplazar
-   * la página: un desplazamiento dejaría otro control bajo el dedo que acaba de pulsar.
+   * D43/D46-a: la acción vino del puntero (layout pendiente). El foco no desplaza la página: un
+   * desplazamiento dejaría otro control bajo el dedo que acaba de pulsar.
    */
   keepScroll?: boolean;
   seq: number;
@@ -101,8 +102,12 @@ const NEED_FOCUS_ORDER = ["unitsPerPack", "quantity", "unitPrice"] as const;
  * explícita) se ignoran las activaciones de candidato durante este tiempo: el 2.º Enter de un
  * rebote o el 2.º clic de un doble clic caerían sobre la fila siguiente. D36: es una defensa
  * adicional; lo que impide elegir por rebote es que el foco nunca va solo a un control que decide.
+ * D46-b la complementa para el puntero con la guarda espacial (`isSpatialRebound`).
  */
 const ACTIVATION_GUARD_MS = 400;
+
+/** D46-a: orden de las filas que se está pintando (índices por lista). */
+type RowOrder = { review: number[]; confirmed: number[] };
 
 /** Solo desde manejadores de eventos (nunca en render). */
 function armGuard(until: { current: number }) {
@@ -163,6 +168,22 @@ function keepInConfirmed(sections: InvoiceReviewSections, index: number | null):
     ...sections,
     review: sections.review.filter((item) => item !== line),
     confirmed: [...sections.confirmed, line].sort((left, right) => left.index - right.index),
+  };
+}
+
+/** D46-a: con el layout pendiente, cada fila sigue en la lista y el puesto en que se pintaba. */
+function keepRowOrder(
+  sections: InvoiceReviewSections,
+  order: RowOrder | undefined,
+  lines: InvoiceReviewState["lines"],
+): InvoiceReviewSections {
+  if (!order) {
+    return sections;
+  }
+  return {
+    ...sections,
+    review: order.review.map((index) => lines[index]),
+    confirmed: order.confirmed.map((index) => lines[index]),
   };
 }
 
@@ -284,14 +305,19 @@ export function InvoiceReviewPanel({
   // D39-7 (C8-M1): fila a la que se llevó el foco por programa; sus flechas no marcan candidato
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
-  // D43 (B-r9-1): fila del último puntero pulsado (null tras una tecla): su foco no desplaza.
-  const pointerRowRef = useRef<number | null>(null);
-  // D43 (B-r9-1): fila en la que se actuó con el puntero; no encoge (lo de debajo no sube bajo el
-  // dedo) hasta que el usuario desplace la página o use el teclado.
-  const [heldRow, setHeldRow] = useState<{ index: number; minHeight: number } | null>(null);
+  // D46: tras una activación con el puntero, las filas conservan caja y orden (layout pendiente) y
+  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const layoutHold = useLayoutHold<RowOrder>(rootRef, (key) => {
+    // Al aplicarse el layout, la fila con el foco cambió de lista: el foco vuelve a ella sin desplazar
+    // (o al pie si no lo admite); nunca se queda en BODY.
+    const row = key.startsWith("row:") ? rowRefs.current.get(Number(key.slice("row:".length))) : undefined;
+    (row?.hasAttribute("tabindex") ? row : footerRef.current)?.focus({ preventScroll: true });
+  });
+  const lastPointerActivationRef = useRef<PointerActivation | null>(null);
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const modelSections = getReviewSections(state);
-  const sections = keepInConfirmed(modelSections, heldConfirmedIndex);
+  const sections = keepRowOrder(keepInConfirmed(modelSections, heldConfirmedIndex), layoutHold.order, state.lines);
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
   // modelo), pero el botón lo dice para que se abra a revisarla.
   const confirmedMismatches = sections.confirmed.filter((line) =>
@@ -325,7 +351,6 @@ export function InvoiceReviewPanel({
     };
     const onKeyUp = (event: globalThis.KeyboardEvent) => release(`key:${event.key}`);
     const onPointerUp = (event: PointerEvent) => release(`pointer:${event.pointerId}`);
-    const releaseHeldRow = () => setHeldRow(null);
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         releaseAll();
@@ -335,18 +360,12 @@ export function InvoiceReviewPanel({
     window.addEventListener("pointerup", onPointerUp, true);
     window.addEventListener("pointercancel", onPointerUp, true);
     window.addEventListener("blur", releaseAll);
-    window.addEventListener("scroll", releaseHeldRow, true);
-    window.addEventListener("wheel", releaseHeldRow, { passive: true });
-    window.addEventListener("touchmove", releaseHeldRow, { passive: true });
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("pointercancel", onPointerUp, true);
       window.removeEventListener("blur", releaseAll);
-      window.removeEventListener("scroll", releaseHeldRow, true);
-      window.removeEventListener("wheel", releaseHeldRow);
-      window.removeEventListener("touchmove", releaseHeldRow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
@@ -369,7 +388,7 @@ export function InvoiceReviewPanel({
     const choice =
       !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsOptionChoice(next, line);
     const needsSupplier = target === null && !next.header.supplier.contactId;
-    const keepScroll = target !== null && pointerRowRef.current === target;
+    const keepScroll = layoutHold.isHolding();
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
       target,
@@ -394,7 +413,7 @@ export function InvoiceReviewPanel({
         ? headerRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]')
         : null;
       autoFocusedRowRef.current = null;
-      (supplier ?? footerRef.current)?.focus();
+      (supplier ?? footerRef.current)?.focus({ preventScroll: focusRequest.keepScroll });
       return;
     }
     const field = focusRequest.need
@@ -715,18 +734,9 @@ export function InvoiceReviewPanel({
             requestFocus(action.index, next);
           }
         }}
-        minHeight={heldRow?.index === line.index ? heldRow.minHeight : undefined}
-        onAction={(action) => {
-          // D43 (B-r9-1): con el puntero en esta fila, su alto actual queda como mínimo.
-          const element = rowRefs.current.get(line.index);
-          if ("index" in action && action.index === line.index && pointerRowRef.current === line.index && element) {
-            const height = element.getBoundingClientRect().height;
-            setHeldRow((held) =>
-              held?.index === line.index ? { index: line.index, minHeight: Math.max(held.minHeight, height) } : { index: line.index, minHeight: height },
-            );
-          }
-          applyRowAction(action);
-        }}
+        layoutBox={`row:${line.index}`}
+        layoutStyle={layoutHold.boxStyle(`row:${line.index}`)}
+        onAction={applyRowAction}
         onNewProduct={handleNewProduct}
         onOpenSearch={(target) => setSearchIndex((current) => (current === target ? null : target))}
         onPickProduct={handlePickProduct}
@@ -749,6 +759,7 @@ export function InvoiceReviewPanel({
   return (
     <div
       className="flex min-w-0 flex-col gap-4"
+      data-layout-box="panel"
       data-testid="invoice-review-panel"
       // D33-a (C6-M1): la autorrepetición del teclado y el 2.º clic de un doble clic no activan
       // nada (fila, chip, opción, Descartar/Restaurar, Cargar).
@@ -763,13 +774,29 @@ export function InvoiceReviewPanel({
         ) {
           event.preventDefault();
           event.stopPropagation();
+          return;
         }
+        const activation = readPointerActivation(event);
+        if (!activation) {
+          return;
+        }
+        // D46-b: lo que apareció bajo el dedo tras la activación anterior no se acciona.
+        if (isSpatialRebound(lastPointerActivationRef.current, activation)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        lastPointerActivationRef.current = activation;
+        // D46-a: antes de que la acción cambie nada, se fijan las cajas y el orden actuales.
+        const native = event.nativeEvent;
+        const mouse = "pointerType" in native && native.pointerType === "mouse" ? { x: activation.x, y: activation.y } : null;
+        layoutHold.holdLayout(
+          activation.control,
+          { review: sections.review.map((line) => line.index), confirmed: sections.confirmed.map((line) => line.index) },
+          mouse,
+        );
       }}
       onKeyDownCapture={(event) => {
-        pointerRowRef.current = null;
-        if (heldRow) {
-          setHeldRow(null);
-        }
         if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
           event.preventDefault();
           event.stopPropagation();
@@ -781,9 +808,6 @@ export function InvoiceReviewPanel({
       }}
       onPointerDownCapture={(event) => {
         pressedRef.current.add(`pointer:${event.pointerId}`);
-        const pointerRow =
-          event.target instanceof Element ? event.target.closest("[data-line-index]")?.getAttribute("data-line-index") : null;
-        pointerRowRef.current = pointerRow ? Number(pointerRow) : null;
         // D39-7: el puntero sobre la fila es acción del usuario en ella.
         if (
           event.target instanceof Element &&
@@ -793,6 +817,8 @@ export function InvoiceReviewPanel({
           autoFocusedRowRef.current = null;
         }
       }}
+      ref={rootRef}
+      style={layoutHold.boxStyle("panel")}
       onBlur={(event) => {
         // D39-7: si el foco sale de la fila llevada por programa, volver a ella es del usuario.
         if (event.target.getAttribute("data-line-index") === String(autoFocusedRowRef.current)) {
@@ -828,16 +854,19 @@ export function InvoiceReviewPanel({
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-4">
-          <div ref={headerRef}>
-            <InvoiceReviewHeader
-              onAction={applyPanelAction}
-              onRescan={onRescan}
-              state={state}
-              supplierFetcher={supplierFetcher}
-            />
+          {/* D46-a: encabezado y avisos no encogen bajo el dedo (las filas subirían). */}
+          <div className="flex min-w-0 flex-col gap-4" data-layout-box="header" style={layoutHold.boxStyle("header")}>
+            <div ref={headerRef}>
+              <InvoiceReviewHeader
+                onAction={applyPanelAction}
+                onRescan={onRescan}
+                state={state}
+                supplierFetcher={supplierFetcher}
+              />
+            </div>
+            <InvoiceReviewRateNotice onAction={applyPanelAction} state={state} />
+            <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
           </div>
-          <InvoiceReviewRateNotice onAction={applyPanelAction} state={state} />
-          <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
 
           <section
             aria-label="Líneas de la factura"
@@ -904,6 +933,7 @@ export function InvoiceReviewPanel({
       </div>
 
       <InvoiceReviewFooter
+        detailStyle={layoutHold.boxStyle("footer-detail")}
         footerRef={footerRef}
         onAction={dispatch}
         onDiscard={() => setDiscardScanOpen(true)}
