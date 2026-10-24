@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Check, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
-import { type KeyboardEvent, type Ref, useId } from "react";
+import { type CSSProperties, type KeyboardEvent, type Ref, useId } from "react";
 
 import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
@@ -57,8 +57,9 @@ export type InvoiceReviewLineRowProps = {
   canCreateProduct: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
-  /** D43 (B-r9-1): alto mínimo tras una acción con el puntero en la fila (no encoge bajo el dedo). */
-  minHeight?: number;
+  /** D46-a: clave de caja de la fila (`data-layout-box`) y su alto mínimo con el layout pendiente. */
+  layoutBox?: string;
+  layoutStyle?: CSSProperties;
   onAction: (action: InvoiceReviewAction) => void;
   /** Elegir candidato con Enter (teclado); D39-6: el foco queda en la fila. */
   onAcceptByKey: (action: InvoiceReviewAction) => void;
@@ -79,8 +80,9 @@ function finiteOrNull(value: number): number | null {
  */
 export function InvoiceReviewLineRow({
   canCreateProduct,
+  layoutBox,
+  layoutStyle,
   line,
-  minHeight,
   mismatch,
   noticeHighlighted = false,
   onAcceptByKey,
@@ -146,12 +148,13 @@ export function InvoiceReviewLineRow({
         meta.borderClassName,
         line.discarded ? "opacity-70" : null,
       )}
+      data-layout-box={layoutBox}
       data-line-index={index}
       data-status={line.status}
       onKeyDown={(event) => onRowKeyDown(event, index)}
       ref={rowRef}
       role="group"
-      style={minHeight ? { minHeight } : undefined}
+      style={layoutStyle}
       // D31: la descartada recibe el foco (no «Restaurar») si no queda otra pendiente. D39-6: la
       // resuelta también, al elegir su opción (el foco no avanza solo a otra fila).
       tabIndex={pending ? 0 : line.status === "confirmed_by_match" ? undefined : -1}
@@ -168,10 +171,23 @@ export function InvoiceReviewLineRow({
             {line.rawText || line.description}
           </p>
         </div>
-        <div className="text-right text-sm tabular-nums">
+        <div className="flex flex-col items-end gap-1 text-right text-sm tabular-nums">
           <span className={cn("font-medium", mismatch ? "text-red-700 dark:text-red-300" : "text-foreground")}>
             {formatInvoiceMoney(state, amount)}
           </span>
+          {/* D46: bajo el importe, donde ni la fila pendiente ni la restaurada tienen controles (en el
+              sitio de los candidatos, el 2.º toque de «Restaurar» aceptaría uno). */}
+          {line.discarded ? (
+            <Button
+              data-row-action="restore"
+              onClick={() => onAction({ type: "restoreLine", index })}
+              size="sm"
+              variant="outline"
+            >
+              <RotateCcw aria-hidden className="size-4" />
+              Restaurar
+            </Button>
+          ) : null}
           {mismatch ? (
             <p className="text-xs text-red-700 dark:text-red-300" data-testid={`line-mismatch-${index}`}>
               La factura dice {formatInvoiceMoney(state, line.lineTotalRead)}
@@ -180,19 +196,7 @@ export function InvoiceReviewLineRow({
         </div>
       </div>
 
-      {line.discarded ? (
-        <div>
-          <Button
-            data-row-action="restore"
-            onClick={() => onAction({ type: "restoreLine", index })}
-            size="sm"
-            variant="outline"
-          >
-            <RotateCcw aria-hidden className="size-4" />
-            Restaurar
-          </Button>
-        </div>
-      ) : (
+      {line.discarded ? null : (
         <>
           {chips.length > 0 ? (
             <div aria-label="Candidatos" className="flex flex-wrap gap-2" role="group">
@@ -228,50 +232,54 @@ export function InvoiceReviewLineRow({
           ) : null}
 
           {/* El buscador va antes que las acciones (SCN-UI-C1, 6.17): Tab abre el buscador y,
-              hacia delante, sigue a «Nuevo producto» y «Descartar línea» antes que a los campos. */}
-          {searchOpen ? (
-            <InvoiceReviewProductSearch
-              candidates={line.candidates}
-              fetcher={productFetcher}
-              initialQuery={line.description || line.rawText}
-              label={`Producto de la línea ${index + 1}`}
-              onPick={(product) => onPickProduct(index, product)}
-            />
-          ) : null}
+              hacia delante, sigue a «Nuevo producto» y «Descartar línea» antes que a los campos.
+              D46: se pinta DEBAJO de las acciones; encima, su lista quedaría bajo el dedo que pulsó
+              «Buscar producto» y el 2.º toque elegiría un producto. */}
+          <div className="flex flex-col-reverse gap-3">
+            {searchOpen ? (
+              <InvoiceReviewProductSearch
+                candidates={line.candidates}
+                fetcher={productFetcher}
+                initialQuery={line.description || line.rawText}
+                label={`Producto de la línea ${index + 1}`}
+                onPick={(product) => onPickProduct(index, product)}
+              />
+            ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => onOpenSearch(index)} size="sm" variant="outline">
-              <Search aria-hidden className="size-4" />
-              {line.productId ? "Cambiar producto" : "Buscar producto"}
-            </Button>
-            {canCreateProduct && !line.productId ? (
-              <Button
-                onClick={(event) => onNewProduct(index, event.currentTarget)}
-                size="sm"
-                variant="outline"
-              >
-                <Plus aria-hidden className="size-4" />
-                Nuevo producto
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => onOpenSearch(index)} size="sm" variant="outline">
+                <Search aria-hidden className="size-4" />
+                {line.productId ? "Cambiar producto" : "Buscar producto"}
               </Button>
-            ) : null}
-            {pending ? (
-              <Button
-                data-row-action="discard"
-                onClick={() => onAction({ type: "discardLine", index })}
-                size="sm"
-                variant="ghost"
-              >
-                <Trash2 aria-hidden className="size-4" />
-                Descartar línea
-              </Button>
-            ) : line.status === "resolved" ? (
-              // D43 (B-r9-1): resuelta, el hueco se conserva (a 390 px la fila de acciones no se pliega
-              // y nada sube bajo el dedo); no es un control.
-              <span aria-hidden className="invisible inline-flex h-9 items-center gap-2 px-3 text-sm font-medium">
-                <Trash2 className="size-4" />
-                Descartar línea
-              </span>
-            ) : null}
+              {canCreateProduct && !line.productId ? (
+                <Button
+                  onClick={(event) => onNewProduct(index, event.currentTarget)}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Plus aria-hidden className="size-4" />
+                  Nuevo producto
+                </Button>
+              ) : null}
+              {pending ? (
+                <Button
+                  data-row-action="discard"
+                  onClick={() => onAction({ type: "discardLine", index })}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Trash2 aria-hidden className="size-4" />
+                  Descartar línea
+                </Button>
+              ) : line.status === "resolved" ? (
+                // D43 (B-r9-1): resuelta, el hueco se conserva (a 390 px la fila de acciones no se pliega
+                // y nada sube bajo el dedo); no es un control.
+                <span aria-hidden className="invisible inline-flex h-9 items-center gap-2 px-3 text-sm font-medium">
+                  <Trash2 className="size-4" />
+                  Descartar línea
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,8rem)_minmax(0,10rem)_auto] sm:items-end">
