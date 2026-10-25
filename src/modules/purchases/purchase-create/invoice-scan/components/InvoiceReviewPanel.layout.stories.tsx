@@ -923,3 +923,83 @@ export const CampoMovidoSinFocoTactil390: Story = {
     await expect(document.activeElement, "pasado 1 s, sí").toBe(quantity);
   },
 };
+
+/** Alto de cada fila y su posición vertical, redondeados a 0,5 px. */
+function rowGeometry() {
+  return [...panel().querySelectorAll<HTMLElement>("li[data-line-index]")].map((item) => {
+    const { top, height } = item.getBoundingClientRect();
+    return `L${item.dataset.lineIndex}@${Math.round(top * 2) / 2}h${Math.round(height * 2) / 2}`;
+  });
+}
+
+/**
+ * B-qa02-2 (QA REP11-02, D48(b)): con el puntero sobre el panel, descartar L0 o resolverla con el
+ * chip no cambia la altura ni la posición de ninguna fila: el resumen retenido solo ocupa el alto
+ * sobrante (0 px extra), al instante y a los 1,5 s.
+ */
+function resumenRetenido(width: number, pointer: Pointer, target: () => HTMLElement): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const before = rowGeometry();
+      await activateAt(browser, centerOf(target()), pointer);
+      await sleep(100);
+      await expect(row(0).querySelector('[data-testid="invoice-review-held-summary"]'), "fila retenida").not.toBeNull();
+      await expect(rowGeometry(), "a los 100 ms ninguna fila cambia de alto ni de sitio").toEqual(before);
+      await sleep(1400);
+      await expect(rowGeometry(), "a los 1,5 s tampoco").toEqual(before);
+    },
+  };
+}
+
+const chipL0 = () => button(row(0), /^CAOSG Harina Maiz 1kg/);
+const discardL0 = () => button(row(0), /Descartar línea/);
+
+export const ResumenRetenidoChip1280Raton = resumenRetenido(1280, "mouse", chipL0);
+export const ResumenRetenidoChip390Tactil = resumenRetenido(390, "touch", chipL0);
+export const ResumenRetenidoDescartada1280Raton = resumenRetenido(1280, "mouse", discardL0);
+export const ResumenRetenidoDescartada390Tactil = resumenRetenido(390, "touch", discardL0);
+
+/**
+ * B-qa02-3 (QA REP11-02, D49): tras descartar L0, activar la Cantidad de L1 y teclear (el mismo
+ * valor: el texto de la fila no cambia, solo la compactación podría mover el campo) compacta el
+ * layout (el teclado lo aplica), pero el campo en que se escribe se queda en el mismo punto de la
+ * pantalla (< 2 px) y conserva el foco y lo tecleado.
+ */
+function teclearTrasDescartar(width: number, pointer: Pointer): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const heldHeight = row(0).getBoundingClientRect().height;
+      await activateAt(browser, centerOf(discardL0()), pointer);
+      await sleep(1200);
+      const quantity = within(row(1)).getByLabelText(/^Cantidad/);
+      await activateAt(browser, centerOf(quantity), pointer);
+      await sleep(300);
+      await expect(document.activeElement, "la Cantidad de L1 tiene el foco").toBe(quantity);
+      const before = quantity.getBoundingClientRect().top;
+      await browser.userEvent.keyboard("1");
+      await sleep(300);
+      await expect(row(0).getBoundingClientRect().height, "el teclado aplica el layout").toBeLessThan(heldHeight);
+      await expect(document.activeElement, "el foco sigue en la Cantidad").toBe(quantity);
+      await expect(quantity instanceof HTMLInputElement ? quantity.value : "", "lo tecleado llega al campo").toBe("1");
+      const moved = quantity.getBoundingClientRect().top - before;
+      await expect(Math.abs(moved), `el campo enfocado se movió ${Math.round(moved)} px`).toBeLessThan(2);
+    },
+  };
+}
+
+export const TeclearTrasDescartar390Tactil = teclearTrasDescartar(390, "touch");
+export const TeclearTrasDescartar1280Raton = teclearTrasDescartar(1280, "mouse");
