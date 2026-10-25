@@ -1003,3 +1003,117 @@ function teclearTrasDescartar(width: number, pointer: Pointer): Story {
 
 export const TeclearTrasDescartar390Tactil = teclearTrasDescartar(390, "touch");
 export const TeclearTrasDescartar1280Raton = teclearTrasDescartar(1280, "mouse");
+
+/** c12-foot (C12B-M1): L0 «CG-HARINA» 1 × 450 confirmada por SKU; L1 «FLETE Y TRANSPORTE» 1 × 900 sin emparejar; leído 1.350. */
+const footResponse = makeReviewResponse({
+  extraction: { subtotal: 1350, total: 1350 },
+  lines: [
+    {
+      read: {
+        rawText: "CG-HARINA HARINA MAIZ 1KG 1 450,00 450,00",
+        description: "HARINA MAIZ 1KG",
+        supplierSku: "CG-HARINA",
+        unit: "unidad",
+        quantity: 1,
+        unitPrice: 450,
+        lineTotal: 450,
+      },
+      match: {
+        status: "confirmed",
+        productId: HARINA,
+        taxRateCode: "exento",
+        candidates: [{ productId: HARINA, name: "CAOSG Harina Maiz 1kg", score: 1, reason: "SKU del proveedor", lastUnitCostRef: 0.5 }],
+        lastUnitCostRef: 0.5,
+      },
+    },
+    {
+      read: {
+        rawText: "FLETE Y TRANSPORTE 1 900,00 900,00",
+        description: "FLETE Y TRANSPORTE",
+        unit: "otro",
+        quantity: 1,
+        unitPrice: 900,
+        lineTotal: 900,
+      },
+      match: { status: "unmatched", productId: undefined, candidates: undefined, taxRateCode: "exento" },
+    },
+  ],
+});
+
+const boxText = (box: DOMRect) =>
+  `(${Math.round(box.left)},${Math.round(box.top)} ${Math.round(box.width)}×${Math.round(box.height)})`;
+
+function intersects(a: DOMRect, b: DOMRect) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/**
+ * C12B-M1 (REP12-02 · D54(a)): descartar la última pendiente (L1) y, a los `at` ms, activar el punto
+ * donde estaba «Cargar». La casilla de diferencia aparece en un sitio que no es el de «Cargar», que no
+ * se mueve (0 px); el 2.º toque no marca la casilla ni habilita «Cargar». Con `height` la ventana es
+ * más baja y el pie queda pegado abajo, como en el reporte (crecía hacia arriba; B-p12B-1 a 1280).
+ */
+function c12bm1Pie(width: number, pointer: Pointer, at: number, height?: number): Story {
+  return {
+    args: { response: footResponse },
+    play: async ({ args }) => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      if (height) {
+        await browser.page.viewport(width, height);
+      }
+      const discard = button(row(1), /Descartar línea/);
+      discard.scrollIntoView({ block: "center" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const load = screen.getByRole("button", { name: "Cargar en la compra" });
+      const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
+      const loadBefore = load.getBoundingClientRect();
+      const footerBefore = footer.getBoundingClientRect();
+      const aim = centerOf(load);
+      await expect(load, "antes, «Cargar» está deshabilitado (falta L1)").toBeDisabled();
+      // «Cargar» deshabilitado no recibe el puntero (pointer-events: none): el punto cae en el pie.
+      await expect(
+        document.elementFromPoint(aim.x, aim.y)?.closest("footer"),
+        `antes, el punto de «Cargar» ${boxText(loadBefore)} está en el pie ${boxText(footerBefore)} (ventana ${window.innerHeight})`,
+      ).toBe(footer);
+
+      await activateAt(browser, centerOf(discard), pointer);
+      const start = performance.now();
+      await sleepUntil(start, 100);
+      await expect(row(1).dataset.status, "el 1.er toque descarta L1").toBe("discarded");
+      const slot = screen.getByTestId("invoice-review-confirm-difference");
+      const box = within(slot).getByRole("checkbox");
+      const loadAfter = load.getBoundingClientRect();
+      const footerAfter = footer.getBoundingClientRect();
+      const report =
+        `${width} ${pointer} @${at}ms · viewport ${window.innerWidth}×${window.innerHeight} · ` +
+        `pie antes ${boxText(footerBefore)} después ${boxText(footerAfter)} · ` +
+        `Cargar antes ${boxText(loadBefore)} después ${boxText(loadAfter)} ` +
+        `Δ=(${Math.round(loadAfter.left - loadBefore.left)},${Math.round(loadAfter.top - loadBefore.top)}) · ` +
+        `casilla ${boxText(box.getBoundingClientRect())} zona ${boxText(slot.getBoundingClientRect())} · ` +
+        `bajo el punto de Cargar: ${describeControl(document.elementFromPoint(aim.x, aim.y)?.closest("button, input, label") ?? null)}`;
+      console.log(`[C12B-M1] ${report}`);
+
+      await sleepUntil(start, at);
+      await activateAt(browser, aim, pointer);
+      await sleep(300);
+      console.log(`[C12B-M1] ${width} ${pointer} @${at}ms · casilla=${String(box instanceof HTMLInputElement && box.checked)} · Cargar=${String(!(load as HTMLButtonElement).disabled)}`);
+      await expect(box, `${report}: el toque a ${at} ms no marca la casilla`).not.toBeChecked();
+      await expect(load, "ni habilita «Cargar»").toBeDisabled();
+      await expect(Math.abs(loadAfter.top - loadBefore.top), `«Cargar» no se mueve: ${report}`).toBeLessThan(0.5);
+      await expect(Math.abs(loadAfter.left - loadBefore.left), `«Cargar» no se mueve: ${report}`).toBeLessThan(0.5);
+      await expect(intersects(box.getBoundingClientRect(), loadBefore), `la casilla no cae en la caja previa de «Cargar»: ${report}`).toBe(false);
+      await expect(intersects(slot.getBoundingClientRect(), loadBefore), `ni su texto: ${report}`).toBe(false);
+      await expect(args.onLoad).not.toHaveBeenCalled();
+    },
+  };
+}
+
+export const C12BM1Pie390Tactil300 = c12bm1Pie(390, "touch", 300);
+export const C12BM1Pie390Tactil700 = c12bm1Pie(390, "touch", 700);
+export const C12BM1Pie390Tactil1500 = c12bm1Pie(390, "touch", 1500);
+export const C12BM1Pie390Tactil700Pegado = c12bm1Pie(390, "touch", 700, 600);
+export const C12BM1Pie1280Raton700 = c12bm1Pie(1280, "mouse", 700);
+export const C12BM1Pie1280Raton700Pegado = c12bm1Pie(1280, "mouse", 700, 560);

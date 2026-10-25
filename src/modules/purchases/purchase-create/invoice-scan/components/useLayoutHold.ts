@@ -25,6 +25,12 @@ const CONTROL_SELECTOR =
 /** Cajas cuya altura se conserva mientras el layout está pendiente (`data-layout-box="<clave>"`). */
 const LAYOUT_BOX_SELECTOR = "[data-layout-box]";
 
+/**
+ * D54(a): zonas (el pie fijo) que pueden cambiar de alto con la acción aunque estén retenidas: un
+ * control suyo que aparece o se mueve con el layout pendiente queda guardado desde ESE momento.
+ */
+const SHIFT_GUARD_SELECTOR = "[data-layout-shift-guard]";
+
 export type PointerActivation = { x: number; y: number; at: number; control: Element };
 
 /**
@@ -71,9 +77,6 @@ type Anchor = { control: Element; controlTop: number; zone: Element | null; zone
 
 type Position = { top: number; left: number };
 
-/** Controles movidos (o aparecidos) al aplicar el layout pendiente, y cuándo se aplicó. */
-type Compaction = { moved: ReadonlySet<Element>; at: number };
-
 function contains(rect: DOMRect, x: number, y: number) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
@@ -86,6 +89,39 @@ function controlPositions(): Map<Element, Position> {
     positions.set(control, { top, left });
   }
   return positions;
+}
+
+/** Posición en pantalla de los controles de las zonas `[data-layout-shift-guard]` de `root`. */
+function shiftGuardedPositions(root: Element): Map<Element, Position> {
+  const positions = new Map<Element, Position>();
+  for (const zone of root.querySelectorAll(SHIFT_GUARD_SELECTOR)) {
+    for (const control of zone.querySelectorAll(CONTROL_SELECTOR)) {
+      const { top, left } = control.getBoundingClientRect();
+      positions.set(control, { top, left });
+    }
+  }
+  return positions;
+}
+
+/** Controles de `now` que no estaban en `before` o cambiaron de sitio (≥ 1 px). */
+function movedControls(before: ReadonlyMap<Element, Position>, now: ReadonlyMap<Element, Position>): Element[] {
+  return [...now].flatMap(([control, position]) => {
+    const was = before.get(control);
+    return !was || Math.abs(was.top - position.top) >= 1 || Math.abs(was.left - position.left) >= 1 ? [control] : [];
+  });
+}
+
+/** Marca `controls` como movidos ahora; olvida los que ya salieron de la guarda. Solo desde efectos. */
+function markMoved(movedAt: Map<Element, number>, controls: readonly Element[]) {
+  const now = Date.now();
+  for (const [control, at] of movedAt) {
+    if (now - at >= COMPACTION_GUARD_MS) {
+      movedAt.delete(control);
+    }
+  }
+  for (const control of controls) {
+    movedAt.set(control, now);
+  }
 }
 
 /** Contenedor que desplaza a `element` (el documento si ninguno). */
@@ -128,6 +164,8 @@ function scrollBack(element: Element, delta: number): OwnScroll | null {
  * nunca solo. Si lo aplica el teclado, el control enfocado se queda en su punto de pantalla
  * (B-qa02-3). Al aplicarlo se comparan las posiciones de los controles antes y después: durante
  * COMPACTION_GUARD_MS, `movedByCompaction` dice si un control se movió (o apareció) con ello.
+ * D54(a): las zonas `[data-layout-shift-guard]` (el pie) se miden además tras cada render con el
+ * layout pendiente: lo que aparece o se mueve en ellas queda guardado igual, desde ese render.
  * `onFocusLost`: al aplicarse el layout, la caja que tenía el foco se volvió a montar (cambió de
  * lista) y el foco cayó en BODY; recibe su clave.
  */
@@ -137,7 +175,10 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const anchorRef = useRef<Anchor | null>(null);
   // Posiciones de los controles justo antes de aplicar el layout, y lo que se movió al aplicarlo.
   const positionsBeforeRef = useRef<Map<Element, Position> | null>(null);
-  const compactionRef = useRef<Compaction | null>(null);
+  // Cuándo se movió (o apareció) cada control: al aplicar el layout o, en el pie, al cambiar con él.
+  const movedAtRef = useRef(new Map<Element, number>());
+  // D54(a): posiciones de los controles del pie en el último render con el layout pendiente.
+  const shiftPositionsRef = useRef<Map<Element, Position> | null>(null);
   // Desplazamiento que hizo la compensación: su evento `scroll` no es del usuario.
   const ownScrollRef = useRef<OwnScroll | null>(null);
   // B-qa02-3: el teclado aplicó el layout; el control enfocado (donde se escribe) y su posición antes.
@@ -151,6 +192,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const release = useCallback(() => {
     anchorRef.current = null;
     ownScrollRef.current = null;
+    shiftPositionsRef.current = null;
     if (holdRef.current) {
       const focused = document.activeElement instanceof Element ? document.activeElement : null;
       focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
@@ -175,6 +217,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       }
       const next = { order: holdRef.current?.order ?? order, heights };
       holdRef.current = next;
+      shiftPositionsRef.current = shiftGuardedPositions(root);
       if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) {
         // Una casilla nativa cambia en su `change`, después del clic: un render antes la devolvería a
         // su valor controlado y React no emitiría `onChange`. Se pinta tras ese `change`.
@@ -216,6 +259,19 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
   });
 
+  // D54(a): el pie puede cambiar con la acción (aparece la casilla de diferencia, cambia «Cargar»):
+  // lo que aparece o se mueve en él queda guardado desde este render, antes de pintarse.
+  useLayoutEffect(() => {
+    const before = shiftPositionsRef.current;
+    const root = rootRef.current;
+    if (!holdRef.current || !before || !root) {
+      return;
+    }
+    const now = shiftGuardedPositions(root);
+    markMoved(movedAtRef.current, movedControls(before, now));
+    shiftPositionsRef.current = now;
+  });
+
   const holding = hold !== null;
 
   // D49: recién aplicado el layout (antes de pintar), lo que cambió de sitio o apareció respecto a
@@ -236,14 +292,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         ownScrollRef.current = scrollBack(typing.element, delta);
       }
     }
-    const moved = new Set<Element>();
-    for (const [control, now] of controlPositions()) {
-      const was = before.get(control);
-      if (!was || Math.abs(was.top - now.top) >= 1 || Math.abs(was.left - now.left) >= 1) {
-        moved.add(control);
-      }
-    }
-    compactionRef.current = { moved, at: Date.now() };
+    markMoved(movedAtRef.current, movedControls(before, controlPositions()));
   }, [holding]);
 
   useEffect(() => {
@@ -321,10 +370,10 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     holdLayout,
     /** Para manejadores: el layout está pendiente ahora (el foco no debe desplazar). */
     isHolding: useCallback(() => holdRef.current !== null, []),
-    /** D49, para manejadores: `control` se movió al aplicarse el layout hace menos de 1 s. */
+    /** D49/D54(a), para manejadores: `control` se movió (layout aplicado o pie) hace menos de 1 s. */
     movedByCompaction: useCallback((control: Element) => {
-      const compaction = compactionRef.current;
-      return compaction !== null && Date.now() - compaction.at < COMPACTION_GUARD_MS && compaction.moved.has(control);
+      const at = movedAtRef.current.get(control);
+      return at !== undefined && Date.now() - at < COMPACTION_GUARD_MS;
     }, []),
   };
 }

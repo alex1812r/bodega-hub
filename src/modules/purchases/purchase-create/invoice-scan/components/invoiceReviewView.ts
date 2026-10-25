@@ -24,6 +24,7 @@ import {
   getLineNeeds,
   getUnitConversion,
   isLineMismatch,
+  lineOffersPack,
   linePackWord,
   MAX_REVIEW_UNITS_PER_PACK,
   needsExplicitChoice,
@@ -179,11 +180,12 @@ function neutralChoiceText(line: InvoiceReviewLine): string {
 
 /**
  * D48(a): qué elegir con el costo actual desviado. Solo se nombra la otra opción si deja el costo
- * coherente con el último (nunca la actual, que es la desviada); si no, el texto es neutro.
+ * coherente con el último (nunca la actual, que es la desviada) y la fila la ofrece (D54-b); si
+ * no, el texto es neutro.
  */
 function chooseOptionText(state: InvoiceReviewState, line: InvoiceReviewLine): string {
   const other = line.entryMode === "unit" ? "pack" : "unit";
-  const outcome = getEntryModeOutcome(state, line, other);
+  const outcome = other === "pack" && !lineOffersPack(state, line) ? undefined : getEntryModeOutcome(state, line, other);
   if (outcome?.unitCost?.currency !== "REF" || outcome.lastUnitCostRef === undefined || outcome.deviates) {
     return neutralChoiceText(line);
   }

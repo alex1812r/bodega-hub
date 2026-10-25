@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
-import { type CSSProperties, type Ref, useId, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type Ref, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
@@ -24,6 +24,8 @@ export type InvoiceReviewFooterProps = {
   onDiscard: () => void;
   /** D46-a: alto mínimo del detalle (pendientes y bloqueos) con el layout pendiente. */
   detailStyle?: CSSProperties;
+  /** D54(a): alto mínimo del pie entero con el layout pendiente. */
+  footerStyle?: CSSProperties;
 };
 
 /**
@@ -36,6 +38,11 @@ export type InvoiceReviewFooterProps = {
  * referencia es el total leído; sin él, subtotal + IVA leídos; sin IVA, el subtotal
  * (frente a la base a registrar); sin subtotal, el IVA (frente al IVA a registrar). Sin
  * ninguna cifra leída no hay casilla y se informa que no hay con qué comparar.
+ * D54(a) (C12B-M1): con cifra leída, el sitio de la casilla está reservado siempre (arriba en móvil,
+ * bajo el detalle desde `sm`, a la izquierda) y «Cargar» va pegado al borde de abajo: que aparezca
+ * la diferencia no cambia el alto del pie ni pone la casilla donde estaba «Cargar». La casilla solo
+ * cambia con su propio control (el texto no es su etiqueta) y, con el puntero, con una pulsación que
+ * empezó y terminó en ella después de su último cambio de sitio.
  */
 const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { label: string; against: string }> = {
   total: { label: "Leído", against: "total leído" },
@@ -47,6 +54,7 @@ const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { labe
 export function InvoiceReviewFooter({
   detailStyle,
   footerRef,
+  footerStyle,
   onAction,
   onDiscard,
   onLoad,
@@ -68,12 +76,47 @@ export function InvoiceReviewFooter({
     readLabel = `IVA a registrar ${money(summary.totals.tax)} · ${sourceCopy.label}`;
   }
   const collapsible = detailOpen ? null : "hidden sm:flex";
+  const differenceTextId = useId();
+  const differenceRef = useRef<HTMLInputElement>(null);
+  // D54(a)(3): sitio de la casilla y desde cuándo está ahí; pulsación del puntero sobre ella.
+  const differencePlaceRef = useRef<{ top: number; left: number; at: number } | null>(null);
+  const differencePressRef = useRef<{ pointerId: number; at: number; released: boolean } | null>(null);
+
+  // Al aparecer o moverse la casilla, una pulsación que ya estaba en curso deja de contar.
+  useLayoutEffect(() => {
+    const input = differenceRef.current;
+    if (!input) {
+      differencePlaceRef.current = null;
+      return;
+    }
+    const { top, left } = input.getBoundingClientRect();
+    const place = differencePlaceRef.current;
+    if (!place || Math.abs(place.top - top) >= 1 || Math.abs(place.left - left) >= 1) {
+      differencePlaceRef.current = { top, left, at: Date.now() };
+      differencePressRef.current = null;
+    }
+  });
+
+  function handleDifferenceChange(event: ChangeEvent<HTMLInputElement>) {
+    const press = differencePressRef.current;
+    differencePressRef.current = null;
+    // Con el puntero (clic con `detail` ≥ 1) solo vale una pulsación completa sobre la casilla desde
+    // su último cambio de sitio; el teclado (Espacio) no tiene punto bajo el dedo.
+    const native = event.nativeEvent;
+    if (native instanceof MouseEvent && native.detail > 0) {
+      const placedAt = differencePlaceRef.current?.at ?? 0;
+      if (!press || !press.released || press.at < placedAt) {
+        return;
+      }
+    }
+    onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked });
+  }
 
   return (
     <footer
       aria-label="Resumen de la revisión"
       ref={footerRef}
-      className="sticky bottom-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 border-t border-border bg-surface-container-lowest px-4 py-2 text-sm shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:gap-x-3 sm:py-3 dark:border-slate-800"
+      className="sticky bottom-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto] content-start items-center gap-x-2 gap-y-1 border-t border-border bg-surface-container-lowest px-4 py-2 text-sm shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:gap-x-3 sm:py-3 dark:border-slate-800"
       // D36: contenedor neutro que recibe el foco al no quedar pendientes (Tab sigue a Cargar);
       // Espacio sobre él no desplaza la página (como en las filas, B6-1).
       onKeyDown={(event) => {
@@ -82,9 +125,14 @@ export function InvoiceReviewFooter({
         }
       }}
       tabIndex={-1}
+      // D54(a): retenido como las filas; lo que aparece o se mueve en él queda guardado 1 s.
+      data-layout-box="footer"
+      data-layout-shift-guard
+      style={footerStyle}
     >
+      {/* D54(a): en móvil, dos líneas reservadas (con la diferencia el total pasa a dos y empujaría «Cargar»). */}
       <p
-        className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+        className="col-start-1 row-start-2 flex min-h-11 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0"
         data-testid="invoice-review-totals"
       >
         <span>
@@ -118,7 +166,7 @@ export function InvoiceReviewFooter({
 
       <Button
         aria-label="Cargar en la compra"
-        className="col-start-2 row-start-1 sm:col-start-3 sm:row-span-2"
+        className="col-start-2 row-start-2 self-end sm:col-start-3 sm:row-span-3 sm:row-start-1"
         data-load-button
         disabled={!summary.canLoad}
         onClick={onLoad}
@@ -132,7 +180,7 @@ export function InvoiceReviewFooter({
         aria-expanded={detailOpen}
         aria-label={detailOpen ? "Ocultar detalle del total" : "Ver detalle del total"}
         data-guarded-activation
-        className="col-start-3 row-start-1 inline-flex size-9 cursor-pointer items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:hidden"
+        className="col-start-3 row-start-2 inline-flex size-9 cursor-pointer self-end items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:hidden"
         onClick={() => setDetailOpen((open) => !open)}
         type="button"
       >
@@ -140,7 +188,10 @@ export function InvoiceReviewFooter({
       </button>
 
       <div
-        className={cn("col-span-3 row-start-2 min-w-0 flex-col gap-1 sm:col-span-1 sm:col-start-1", collapsible ?? "flex")}
+        className={cn(
+          "col-span-3 row-start-3 min-w-0 flex-col gap-1 sm:col-span-1 sm:col-start-1 sm:row-start-2",
+          collapsible ?? "flex",
+        )}
         data-layout-box="footer-detail"
         id={detailId}
         style={detailStyle}
@@ -175,7 +226,7 @@ export function InvoiceReviewFooter({
 
       <div
         className={cn(
-          "col-span-3 row-start-3 justify-self-start sm:col-span-1 sm:col-start-2 sm:row-span-2 sm:row-start-1",
+          "col-span-3 row-start-4 justify-self-start sm:col-span-1 sm:col-start-2 sm:row-span-2 sm:row-start-1",
           collapsible ?? "flex",
         )}
       >
@@ -184,19 +235,37 @@ export function InvoiceReviewFooter({
         </Button>
       </div>
 
-      {totals.difference !== undefined ? (
-        <label
-          className="col-span-3 row-start-4 flex items-center gap-2 text-xs text-foreground sm:col-span-1 sm:col-start-1 sm:row-start-3"
-          data-testid="invoice-review-confirm-difference"
+      {totals.read !== undefined ? (
+        // D54(a): sitio reservado aunque no haya diferencia; a la izquierda, nunca bajo «Cargar».
+        <div
+          className="col-span-3 row-start-1 min-h-8 min-w-0 text-xs text-foreground sm:col-span-1 sm:col-start-1 sm:row-start-3 lg:min-h-4"
+          data-testid="invoice-review-difference-slot"
         >
-          <input
-            checked={state.acceptedDifference === totals.difference}
-            className="size-4 rounded border-border"
-            onChange={(event) => onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked })}
-            type="checkbox"
-          />
-          {`Cargar con una diferencia de ${money(totals.difference)} frente al ${sourceCopy.against}`}
-        </label>
+          {totals.difference !== undefined ? (
+            <div className="flex items-start gap-2" data-testid="invoice-review-confirm-difference">
+              <input
+                aria-labelledby={differenceTextId}
+                checked={state.acceptedDifference === totals.difference}
+                className="size-4 shrink-0 rounded border-border"
+                onChange={handleDifferenceChange}
+                onPointerDown={(event) => {
+                  differencePressRef.current = { pointerId: event.pointerId, at: Date.now(), released: false };
+                }}
+                onPointerUp={(event) => {
+                  const press = differencePressRef.current;
+                  if (press?.pointerId === event.pointerId) {
+                    differencePressRef.current = { ...press, released: true };
+                  }
+                }}
+                ref={differenceRef}
+                type="checkbox"
+              />
+              <span id={differenceTextId}>
+                {`Cargar con una diferencia de ${money(totals.difference)} frente al ${sourceCopy.against}`}
+              </span>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </footer>
   );
