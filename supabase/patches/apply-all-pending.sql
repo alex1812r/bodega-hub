@@ -921,7 +921,9 @@ notify pgrst, 'reload schema';
 -- RLS, tienda de assert_store_context(), rol admin | almacen, arrays acotados, execute solo authenticated): las mismas
 -- filas que invoice_match_previous_scans (19q) pero con el proveedor (ids elegido / leido y digitos de RIF leido o
 -- guardado) filtrado ANTES del tope de 200/50; sin el filtro, un numero repetido con otros proveedores ocultaba el
--- duplicado real. La usa solo POST /api/purchases/invoice-scan/duplicates. No redefine nada (reaplicar 19q no la
+-- duplicado real. La usan POST /api/purchases/invoice-scan/duplicates y el emparejamiento del escaneo con proveedor
+-- leido (loadMatchContext). No redefine nada (reaplicar 19q no la
 -- deshace). No toca stock ni dinero.
--- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP12-06 (sin el, la consulta de duplicados da 500 y la
+-- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP12-06 (sin el, el ESCANEO con proveedor leido falla al
+-- emparejar con PGRST202, y la consulta de duplicados da 500 y la
 -- revision muestra "No se pudo comprobar...", sin bloquear), y correr verify-patches.sql (filas "(20261026a").

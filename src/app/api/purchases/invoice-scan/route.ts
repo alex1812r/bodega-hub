@@ -58,6 +58,6 @@ export async function POST(request: Request) {
 
     return jsonData(result);
   } catch (error) {
-    return toErrorResponse(error);
+    return toErrorResponse(error, { zodIssues: "public" });
   }
 }

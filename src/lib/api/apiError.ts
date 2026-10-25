@@ -37,7 +37,15 @@ export function unauthenticatedError() {
   return new ApiError(401, "UNAUTHORIZED", UNAUTHENTICATED_MESSAGE);
 }
 
-export function toErrorResponse(error: unknown) {
+export type ErrorResponseOptions = {
+  /**
+   * REP12-06: `"public"` devuelve de cada issue de zod solo `message` y `path` (sin `code`,
+   * `expected`, `keys`… internos). Lo usan las rutas del escaneo de factura.
+   */
+  zodIssues?: "full" | "public";
+};
+
+export function toErrorResponse(error: unknown, options: ErrorResponseOptions = {}) {
   if (error instanceof ApiError) {
     return Response.json(
       {
@@ -57,7 +65,10 @@ export function toErrorResponse(error: unknown) {
         error: {
           code: "BAD_REQUEST",
           message: "La solicitud no tiene un formato válido.",
-          issues: error.issues,
+          issues:
+            options.zodIssues === "public"
+              ? error.issues.map((issue) => ({ message: issue.message, path: issue.path }))
+              : error.issues,
         },
       },
       { status: 400 },

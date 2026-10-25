@@ -18,6 +18,7 @@ import {
   MATCH_CANDIDATES_RPC,
   MATCH_EXACT_ALIASES_RPC,
   MATCH_PREVIOUS_SCANS_RPC,
+  DUPLICATE_CANDIDATES_RPC,
   taxRateKind,
   type MatchContextSupabaseClient,
 } from "./loadMatchContext";
@@ -70,7 +71,9 @@ function rpcAsTableQuery(name: string, params: RpcParams): Query | null {
   if (name === MATCH_BARCODE_PRODUCTS_RPC) {
     return { table: "products", calls: [{ method: "in", args: ["barcode", params.p_barcodes] }] };
   }
-  if (name === MATCH_PREVIOUS_SCANS_RPC) {
+  // REP12-06: invoice_duplicate_candidates es la misma búsqueda con el proveedor filtrado antes del tope;
+  // el stub devuelve las filas de la tabla (superconjunto) y `findDuplicateScan` decide.
+  if (name === MATCH_PREVIOUS_SCANS_RPC || name === DUPLICATE_CANDIDATES_RPC) {
     const calls: Call[] = [{ method: "not", args: ["status", "in", "(discarded,failed)"] }];
     if (typeof params.p_number === "string") {
       // Como la RPC: los caracteres del número normalizado en orden ('%F%A%C%1').
@@ -180,6 +183,12 @@ const extraction: InvoiceExtraction = {
   confidence: 0.85,
   warnings: [],
 };
+
+/**
+ * REP12-06: con el proveedor leído (RIF J-12345678-9 resuelto a SUPPLIER_ID), los escaneos previos se
+ * piden a invoice_duplicate_candidates con su contacto y los dígitos del RIF (leído y guardado).
+ */
+const READ_SUPPLIER = { p_supplier_ids: [SUPPLIER_ID], p_tax_digits: ["123456789"] };
 
 const candidates = {
   suppliers: [
@@ -383,7 +392,7 @@ describe("loadMatchContext", () => {
       p_alias_keys: expect.arrayContaining(["harina pan 1kg", "malta polar 355ml"]),
     });
     // Número normalizado: la RPC busca su subsecuencia (tolera separadores y ceros del texto guardado).
-    expect(stub.rpc).toHaveBeenCalledWith(MATCH_PREVIOUS_SCANS_RPC, { p_number: "123", p_exclude_scan_id: null, p_limit: 200 });
+    expect(stub.rpc).toHaveBeenCalledWith(DUPLICATE_CANDIDATES_RPC, { p_number: "123", p_exclude_scan_id: null, p_limit: 200, ...READ_SUPPLIER });
     expect(stub.rpc).toHaveBeenCalledWith(MATCH_BARCODE_PRODUCTS_RPC, { p_barcodes: ["759 1234", "7591234"] });
     expect(queriesOf(stub.queries, "invoice_scans")).toEqual([]);
     expect(stub.queries.some((query) => argsOf(query, "in").some(([column]) => column !== "id" && !String(column).endsWith("product_id")))).toBe(false);
@@ -433,6 +442,7 @@ describe("loadMatchContext", () => {
     const rpcs = stub.rpc.mock.calls.map(([name]) => name);
     expect(rpcs).not.toContain(MATCH_EXACT_ALIASES_RPC);
     expect(rpcs).not.toContain(MATCH_PREVIOUS_SCANS_RPC);
+    expect(rpcs).not.toContain(DUPLICATE_CANDIDATES_RPC);
     expect(rpcs).not.toContain(MATCH_BARCODE_PRODUCTS_RPC);
   });
 
@@ -451,14 +461,14 @@ describe("loadMatchContext", () => {
 
     const ctx = await loadMatchContext(stub.client, STORE_ID, extraction, { excludeScanId: "scan-1" });
 
-    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([expect.objectContaining({ p_exclude_scan_id: "scan-1" })]);
+    expect(rpcParams(stub.rpc, DUPLICATE_CANDIDATES_RPC)).toEqual([expect.objectContaining({ p_exclude_scan_id: "scan-1" })]);
     expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-2"]);
     expect(matchInvoice(extraction, ctx).duplicateOfScanId).not.toBe("scan-1");
 
     // Sin la opción, la firma de tres argumentos no filtra por id.
     const plain = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
     await loadMatchContext(plain.client, STORE_ID, extraction);
-    expect(rpcParams(plain.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([expect.objectContaining({ p_exclude_scan_id: null })]);
+    expect(rpcParams(plain.rpc, DUPLICATE_CANDIDATES_RPC)).toEqual([expect.objectContaining({ p_exclude_scan_id: null })]);
   });
 
   it.each([
@@ -499,8 +509,8 @@ describe("loadMatchContext", () => {
 
       expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-dup"]);
       expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-dup");
-      expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([
-        { p_number: normalizeInvoiceNumber(readNumber), p_exclude_scan_id: "scan-self", p_limit: 200 },
+      expect(rpcParams(stub.rpc, DUPLICATE_CANDIDATES_RPC)).toEqual([
+        { p_number: normalizeInvoiceNumber(readNumber), p_exclude_scan_id: "scan-self", p_limit: 200, ...READ_SUPPLIER },
       ]);
     },
   );
@@ -702,8 +712,8 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
     expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-f02");
 
     // Por POST (D35): totales al céntimo, fecha leída, el propio escaneo fuera y acotada.
-    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toEqual([
-      { p_totals: ["1200", "1200.01", "1200.02"], p_date: "2026-09-08", p_exclude_scan_id: "scan-self", p_limit: 50 },
+    expect(rpcParams(stub.rpc, DUPLICATE_CANDIDATES_RPC)).toEqual([
+      { p_totals: ["1200", "1200.01", "1200.02"], p_date: "2026-09-08", p_exclude_scan_id: "scan-self", p_limit: 50, ...READ_SUPPLIER },
     ]);
     expect(queriesOf(stub.queries, "invoice_scans")).toEqual([]);
   });
@@ -718,7 +728,7 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
 
     const ctx = await loadMatchContext(stub.client, STORE_ID, scanned);
 
-    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toHaveLength(2);
+    expect(rpcParams(stub.rpc, DUPLICATE_CANDIDATES_RPC)).toHaveLength(2);
     expect(ctx.previousScans.map((scan) => scan.scanId)).toEqual(["scan-f02"]);
     expect(matchInvoice(scanned, ctx).duplicateOfScanId).toBe("scan-f02");
   });
@@ -732,7 +742,7 @@ describe("loadMatchContext · posible duplicado (SCN-11-F4)", () => {
 
     await loadMatchContext(stub.client, STORE_ID, { ...extraction, number: undefined, date: "2026-09-08" });
 
-    expect(rpcParams(stub.rpc, MATCH_PREVIOUS_SCANS_RPC)).toHaveLength(0);
+    expect(rpcParams(stub.rpc, DUPLICATE_CANDIDATES_RPC)).toHaveLength(0);
   });
 });
 

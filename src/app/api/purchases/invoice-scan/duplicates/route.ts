@@ -96,6 +96,6 @@ export async function POST(request: Request) {
       ),
     );
   } catch (error) {
-    return toErrorResponse(error);
+    return toErrorResponse(error, { zodIssues: "public" });
   }
 }

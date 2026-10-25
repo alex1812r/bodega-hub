@@ -92,6 +92,18 @@ describe("POST /api/purchases/invoice-scan/duplicates · REP12-06", () => {
     expect(body.data.map((match: { scanId: string }) => match.scanId)).toEqual([PREVIO]);
   });
 
+  it("B-qa-rep12-01-1 (fecha + total, sin número): más de 50 escaneos más nuevos con la misma fecha y total de OTRO proveedor no ocultan el posible duplicado", async () => {
+    seed(PREVIO, "2026-10-01T10:00:00.000Z", { status: "confirmed", supplierId: CAOS, purchaseId: "purchase-caos" });
+    for (let index = 0; index < PREVIOUS_SCANS_LIMIT + 10; index += 1) {
+      const suffix = String(index).padStart(3, "0");
+      seed(`00000000-0000-4000-8000-000000f00${suffix}`, `2026-10-02T10:${suffix.slice(1)}:00.000Z`, { supplierId: NORTE });
+    }
+
+    const body = await (await post({ supplierId: CAOS, date: "2026-10-20", total: 464 })).json();
+
+    expect(body.data.map((match: { scanId: string }) => match.scanId)).toEqual([PREVIO]);
+  });
+
   it.each([
     ["total como texto", { supplierId: NORTE, date: "2026-10-20", total: "5" }],
     ["campo desconocido", { supplierId: NORTE, number: "1", extra: "x" }],
@@ -108,6 +120,9 @@ describe("POST /api/purchases/invoice-scan/duplicates · REP12-06", () => {
 
     expect(response.status).toBe(400);
     expect(json.error.code).toBe("BAD_REQUEST");
+    // REP12-06b: sin los detalles internos de zod (expected, keys, code…): solo el mensaje y la ruta del campo.
+    const leaked = (json.error.issues ?? []).flatMap((issue: Record<string, unknown>) => Object.keys(issue).filter((key) => key !== "message" && key !== "path"));
+    expect(leaked).toEqual([]);
     const messages = [json.error.message, ...(json.error.issues ?? []).map((issue: { message: string }) => issue.message)];
     expect(messages.filter((message: string) => ZOD_ENGLISH.test(message))).toEqual([]);
   });

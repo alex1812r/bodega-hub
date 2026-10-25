@@ -5,8 +5,10 @@
  */
 import {
   DUPLICATE_CANDIDATES_RPC,
+  duplicateSupplierParams,
   loadPreviousScans,
   MATCH_PREVIOUS_SCANS_RPC,
+  readDuplicateSupplier,
   type MatchContextSupabaseClient,
 } from "./loadMatchContext";
 
@@ -59,5 +61,33 @@ describe("loadPreviousScans · REP12-06", () => {
     await loadPreviousScans(client, STORE_ID, { number: "1" });
 
     expect(rpc).toHaveBeenCalledWith(MATCH_PREVIOUS_SCANS_RPC, { p_number: "1", p_exclude_scan_id: null, p_limit: 200 });
+  });
+});
+
+describe("readDuplicateSupplier · REP12-06 (emparejamiento con el proveedor leído)", () => {
+  const caos = { contactId: CAOS, name: "Distribuidora Caos Global", taxId: "J-40999888-1", score: 0.9 };
+  const norte = { contactId: "9cd0d5af-85cb-448c-a65c-d688874fa5da", name: "Distribuidora Norte", taxId: null, score: 0.5 };
+
+  it("el contacto que resuelve matchInvoice (por RIF) y su RIF; no los demás candidatos por nombre", () => {
+    expect(readDuplicateSupplier({ supplier: { name: "Caos Global", taxId: "J-40999888-1" } }, [norte, caos])).toEqual({
+      ids: [CAOS],
+      taxIds: ["J-40999888-1", "J-40999888-1"],
+    });
+    expect(duplicateSupplierParams(readDuplicateSupplier({ supplier: { name: "x", taxId: "J-40999888-1" } }, [norte, caos])!)).toEqual({
+      p_supplier_ids: [CAOS],
+      p_tax_digits: ["409998881"],
+    });
+  });
+
+  it("RIF leído sin contacto resuelto: solo el RIF", () => {
+    expect(duplicateSupplierParams(readDuplicateSupplier({ supplier: { name: "Otro", taxId: "V-1234567" } }, [norte])!)).toEqual({
+      p_supplier_ids: [],
+      p_tax_digits: ["1234567"],
+    });
+  });
+
+  it("sin contacto resuelto ni RIF leído: sin filtro (como antes)", () => {
+    expect(readDuplicateSupplier({ supplier: { name: "Desconocido" } }, [norte])).toBeUndefined();
+    expect(readDuplicateSupplier({ supplier: { name: "Desconocido", taxId: "--" } }, [])).toBeUndefined();
   });
 });

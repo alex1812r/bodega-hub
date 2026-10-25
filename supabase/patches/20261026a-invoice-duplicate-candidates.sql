@@ -20,8 +20,9 @@
 --    "Dígitos" = normalizeTaxId del BFF: mayúsculas, solo [A-Z0-9] y sin la letra de tipo
 --    inicial [JVEGPC]; la letra la compara el BFF (sameTaxId).
 --    Los ids y RIF viajan en el cuerpo POST (D35: nada de texto de la factura en la URL).
---    La usa solo POST /api/purchases/invoice-scan/duplicates; el emparejamiento del
---    escaneo sigue con invoice_match_previous_scans (allí el proveedor aún no se conoce).
+--    La usan POST /api/purchases/invoice-scan/duplicates (proveedor elegido / leído) y el
+--    emparejamiento del escaneo (loadMatchContext, con el proveedor LEÍDO: contacto resuelto y
+--    RIF leído; sin proveedor leído sigue con invoice_match_previous_scans).
 --
 -- Security INVOKER (RLS de invoice_scans, purchases y contacts), tienda de
 -- assert_store_context(), rol admin | almacen (PT403), como 20261019q.
@@ -33,9 +34,9 @@
 -- Requiere 20261019a y 20261019o (columnas de invoice_scans legibles por authenticated).
 -- No redefine nada: reaplicar 20261019q no lo deshace. Idempotente, una transacción. Solo
 -- lectura: no toca stock ni dinero.
--- ORDEN: aplicar ANTES de desplegar el BFF de REP12-06 (sin el parche la consulta de
--- duplicados responde 500 / PGRST202 y la revisión muestra «No se pudo comprobar…», sin
--- bloquear). Después, verify-patches.sql (filas "(20261026a").
+-- ORDEN: aplicar ANTES de desplegar el BFF de REP12-06. Sin el parche, el ESCANEO con proveedor
+-- leído falla al emparejar (PGRST202) y la consulta de duplicados de la revisión responde 500
+-- («No se pudo comprobar…», sin bloquear). Después, verify-patches.sql (filas "(20261026a").
 -- =============================================================================
 
 begin;

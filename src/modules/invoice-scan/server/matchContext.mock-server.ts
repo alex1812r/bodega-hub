@@ -46,6 +46,7 @@ import {
   MATCH_CANDIDATES_MAX_TEXTS,
   MATCH_CANDIDATES_PER_LINE,
   PREVIOUS_SCANS_LIMIT,
+  readDuplicateSupplier,
   taxRateKind,
 } from "./loadMatchContext";
 import type {
@@ -359,7 +360,8 @@ export function loadMockMatchContext(
         isDefault: rate.id === defaultTaxRateId,
       })),
     systemRate: systemRate(storeId),
-    previousScans: listMockPreviousScans(storeId, extraction, options?.excludeScanId),
+    // REP12-06: con el proveedor leído, como `loadMatchContext`.
+    previousScans: listMockPreviousScans(storeId, extraction, options?.excludeScanId, readDuplicateSupplier(extraction, suppliers)),
   };
 }
 

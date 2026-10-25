@@ -29,6 +29,9 @@ async function englishMessages(response: Response) {
   expect(response.status).toBe(400);
   const json = await response.json();
   expect(json.error.code).toBe("BAD_REQUEST");
+  // REP12-06b: sin los detalles internos de zod (expected, keys, code…): solo el mensaje y la ruta del campo.
+  const leaked = (json.error.issues ?? []).flatMap((issue: Record<string, unknown>) => Object.keys(issue).filter((key) => key !== "message" && key !== "path"));
+  expect(leaked).toEqual([]);
   const messages: string[] = [json.error.message, ...(json.error.issues ?? []).map((issue: { message: string }) => issue.message)];
   return messages.filter((message) => ZOD_ENGLISH.test(message));
 }

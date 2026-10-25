@@ -49,6 +49,7 @@ import type {
 import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
 import { exactAliasTexts } from "./match/product";
+import { resolveSupplier } from "./match/supplier";
 import { normalizeCode, normalizeInvoiceNumber, normalizeTaxId } from "./match/text";
 
 /** Mismo cliente que usan los `*.server.ts` (sesión del usuario: `auth.uid()` para la RPC). */
@@ -156,6 +157,26 @@ export type DuplicateSupplierFilter = {
   ids: (string | null | undefined)[];
   taxIds: (string | null | undefined)[];
 };
+
+/**
+ * REP12-06: proveedor LEÍDO para los escaneos previos del emparejamiento, con lo mismo que
+ * `matchInvoice` pasa a `findDuplicateScan`: el contacto que resuelve `resolveSupplier`, su RIF
+ * guardado y el RIF leído. Sin contacto resuelto ni RIF leído, `undefined` (búsqueda sin filtro de
+ * proveedor, como antes).
+ */
+export function readDuplicateSupplier(
+  extraction: Pick<InvoiceExtraction, "supplier">,
+  supplierCandidates: MatchSupplierCandidate[],
+): DuplicateSupplierFilter | undefined {
+  const contactId = resolveSupplier(extraction.supplier, supplierCandidates).contactId;
+  if (!contactId && !normalizeTaxId(extraction.supplier.taxId)) {
+    return undefined;
+  }
+  return {
+    ids: [contactId],
+    taxIds: [extraction.supplier.taxId, supplierCandidates.find((candidate) => candidate.contactId === contactId)?.taxId],
+  };
+}
 
 /** Parámetros de `invoice_duplicate_candidates`: ids únicos y dígitos de RIF (`normalizeTaxId`). */
 export function duplicateSupplierParams(filter: DuplicateSupplierFilter): {
@@ -789,6 +810,9 @@ function toFuzzy(result: CandidatesRpcResult, lineCount: number): Record<number,
  * emparejar, o re-emparejar en GET); si no, sale en `previousScans` y
  * `matchInvoice` lo marca como duplicado de sí mismo. Omítelo si el escaneo
  * aún no existe en la base.
+ *
+ * REP12-06: los escaneos previos se piden con el proveedor LEÍDO (`readDuplicateSupplier`) para
+ * que el tope de candidatos no deje fuera el duplicado real; sin proveedor leído, como antes.
  */
 export async function loadMatchContext(
   supabase: MatchContextSupabaseClient,
@@ -796,20 +820,26 @@ export async function loadMatchContext(
   extraction: InvoiceExtraction,
   options?: { excludeScanId?: string },
 ): Promise<MatchContext> {
-  const [candidates, taxRates, systemRate, previousScans, barcodeProductIds] = await Promise.all([
+  const [candidates, taxRates, systemRate, barcodeProductIds] = await Promise.all([
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
     loadSystemRate(),
-    loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
     loadBarcodeProductIds(supabase, extraction),
   ]);
 
   const supplierCandidates = toSupplierCandidates(candidates);
   const supplierId = candidates.supplier_id ?? undefined;
   const firstFuzzy = toFuzzy(candidates, extraction.lines.length);
-  const [catalog, variantFuzzy] = await Promise.all([
+  const [catalog, variantFuzzy, previousScans] = await Promise.all([
     supplierId ? loadCatalog(supabase, storeId, supplierId, extraction) : Promise.resolve(undefined),
     loadVariantFuzzy(supabase, extraction, firstFuzzy, supplierId),
+    loadPreviousScans(
+      supabase,
+      storeId,
+      extraction,
+      options?.excludeScanId,
+      readDuplicateSupplier(extraction, supplierCandidates),
+    ),
   ]);
   const fuzzy = { ...firstFuzzy, ...variantFuzzy };
 
