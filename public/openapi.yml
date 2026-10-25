@@ -2989,6 +2989,88 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/purchases/invoice-scan/duplicates:
+    post:
+      tags: [Purchases]
+      summary: Escaneos previos que serian la misma factura que la revision
+      description: >-
+        Solo lectura (REP12-01). Con el proveedor elegido en la revision
+        (`supplierId`), el contacto leido (`contactId`) y el RIF leido
+        (`taxId`), devuelve los escaneos de la tienda con el mismo numero de
+        factura normalizado (o, sin numero exacto, el mismo total +-0,01 con la
+        misma fecha y numero ausente o a un caracter) y proveedor coincidente por
+        cualquiera de los tres, en cualquier combinacion con el elegido al
+        confirmar o el leido del escaneo previo. Misma regla que
+        `matched.duplicateOfScanId`. Los de compras anuladas no cuentan; el
+        escaneo `scanId` nunca cuenta. Por POST porque el numero es texto de la
+        factura y no va en la URL. Confirmados con compra primero. Se autoriza
+        con `purchases.create`.
+      x-permission: purchases.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: >-
+                Hace falta al menos uno de supplierId, contactId o taxId, y numero o
+                total. Cualquier otro campo o valor no valido responde 400.
+              properties:
+                scanId:
+                  type: string
+                  format: uuid
+                supplierId:
+                  type: string
+                  maxLength: 64
+                contactId:
+                  type: string
+                  maxLength: 64
+                taxId:
+                  type: string
+                  maxLength: 20
+                number:
+                  type: string
+                  maxLength: 64
+                date:
+                  type: string
+                  format: date
+                total:
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+      responses:
+        "200":
+          description: Escaneos coincidentes (vacio si no hay).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [scanId, purchaseId, number, date]
+                      properties:
+                        scanId:
+                          type: string
+                        purchaseId:
+                          type: string
+                          nullable: true
+                        number:
+                          type: string
+                          nullable: true
+                        date:
+                          type: string
+                          nullable: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/purchases/invoice-scan/upload-url:
     get:
       tags: [Purchases]

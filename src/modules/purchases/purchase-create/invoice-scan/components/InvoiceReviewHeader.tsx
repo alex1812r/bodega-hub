@@ -4,6 +4,7 @@ import { AlertTriangle, Camera, Copy } from "lucide-react";
 import Link from "next/link";
 
 import { useInvoiceScanPurchase } from "@/modules/invoice-scan/client/useInvoiceScanPurchase";
+import type { InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
 import { PurchaseSupplierCard } from "@/modules/purchases/purchase-create/components/PurchaseSupplierCard";
 import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
@@ -29,6 +30,14 @@ export type InvoiceReviewHeaderProps = {
   onAction: (action: InvoiceReviewAction) => void;
   onRescan: () => void;
   supplierFetcher?: EntityFetcher<"contact">;
+  /**
+   * REP12-01 (D52): duplicados consultados con el proveedor elegido; `undefined` mientras no hay
+   * respuesta (se usa el `duplicateOfScanId` del escaneo).
+   */
+  duplicates?: InvoiceDuplicateMatch[];
+  /** Casilla del aviso de duplicado marcada (Cargar la exige). */
+  duplicateAcknowledged?: boolean;
+  onDuplicateAcknowledge?: (acknowledged: boolean) => void;
 };
 
 /**
@@ -36,14 +45,29 @@ export type InvoiceReviewHeaderProps = {
  * proveedores de la compra), número, fecha, moneda, avisos de la lectura con
  * "Repetir foto" y el aviso de factura ya escaneada.
  */
-export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher }: InvoiceReviewHeaderProps) {
+export function InvoiceReviewHeader({
+  duplicateAcknowledged = false,
+  duplicates,
+  onAction,
+  onDuplicateAcknowledge,
+  onRescan,
+  state,
+  supplierFetcher,
+}: InvoiceReviewHeaderProps) {
   const { extraction, header } = state;
   const { supplier } = header;
   const lowConfidence = extraction.confidence < LOW_EXTRACTION_CONFIDENCE;
   const warnings = extraction.warnings;
   const showCandidates = !supplier.contactId && supplier.candidates.length > 0;
-  // Factura duplicada: si el escaneo anterior ya está en una compra, se enlaza (no bloquea).
-  const { purchaseId: duplicatePurchaseId } = useInvoiceScanPurchase(state.duplicateOfScanId);
+  // Factura duplicada: si el escaneo anterior ya está en una compra, se enlaza. No bloquea, pero
+  // Cargar exige marcar la casilla (REP12-01, D52). Con la consulta del proveedor elegido ya
+  // respondida manda ella; si no, el aviso del escaneo.
+  const { purchaseId: scanDuplicatePurchaseId } = useInvoiceScanPurchase(
+    duplicates === undefined ? state.duplicateOfScanId : undefined,
+  );
+  const showDuplicate = duplicates === undefined ? Boolean(state.duplicateOfScanId) : duplicates.length > 0;
+  const duplicatePurchaseId =
+    duplicates === undefined ? scanDuplicatePurchaseId : (duplicates.find((match) => match.purchaseId)?.purchaseId ?? null);
 
   return (
     <section aria-label="Datos de la factura" className="flex flex-col gap-4">
@@ -74,29 +98,42 @@ export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher
         </div>
       ) : null}
 
-      {state.duplicateOfScanId ? (
+      {showDuplicate ? (
         <div
           className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
           role="status"
         >
           <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
-          {duplicatePurchaseId ? (
-            <span>
-              Esta factura ({duplicateCriterionLabel(extraction)}) ya se registró en una compra. Revisa que no la cargues dos
-              veces.{" "}
-              <Link
-                className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
-                href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
-              >
-                Ver
-              </Link>
-            </span>
-          ) : (
-            <span>
-              Esta factura ({duplicateCriterionLabel(extraction)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
-              veces.
-            </span>
-          )}
+          <div className="flex min-w-0 flex-col gap-2">
+            {duplicatePurchaseId ? (
+              <span>
+                Esta factura ({duplicateCriterionLabel(extraction)}) ya se registró en una compra. Revisa que no la cargues dos
+                veces.{" "}
+                <Link
+                  className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
+                  href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
+                >
+                  Ver
+                </Link>
+              </span>
+            ) : (
+              <span>
+                Esta factura ({duplicateCriterionLabel(extraction)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
+                veces.
+              </span>
+            )}
+            {onDuplicateAcknowledge ? (
+              <label className="flex items-center gap-2 text-xs font-medium">
+                <input
+                  checked={duplicateAcknowledged}
+                  className="size-4 rounded border-border"
+                  onChange={(event) => onDuplicateAcknowledge(event.target.checked)}
+                  type="checkbox"
+                />
+                No es la misma compra, o quiero cargarla igual
+              </label>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

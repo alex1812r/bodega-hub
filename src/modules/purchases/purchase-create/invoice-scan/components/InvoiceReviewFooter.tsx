@@ -24,6 +24,8 @@ export type InvoiceReviewFooterProps = {
   onDiscard: () => void;
   /** D46-a: alto mínimo del detalle (pendientes y bloqueos) con el layout pendiente. */
   detailStyle?: CSSProperties;
+  /** REP12-01 (D52): aviso de factura duplicada sin reconocer; Cargar lo exige. */
+  duplicateUnacknowledged?: boolean;
 };
 
 /**
@@ -46,6 +48,7 @@ const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { labe
 
 export function InvoiceReviewFooter({
   detailStyle,
+  duplicateUnacknowledged = false,
   footerRef,
   onAction,
   onDiscard,
@@ -120,7 +123,7 @@ export function InvoiceReviewFooter({
         aria-label="Cargar en la compra"
         className="col-start-2 row-start-1 sm:col-start-3 sm:row-span-2"
         data-load-button
-        disabled={!summary.canLoad}
+        disabled={!summary.canLoad || duplicateUnacknowledged}
         onClick={onLoad}
       >
         <span className="sm:hidden">Cargar</span>

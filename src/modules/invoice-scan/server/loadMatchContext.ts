@@ -139,6 +139,9 @@ type LastLineRow = {
   purchase_items: Array<{ unit_cost_ref: number | string }> | null;
 };
 
+/** Lo que la búsqueda de escaneos previos usa de la factura (o de la revisión). */
+type DuplicateKeys = Pick<InvoiceExtraction, "number" | "date" | "total">;
+
 type PreviousScanRow = {
   id: string;
   supplier_id: string | null;
@@ -291,11 +294,12 @@ async function loadSystemRate(): Promise<number | undefined> {
  * separadores y ceros sobrantes caen en los `%`) y aquí se filtra por igualdad
  * normalizada. `findDuplicateScan` decide después por proveedor/RIF. Los
  * descartados o fallidos no cuentan. Se suman los del posible duplicado
- * (`loadPreviousScansByDateTotal`), con fecha y total leídos.
+ * (`loadPreviousScansByDateTotal`), con fecha y total leídos. REP12-01 (D53): también la usa
+ * `POST /api/purchases/invoice-scan/duplicates` con el número, la fecha y el total de la revisión.
  */
-async function loadPreviousScans(
+export async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
-  extraction: InvoiceExtraction,
+  extraction: DuplicateKeys,
   excludeScanId?: string,
 ): Promise<MatchPreviousScan[]> {
   const [byNumber, byDateTotal] = await Promise.all([
@@ -306,6 +310,7 @@ async function loadPreviousScans(
   return [...byNumber, ...byDateTotal.filter((row) => !seen.has(row.id))].map((row) => ({
     scanId: row.id,
     supplierId: row.supplier_id ?? row.matched_contact_id ?? null,
+    matchedContactId: row.matched_contact_id ?? undefined,
     supplierTaxId: row.supplier_tax_id ?? null,
     number: row.number ?? null,
     date: row.date ?? undefined,
@@ -325,7 +330,7 @@ async function loadPreviousScans(
  */
 async function loadPreviousScansByDateTotal(
   supabase: MatchContextSupabaseClient,
-  extraction: InvoiceExtraction,
+  extraction: DuplicateKeys,
   excludeScanId?: string,
 ): Promise<PreviousScanRow[]> {
   const total = extraction.total;
@@ -351,7 +356,7 @@ async function loadPreviousScansByDateTotal(
 
 async function loadPreviousScansByNumber(
   supabase: MatchContextSupabaseClient,
-  extraction: InvoiceExtraction,
+  extraction: DuplicateKeys,
   excludeScanId?: string,
 ): Promise<PreviousScanRow[]> {
   const number = normalizeInvoiceNumber(extraction.number);

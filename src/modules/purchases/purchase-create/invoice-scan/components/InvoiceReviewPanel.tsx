@@ -5,6 +5,8 @@ import { type FocusEvent, type KeyboardEvent, useEffect, useMemo, useRef, useSta
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
 import { fetchLastUnitCostRef } from "@/modules/invoice-scan/client/fetchLastUnitCost";
+import { buildInvoiceDuplicateQuery } from "@/modules/invoice-scan/client/fetchInvoiceDuplicates";
+import { type InvoiceDuplicatesFetcher, useInvoiceDuplicates } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import { useInvoiceScanImages } from "@/modules/invoice-scan/client/useInvoiceScanImages";
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
@@ -78,6 +80,11 @@ export type InvoiceReviewPanelProps = {
    * `fetchLastUnitCostRef` (`GET /api/purchases/invoice-scan/last-unit-costs`, solo ids).
    */
   lastUnitCostFetcher?: (productId: string, supplierId?: string) => Promise<number | null>;
+  /**
+   * REP12-01 (D52): duplicados con el proveedor elegido; por defecto
+   * `POST /api/purchases/invoice-scan/duplicates`.
+   */
+  duplicateFetcher?: InvoiceDuplicatesFetcher;
 };
 
 /**
@@ -242,6 +249,7 @@ function scrollAboveFooter(element: HTMLElement, footer: HTMLElement | null) {
 export function InvoiceReviewPanel({
   canCreateProduct = false,
   context,
+  duplicateFetcher,
   lastUnitCostFetcher = fetchLastUnitCostRef,
   onDiscard,
   onLoad,
@@ -284,6 +292,23 @@ export function InvoiceReviewPanel({
         .finally(() => lastCostRequestsRef.current.delete(key));
     }
   }, [dispatch, lastUnitCostFetcher, state.lines, supplierId]);
+  // REP12-01 (D52): al cambiar el proveedor (o el número/fecha) se vuelve a consultar el duplicado;
+  // el aviso no bloquea, pero Cargar exige reconocerlo (por escaneo previo al que apunta).
+  const duplicates = useInvoiceDuplicates(
+    buildInvoiceDuplicateQuery({
+      scanId: state.scanId,
+      supplierId,
+      contactId: response.matched.supplier.contactId,
+      taxId: state.extraction.supplier.taxId,
+      number: state.header.number,
+      date: state.header.date,
+      total: state.extraction.total,
+    }),
+    duplicateFetcher,
+  );
+  const duplicateKey = duplicates.matches ? (duplicates.matches[0]?.scanId ?? null) : (state.duplicateOfScanId ?? null);
+  const [acknowledgedDuplicate, setAcknowledgedDuplicate] = useState<string | null>(null);
+  const duplicateUnacknowledged = duplicateKey !== null && acknowledgedDuplicate !== duplicateKey;
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [confirmedOpen, setConfirmedOpen] = useState(false);
   // REP9-02: confirmada en cuyo campo se está escribiendo; no cambia de lista hasta que el foco salga
@@ -706,7 +731,7 @@ export function InvoiceReviewPanel({
 
   function handleLoad() {
     // D33-a: el rebote de la elección que resolvió la última línea no carga el borrador.
-    if (activationGuarded()) {
+    if (activationGuarded() || duplicateUnacknowledged) {
       return;
     }
     const draft = buildInvoiceReviewDraft(state);
@@ -896,7 +921,10 @@ export function InvoiceReviewPanel({
           <div className="flex min-w-0 flex-col gap-4" data-layout-box="header" style={layoutHold.boxStyle("header")}>
             <div ref={headerRef}>
               <InvoiceReviewHeader
+                duplicateAcknowledged={!duplicateUnacknowledged}
+                duplicates={duplicates.matches}
                 onAction={applyPanelAction}
+                onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
                 onRescan={onRescan}
                 state={state}
                 supplierFetcher={supplierFetcher}
@@ -972,6 +1000,7 @@ export function InvoiceReviewPanel({
 
       <InvoiceReviewFooter
         detailStyle={layoutHold.boxStyle("footer-detail")}
+        duplicateUnacknowledged={duplicateUnacknowledged}
         footerRef={footerRef}
         onAction={dispatch}
         onDiscard={() => setDiscardScanOpen(true)}

@@ -339,7 +339,7 @@ describe("loadMatchContext", () => {
     ]);
     expect(ctx.systemRate).toBe(45.5);
     expect(ctx.previousScans).toEqual([
-      { scanId: "scan-1", supplierId: SUPPLIER_ID, supplierTaxId: "J123456789", number: "0123" },
+      { scanId: "scan-1", supplierId: SUPPLIER_ID, matchedContactId: SUPPLIER_ID, supplierTaxId: "J123456789", number: "0123" },
       { scanId: "scan-2", supplierId: OTHER_SUPPLIER_ID, supplierTaxId: null, number: "123" },
     ]);
   });
@@ -753,6 +753,25 @@ describe("loadMatchContext · duplicado prefiere el escaneo confirmado (SCN-UI-C
       ["scan-confirmado", "purchase-1"],
     ]);
     expect(matchInvoice(extraction, ctx).duplicateOfScanId).toBe("scan-confirmado");
+  });
+});
+
+describe("loadMatchContext · duplicado cargado con otro proveedor (REP12-01, M-p12A-1)", () => {
+  it("la 1.ª compra se confirmó con otro proveedor: el contacto leído del escaneo previo sigue contando", async () => {
+    const rows = [
+      // Leído = SUPPLIER_ID (sin RIF), confirmado eligiendo OTHER_SUPPLIER_ID.
+      { id: "scan-otro-proveedor", supplier_id: OTHER_SUPPLIER_ID, number: "0123", supplier_tax_id: null, matched_contact_id: SUPPLIER_ID, purchase_id: "purchase-1" },
+    ];
+    const tables = fullTables();
+    tables.invoice_scans = (query) => ({ data: argsOf(query, "ilike").length > 0 ? rows : [], error: null });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    expect(ctx.previousScans).toEqual([
+      expect.objectContaining({ scanId: "scan-otro-proveedor", supplierId: OTHER_SUPPLIER_ID, matchedContactId: SUPPLIER_ID }),
+    ]);
+    expect(matchInvoice(extraction, ctx).duplicateOfScanId).toBe("scan-otro-proveedor");
   });
 });
 

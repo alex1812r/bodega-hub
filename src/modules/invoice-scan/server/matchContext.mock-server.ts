@@ -233,7 +233,12 @@ function systemRate(storeId: string): number | undefined {
   return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
 }
 
-function previousScans(storeId: string, extraction: InvoiceExtraction, excludeScanId?: string): MatchPreviousScan[] {
+/** REP12-01: también la usa `POST /api/purchases/invoice-scan/duplicates` en mock (paridad con `loadPreviousScans`). */
+export function listMockPreviousScans(
+  storeId: string,
+  extraction: Pick<InvoiceExtraction, "number" | "date" | "total">,
+  excludeScanId?: string,
+): MatchPreviousScan[] {
   const number = normalizeInvoiceNumber(extraction.number);
   // Paridad con `loadPreviousScansByDateTotal`: mismo total (±0,01, al céntimo) y fecha si se leyó.
   const total = extraction.total;
@@ -262,6 +267,7 @@ function previousScans(storeId: string, extraction: InvoiceExtraction, excludeSc
   return [...byNumber, ...byDateTotal.filter((scan) => !byNumber.includes(scan))].map((scan) => ({
     scanId: scan.id,
     supplierId: scan.supplierId ?? scan.matched?.supplier.contactId ?? null,
+    matchedContactId: scan.matched?.supplier.contactId ?? undefined,
     supplierTaxId: scan.extracted?.supplier.taxId ?? null,
     number: scan.extracted?.number ?? null,
     date: scan.extracted?.date,
@@ -297,7 +303,7 @@ export function loadMockMatchContext(
         isDefault: rate.id === defaultTaxRateId,
       })),
     systemRate: systemRate(storeId),
-    previousScans: previousScans(storeId, extraction, options?.excludeScanId),
+    previousScans: listMockPreviousScans(storeId, extraction, options?.excludeScanId),
   };
 }
 

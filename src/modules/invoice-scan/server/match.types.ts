@@ -164,8 +164,13 @@ export type MatchTaxRate = {
 export type MatchPreviousScan = {
   /** `invoice_scans.id`. */
   scanId: string;
-  /** `invoice_scans.supplier_id`, si se resolvió. */
+  /** `invoice_scans.supplier_id` (el elegido al confirmar) o, sin él, el contacto leído. */
   supplierId?: string | null;
+  /**
+   * REP12-01 (D53): contacto leído en ese escaneo (`matched->supplier->contactId`), aunque se
+   * confirmara eligiendo otro proveedor: también cuenta como el mismo proveedor.
+   */
+  matchedContactId?: string | null;
   /** RIF leído en ese escaneo (`extracted->supplier->taxId`). */
   supplierTaxId?: string | null;
   /** Número de factura leído en ese escaneo (`extracted->number`). */
