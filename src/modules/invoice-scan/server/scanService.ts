@@ -174,14 +174,25 @@ export function multipartTooLarge(): ApiError {
   return new ApiError(413, "PAYLOAD_TOO_LARGE", INVOICE_MULTIPART_TOO_LARGE_MESSAGE);
 }
 
-const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, "El hash de la factura no es válido.");
-const supplierIdSchema = z.string().trim().min(1).max(100);
+// REP12-06 (B-qa-rep12-01-2): cada esquema con su mensaje en español (zod los da en inglés).
+const SHA256_MESSAGE = "El hash de la factura no es válido.";
+const SUPPLIER_ID_MESSAGE = "El identificador del proveedor no es válido.";
+const STORAGE_PATHS_MESSAGE = `Indica de 1 a ${INVOICE_MAX_PAGES} rutas de página válidas (storagePaths).`;
 
-export const storedScanBodySchema = z.object({
-  sha256: sha256Schema,
-  storagePaths: z.array(z.string().max(300)).min(1).max(INVOICE_MAX_PAGES),
-  supplierId: supplierIdSchema.optional(),
-});
+const sha256Schema = z.string(SHA256_MESSAGE).regex(/^[0-9a-f]{64}$/, SHA256_MESSAGE);
+const supplierIdSchema = z.string(SUPPLIER_ID_MESSAGE).trim().min(1, SUPPLIER_ID_MESSAGE).max(100, SUPPLIER_ID_MESSAGE);
+
+export const storedScanBodySchema = z.object(
+  {
+    sha256: sha256Schema,
+    storagePaths: z
+      .array(z.string(STORAGE_PATHS_MESSAGE).max(300, STORAGE_PATHS_MESSAGE), STORAGE_PATHS_MESSAGE)
+      .min(1, STORAGE_PATHS_MESSAGE)
+      .max(INVOICE_MAX_PAGES, STORAGE_PATHS_MESSAGE),
+    supplierId: supplierIdSchema.optional(),
+  },
+  "El cuerpo debe ser un objeto JSON.",
+);
 
 const formFieldsSchema = z.object({
   sha256: sha256Schema.optional(),

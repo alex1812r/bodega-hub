@@ -41,6 +41,8 @@ import type { InvoiceExtraction } from "../contracts";
 import { listMockLearnedAliases } from "./confirmScan.mock-server";
 import {
   contactTaxIdsOf,
+  duplicateSupplierParams,
+  type DuplicateSupplierFilter,
   MATCH_CANDIDATES_MAX_TEXTS,
   MATCH_CANDIDATES_PER_LINE,
   PREVIOUS_SCANS_LIMIT,
@@ -57,7 +59,7 @@ import type {
 } from "./match.types";
 import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
-import { normalizeInvoiceNumber, sameTaxId, textSimilarity } from "./match/text";
+import { normalizeInvoiceNumber, normalizeTaxId, sameTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
 
 /** Mismos umbrales que `invoice_match_candidates` (20261019d). */
@@ -251,19 +253,48 @@ function mockContactTaxIds(storeId: string, ids: (string | null | undefined)[]):
   );
 }
 
-/** REP12-01: también la usa `POST /api/purchases/invoice-scan/duplicates` en mock (paridad con `loadPreviousScans`). */
+/**
+ * Paridad mock de `invoice_duplicate_candidates` (REP12-06): el escaneo puede ser del proveedor de
+ * la consulta por id (elegido o leído) o por los dígitos del RIF leído o guardado de sus contactos.
+ */
+function mockScanOfSupplier(
+  storeId: string,
+  scan: ReturnType<typeof listMockScansOfStore>[number],
+  params: ReturnType<typeof duplicateSupplierParams>,
+): boolean {
+  const ids = [scan.supplierId, scan.matched?.supplier.contactId];
+  if (ids.some((id) => typeof id === "string" && params.p_supplier_ids.includes(id))) {
+    return true;
+  }
+  const taxIds = [scan.extracted?.supplier.taxId, ...mockContactTaxIds(storeId, ids).values()];
+  return taxIds.some((taxId) => {
+    const digits = normalizeTaxId(taxId);
+    return digits !== "" && params.p_tax_digits.includes(digits);
+  });
+}
+
+/**
+ * REP12-01: también la usa `POST /api/purchases/invoice-scan/duplicates` en mock (paridad con `loadPreviousScans`).
+ * REP12-06: con `supplier`, el proveedor se filtra antes del tope, como `invoice_duplicate_candidates`.
+ */
 export function listMockPreviousScans(
   storeId: string,
   extraction: Pick<InvoiceExtraction, "number" | "date" | "total">,
   excludeScanId?: string,
+  supplier?: DuplicateSupplierFilter,
 ): MatchPreviousScan[] {
   const number = normalizeInvoiceNumber(extraction.number);
   // Paridad con `loadPreviousScansByDateTotal`: mismo total (±0,01, al céntimo) y fecha si se leyó.
   const total = extraction.total;
   const date = extraction.date?.trim();
   const cents = typeof total === "number" && Number.isFinite(total) && total > 0 && (date || !number) ? Math.round(total * 100) : undefined;
+  const supplierParams = supplier ? duplicateSupplierParams(supplier) : undefined;
   const live = listMockScansOfStore(storeId).filter(
-    (scan) => scan.id !== excludeScanId && scan.status !== "discarded" && scan.status !== "failed",
+    (scan) =>
+      scan.id !== excludeScanId &&
+      scan.status !== "discarded" &&
+      scan.status !== "failed" &&
+      (!supplierParams || mockScanOfSupplier(storeId, scan, supplierParams)),
   );
   const byNumber = number
     ? live.filter((scan) => normalizeInvoiceNumber(scan.extracted?.number) === number).slice(0, PREVIOUS_SCANS_LIMIT)

@@ -912,3 +912,16 @@ notify pgrst, 'reload schema';
 -- extracted tras un MATCH_ERROR. No toca stock ni dinero.
 -- OJO: reaplicar 20261019d devuelve invoice_match_candidates sin indice: volver a aplicar este parche despues.
 -- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP7-01, y correr verify-patches.sql (filas "(20261019q").
+-- -----------------------------------------------------------------------------
+-- 20261026a — escaneo de factura: candidatos a duplicado ya filtrados por proveedor (REP12-06; QA REP12-01
+--             B-qa-rep12-01-1): invoice_duplicate_candidates
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261026a-invoice-duplicate-candidates.sql
+-- Requiere 20261019a y 20261019o. Idempotente, una transaccion. RPC nueva de solo lectura (jsonb, security invoker con
+-- RLS, tienda de assert_store_context(), rol admin | almacen, arrays acotados, execute solo authenticated): las mismas
+-- filas que invoice_match_previous_scans (19q) pero con el proveedor (ids elegido / leido y digitos de RIF leido o
+-- guardado) filtrado ANTES del tope de 200/50; sin el filtro, un numero repetido con otros proveedores ocultaba el
+-- duplicado real. La usa solo POST /api/purchases/invoice-scan/duplicates. No redefine nada (reaplicar 19q no la
+-- deshace). No toca stock ni dinero.
+-- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP12-06 (sin el, la consulta de duplicados da 500 y la
+-- revision muestra "No se pudo comprobar...", sin bloquear), y correr verify-patches.sql (filas "(20261026a").

@@ -120,9 +120,13 @@ export function InvoiceReviewFooter({
       data-layout-shift-guard
       style={footerStyle}
     >
-      {/* D54(a): en móvil, dos líneas reservadas (con la diferencia el total pasa a dos y empujaría «Cargar»). */}
+      {/* D54(a): en móvil, dos líneas reservadas (con la diferencia el total pasa a dos y empujaría «Cargar»).
+          REP12-06: con el fallo de duplicados a la vista, tres (que aparezca la diferencia no lo hace crecer). */}
       <p
-        className="col-start-1 row-start-2 flex min-h-11 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0"
+        className={cn(
+          "col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0",
+          duplicateCheckFailed && !detailOpen ? "min-h-16" : "min-h-11",
+        )}
         data-testid="invoice-review-totals"
       >
         <span>
@@ -152,6 +156,10 @@ export function InvoiceReviewFooter({
             {totals.difference !== undefined ? `Diferencia ${money(totals.difference)}` : "Los totales no cuadran"}
           </span>
         )}
+        {/* REP12-06 (B-qa05-1): en móvil, con el detalle plegado, el fallo de la consulta de duplicados también se ve. */}
+        {duplicateCheckFailed && !detailOpen ? (
+          <span className="text-xs text-amber-700 sm:hidden dark:text-amber-300">No se pudo comprobar duplicados</span>
+        ) : null}
       </p>
 
       <Button
@@ -242,15 +250,16 @@ export function InvoiceReviewFooter({
       {totals.read !== undefined ? (
         // D54(a): sitio reservado aunque no haya diferencia; a la izquierda, nunca bajo «Cargar».
         <div
-          className="col-span-3 row-start-1 min-h-8 min-w-0 text-xs text-foreground sm:col-span-1 sm:col-start-1 sm:row-start-3 lg:min-h-4"
+          className="col-span-3 row-start-1 min-h-8 min-w-0 text-xs text-foreground sm:col-span-1 sm:col-start-1 sm:row-start-3 lg:min-h-6"
           data-testid="invoice-review-difference-slot"
         >
           {totals.difference !== undefined ? (
             <div className="flex items-start gap-2" data-testid="invoice-review-confirm-difference">
+              {/* REP12-06: 24 px de área táctil (WCAG 2.5.8); el sitio reservado tiene su alto (lg:min-h-6). */}
               <input
                 aria-labelledby={differenceTextId}
                 checked={state.acceptedDifference === totals.difference}
-                className="size-4 shrink-0 rounded border-border"
+                className="size-6 shrink-0 rounded border-border"
                 onChange={handleDifferenceChange}
                 onPointerDown={difference.onPointerDown}
                 onPointerUp={difference.onPointerUp}

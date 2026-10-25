@@ -142,7 +142,7 @@ export function InvoiceReviewHeader({
                 <input
                   aria-labelledby={acknowledgeTextId}
                   checked={duplicateAcknowledged}
-                  className="size-4 rounded border-border"
+                  className="size-6 shrink-0 rounded border-border"
                   onChange={(event) => {
                     if (acknowledge.accepts(event)) {
                       onDuplicateAcknowledge(event.target.checked);

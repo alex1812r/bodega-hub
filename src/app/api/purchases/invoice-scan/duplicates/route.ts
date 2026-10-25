@@ -15,30 +15,44 @@ const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MAX_NUMBER_LENGTH = 64;
 const MAX_TOTAL = 1e12;
 
-const idSchema = (message: string) => z.string().min(1, message).max(MAX_ID_LENGTH, message).regex(ID_PATTERN, message);
+const idSchema = (message: string) => z.string(message).min(1, message).max(MAX_ID_LENGTH, message).regex(ID_PATTERN, message);
 
+// REP12-06 (B-qa-rep12-01-2): cada esquema lleva su mensaje en español también para el tipo
+// equivocado, el cuerpo que no es objeto y los campos de más (zod los da en inglés).
 const bodySchema = z
-  .strictObject({
-    scanId: z.uuid("El identificador del escaneo no es válido.").optional(),
-    supplierId: idSchema("El identificador del proveedor no es válido.").optional(),
-    contactId: idSchema("El identificador del proveedor leído no es válido.").optional(),
-    taxId: z
-      .string()
-      .trim()
-      .min(1, "El RIF no es válido.")
-      .max(20, "El RIF no es válido.")
-      .regex(/^[A-Za-z0-9 .-]+$/, "El RIF no es válido.")
-      .optional(),
-    number: z
-      .string()
-      .trim()
-      .min(1, "El número de factura no es válido.")
-      .max(MAX_NUMBER_LENGTH, "El número de factura no es válido.")
-      .regex(/^[^\p{Cc}]+$/u, "El número de factura no es válido.")
-      .optional(),
-    date: z.iso.date("La fecha debe tener el formato AAAA-MM-DD.").optional(),
-    total: z.number().positive("El total debe ser mayor que 0.").max(MAX_TOTAL, "El total no es válido.").optional(),
-  })
+  .strictObject(
+    {
+      scanId: z.uuid("El identificador del escaneo no es válido.").optional(),
+      supplierId: idSchema("El identificador del proveedor no es válido.").optional(),
+      contactId: idSchema("El identificador del proveedor leído no es válido.").optional(),
+      taxId: z
+        .string("El RIF no es válido.")
+        .trim()
+        .min(1, "El RIF no es válido.")
+        .max(20, "El RIF no es válido.")
+        .regex(/^[A-Za-z0-9 .-]+$/, "El RIF no es válido.")
+        .optional(),
+      number: z
+        .string("El número de factura no es válido.")
+        .trim()
+        .min(1, "El número de factura no es válido.")
+        .max(MAX_NUMBER_LENGTH, "El número de factura no es válido.")
+        .regex(/^[^\p{Cc}]+$/u, "El número de factura no es válido.")
+        .optional(),
+      date: z.iso.date("La fecha debe tener el formato AAAA-MM-DD.").optional(),
+      total: z
+        .number("El total no es válido.")
+        .positive("El total debe ser mayor que 0.")
+        .max(MAX_TOTAL, "El total no es válido.")
+        .optional(),
+    },
+    {
+      error: (issue) =>
+        issue.code === "unrecognized_keys"
+          ? `Campo no permitido: ${issue.keys.join(", ")}.`
+          : "El cuerpo debe ser un objeto JSON.",
+    },
+  )
   .refine((body) => Boolean(body.supplierId || body.contactId || body.taxId), {
     message: "Indica el proveedor (supplierId, contactId o taxId).",
   })
@@ -62,20 +76,23 @@ export async function POST(request: Request) {
 
     const contactIds = [query.supplierId, query.contactId];
 
+    // REP12-06 (B-qa-rep12-01-1): el proveedor (ids y RIF) se filtra antes del tope de candidatos.
     if (resolveDataSource() === "supabase") {
       const supabase = await createRouteSupabaseClient();
-      const [previousScans, taxIds] = await Promise.all([
-        loadPreviousScans(supabase, auth.storeId, keys, query.scanId),
-        loadContactTaxIds(supabase, auth.storeId, contactIds),
-      ]);
-      return jsonData(toInvoiceDuplicateMatches(query, previousScans, [...taxIds.values()]));
+      const taxIds = [...(await loadContactTaxIds(supabase, auth.storeId, contactIds)).values()];
+      const previousScans = await loadPreviousScans(supabase, auth.storeId, keys, query.scanId, {
+        ids: contactIds,
+        taxIds: [query.taxId, ...taxIds],
+      });
+      return jsonData(toInvoiceDuplicateMatches(query, previousScans, taxIds));
     }
 
+    const taxIds = listMockContactTaxIds(auth.storeId, contactIds);
     return jsonData(
       toInvoiceDuplicateMatches(
         query,
-        listMockPreviousScans(auth.storeId, keys, query.scanId),
-        listMockContactTaxIds(auth.storeId, contactIds),
+        listMockPreviousScans(auth.storeId, keys, query.scanId, { ids: contactIds, taxIds: [query.taxId, ...taxIds] }),
+        taxIds,
       ),
     );
   } catch (error) {

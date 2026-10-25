@@ -1324,3 +1324,74 @@ export const MQaRep12F19d390Tactil1500 = f19dAviso(390, "touch", 1500);
 export const MQaRep12F19d1280Raton400 = f19dAviso(1280, "mouse", 400);
 export const MQaRep12F19d1280Raton700 = f19dAviso(1280, "mouse", 700);
 export const MQaRep12F19d1280Raton1500 = f19dAviso(1280, "mouse", 1500);
+
+/** REP12-06: aviso de duplicado del escaneo y diferencia frente al total leído a la vez. */
+const casillasResponse = makeReviewResponse({
+  extraction: { total: 9999 },
+  lines: [{}, { read: { description: "Arroz Mary 1kg", rawText: "ARROZ MARY 1KG" } }],
+  matched: { duplicateOfScanId: "scan-previo" },
+});
+
+/**
+ * REP12-06 (QA-05, observación): las casillas que reconocen dinero (aviso de duplicado y diferencia)
+ * solo responden a su propio control; su área táctil mide al menos 24 × 24 px (WCAG 2.5.8).
+ */
+function casillasTactiles(width: number): Story {
+  return {
+    args: { response: casillasResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      const boxes = {
+        duplicado: screen.getByRole("checkbox", { name: /cargarla igual/i }),
+        diferencia: within(screen.getByTestId("invoice-review-confirm-difference")).getByRole("checkbox"),
+      };
+      for (const [name, box] of Object.entries(boxes)) {
+        const rect = box.getBoundingClientRect();
+        await expect(Math.min(rect.width, rect.height), `${width} casilla de ${name}: ${boxText(rect)}`).toBeGreaterThanOrEqual(24);
+      }
+    },
+  };
+}
+
+export const Rep1206CasillasTactiles390 = casillasTactiles(390);
+export const Rep1206CasillasTactiles1280 = casillasTactiles(1280);
+
+/**
+ * REP12-06 (B-qa05-1): a 390, con la consulta de duplicados caída tras elegir el proveedor a mano, el
+ * pie PLEGADO dice que no se pudo comprobar (Cargar sigue habilitado: el fallo no bloquea, D52).
+ */
+export const Rep1206FalloDuplicadosPiePlegado390: Story = {
+  args: {
+    duplicateFetcher: async () => {
+      throw new Error("500");
+    },
+    response: f19Response,
+    supplierFetcher: farmatodoFetcher,
+  },
+  play: async () => {
+    const browser = await prepare(390);
+    if (!browser) {
+      return;
+    }
+    const field = screen.getByRole("combobox", { name: /proveedor/i });
+    field.scrollIntoView({ block: "center" });
+    await browser.userEvent.click(field);
+    await browser.userEvent.type(field, "Farma");
+    await browser.userEvent.click(await screen.findByRole("option", { name: /farmatodo/i }));
+    const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
+    await expect(within(footer).getByRole("button", { name: "Ver detalle del total" }), "pie plegado").toBeVisible();
+    await waitFor(
+      () => {
+        const shown = within(footer)
+          .queryAllByText(/No se pudo comprobar/)
+          .filter((element) => element.checkVisibility() && element.getBoundingClientRect().height > 0);
+        expect(shown.length, "texto de fallo visible en el pie plegado").toBeGreaterThan(0);
+      },
+      { timeout: 2000 },
+    );
+    await expect(screen.getByRole("button", { name: "Cargar en la compra" })).toBeEnabled();
+  },
+};

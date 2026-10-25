@@ -49,7 +49,7 @@ import type {
 import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
 import { exactAliasTexts } from "./match/product";
-import { normalizeCode, normalizeInvoiceNumber } from "./match/text";
+import { normalizeCode, normalizeInvoiceNumber, normalizeTaxId } from "./match/text";
 
 /** Mismo cliente que usan los `*.server.ts` (sesión del usuario: `auth.uid()` para la RPC). */
 export type MatchContextSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
@@ -66,6 +66,11 @@ export const MATCH_EXACT_ALIASES_RPC = "invoice_match_exact_aliases";
 export const MATCH_BARCODE_PRODUCTS_RPC = "invoice_match_barcode_products";
 /** RPC de escaneos previos por número o por fecha y total (20261019q). */
 export const MATCH_PREVIOUS_SCANS_RPC = "invoice_match_previous_scans";
+/**
+ * REP12-06 (B-qa-rep12-01-1): la misma búsqueda con el proveedor filtrado ANTES del tope
+ * (20261026a); la usa `POST /api/purchases/invoice-scan/duplicates`.
+ */
+export const DUPLICATE_CANDIDATES_RPC = "invoice_duplicate_candidates";
 /** Escaneos previos con el mismo número normalizado que se pasan a `matchInvoice`. */
 export const PREVIOUS_SCANS_LIMIT = 50;
 /** Candidatos que se piden a la base antes de filtrar por número normalizado. */
@@ -141,6 +146,26 @@ type LastLineRow = {
 
 /** Lo que la búsqueda de escaneos previos usa de la factura (o de la revisión). */
 type DuplicateKeys = Pick<InvoiceExtraction, "number" | "date" | "total">;
+
+/**
+ * REP12-06 (B-qa-rep12-01-1): proveedor de la consulta de duplicados (ids elegido / leído y RIF
+ * leído / guardado). Con él, la base filtra por proveedor antes del tope de candidatos; la regla
+ * exacta sigue siendo `findDuplicateScans`.
+ */
+export type DuplicateSupplierFilter = {
+  ids: (string | null | undefined)[];
+  taxIds: (string | null | undefined)[];
+};
+
+/** Parámetros de `invoice_duplicate_candidates`: ids únicos y dígitos de RIF (`normalizeTaxId`). */
+export function duplicateSupplierParams(filter: DuplicateSupplierFilter): {
+  p_supplier_ids: string[];
+  p_tax_digits: string[];
+} {
+  const ids = filter.ids.filter((id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id));
+  const digits = filter.taxIds.map(normalizeTaxId).filter((value) => /^[A-Z0-9]{1,20}$/.test(value));
+  return { p_supplier_ids: [...new Set(ids)].slice(0, 10), p_tax_digits: [...new Set(digits)].slice(0, 10) };
+}
 
 type PreviousScanRow = {
   id: string;
@@ -298,16 +323,23 @@ async function loadSystemRate(): Promise<number | undefined> {
  * `POST /api/purchases/invoice-scan/duplicates` con el número, la fecha y el total de la revisión.
  * REP12-01 (D53): cada escaneo lleva el RIF guardado de su proveedor elegido y de su contacto
  * leído (`loadContactTaxIds`, contactos de la tienda).
+ * REP12-06 (B-qa-rep12-01-1): con `supplier`, la base filtra por proveedor antes del tope
+ * (`invoice_duplicate_candidates`); sin ningún id ni RIF usable no hay candidatos.
  */
 export async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
   storeId: string,
   extraction: DuplicateKeys,
   excludeScanId?: string,
+  supplier?: DuplicateSupplierFilter,
 ): Promise<MatchPreviousScan[]> {
+  const supplierParams = supplier ? duplicateSupplierParams(supplier) : undefined;
+  if (supplierParams && supplierParams.p_supplier_ids.length + supplierParams.p_tax_digits.length === 0) {
+    return [];
+  }
   const [byNumber, byDateTotal] = await Promise.all([
-    loadPreviousScansByNumber(supabase, extraction, excludeScanId),
-    loadPreviousScansByDateTotal(supabase, extraction, excludeScanId),
+    loadPreviousScansByNumber(supabase, extraction, excludeScanId, supplierParams),
+    loadPreviousScansByDateTotal(supabase, extraction, excludeScanId, supplierParams),
   ]);
   const seen = new Set(byNumber.map((row) => row.id));
   const rows = [...byNumber, ...byDateTotal.filter((row) => !seen.has(row.id))];
@@ -378,6 +410,7 @@ async function loadPreviousScansByDateTotal(
   supabase: MatchContextSupabaseClient,
   extraction: DuplicateKeys,
   excludeScanId?: string,
+  supplierParams?: ReturnType<typeof duplicateSupplierParams>,
 ): Promise<PreviousScanRow[]> {
   const total = extraction.total;
   const date = extraction.date?.trim();
@@ -390,11 +423,12 @@ async function loadPreviousScansByDateTotal(
 
   const cents = Math.round(total * 100);
   const totals = [cents - 1, cents, cents + 1].map((value) => String(value / 100));
-  const { data, error } = await supabase.rpc(MATCH_PREVIOUS_SCANS_RPC, {
+  const { data, error } = await supabase.rpc(supplierParams ? DUPLICATE_CANDIDATES_RPC : MATCH_PREVIOUS_SCANS_RPC, {
     p_totals: totals,
     p_date: date || null,
     p_exclude_scan_id: excludeScanId ?? null,
     p_limit: PREVIOUS_SCANS_LIMIT,
+    ...supplierParams,
   });
   throwIfSupabaseError(error);
   return (data ?? []) as PreviousScanRow[];
@@ -404,6 +438,7 @@ async function loadPreviousScansByNumber(
   supabase: MatchContextSupabaseClient,
   extraction: DuplicateKeys,
   excludeScanId?: string,
+  supplierParams?: ReturnType<typeof duplicateSupplierParams>,
 ): Promise<PreviousScanRow[]> {
   const number = normalizeInvoiceNumber(extraction.number);
   if (!number) {
@@ -411,10 +446,11 @@ async function loadPreviousScansByNumber(
   }
 
   // La RPC busca `%F%A%C%1` (los caracteres en orden) con `number` en el cuerpo POST.
-  const { data, error } = await supabase.rpc(MATCH_PREVIOUS_SCANS_RPC, {
+  const { data, error } = await supabase.rpc(supplierParams ? DUPLICATE_CANDIDATES_RPC : MATCH_PREVIOUS_SCANS_RPC, {
     p_number: number,
     p_exclude_scan_id: excludeScanId ?? null,
     p_limit: PREVIOUS_SCAN_CANDIDATES_LIMIT,
+    ...supplierParams,
   });
   throwIfSupabaseError(error);
 
