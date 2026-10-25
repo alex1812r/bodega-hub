@@ -26,6 +26,9 @@ import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
+/** f19d (REP12-05): proveedor que el usuario elige a mano en la revisión. */
+const FARMATODO = "00000000-0000-4000-8000-0000000000f1";
+const farmatodo = { id: FARMATODO, isActive: true, name: "Farmatodo", taxId: "J-00030426-5" };
 
 /** c10-move: «CAOSG Harina Maiz 1kg» por nombre; a 4.500 Bs se desvía del último costo (0,50 REF). */
 function harinaByName(unitPrice: number, taxRateCode = "exento"): ReviewFixtureLine {
@@ -131,6 +134,7 @@ const products: ProductEntityOption[] = [
 ];
 
 const productFetcher: EntityFetcher<"product"> = async () => products;
+const noSuppliers: EntityFetcher<"contact"> = async () => [];
 
 /** Clics y viewport reales de Vitest browser (Playwright); `null` fuera de Vitest. */
 async function loadBrowser() {
@@ -446,7 +450,7 @@ const meta = {
     onRescan: fn(),
     productFetcher,
     response: linesResponse,
-    supplierFetcher: async () => [],
+    supplierFetcher: noSuppliers,
   },
   component: InvoiceReviewPanel,
   decorators: [
@@ -459,6 +463,7 @@ const meta = {
         taxId: "J-12345678-9",
       });
       queryClient.setQueryData(invoiceScanQueryKeys.images(REVIEW_SCAN_ID), []);
+      queryClient.setQueryData(purchaseSuppliersQueryKeys.detail(FARMATODO), farmatodo);
       return (
         <QueryClientProvider client={queryClient}>
           <div className="min-h-screen bg-surface p-4">
@@ -1245,3 +1250,77 @@ function campoFueraDelPanel(width: number, pointer: Pointer): Story {
 
 export const CampoFueraDelPanel1280Raton = campoFueraDelPanel(1280, "mouse");
 export const CampoFueraDelPanel390Tactil = campoFueraDelPanel(390, "touch");
+
+const farmatodoFetcher: EntityFetcher<"contact"> = async () => [
+  { id: FARMATODO, isActive: true, label: "Farmatodo", phone: "", taxId: farmatodo.taxId, type: "proveedor" },
+];
+
+/** f19d: «FARMACIA OPALO», sin RIF ni proveedor reconocido; la línea ya está resuelta (Cargar solo espera el duplicado). */
+const f19Response = makeReviewResponse({
+  lines: [{ read: { quantity: 1, unitPrice: 1750, lineTotal: 1750 }, match: { taxRateCode: "exento" } }],
+  extraction: { supplier: { name: "FARMACIA OPALO" }, number: "00362952", date: "2026-09-03", total: 1750 },
+  matched: { supplier: {} },
+});
+
+/**
+ * M-qa-rep12-1 (REP12-05 · D49/D54): f19d. Escribir «Farma» en Proveedor, elegir «Farmatodo» y, a los
+ * `at` ms, volver a activar el punto del campo Proveedor. El aviso de duplicado aparece y empuja la
+ * cabecera; lo que quede en ese punto (su texto, su casilla) no marca la casilla ni habilita «Cargar».
+ */
+function f19dAviso(width: number, pointer: Pointer, at: number): Story {
+  return {
+    args: {
+      duplicateFetcher: async (query) =>
+        query.supplierId === FARMATODO
+          ? [{ scanId: "scan-previo", purchaseId: "00000000-0000-4000-8000-0000000000c8", number: "00362952", date: "2026-09-03" }]
+          : [],
+      response: f19Response,
+      supplierFetcher: farmatodoFetcher,
+    },
+    play: async ({ args }) => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      const field = screen.getByRole("combobox", { name: /proveedor/i });
+      field.scrollIntoView({ block: "center" });
+      await browser.userEvent.click(field);
+      await browser.userEvent.type(field, "Farma");
+      const option = await screen.findByRole("option", { name: /farmatodo/i });
+      await sleep(POINTER_GUARD_MS + 200);
+      const aim = centerOf(field);
+      const load = screen.getByRole("button", { name: "Cargar en la compra" });
+      await expect(screen.queryByText(/ya se registró en una compra/), "antes de elegir no hay aviso").toBeNull();
+
+      await activateAt(browser, centerOf(option), pointer);
+      const start = performance.now();
+      await waitFor(() => expect(screen.getByText(/ya se registró en una compra/)).toBeInTheDocument(), { timeout: 900 });
+      const shownAt = Math.round(performance.now() - start);
+      const box = screen.getByRole("checkbox", { name: /cargarla igual/i });
+      const under = document.elementFromPoint(aim.x, aim.y);
+      const report =
+        `${width} ${pointer} @${at}ms · aviso a los ${shownAt} ms · punto del campo (${Math.round(aim.x)},${Math.round(aim.y)}) · ` +
+        `casilla ${boxText(box.getBoundingClientRect())} · bajo el punto: ${describeControl(under?.closest("button, input, label, span, div") ?? null)}`;
+      console.log(`[M-qa-rep12-1] ${report}`);
+      await expect(box, "el aviso aparece sin marcar").not.toBeChecked();
+      await expect(load, "y «Cargar» espera la casilla").toBeDisabled();
+
+      await sleepUntil(start, at);
+      await activateAt(browser, aim, pointer);
+      await sleep(300);
+      console.log(
+        `[M-qa-rep12-1] ${width} ${pointer} @${at}ms · casilla=${String((box as HTMLInputElement).checked)} · Cargar=${String(!(load as HTMLButtonElement).disabled)}`,
+      );
+      await expect(box, `${report}: el toque a ${at} ms no marca la casilla`).not.toBeChecked();
+      await expect(load, `${report}: ni habilita «Cargar»`).toBeDisabled();
+      await expect(args.onLoad).not.toHaveBeenCalled();
+    },
+  };
+}
+
+export const MQaRep12F19d390Tactil400 = f19dAviso(390, "touch", 400);
+export const MQaRep12F19d390Tactil700 = f19dAviso(390, "touch", 700);
+export const MQaRep12F19d390Tactil1500 = f19dAviso(390, "touch", 1500);
+export const MQaRep12F19d1280Raton400 = f19dAviso(1280, "mouse", 400);
+export const MQaRep12F19d1280Raton700 = f19dAviso(1280, "mouse", 700);
+export const MQaRep12F19d1280Raton1500 = f19dAviso(1280, "mouse", 1500);

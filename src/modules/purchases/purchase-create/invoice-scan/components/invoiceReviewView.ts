@@ -357,8 +357,9 @@ export function getDisplayedLineIssues(
   });
 }
 
+/** REP12-05 (B-qa-rep12-3): como el aviso de cantidad (REP12-04), sin redondear: 2,9999 no se lee «3». */
 function formatCount(value: number): string {
-  return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
+  return value.toLocaleString("es-VE", { maximumSignificantDigits: 15 });
 }
 
 /** Dos decimales como el aviso de precio del servidor («0,10 REF»). */

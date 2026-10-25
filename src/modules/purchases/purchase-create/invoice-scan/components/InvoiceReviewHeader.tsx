@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Camera, Copy } from "lucide-react";
 import Link from "next/link";
-import type { Ref } from "react";
+import { type RefObject, useId, useRef } from "react";
 
 import { useInvoiceScanPurchase } from "@/modules/invoice-scan/client/useInvoiceScanPurchase";
 import type { InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
@@ -19,6 +19,7 @@ import {
   formatScore,
   LOW_EXTRACTION_CONFIDENCE,
 } from "./invoiceReviewView";
+import { useFreshPressCheckbox } from "./useFreshPressCheckbox";
 
 const CURRENCY_LABELS: Record<InvoiceReviewState["header"]["currency"], string> = {
   USD: "Dólares (USD)",
@@ -40,7 +41,7 @@ export type InvoiceReviewHeaderProps = {
   duplicateAcknowledged?: boolean;
   onDuplicateAcknowledge?: (acknowledged: boolean) => void;
   /** Casilla del aviso de duplicado: el motivo del pie lleva el foco a ella. */
-  duplicateCheckboxRef?: Ref<HTMLInputElement>;
+  duplicateCheckboxRef?: RefObject<HTMLInputElement | null>;
 };
 
 /**
@@ -72,6 +73,11 @@ export function InvoiceReviewHeader({
   const showDuplicate = duplicates === undefined ? Boolean(state.duplicateOfScanId) : duplicates.length > 0;
   const duplicatePurchaseId =
     duplicates === undefined ? scanDuplicatePurchaseId : (duplicates.find((match) => match.purchaseId)?.purchaseId ?? null);
+  const acknowledgeTextId = useId();
+  // La casilla la usan el hook (su sitio) y el panel (el motivo del pie le lleva el foco).
+  const ownCheckboxRef = useRef<HTMLInputElement>(null);
+  const acknowledgeRef = duplicateCheckboxRef ?? ownCheckboxRef;
+  const acknowledge = useFreshPressCheckbox(acknowledgeRef);
 
   return (
     <section aria-label="Datos de la factura" className="flex flex-col gap-4">
@@ -105,6 +111,9 @@ export function InvoiceReviewHeader({
       {showDuplicate ? (
         <div
           className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
+          // REP12-05 (D49): aparece tras la consulta, con el dedo aún cerca; lo que aparece o se mueve en
+          // él queda guardado 1 s (useLayoutHold), como el pie.
+          data-layout-shift-guard
           role="status"
         >
           <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -127,16 +136,25 @@ export function InvoiceReviewHeader({
               </span>
             )}
             {onDuplicateAcknowledge ? (
-              <label className="flex items-center gap-2 text-xs font-medium">
+              // REP12-05 (M-qa-rep12-1): el texto no es su etiqueta; la casilla solo cambia con su propio
+              // control y una pulsación nueva sobre ella (como la de diferencia del pie, D54(a)(3)).
+              <div className="flex items-center gap-2 text-xs font-medium">
                 <input
+                  aria-labelledby={acknowledgeTextId}
                   checked={duplicateAcknowledged}
                   className="size-4 rounded border-border"
-                  onChange={(event) => onDuplicateAcknowledge(event.target.checked)}
-                  ref={duplicateCheckboxRef}
+                  onChange={(event) => {
+                    if (acknowledge.accepts(event)) {
+                      onDuplicateAcknowledge(event.target.checked);
+                    }
+                  }}
+                  onPointerDown={acknowledge.onPointerDown}
+                  onPointerUp={acknowledge.onPointerUp}
+                  ref={acknowledgeRef}
                   type="checkbox"
                 />
-                No es la misma compra, o quiero cargarla igual
-              </label>
+                <span id={acknowledgeTextId}>No es la misma compra, o quiero cargarla igual</span>
+              </div>
             ) : null}
           </div>
         </div>
