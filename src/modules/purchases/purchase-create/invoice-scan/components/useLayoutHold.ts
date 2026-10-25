@@ -11,15 +11,12 @@ import {
   useState,
 } from "react";
 
-/**
- * D46-a: tras una activación con el puntero, el layout pendiente (alturas y orden) se aplica al
- * desplazar, al usar el teclado o tras este tiempo sin puntero sobre la zona de la acción.
- */
-export const LAYOUT_SETTLE_MS = 1500;
-
 /** D46-b: ventana y radio de la guarda espacial entre dos activaciones con el puntero. */
 export const POINTER_GUARD_MS = 1000;
 export const POINTER_GUARD_RADIUS_PX = 32;
+
+/** D49: tras aplicar el layout pendiente, ventana en que no actúa un control cuya caja se movió. */
+export const COMPACTION_GUARD_MS = 1000;
 
 /** Controles que una activación con el puntero puede accionar. */
 const CONTROL_SELECTOR =
@@ -57,13 +54,26 @@ export function isSpatialRebound(previous: PointerActivation | null, next: Point
 
 type LayoutHold<TOrder> = { order: TOrder; heights: ReadonlyMap<string, number> };
 
-export type Point = { x: number; y: number };
-
 /** Control pulsado y su caja, con su posición vertical antes de la acción. */
 type Anchor = { control: Element; controlTop: number; zone: Element | null; zoneTop: number };
 
-function contains(rect: DOMRect, point: Point) {
-  return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
+type Position = { top: number; left: number };
+
+/** Controles movidos (o aparecidos) al aplicar el layout pendiente, y cuándo se aplicó. */
+type Compaction = { moved: ReadonlySet<Element>; at: number };
+
+function contains(rect: DOMRect, x: number, y: number) {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+/** Posición en pantalla de cada control (los del buscador están en un portal: todo el documento). */
+function controlPositions(): Map<Element, Position> {
+  const positions = new Map<Element, Position>();
+  for (const control of document.querySelectorAll(CONTROL_SELECTOR)) {
+    const { top, left } = control.getBoundingClientRect();
+    positions.set(control, { top, left });
+  }
+  return positions;
 }
 
 /** Contenedor que desplaza a `element` (el documento si ninguno). */
@@ -82,8 +92,11 @@ function scrollParent(element: Element): Element {
  * cambie nada: fija el orden que se está pintando y el alto actual de cada `[data-layout-box]`
  * dentro de `rootRef` (solo crecen). Mientras dura, `order` devuelve ese orden, `boxStyle` su alto
  * mínimo y, si algo encima del control pulsado cambia de alto, se compensa el desplazamiento para
- * que siga bajo el puntero. Una nueva activación lo prolonga sin cambiar el orden fijado. `mouse`:
- * punto del ratón que activó (null si fue un toque), para saber si sigue sobre la zona.
+ * que siga bajo el puntero. Una nueva activación lo prolonga sin cambiar el orden fijado.
+ * D48(b)/D49: nunca se aplica por tiempo. Se aplica al desplazar (rueda, arrastre o barra), al usar
+ * el teclado o cuando el RATÓN sale del panel completo (`rootRef`) o de la ventana; tras un toque,
+ * nunca solo. Al aplicarlo se comparan las posiciones de los controles antes y después: durante
+ * COMPACTION_GUARD_MS, `movedByCompaction` dice si un control se movió (o apareció) con ello.
  * `onFocusLost`: al aplicarse el layout, la caja que tenía el foco se volvió a montar (cambió de
  * lista) y el foco cayó en BODY; recibe su clave.
  */
@@ -91,8 +104,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const [hold, setHold] = useState<LayoutHold<TOrder> | null>(null);
   const holdRef = useRef<LayoutHold<TOrder> | null>(null);
   const anchorRef = useRef<Anchor | null>(null);
-  const mouseRef = useRef<Point | null>(null);
-  const timerRef = useRef<number | undefined>(undefined);
+  // Posiciones de los controles justo antes de aplicar el layout, y lo que se movió al aplicarlo.
+  const positionsBeforeRef = useRef<Map<Element, Position> | null>(null);
+  const compactionRef = useRef<Compaction | null>(null);
   // Desplazamiento que hizo la compensación: su evento `scroll` no es del usuario.
   const ownScrollRef = useRef<{ scroller: Element; top: number } | null>(null);
   const focusedKeyRef = useRef<string | undefined>(undefined);
@@ -102,34 +116,19 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   });
 
   const release = useCallback(() => {
-    window.clearTimeout(timerRef.current);
     anchorRef.current = null;
     ownScrollRef.current = null;
     if (holdRef.current) {
       const focused = document.activeElement instanceof Element ? document.activeElement : null;
       focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
+      positionsBeforeRef.current = controlPositions();
       holdRef.current = null;
       setHold(null);
     }
   }, []);
 
-  const settleLater = useCallback(() => {
-    window.clearTimeout(timerRef.current);
-    const settle = () => {
-      // Un ratón quieto sobre la zona sigue «sobre ella»; un toque no deja puntero encima.
-      const zone = anchorRef.current?.zone;
-      const mouse = mouseRef.current;
-      if (zone?.isConnected && mouse && contains(zone.getBoundingClientRect(), mouse)) {
-        timerRef.current = window.setTimeout(settle, LAYOUT_SETTLE_MS);
-        return;
-      }
-      release();
-    };
-    timerRef.current = window.setTimeout(settle, LAYOUT_SETTLE_MS);
-  }, [release]);
-
   const holdLayout = useCallback(
-    (control: Element, order: TOrder, mouse: Point | null) => {
+    (control: Element, order: TOrder) => {
       const root = rootRef.current;
       if (!root) {
         return;
@@ -158,10 +157,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         zone,
         zoneTop: zone?.getBoundingClientRect().top ?? 0,
       };
-      mouseRef.current = mouse;
-      settleLater();
     },
-    [rootRef, settleLater],
+    [rootRef],
   );
 
   // Tras cada render con el layout pendiente, el control pulsado (o su caja, si desapareció) vuelve
@@ -192,6 +189,25 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   });
 
   const holding = hold !== null;
+
+  // D49: recién aplicado el layout (antes de pintar), lo que cambió de sitio o apareció respecto a
+  // justo antes queda marcado; la guarda cuenta desde ESTE momento, no desde la activación.
+  useLayoutEffect(() => {
+    const before = positionsBeforeRef.current;
+    if (holding || !before) {
+      return;
+    }
+    positionsBeforeRef.current = null;
+    const moved = new Set<Element>();
+    for (const [control, now] of controlPositions()) {
+      const was = before.get(control);
+      if (!was || Math.abs(was.top - now.top) >= 1 || Math.abs(was.left - now.left) >= 1) {
+        moved.add(control);
+      }
+    }
+    compactionRef.current = { moved, at: Date.now() };
+  }, [holding]);
+
   useEffect(() => {
     if (holding) {
       return;
@@ -215,19 +231,25 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       }
       release();
     };
+    // Solo el ratón: un toque no deja puntero encima (y su `pointerleave` llega al levantar el dedo).
     const onPointerMove = (event: PointerEvent) => {
-      mouseRef.current = event.pointerType === "mouse" ? { x: event.clientX, y: event.clientY } : null;
+      const root = rootRef.current;
+      if (event.pointerType === "mouse" && root && !contains(root.getBoundingClientRect(), event.clientX, event.clientY)) {
+        release();
+      }
     };
-    const onPointerLeave = () => {
-      mouseRef.current = null;
+    const onPointerLeave = (event: PointerEvent) => {
+      if (event.pointerType === "mouse") {
+        release();
+      }
     };
-    // Desplazar (rueda, arrastre o barra) o usar el teclado aplica el layout pendiente.
+    // Desplazar (rueda, arrastre o barra), usar el teclado o sacar el ratón del panel (o de la
+    // ventana) aplica el layout pendiente.
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("wheel", release, { passive: true });
     window.addEventListener("touchmove", release, { passive: true });
     window.addEventListener("keydown", release, true);
     window.addEventListener("pointermove", onPointerMove, true);
-    window.addEventListener("pointerdown", onPointerMove, true);
     document.documentElement.addEventListener("pointerleave", onPointerLeave);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
@@ -235,12 +257,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       window.removeEventListener("touchmove", release);
       window.removeEventListener("keydown", release, true);
       window.removeEventListener("pointermove", onPointerMove, true);
-      window.removeEventListener("pointerdown", onPointerMove, true);
       document.documentElement.removeEventListener("pointerleave", onPointerLeave);
     };
-  }, [holding, release]);
-
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  }, [holding, release, rootRef]);
 
   const boxStyle = useCallback(
     (key: string): CSSProperties | undefined => {
@@ -257,5 +276,10 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     holdLayout,
     /** Para manejadores: el layout está pendiente ahora (el foco no debe desplazar). */
     isHolding: useCallback(() => holdRef.current !== null, []),
+    /** D49, para manejadores: `control` se movió al aplicarse el layout hace menos de 1 s. */
+    movedByCompaction: useCallback((control: Element) => {
+      const compaction = compactionRef.current;
+      return compaction !== null && Date.now() - compaction.at < COMPACTION_GUARD_MS && compaction.moved.has(control);
+    }, []),
   };
 }

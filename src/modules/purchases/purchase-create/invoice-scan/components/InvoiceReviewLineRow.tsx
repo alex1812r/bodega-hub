@@ -138,6 +138,16 @@ export function InvoiceReviewLineRow({
   const noticesId = useId();
   const optionsId = useId();
   const hasNotices = issues.length > 0 || needs.length > 0;
+  // D48(b) (B-p11-1): con el layout pendiente, la descartada o resuelta conserva su caja; el sitio
+  // que deja libre lo ocupa un resumen (texto, nunca un control) en vez de un hueco en blanco.
+  const heldSummary =
+    layoutStyle === undefined
+      ? undefined
+      : line.discarded
+        ? "Línea descartada · Restaurar la devuelve a la compra"
+        : line.status === "resolved"
+          ? `Resuelta: ${title} · ${formatInvoiceMoney(state, amount)}`
+          : undefined;
 
   return (
     <li
@@ -473,6 +483,24 @@ export function InvoiceReviewLineRow({
           ) : null}
         </>
       )}
+
+      {heldSummary ? (
+        // Solo el alto sobrante de la caja retenida (`basis-0`, y `-mt-3` anula el `gap`): nunca
+        // empuja nada. En la descartada queda justo bajo el encabezado, en la parte alta de la caja.
+        <div
+          className="-mt-3 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden pt-3"
+          data-testid="invoice-review-held-summary"
+        >
+          <p
+            className={cn(
+              "text-xs text-on-surface-variant",
+              line.discarded ? "flex-1 rounded-lg border border-dashed border-outline-variant px-3 py-2" : null,
+            )}
+          >
+            {heldSummary}
+          </p>
+        </div>
+      ) : null}
     </li>
   );
 }
