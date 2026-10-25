@@ -139,6 +139,9 @@ type LastLineRow = {
   purchase_items: Array<{ unit_cost_ref: number | string }> | null;
 };
 
+/** Lo que la búsqueda de escaneos previos usa de la factura (o de la revisión). */
+type DuplicateKeys = Pick<InvoiceExtraction, "number" | "date" | "total">;
+
 type PreviousScanRow = {
   id: string;
   supplier_id: string | null;
@@ -291,11 +294,15 @@ async function loadSystemRate(): Promise<number | undefined> {
  * separadores y ceros sobrantes caen en los `%`) y aquí se filtra por igualdad
  * normalizada. `findDuplicateScan` decide después por proveedor/RIF. Los
  * descartados o fallidos no cuentan. Se suman los del posible duplicado
- * (`loadPreviousScansByDateTotal`), con fecha y total leídos.
+ * (`loadPreviousScansByDateTotal`), con fecha y total leídos. REP12-01 (D53): también la usa
+ * `POST /api/purchases/invoice-scan/duplicates` con el número, la fecha y el total de la revisión.
+ * REP12-01 (D53): cada escaneo lleva el RIF guardado de su proveedor elegido y de su contacto
+ * leído (`loadContactTaxIds`, contactos de la tienda).
  */
-async function loadPreviousScans(
+export async function loadPreviousScans(
   supabase: MatchContextSupabaseClient,
-  extraction: InvoiceExtraction,
+  storeId: string,
+  extraction: DuplicateKeys,
   excludeScanId?: string,
 ): Promise<MatchPreviousScan[]> {
   const [byNumber, byDateTotal] = await Promise.all([
@@ -303,16 +310,60 @@ async function loadPreviousScans(
     loadPreviousScansByDateTotal(supabase, extraction, excludeScanId),
   ]);
   const seen = new Set(byNumber.map((row) => row.id));
-  return [...byNumber, ...byDateTotal.filter((row) => !seen.has(row.id))].map((row) => ({
+  const rows = [...byNumber, ...byDateTotal.filter((row) => !seen.has(row.id))];
+  const taxIds = await loadContactTaxIds(
+    supabase,
+    storeId,
+    rows.flatMap((row) => [row.supplier_id, row.matched_contact_id]),
+  );
+  return rows.map((row) => ({
     scanId: row.id,
     supplierId: row.supplier_id ?? row.matched_contact_id ?? null,
+    matchedContactId: row.matched_contact_id ?? undefined,
     supplierTaxId: row.supplier_tax_id ?? null,
+    ...contactTaxIdsOf(taxIds, [row.supplier_id, row.matched_contact_id]),
     number: row.number ?? null,
     date: row.date ?? undefined,
     total: toNumber(row.total),
     purchaseId: row.purchase_id ?? undefined,
     purchaseStatus: row.purchase?.status ?? undefined,
   }));
+}
+
+/**
+ * REP12-01 (D53): RIF guardado (`contacts.tax_id`) de los contactos de la tienda, por id. Solo
+ * ids internos en la URL (D35); los que no son uuid no pueden ser contactos y no se piden.
+ */
+export async function loadContactTaxIds(
+  supabase: MatchContextSupabaseClient,
+  storeId: string,
+  ids: (string | null | undefined)[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((id): id is string => typeof id === "string" && UUID_PATTERN.test(id)))];
+  const taxIds = new Map<string, string>();
+  for (let start = 0; start < unique.length; start += IN_FILTER_CHUNK_SIZE) {
+    const { data, error } = await supabase
+      .from("contacts")
+      .select("id, tax_id")
+      .eq("store_id", storeId)
+      .in("id", unique.slice(start, start + IN_FILTER_CHUNK_SIZE));
+    throwIfSupabaseError(error);
+    for (const row of (data ?? []) as { id: string; tax_id: string | null }[]) {
+      if (row.tax_id?.trim()) {
+        taxIds.set(row.id, row.tax_id);
+      }
+    }
+  }
+  return taxIds;
+}
+
+/** `contactTaxIds` de un escaneo previo (sin la clave si ninguno de sus contactos tiene RIF). */
+export function contactTaxIdsOf(
+  taxIds: ReadonlyMap<string, string>,
+  ids: (string | null | undefined)[],
+): { contactTaxIds?: string[] } {
+  const found = [...new Set(ids.flatMap((id) => (id && taxIds.has(id) ? [taxIds.get(id) as string] : [])))];
+  return found.length > 0 ? { contactTaxIds: found } : {};
 }
 
 /**
@@ -325,7 +376,7 @@ async function loadPreviousScans(
  */
 async function loadPreviousScansByDateTotal(
   supabase: MatchContextSupabaseClient,
-  extraction: InvoiceExtraction,
+  extraction: DuplicateKeys,
   excludeScanId?: string,
 ): Promise<PreviousScanRow[]> {
   const total = extraction.total;
@@ -351,7 +402,7 @@ async function loadPreviousScansByDateTotal(
 
 async function loadPreviousScansByNumber(
   supabase: MatchContextSupabaseClient,
-  extraction: InvoiceExtraction,
+  extraction: DuplicateKeys,
   excludeScanId?: string,
 ): Promise<PreviousScanRow[]> {
   const number = normalizeInvoiceNumber(extraction.number);
@@ -713,7 +764,7 @@ export async function loadMatchContext(
     loadCandidates(supabase, extraction),
     loadTaxRates(supabase, storeId),
     loadSystemRate(),
-    loadPreviousScans(supabase, extraction, options?.excludeScanId),
+    loadPreviousScans(supabase, storeId, extraction, options?.excludeScanId),
     loadBarcodeProductIds(supabase, extraction),
   ]);
 

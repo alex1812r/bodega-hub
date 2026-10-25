@@ -40,6 +40,7 @@ import type { InvoiceExtraction } from "../contracts";
 
 import { listMockLearnedAliases } from "./confirmScan.mock-server";
 import {
+  contactTaxIdsOf,
   MATCH_CANDIDATES_MAX_TEXTS,
   MATCH_CANDIDATES_PER_LINE,
   PREVIOUS_SCANS_LIMIT,
@@ -233,7 +234,29 @@ function systemRate(storeId: string): number | undefined {
   return Number.isFinite(rateVes) && rateVes > 0 ? rateVes : undefined;
 }
 
-function previousScans(storeId: string, extraction: InvoiceExtraction, excludeScanId?: string): MatchPreviousScan[] {
+/**
+ * Paridad mock de `loadContactTaxIds` (REP12-01, D53): RIF guardado de los contactos de la
+ * tienda con esos ids (sin repetir; los que no tienen RIF no aportan).
+ */
+export function listMockContactTaxIds(storeId: string, ids: (string | null | undefined)[]): string[] {
+  return [...mockContactTaxIds(storeId, ids).values()];
+}
+
+function mockContactTaxIds(storeId: string, ids: (string | null | undefined)[]): Map<string, string> {
+  const wanted = new Set(ids.filter((id): id is string => Boolean(id)));
+  return new Map(
+    mockContacts
+      .filter((contact) => wanted.has(contact.id) && ofStore(contact.storeId, storeId) && contact.taxId?.trim())
+      .map((contact) => [contact.id, contact.taxId]),
+  );
+}
+
+/** REP12-01: también la usa `POST /api/purchases/invoice-scan/duplicates` en mock (paridad con `loadPreviousScans`). */
+export function listMockPreviousScans(
+  storeId: string,
+  extraction: Pick<InvoiceExtraction, "number" | "date" | "total">,
+  excludeScanId?: string,
+): MatchPreviousScan[] {
   const number = normalizeInvoiceNumber(extraction.number);
   // Paridad con `loadPreviousScansByDateTotal`: mismo total (±0,01, al céntimo) y fecha si se leyó.
   const total = extraction.total;
@@ -259,10 +282,18 @@ function previousScans(storeId: string, extraction: InvoiceExtraction, excludeSc
           })
           .slice(0, PREVIOUS_SCANS_LIMIT);
 
-  return [...byNumber, ...byDateTotal.filter((scan) => !byNumber.includes(scan))].map((scan) => ({
+  const scans = [...byNumber, ...byDateTotal.filter((scan) => !byNumber.includes(scan))];
+  const taxIds = mockContactTaxIds(
+    storeId,
+    scans.flatMap((scan) => [scan.supplierId, scan.matched?.supplier.contactId]),
+  );
+
+  return scans.map((scan) => ({
     scanId: scan.id,
     supplierId: scan.supplierId ?? scan.matched?.supplier.contactId ?? null,
+    matchedContactId: scan.matched?.supplier.contactId ?? undefined,
     supplierTaxId: scan.extracted?.supplier.taxId ?? null,
+    ...contactTaxIdsOf(taxIds, [scan.supplierId, scan.matched?.supplier.contactId]),
     number: scan.extracted?.number ?? null,
     date: scan.extracted?.date,
     total: scan.extracted?.total,
@@ -297,7 +328,7 @@ export function loadMockMatchContext(
         isDefault: rate.id === defaultTaxRateId,
       })),
     systemRate: systemRate(storeId),
-    previousScans: previousScans(storeId, extraction, options?.excludeScanId),
+    previousScans: listMockPreviousScans(storeId, extraction, options?.excludeScanId),
   };
 }
 
