@@ -1009,6 +1009,7 @@ export function InvoiceReviewPanel({
 
       <InvoiceReviewFooter
         detailStyle={layoutHold.boxStyle("footer-detail")}
+        duplicateCheckFailed={duplicates.failed}
         duplicatePending={duplicates.pending}
         duplicateUnacknowledged={duplicateUnacknowledged}
         footerRef={footerRef}

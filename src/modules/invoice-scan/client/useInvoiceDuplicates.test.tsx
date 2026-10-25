@@ -145,3 +145,24 @@ describe("useInvoiceDuplicates · consulta vigente sin respuesta (REP12-01 inten
     expect(result.current.pending).toBe(false);
   });
 });
+
+describe("useInvoiceDuplicates · consulta fallida (REP12-05, B-qa-rep12-2)", () => {
+  it("failed solo si la consulta vigente falló; una respuesta o una consulta nueva lo quitan", async () => {
+    const fetcher = jest.fn(async (query: InvoiceDuplicateQuery) => {
+      if (query.supplierId === "a") {
+        throw new Error("500");
+      }
+      return [];
+    });
+    const { rerender, result } = renderHook(({ query }) => useInvoiceDuplicates(query, fetcher), {
+      initialProps: { query: { supplierId: "a", number: "1" } as InvoiceDuplicateQuery },
+    });
+
+    expect(result.current.failed).toBe(false);
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    rerender({ query: { supplierId: "b", number: "1" } });
+    expect(result.current.failed).toBe(false);
+    await waitFor(() => expect(result.current.matches).toEqual([]));
+    expect(result.current.failed).toBe(false);
+  });
+});

@@ -26,12 +26,15 @@ type Result = { key: string; matches?: InvoiceDuplicateMatch[] };
  * vuelo), así que ni el aviso del escaneo vale para ella; Cargar no debe cargar. No lo está si
  * falló (vuelve al aviso del escaneo) ni si es `answered`: la consulta que el escaneo ya
  * respondió con la misma regla (proveedor leído, número y fecha leídos).
+ *
+ * `failed` (REP12-05, B-qa-rep12-2): la consulta vigente falló; no bloquea (D52), pero quien lo usa
+ * debe decir que no se pudo comprobar.
  */
 export function useInvoiceDuplicates(
   query: InvoiceDuplicateQuery | null,
   fetcher: InvoiceDuplicatesFetcher = fetchInvoiceDuplicates,
   answered: InvoiceDuplicateQuery | null = null,
-): { matches: InvoiceDuplicateMatch[] | undefined; pending: boolean } {
+): { matches: InvoiceDuplicateMatch[] | undefined; pending: boolean; failed: boolean } {
   const key = query ? JSON.stringify(query) : null;
   const answeredKey = answered ? JSON.stringify(answered) : null;
   const [result, setResult] = useState<Result | null>(null);
@@ -68,5 +71,9 @@ export function useInvoiceDuplicates(
   }, [key]);
 
   const current = result !== null && result.key === key ? result : null;
-  return { matches: current?.matches, pending: key !== null && key !== answeredKey && current === null };
+  return {
+    matches: current?.matches,
+    pending: key !== null && key !== answeredKey && current === null,
+    failed: current !== null && current.matches === undefined,
+  };
 }

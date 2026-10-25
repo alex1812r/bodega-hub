@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
-import { type ChangeEvent, type CSSProperties, type Ref, useId, useLayoutEffect, useRef, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type Ref, useId, useRef, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
@@ -14,6 +14,7 @@ import {
   type InvoiceReviewTotals,
 } from "../reviewModel";
 import { formatInvoiceMoney, getDisplayedTotals } from "./invoiceReviewView";
+import { useFreshPressCheckbox } from "./useFreshPressCheckbox";
 
 export type InvoiceReviewFooterProps = {
   state: InvoiceReviewState;
@@ -30,6 +31,8 @@ export type InvoiceReviewFooterProps = {
   duplicateUnacknowledged?: boolean;
   /** REP12-01: consulta de duplicados vigente sin respuesta; Cargar espera. */
   duplicatePending?: boolean;
+  /** REP12-05 (B-qa-rep12-2): la consulta de duplicados vigente falló; no bloquea (D52), pero se dice. */
+  duplicateCheckFailed?: boolean;
   /** REP12-01: el motivo «Marca el aviso…» lleva a la casilla del aviso. */
   onReviewDuplicate?: () => void;
 };
@@ -59,6 +62,7 @@ const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { labe
 
 export function InvoiceReviewFooter({
   detailStyle,
+  duplicateCheckFailed = false,
   duplicatePending = false,
   duplicateUnacknowledged = false,
   footerRef,
@@ -86,39 +90,14 @@ export function InvoiceReviewFooter({
   }
   const collapsible = detailOpen ? null : "hidden sm:flex";
   const differenceTextId = useId();
+  // D54(a)(3): la casilla solo cambia con su propio control y una pulsación nueva sobre ella.
   const differenceRef = useRef<HTMLInputElement>(null);
-  // D54(a)(3): sitio de la casilla y desde cuándo está ahí; pulsación del puntero sobre ella.
-  const differencePlaceRef = useRef<{ top: number; left: number; at: number } | null>(null);
-  const differencePressRef = useRef<{ pointerId: number; at: number; released: boolean } | null>(null);
-
-  // Al aparecer o moverse la casilla, una pulsación que ya estaba en curso deja de contar.
-  useLayoutEffect(() => {
-    const input = differenceRef.current;
-    if (!input) {
-      differencePlaceRef.current = null;
-      return;
-    }
-    const { top, left } = input.getBoundingClientRect();
-    const place = differencePlaceRef.current;
-    if (!place || Math.abs(place.top - top) >= 1 || Math.abs(place.left - left) >= 1) {
-      differencePlaceRef.current = { top, left, at: Date.now() };
-      differencePressRef.current = null;
-    }
-  });
+  const difference = useFreshPressCheckbox(differenceRef);
 
   function handleDifferenceChange(event: ChangeEvent<HTMLInputElement>) {
-    const press = differencePressRef.current;
-    differencePressRef.current = null;
-    // Con el puntero (clic con `detail` ≥ 1) solo vale una pulsación completa sobre la casilla desde
-    // su último cambio de sitio; el teclado (Espacio) no tiene punto bajo el dedo.
-    const native = event.nativeEvent;
-    if (native instanceof MouseEvent && native.detail > 0) {
-      const placedAt = differencePlaceRef.current?.at ?? 0;
-      if (!press || !press.released || press.at < placedAt) {
-        return;
-      }
+    if (difference.accepts(event)) {
+      onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked });
     }
-    onAction({ type: "confirmTotalsDifference", confirmed: event.target.checked });
   }
   // REP12-01: motivos del duplicado junto a los bloqueos (mientras se comprueba, solo ese).
   const duplicateReason = duplicatePending ? "pending" : duplicateUnacknowledged ? "unacknowledged" : null;
@@ -226,12 +205,13 @@ export function InvoiceReviewFooter({
             ? ` · ${summary.totals.lineMismatches.length} con cantidad × costo distinto del total leído`
             : ""}
         </p>
-        {summary.blockers.length > 0 || duplicateReason ? (
+        {summary.blockers.length > 0 || duplicateReason || duplicateCheckFailed ? (
           <ul aria-live="polite" className="text-xs text-on-surface-variant" data-testid="invoice-review-blockers">
             {summary.blockers.map((blocker) => (
               <li key={blocker}>{blocker}</li>
             ))}
             {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
+            {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
             {duplicateReason === "unacknowledged" ? (
               <li>
                 <button
@@ -272,15 +252,8 @@ export function InvoiceReviewFooter({
                 checked={state.acceptedDifference === totals.difference}
                 className="size-4 shrink-0 rounded border-border"
                 onChange={handleDifferenceChange}
-                onPointerDown={(event) => {
-                  differencePressRef.current = { pointerId: event.pointerId, at: Date.now(), released: false };
-                }}
-                onPointerUp={(event) => {
-                  const press = differencePressRef.current;
-                  if (press?.pointerId === event.pointerId) {
-                    differencePressRef.current = { ...press, released: true };
-                  }
-                }}
+                onPointerDown={difference.onPointerDown}
+                onPointerUp={difference.onPointerUp}
                 ref={differenceRef}
                 type="checkbox"
               />
