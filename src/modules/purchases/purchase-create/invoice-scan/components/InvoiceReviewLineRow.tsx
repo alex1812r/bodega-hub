@@ -138,6 +138,16 @@ export function InvoiceReviewLineRow({
   const noticesId = useId();
   const optionsId = useId();
   const hasNotices = issues.length > 0 || needs.length > 0;
+  // D48(b) (B-p11-1): con el layout pendiente, la descartada o resuelta conserva su caja; el sitio
+  // que deja libre lo ocupa un resumen (texto, nunca un control) en vez de un hueco en blanco.
+  const heldSummary =
+    layoutStyle === undefined
+      ? undefined
+      : line.discarded
+        ? "Línea descartada · Restaurar la devuelve a la compra"
+        : line.status === "resolved"
+          ? `Resuelta: ${title} · ${formatInvoiceMoney(state, amount)}`
+          : undefined;
 
   return (
     <li
@@ -231,21 +241,10 @@ export function InvoiceReviewLineRow({
             </div>
           ) : null}
 
-          {/* El buscador va antes que las acciones (SCN-UI-C1, 6.17): Tab abre el buscador y,
-              hacia delante, sigue a «Nuevo producto» y «Descartar línea» antes que a los campos.
-              D46: se pinta DEBAJO de las acciones; encima, su lista quedaría bajo el dedo que pulsó
-              «Buscar producto» y el 2.º toque elegiría un producto. */}
-          <div className="flex flex-col-reverse gap-3">
-            {searchOpen ? (
-              <InvoiceReviewProductSearch
-                candidates={line.candidates}
-                fetcher={productFetcher}
-                initialQuery={line.description || line.rawText}
-                label={`Producto de la línea ${index + 1}`}
-                onPick={(product) => onPickProduct(index, product)}
-              />
-            ) : null}
-
+          {/* D46: el buscador se pinta DEBAJO de las acciones; encima, su lista quedaría bajo el dedo que
+              pulsó «Buscar producto» y el 2.º toque elegiría un producto. D48-c (B-p11-2): va también
+              después en el documento, para que Tab siga el orden visual (acciones, buscador, campos). */}
+          <div className="flex flex-col gap-3">
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => onOpenSearch(index)} size="sm" variant="outline">
                 <Search aria-hidden className="size-4" />
@@ -280,6 +279,16 @@ export function InvoiceReviewLineRow({
                 </span>
               ) : null}
             </div>
+
+            {searchOpen ? (
+              <InvoiceReviewProductSearch
+                candidates={line.candidates}
+                fetcher={productFetcher}
+                initialQuery={line.description || line.rawText}
+                label={`Producto de la línea ${index + 1}`}
+                onPick={(product) => onPickProduct(index, product)}
+              />
+            ) : null}
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,8rem)_minmax(0,10rem)_auto] sm:items-end">
@@ -473,6 +482,26 @@ export function InvoiceReviewLineRow({
           ) : null}
         </>
       )}
+
+      {heldSummary ? (
+        // Solo el alto sobrante de la caja retenida (`basis-0`, y `-mt-3` anula el `gap`): nunca
+        // empuja nada. Sin padding propio (con `border-box` no baja de él: la fila crecería); la
+        // separación es el `mt-3` del texto, dentro del alto recortado. En la descartada queda justo
+        // bajo el encabezado, en la parte alta de la caja.
+        <div
+          className="-mt-3 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden"
+          data-testid="invoice-review-held-summary"
+        >
+          <p
+            className={cn(
+              "mt-3 text-xs text-on-surface-variant",
+              line.discarded ? "flex-1 rounded-lg border border-dashed border-outline-variant px-3 py-2" : null,
+            )}
+          >
+            {heldSummary}
+          </p>
+        </div>
+      ) : null}
     </li>
   );
 }

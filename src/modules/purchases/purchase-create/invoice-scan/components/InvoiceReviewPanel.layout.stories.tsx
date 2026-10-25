@@ -4,6 +4,9 @@
  * px y mide qué control de decisión queda en ese punto a los 100 y a los 600 ms: el mismo control
  * o ninguno. Luego da un 2.º clic real en el mismo punto y comprueba que ninguna otra línea cambió
  * y que el foco no cayó en BODY.
+ * REP11-02 · D49: las variantes `Raton3s` y `Tactil3s` hacen la acción con el ratón o con un toque
+ * real (CDP) y miden a los 100, 600, 1000, 1500, 2000 y 3000 ms; la 2.ª activación llega a los 3 s.
+ * Al final, las repros de M-p11-2 y C11B-M1 (A y B) y la guarda tras aplicar el layout.
  *
  * Correr: `npx vitest --project storybook run src/modules/purchases/purchase-create/invoice-scan/components/InvoiceReviewPanel.layout.stories.tsx`
  * Fuera de Vitest (Storybook en el navegador) no hay clics reales y la medición se omite.
@@ -20,7 +23,7 @@ import type { EntityFetcher, ProductEntityOption } from "@/shared/components/Ent
 
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { LAYOUT_SETTLE_MS, POINTER_GUARD_MS } from "./useLayoutHold";
+import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
 
@@ -208,7 +211,45 @@ async function clickAt(browser: Browser, point: Point) {
   await browser.userEvent.click(document.body, { force: true, position: { x: point.x - body.left, y: point.y - body.top } });
 }
 
-/** Paso previo con clic real; después se deja asentar el layout y pasar la guarda. */
+type Pointer = "mouse" | "touch";
+
+/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
+function pagePoint(point: Point): Point {
+  let x = point.x;
+  let y = point.y;
+  // `frameElement` es del documento padre (otro reino): `instanceof HTMLElement` no sirve.
+  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
+    const box = frame.getBoundingClientRect();
+    const width = frame.clientWidth + 2 * frame.clientLeft;
+    const scale = width ? box.width / width : 1;
+    x = box.left + (frame.clientLeft + x) * scale;
+    y = box.top + (frame.clientTop + y) * scale;
+  }
+  return { x, y };
+}
+
+/** Toque real (CDP `Input.dispatchTouchEvent`): pointerdown/up con `pointerType` touch y su clic. */
+async function tapAt(browser: Browser, point: Point) {
+  const session = browser.cdp();
+  const touch = pagePoint(point);
+  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  try {
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
+    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  } finally {
+    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+  }
+}
+
+const activateAt = (browser: Browser, point: Point, pointer: Pointer) =>
+  pointer === "touch" ? tapAt(browser, point) : clickAt(browser, point);
+
+function centerOf(element: Element): Point {
+  const box = element.getBoundingClientRect();
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+}
+
+/** Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda. */
 async function setupClick(browser: Browser, element: HTMLElement) {
   await browser.userEvent.click(element);
   await sleep(POINTER_GUARD_MS + 100);
@@ -219,11 +260,10 @@ async function setupClick(browser: Browser, element: HTMLElement) {
  * La medición de D46-c sobre `target`: tras el clic real no queda OTRO control de decisión en el
  * punto, y el 2.º clic en ese punto a 600 ms no cambia ninguna otra línea ni deja el foco en BODY.
  */
-async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElement) {
+async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElement, timing: Timing) {
   target.scrollIntoView({ block: "center" });
-  await sleep(LAYOUT_SETTLE_MS + 200);
-  const box = target.getBoundingClientRect();
-  const point = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  await sleep(POINTER_GUARD_MS + 200);
+  const point = centerOf(target);
   await expect(
     document.elementFromPoint(point.x, point.y)?.closest("button, [role='option'], [role='radio'], input"),
     "el control está en su punto antes de pulsarlo",
@@ -232,15 +272,15 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   const others = () => Object.fromEntries(Object.entries(statuses()).filter(([index]) => index !== line));
 
   const before = observableState();
-  await clickAt(browser, point);
-  for (const [wait, at] of [
-    [100, 100],
-    [500, 600],
-  ] as const) {
-    await sleep(wait);
+  await activateAt(browser, point, timing.pointer);
+  const start = performance.now();
+  for (const at of timing.probes) {
+    await sleep(at - (performance.now() - start));
     const under = decisionAt(point);
     if (under && under !== target) {
-      throw new Error(`a los ${at} ms queda ${describeControl(under)} bajo el puntero tras pulsar ${describeControl(target)}`);
+      throw new Error(
+        `a los ${at} ms (${timing.pointer}) queda ${describeControl(under)} bajo el puntero tras pulsar ${describeControl(target)}`,
+      );
     }
   }
   await expect(observableState(), "la acción tuvo efecto").not.toBe(before);
@@ -248,9 +288,15 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   const afterFirst = others();
   // Un clic en espacio vacío deja el foco en BODY (el navegador): el foco se exige tras el 2.º clic
   // solo si cae en el panel.
-  const secondInPanel = panel().contains(document.elementFromPoint(point.x, point.y));
+  await sleep(timing.secondAt - (performance.now() - start));
+  const secondTarget = document.elementFromPoint(point.x, point.y);
+  if (timing.secondAt > POINTER_GUARD_MS && secondTarget?.closest('[role="dialog"]')) {
+    // Un diálogo a la vista desde hace segundos no es layout de la revisión: tocarlo es del usuario.
+    return;
+  }
+  const secondInPanel = panel().contains(secondTarget);
 
-  await clickAt(browser, point);
+  await activateAt(browser, point, timing.pointer);
   await sleep(300);
   // Las líneas que siguen en pantalla (plegar confirmadas las quita) no cambiaron.
   const afterSecond = others();
@@ -345,23 +391,46 @@ const DIFFERENCE_CASES = {
   },
 } satisfies Record<string, LayoutCase>;
 
-function layoutStory(layoutCase: LayoutCase, width: number, response: InvoiceScanResponse = linesResponse): Story {
+/** Cuándo se mide bajo el punto y cuándo llega la 2.ª activación, con ratón o toque. */
+type Timing = { pointer: Pointer; probes: readonly number[]; secondAt: number };
+
+/** REP10 (C10B-M1): 2.º clic a 600 ms. */
+const REBOUND_600: Timing = { pointer: "mouse", probes: [100, 600], secondAt: 600 };
+/** REP11-02 (D49): sin compactación por tiempo; mide hasta 3 s y la 2.ª activación llega a los 3 s. */
+const SERIES = [100, 600, 1000, 1500, 2000, 3000] as const;
+const MOUSE_3S: Timing = { pointer: "mouse", probes: SERIES, secondAt: 3000 };
+const TOUCH_3S: Timing = { pointer: "touch", probes: SERIES, secondAt: 3000 };
+
+async function prepare(width: number) {
+  const browser = await loadBrowser();
+  if (!browser) {
+    return null;
+  }
+  await browser.page.viewport(width, width < 640 ? 844 : 900);
+  // El botón flotante de React Query Devtools (AppProviders) tapa el pie a 390 px.
+  const hideDevtools = document.createElement("style");
+  hideDevtools.textContent = ".tsqd-parent-container { display: none !important; }";
+  document.head.append(hideDevtools);
+  await waitFor(() => expect(panel()).toBeInTheDocument());
+  await sleep(300);
+  return browser;
+}
+
+function layoutStory(
+  layoutCase: LayoutCase,
+  width: number,
+  response: InvoiceScanResponse = linesResponse,
+  timing: Timing = REBOUND_600,
+): Story {
   return {
     args: { response },
     play: async ({ args }) => {
-      const browser = await loadBrowser();
+      const browser = await prepare(width);
       if (!browser) {
         return;
       }
-      await browser.page.viewport(width, width < 640 ? 844 : 900);
-      // El botón flotante de React Query Devtools (AppProviders) tapa el pie a 390 px.
-      const hideDevtools = document.createElement("style");
-      hideDevtools.textContent = ".tsqd-parent-container { display: none !important; }";
-      document.head.append(hideDevtools);
-      await waitFor(() => expect(panel()).toBeInTheDocument());
-      await sleep(300);
       await layoutCase.setup?.(browser);
-      await expectNothingNewUnderPointer(browser, await layoutCase.target());
+      await expectNothingNewUnderPointer(browser, await layoutCase.target(), timing);
       await expect(args.onDiscard).not.toHaveBeenCalled();
     },
   };
@@ -443,3 +512,494 @@ export const Iva1280 = layoutStory(NOTICE_CASES.iva, 1280, noticesResponse);
 export const Iva390 = layoutStory(NOTICE_CASES.iva, 390, noticesResponse);
 export const Casilla1280 = layoutStory(DIFFERENCE_CASES.casilla, 1280, differenceResponse);
 export const Casilla390 = layoutStory(DIFFERENCE_CASES.casilla, 390, differenceResponse);
+
+// REP11-02 · D49: cada acción con ratón y con toque, medida hasta 3 s (2.ª activación a los 3 s).
+export const DescartarLinea1280Raton3s = layoutStory(CASES.descartarLinea, 1280, linesResponse, MOUSE_3S);
+export const DescartarLinea1280Tactil3s = layoutStory(CASES.descartarLinea, 1280, linesResponse, TOUCH_3S);
+export const DescartarLinea390Raton3s = layoutStory(CASES.descartarLinea, 390, linesResponse, MOUSE_3S);
+export const DescartarLinea390Tactil3s = layoutStory(CASES.descartarLinea, 390, linesResponse, TOUCH_3S);
+export const RestaurarLinea1280Raton3s = layoutStory(CASES.restaurarLinea, 1280, linesResponse, MOUSE_3S);
+export const RestaurarLinea1280Tactil3s = layoutStory(CASES.restaurarLinea, 1280, linesResponse, TOUCH_3S);
+export const RestaurarLinea390Raton3s = layoutStory(CASES.restaurarLinea, 390, linesResponse, MOUSE_3S);
+export const RestaurarLinea390Tactil3s = layoutStory(CASES.restaurarLinea, 390, linesResponse, TOUCH_3S);
+export const ChipCandidato1280Raton3s = layoutStory(CASES.chipCandidato, 1280, linesResponse, MOUSE_3S);
+export const ChipCandidato1280Tactil3s = layoutStory(CASES.chipCandidato, 1280, linesResponse, TOUCH_3S);
+export const ChipCandidato390Raton3s = layoutStory(CASES.chipCandidato, 390, linesResponse, MOUSE_3S);
+export const ChipCandidato390Tactil3s = layoutStory(CASES.chipCandidato, 390, linesResponse, TOUCH_3S);
+export const PorUnidad1280Raton3s = layoutStory(CASES.porUnidad, 1280, linesResponse, MOUSE_3S);
+export const PorUnidad1280Tactil3s = layoutStory(CASES.porUnidad, 1280, linesResponse, TOUCH_3S);
+export const PorUnidad390Raton3s = layoutStory(CASES.porUnidad, 390, linesResponse, MOUSE_3S);
+export const PorUnidad390Tactil3s = layoutStory(CASES.porUnidad, 390, linesResponse, TOUCH_3S);
+export const ReconocerCosto1280Raton3s = layoutStory(CASES.reconocerCosto, 1280, linesResponse, MOUSE_3S);
+export const ReconocerCosto1280Tactil3s = layoutStory(CASES.reconocerCosto, 1280, linesResponse, TOUCH_3S);
+export const ReconocerCosto390Raton3s = layoutStory(CASES.reconocerCosto, 390, linesResponse, MOUSE_3S);
+export const ReconocerCosto390Tactil3s = layoutStory(CASES.reconocerCosto, 390, linesResponse, TOUCH_3S);
+export const VerConfirmadas1280Raton3s = layoutStory(CASES.verConfirmadas, 1280, linesResponse, MOUSE_3S);
+export const VerConfirmadas1280Tactil3s = layoutStory(CASES.verConfirmadas, 1280, linesResponse, TOUCH_3S);
+export const VerConfirmadas390Raton3s = layoutStory(CASES.verConfirmadas, 390, linesResponse, MOUSE_3S);
+export const VerConfirmadas390Tactil3s = layoutStory(CASES.verConfirmadas, 390, linesResponse, TOUCH_3S);
+export const ConfirmadaPorUnidad1280Raton3s = layoutStory(CASES.confirmadaPorUnidad, 1280, linesResponse, MOUSE_3S);
+export const ConfirmadaPorUnidad1280Tactil3s = layoutStory(CASES.confirmadaPorUnidad, 1280, linesResponse, TOUCH_3S);
+export const ConfirmadaPorUnidad390Raton3s = layoutStory(CASES.confirmadaPorUnidad, 390, linesResponse, MOUSE_3S);
+export const ConfirmadaPorUnidad390Tactil3s = layoutStory(CASES.confirmadaPorUnidad, 390, linesResponse, TOUCH_3S);
+export const ConfirmadaPorCaja1280Raton3s = layoutStory(CASES.confirmadaPorCaja, 1280, linesResponse, MOUSE_3S);
+export const ConfirmadaPorCaja1280Tactil3s = layoutStory(CASES.confirmadaPorCaja, 1280, linesResponse, TOUCH_3S);
+export const ConfirmadaPorCaja390Raton3s = layoutStory(CASES.confirmadaPorCaja, 390, linesResponse, MOUSE_3S);
+export const ConfirmadaPorCaja390Tactil3s = layoutStory(CASES.confirmadaPorCaja, 390, linesResponse, TOUCH_3S);
+export const CargarComoUnidades1280Raton3s = layoutStory(CASES.cargarComoUnidades, 1280, linesResponse, MOUSE_3S);
+export const CargarComoUnidades1280Tactil3s = layoutStory(CASES.cargarComoUnidades, 1280, linesResponse, TOUCH_3S);
+export const CargarComoUnidades390Raton3s = layoutStory(CASES.cargarComoUnidades, 390, linesResponse, MOUSE_3S);
+export const CargarComoUnidades390Tactil3s = layoutStory(CASES.cargarComoUnidades, 390, linesResponse, TOUCH_3S);
+export const BuscarProducto1280Raton3s = layoutStory(CASES.buscarProducto, 1280, linesResponse, MOUSE_3S);
+export const BuscarProducto1280Tactil3s = layoutStory(CASES.buscarProducto, 1280, linesResponse, TOUCH_3S);
+export const BuscarProducto390Raton3s = layoutStory(CASES.buscarProducto, 390, linesResponse, MOUSE_3S);
+export const BuscarProducto390Tactil3s = layoutStory(CASES.buscarProducto, 390, linesResponse, TOUCH_3S);
+export const ElegirDelBuscador1280Raton3s = layoutStory(CASES.elegirDelBuscador, 1280, linesResponse, MOUSE_3S);
+export const ElegirDelBuscador1280Tactil3s = layoutStory(CASES.elegirDelBuscador, 1280, linesResponse, TOUCH_3S);
+export const ElegirDelBuscador390Raton3s = layoutStory(CASES.elegirDelBuscador, 390, linesResponse, MOUSE_3S);
+export const ElegirDelBuscador390Tactil3s = layoutStory(CASES.elegirDelBuscador, 390, linesResponse, TOUCH_3S);
+export const NuevoProducto1280Raton3s = layoutStory(CASES.nuevoProducto, 1280, linesResponse, MOUSE_3S);
+export const NuevoProducto1280Tactil3s = layoutStory(CASES.nuevoProducto, 1280, linesResponse, TOUCH_3S);
+export const NuevoProducto390Raton3s = layoutStory(CASES.nuevoProducto, 390, linesResponse, MOUSE_3S);
+export const NuevoProducto390Tactil3s = layoutStory(CASES.nuevoProducto, 390, linesResponse, TOUCH_3S);
+export const DescartarEscaneo1280Raton3s = layoutStory(CASES.descartarEscaneo, 1280, linesResponse, MOUSE_3S);
+export const DescartarEscaneo1280Tactil3s = layoutStory(CASES.descartarEscaneo, 1280, linesResponse, TOUCH_3S);
+export const DescartarEscaneo390Raton3s = layoutStory(CASES.descartarEscaneo, 390, linesResponse, MOUSE_3S);
+export const DescartarEscaneo390Tactil3s = layoutStory(CASES.descartarEscaneo, 390, linesResponse, TOUCH_3S);
+export const Tasa1280Raton3s = layoutStory(NOTICE_CASES.tasa, 1280, noticesResponse, MOUSE_3S);
+export const Tasa1280Tactil3s = layoutStory(NOTICE_CASES.tasa, 1280, noticesResponse, TOUCH_3S);
+export const Tasa390Raton3s = layoutStory(NOTICE_CASES.tasa, 390, noticesResponse, MOUSE_3S);
+export const Tasa390Tactil3s = layoutStory(NOTICE_CASES.tasa, 390, noticesResponse, TOUCH_3S);
+export const Iva1280Raton3s = layoutStory(NOTICE_CASES.iva, 1280, noticesResponse, MOUSE_3S);
+export const Iva1280Tactil3s = layoutStory(NOTICE_CASES.iva, 1280, noticesResponse, TOUCH_3S);
+export const Iva390Raton3s = layoutStory(NOTICE_CASES.iva, 390, noticesResponse, MOUSE_3S);
+export const Iva390Tactil3s = layoutStory(NOTICE_CASES.iva, 390, noticesResponse, TOUCH_3S);
+export const Casilla1280Raton3s = layoutStory(DIFFERENCE_CASES.casilla, 1280, differenceResponse, MOUSE_3S);
+export const Casilla1280Tactil3s = layoutStory(DIFFERENCE_CASES.casilla, 1280, differenceResponse, TOUCH_3S);
+export const Casilla390Raton3s = layoutStory(DIFFERENCE_CASES.casilla, 390, differenceResponse, MOUSE_3S);
+export const Casilla390Tactil3s = layoutStory(DIFFERENCE_CASES.casilla, 390, differenceResponse, TOUCH_3S);
+
+/** c11-three / c10-lay-homo: «JABON AZUL 250G» con dos homónimos empatados (CAOSG-004/005). */
+function jabonHomonyms(): ReviewFixtureLine {
+  return {
+    read: {
+      rawText: "JABON AZUL 250G 1 450,00 450,00",
+      description: "JABON AZUL 250G",
+      unit: "unidad",
+      quantity: 1,
+      unitPrice: 450,
+      lineTotal: 450,
+    },
+    match: {
+      status: "doubtful",
+      productId: undefined,
+      taxRateCode: "exento",
+      candidates: [4, 5].map((seed) => ({
+        productId: productUuid(seed),
+        name: "CAOSG Jabon Azul 250g",
+        sku: `CAOSG-00${seed}`,
+        score: 0.73,
+        reason: "nombre parecido 0,73",
+        lastUnitCostRef: 0.5,
+      })),
+      lastUnitCostRef: 0.5,
+      issues: [],
+    },
+  };
+}
+
+/** c11-three: L0 y L1 harina por nombre a 450, L2 y L3 jabón con homónimos. */
+const c11ThreeResponse = makeReviewResponse({
+  lines: [harinaByName(450), harinaByName(450), jabonHomonyms(), jabonHomonyms()],
+});
+/** c10-lay-homo: L0 harina desviada, L1 jabón con homónimos. */
+const homonymsResponse = makeReviewResponse({ lines: [harinaByName(4500), jabonHomonyms()] });
+
+async function sleepUntil(start: number, at: number) {
+  await sleep(at - (performance.now() - start));
+}
+
+/** La línea `index` muestra su resumen retenido (B-p11-1), no un hueco en blanco. */
+async function expectHeldSummary(index: number, text: RegExp) {
+  const summary = within(row(index)).getByTestId("invoice-review-held-summary");
+  await expect(summary).toHaveTextContent(text);
+  // Ocupa el alto que la caja retenida deja libre: se ve (no es un hueco en blanco).
+  await expect(summary.getBoundingClientRect().height, "el resumen se ve").toBeGreaterThan(40);
+}
+
+/**
+ * C11B-M1 repro A (390, toque): descartar L0 y, a ~1,65 s, tocar «Descartar línea» de L1 donde
+ * estaba a los 900 ms. Debe descartar L1; L2 (homónimos) sigue pendiente.
+ */
+export const C11BM1ReproATactil390: Story = {
+  args: { response: c11ThreeResponse },
+  play: async () => {
+    const browser = await prepare(390);
+    if (!browser) {
+      return;
+    }
+    row(0).scrollIntoView({ block: "start" });
+    await sleep(POINTER_GUARD_MS + 200);
+    await tapAt(browser, centerOf(button(row(0), /Descartar línea/)));
+    const start = performance.now();
+    await sleepUntil(start, 900);
+    const l1Discard = button(row(1), /Descartar línea/);
+    const aim = centerOf(l1Discard);
+    for (const at of [1000, 1500, 1650] as const) {
+      await sleepUntil(start, at);
+      await expect(describeControl(decisionAt(aim)), `a los ${at} ms`).toBe(describeControl(l1Discard));
+    }
+    await tapAt(browser, aim);
+    await sleep(300);
+    await expect(statuses()).toEqual({
+      0: "discarded",
+      1: "discarded",
+      2: "pending_doubtful",
+      3: "pending_doubtful",
+    });
+    await expectHeldSummary(0, /Línea descartada · Restaurar/);
+  },
+};
+
+/** C11B-M1 repro B (390, toque): 2.º toque en el mismo punto que «Descartar línea» de L0 a `at` ms. */
+function reproB(at: number): Story {
+  return {
+    args: { response: homonymsResponse },
+    play: async () => {
+      const browser = await prepare(390);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const point = centerOf(button(row(0), /Descartar línea/));
+      await tapAt(browser, point);
+      const start = performance.now();
+      await sleepUntil(start, 100);
+      await expect(row(0).dataset.status, "el 1.er toque descarta L0").toBe("discarded");
+      await sleepUntil(start, at);
+      // Bajo el dedo sigue la caja retenida de L0 (su resumen), sin ningún control de decisión.
+      const under = document.elementFromPoint(point.x, point.y);
+      await expect(
+        `${under?.closest("[data-line-index]")?.getAttribute("data-line-index")} ${describeControl(decisionAt(point))}`,
+        `a los ${at} ms, bajo el dedo: ${describeControl(under?.closest("button, input, label, li") ?? null)}`,
+      ).toBe("0 nada");
+      await tapAt(browser, point);
+      await sleep(300);
+      await expect(statuses()).toEqual({ 0: "discarded", 1: "pending_doubtful" });
+    },
+  };
+}
+
+export const C11BM1ReproBTactil390a1600 = reproB(1600);
+export const C11BM1ReproBTactil390a1700 = reproB(1700);
+export const C11BM1ReproBTactil390a2200 = reproB(2200);
+export const C11BM1ReproBTactil390a3000 = reproB(3000);
+
+/**
+ * M-p11-2 (ratón): descartar L0, ratón quieto en la fila 3 s, ir a «Buscar producto» de L1 y hacer
+ * clic a los 1,4 s de llegar: abre el buscador de L1 y ninguna otra línea cambia.
+ */
+function mp112(width: number): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      await clickAt(browser, centerOf(button(row(0), /Descartar línea/)));
+      await sleep(3000);
+      const search = button(row(1), /Buscar producto/);
+      const aim = centerOf(search);
+      await browser.userEvent.hover(search);
+      await sleep(1400);
+      await expect(describeControl(document.elementFromPoint(aim.x, aim.y)?.closest("button") ?? null)).toBe(
+        describeControl(search),
+      );
+      await clickAt(browser, aim);
+      await sleep(300);
+      await expect(within(row(1)).getByLabelText("Producto de la línea 2")).toBeInTheDocument();
+      await expect(statuses()).toEqual({
+        0: "discarded",
+        1: "pending_doubtful",
+        2: "pending_doubtful",
+        3: "pending_doubtful",
+      });
+      await expectHeldSummary(0, /Línea descartada · Restaurar/);
+    },
+  };
+}
+
+export const MP112Raton1280 = mp112(1280);
+export const MP112Raton390 = mp112(390);
+
+/**
+ * D49: con el ratón, el layout se aplica al salir del panel completo; al volver, el clic antes de
+ * 1 s sobre un control que se movió no actúa y pasado 1 s sí.
+ */
+export const SalirDelPanelRaton1280: Story = {
+  args: { response: c11ThreeResponse },
+  play: async () => {
+    const browser = await prepare(1280);
+    if (!browser) {
+      return;
+    }
+    row(0).scrollIntoView({ block: "start" });
+    await sleep(POINTER_GUARD_MS + 200);
+    const heldHeight = row(0).getBoundingClientRect().height;
+    await clickAt(browser, centerOf(button(row(0), /Descartar línea/)));
+    await sleep(POINTER_GUARD_MS + 100);
+    await expect(row(0).getBoundingClientRect().height, "ratón en el panel: la caja se conserva").toBe(heldHeight);
+
+    const outside = panel().getBoundingClientRect();
+    await browser.userEvent.hover(document.body, { position: { x: 4, y: Math.max(4, outside.top - 8) } });
+    await sleep(100);
+    await expect(row(0).getBoundingClientRect().height, "fuera del panel: se aplica").toBeLessThan(heldHeight);
+
+    const [chip] = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ });
+    await clickAt(browser, centerOf(chip));
+    await sleep(200);
+    await expect(row(2).dataset.status, "antes de 1 s, el chip que se movió no actúa").toBe("pending_doubtful");
+
+    await sleep(POINTER_GUARD_MS);
+    await clickAt(browser, centerOf(chip));
+    await sleep(200);
+    await expect(row(2).dataset.status, "pasado 1 s, sí").toBe("resolved");
+  },
+};
+
+/** REP11-03 · B-p11-1: una lista larga del buscador, abierta hacia arriba, tapa los chips de su fila. */
+const galletas: ProductEntityOption[] = Array.from({ length: 8 }, (_, index) => ({
+  barcode: null,
+  categoryId: "cat-1",
+  currentCostRef: 0.5,
+  currentStock: 5,
+  id: productUuid(700 + index),
+  isActive: true,
+  label: `CAOSG Galleta Maria ${index + 1}`,
+  salePriceRef: 1,
+  sku: `CAOSG-G${index + 1}`,
+}));
+
+/**
+ * Abre el buscador de L0 con su campo al pie de la ventana (la lista se abre hacia arriba, sobre los
+ * chips de la fila) y busca «Galleta».
+ */
+async function openSearchAtBottom(browser: Browser, opener: RegExp) {
+  row(0).scrollIntoView({ block: "start" });
+  await setupClick(browser, button(row(0), opener));
+  const input = within(row(0)).getByLabelText("Producto de la línea 1");
+  input.scrollIntoView({ block: "end" });
+  await browser.userEvent.fill(input, "Galleta");
+  await screen.findAllByRole("option", { name: /CAOSG Galleta Maria/ });
+  await sleep(POINTER_GUARD_MS + 200);
+}
+
+/**
+ * B-p11-1 (caos p11): se elige con el puntero una opción que tapa el chip candidato de la misma fila;
+ * la lista se cierra y el chip queda bajo el punto. Una 2.ª activación en el mismo punto a `at` ms no
+ * reemplaza el producto elegido. Antes se elige otra galleta con el teclado (sin guarda): así el chip
+ * «Elegido por ti» ya existe y el candidato no cambia de sitio al elegir.
+ */
+function chipBajoOpcion(width: number, pointer: Pointer, at: number): Story {
+  return {
+    args: { productFetcher: async () => galletas, response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      // Ventana baja: el campo puede quedar al pie y la lista se abre hacia arriba.
+      await browser.page.viewport(width, 560);
+      await openSearchAtBottom(browser, /Buscar producto/);
+      await browser.userEvent.keyboard("{ArrowDown}{Enter}");
+      await sleep(300);
+      await openSearchAtBottom(browser, /Cambiar producto/);
+
+      const chip = button(row(0), /^CAOSG Harina Maiz 1kg/);
+      const chipBox = chip.getBoundingClientRect();
+      const options = screen.getAllByRole("option").filter((item) => !/Maria 1(?!\d)/.test(item.textContent ?? ""));
+      const option = options.find((item) => {
+        const box = item.getBoundingClientRect();
+        return box.top < chipBox.bottom - 4 && box.bottom > chipBox.top + 4;
+      });
+      if (!option) {
+        throw new Error(`Ninguna opción de la lista tapa el chip de la fila (chip ${Math.round(chipBox.top)})`);
+      }
+      const box = option.getBoundingClientRect();
+      const point = {
+        x: (Math.max(box.left, chipBox.left) + Math.min(box.right, chipBox.right)) / 2,
+        y: (Math.max(box.top, chipBox.top) + Math.min(box.bottom, chipBox.bottom)) / 2,
+      };
+      await expect(document.elementFromPoint(point.x, point.y)?.closest("[role='option']"), "el punto es de la opción").toBe(option);
+      const picked = (option.textContent ?? "").match(/CAOSG Galleta Maria \d/)?.[0] ?? "";
+
+      await activateAt(browser, point, pointer);
+      const start = performance.now();
+      await sleepUntil(start, 100);
+      await expect(describeControl(decisionAt(point)), "al cerrarse la lista, bajo el punto").toBe(describeControl(chip));
+      await expect(chip, "elegida la opción, el chip no está marcado").toHaveAttribute("aria-pressed", "false");
+      await expect(row(0)).toHaveTextContent(picked);
+      await sleepUntil(start, at);
+      await activateAt(browser, point, pointer);
+      await sleep(300);
+      await expect(chip, `la 2.ª activación a ${at} ms no acepta el chip`).toHaveAttribute("aria-pressed", "false");
+      await expect(row(0)).toHaveTextContent(picked);
+    },
+  };
+}
+
+export const ChipBajoOpcion1280Raton1200 = chipBajoOpcion(1280, "mouse", 1200);
+export const ChipBajoOpcion1280Tactil1200 = chipBajoOpcion(1280, "touch", 1200);
+export const ChipBajoOpcion390Raton1200 = chipBajoOpcion(390, "mouse", 1200);
+export const ChipBajoOpcion390Tactil1200 = chipBajoOpcion(390, "touch", 1200);
+export const ChipBajoOpcion390Tactil600 = chipBajoOpcion(390, "touch", 600);
+
+/**
+ * B-p11-2 (QA p11, D48-c): con el buscador abierto, Tab recorre la fila en el orden visual: cada
+ * control al que llega está a la misma altura o más abajo que el anterior.
+ */
+function ordenTabBuscador(width: number): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await setupClick(browser, button(row(0), /Buscar producto/));
+      button(row(0), /^CAOSG Harina Maiz 1kg/).focus();
+      const visited: string[] = [];
+      let previousTop = -Infinity;
+      for (let presses = 0; presses < 8 && row(0).contains(document.activeElement); presses += 1) {
+        const focused = document.activeElement as HTMLElement;
+        const { top } = focused.getBoundingClientRect();
+        visited.push(`${describeControl(focused)}@${Math.round(top)}`);
+        await expect(top, `Tab sube: ${visited.join(" → ")}`).toBeGreaterThanOrEqual(previousTop - 1);
+        previousTop = top;
+        await browser.userEvent.keyboard("{Tab}");
+        await sleep(50);
+      }
+      await expect(visited.some((item) => item.startsWith("INPUT")), `pasa por el buscador: ${visited.join(" → ")}`).toBe(true);
+    },
+  };
+}
+
+export const OrdenTabBuscador1280 = ordenTabBuscador(1280);
+export const OrdenTabBuscador390 = ordenTabBuscador(390);
+
+/**
+ * B-p11-2 (caos p11): tras aplicarse el layout (aquí al desplazar), el toque que cae en un campo de
+ * texto que se movió no le da el foco (ni abre el teclado) antes de 1 s; pasado 1 s, sí.
+ */
+export const CampoMovidoSinFocoTactil390: Story = {
+  args: { response: c11ThreeResponse },
+  play: async () => {
+    const browser = await prepare(390);
+    if (!browser) {
+      return;
+    }
+    row(0).scrollIntoView({ block: "start" });
+    await sleep(POINTER_GUARD_MS + 200);
+    await tapAt(browser, centerOf(button(row(0), /Descartar línea/)));
+    await sleep(POINTER_GUARD_MS + 200);
+    const quantity = within(row(1)).getByLabelText(/^Cantidad/);
+    const before = quantity.getBoundingClientRect().top;
+    window.scrollBy({ top: 40, behavior: "instant" });
+    await sleep(150);
+    await expect(quantity.getBoundingClientRect().top, "al desplazar se aplica el layout").not.toBe(before);
+
+    await tapAt(browser, centerOf(quantity));
+    await sleep(150);
+    await expect(document.activeElement, "antes de 1 s el campo movido no recibe el foco").not.toBe(quantity);
+
+    await sleep(POINTER_GUARD_MS);
+    await tapAt(browser, centerOf(quantity));
+    await sleep(150);
+    await expect(document.activeElement, "pasado 1 s, sí").toBe(quantity);
+  },
+};
+
+/** Alto de cada fila y su posición vertical, redondeados a 0,5 px. */
+function rowGeometry() {
+  return [...panel().querySelectorAll<HTMLElement>("li[data-line-index]")].map((item) => {
+    const { top, height } = item.getBoundingClientRect();
+    return `L${item.dataset.lineIndex}@${Math.round(top * 2) / 2}h${Math.round(height * 2) / 2}`;
+  });
+}
+
+/**
+ * B-qa02-2 (QA REP11-02, D48(b)): con el puntero sobre el panel, descartar L0 o resolverla con el
+ * chip no cambia la altura ni la posición de ninguna fila: el resumen retenido solo ocupa el alto
+ * sobrante (0 px extra), al instante y a los 1,5 s.
+ */
+function resumenRetenido(width: number, pointer: Pointer, target: () => HTMLElement): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const before = rowGeometry();
+      await activateAt(browser, centerOf(target()), pointer);
+      await sleep(100);
+      await expect(row(0).querySelector('[data-testid="invoice-review-held-summary"]'), "fila retenida").not.toBeNull();
+      await expect(rowGeometry(), "a los 100 ms ninguna fila cambia de alto ni de sitio").toEqual(before);
+      await sleep(1400);
+      await expect(rowGeometry(), "a los 1,5 s tampoco").toEqual(before);
+    },
+  };
+}
+
+const chipL0 = () => button(row(0), /^CAOSG Harina Maiz 1kg/);
+const discardL0 = () => button(row(0), /Descartar línea/);
+
+export const ResumenRetenidoChip1280Raton = resumenRetenido(1280, "mouse", chipL0);
+export const ResumenRetenidoChip390Tactil = resumenRetenido(390, "touch", chipL0);
+export const ResumenRetenidoDescartada1280Raton = resumenRetenido(1280, "mouse", discardL0);
+export const ResumenRetenidoDescartada390Tactil = resumenRetenido(390, "touch", discardL0);
+
+/**
+ * B-qa02-3 (QA REP11-02, D49): tras descartar L0, activar la Cantidad de L1 y teclear (el mismo
+ * valor: el texto de la fila no cambia, solo la compactación podría mover el campo) compacta el
+ * layout (el teclado lo aplica), pero el campo en que se escribe se queda en el mismo punto de la
+ * pantalla (< 2 px) y conserva el foco y lo tecleado.
+ */
+function teclearTrasDescartar(width: number, pointer: Pointer): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const heldHeight = row(0).getBoundingClientRect().height;
+      await activateAt(browser, centerOf(discardL0()), pointer);
+      await sleep(1200);
+      const quantity = within(row(1)).getByLabelText(/^Cantidad/);
+      await activateAt(browser, centerOf(quantity), pointer);
+      await sleep(300);
+      await expect(document.activeElement, "la Cantidad de L1 tiene el foco").toBe(quantity);
+      const before = quantity.getBoundingClientRect().top;
+      await browser.userEvent.keyboard("1");
+      await sleep(300);
+      await expect(row(0).getBoundingClientRect().height, "el teclado aplica el layout").toBeLessThan(heldHeight);
+      await expect(document.activeElement, "el foco sigue en la Cantidad").toBe(quantity);
+      await expect(quantity instanceof HTMLInputElement ? quantity.value : "", "lo tecleado llega al campo").toBe("1");
+      const moved = quantity.getBoundingClientRect().top - before;
+      await expect(Math.abs(moved), `el campo enfocado se movió ${Math.round(moved)} px`).toBeLessThan(2);
+    },
+  };
+}
+
+export const TeclearTrasDescartar390Tactil = teclearTrasDescartar(390, "touch");
+export const TeclearTrasDescartar1280Raton = teclearTrasDescartar(1280, "mouse");

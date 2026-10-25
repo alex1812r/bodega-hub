@@ -428,7 +428,8 @@ export function getUnitConversion(line: InvoiceReviewLine): InvoiceUnitConversio
   if (line.entryMode !== "pack") {
     return {
       ok: false,
-      reason: `La compra solo admite cantidades enteras. Si la factura vende por ${pack}, elige «Por ${pack}» e indica las unidades por empaque para cargarla como unidades; si no, corrige la cantidad.`,
+      // D48(a): sin el último costo a mano no se recomienda ninguna opción (lo hace `costNeedMessages`).
+      reason: `La cantidad ${formatQuantity(line.quantity)} no es entera y la compra solo admite enteras: elige cómo viene; si viene por ${pack}, indica las unidades por empaque para cargarla como unidades; si no, corrige la cantidad.`,
     };
   }
   if (!isValidUnitsPerPack(line.unitsPerPack)) {
