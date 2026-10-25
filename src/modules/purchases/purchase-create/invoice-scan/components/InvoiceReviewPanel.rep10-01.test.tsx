@@ -2,7 +2,7 @@
  * REP10-01 · D46 (C10B-M1, C10B-M2): ninguna acción con el puntero deja otro control de decisión
  * bajo el dedo.
  * (a) Tras la acción, las filas conservan su caja y su orden (y el foco no desplaza) hasta que el
- *     usuario desplace, use el teclado o pasen 1,5 s sin puntero sobre esa zona.
+ *     usuario desplace, use el teclado o (D49, REP11-02) saque el ratón del panel; nunca por tiempo.
  * (b) Guarda espacial: durante 1 s, otra activación con puntero a < 32 px del punto anterior sobre
  *     un control distinto se ignora. El teclado nunca la sufre.
  */
@@ -192,14 +192,12 @@ describe("REP10-01 · C10B-M1: tras «Descartar línea» nada sube bajo el dedo"
     expect(row(0)).not.toHaveStyle({ minHeight: `${ROW_HEIGHT}px` });
   });
 
-  it("la fila colapsa a los 1,5 s sin puntero sobre ella (táctil)", () => {
+  it("D49 (sustituye a los 1,5 s): con táctil la fila no colapsa sola", () => {
     renderDiscardRepro();
     tap(discardButton(0));
 
-    advance(1400);
+    advance(5000);
     expect(row(0)).toHaveStyle({ minHeight: `${ROW_HEIGHT}px` });
-    advance(100);
-    expect(row(0)).not.toHaveStyle({ minHeight: `${ROW_HEIGHT}px` });
   });
 });
 
@@ -222,12 +220,12 @@ describe("REP10-01 · C10B-M1 repro 3: la confirmada que sale de su grupo no se 
     expect(reviewList()).toContainElement(row(0));
   });
 
-  it("a los 1,5 s sin puntero toma su lista y el foco sigue en su fila (nunca en BODY)", () => {
+  it("D49: al desplazar toma su lista y el foco sigue en su fila (nunca en BODY)", () => {
     renderConfirmedUnitRepro();
     advance(0);
     expect(row(0)).toHaveFocus();
 
-    advance(1500);
+    fireEvent.scroll(window);
 
     expect(reviewList()).toContainElement(row(0));
     expect(row(0)).toHaveFocus();

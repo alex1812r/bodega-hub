@@ -306,7 +306,8 @@ export function InvoiceReviewPanel({
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
   // D46: tras una activación con el puntero, las filas conservan caja y orden (layout pendiente) y
-  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s.
+  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s. D49: el
+  // layout se aplica al desplazar, con teclado o al salir el ratón del panel, nunca por tiempo.
   const rootRef = useRef<HTMLDivElement>(null);
   const layoutHold = useLayoutHold<RowOrder>(rootRef, (key) => {
     // Al aplicarse el layout, la fila con el foco cambió de lista: el foco vuelve a ella sin desplazar
@@ -780,21 +781,22 @@ export function InvoiceReviewPanel({
         if (!activation) {
           return;
         }
-        // D46-b: lo que apareció bajo el dedo tras la activación anterior no se acciona.
-        if (isSpatialRebound(lastPointerActivationRef.current, activation)) {
+        // D46-b: lo que apareció bajo el dedo tras la activación anterior no se acciona. D49: tampoco
+        // lo que movió la aplicación del layout pendiente hace menos de 1 s.
+        if (
+          isSpatialRebound(lastPointerActivationRef.current, activation) ||
+          layoutHold.movedByCompaction(activation.control)
+        ) {
           event.preventDefault();
           event.stopPropagation();
           return;
         }
         lastPointerActivationRef.current = activation;
         // D46-a: antes de que la acción cambie nada, se fijan las cajas y el orden actuales.
-        const native = event.nativeEvent;
-        const mouse = "pointerType" in native && native.pointerType === "mouse" ? { x: activation.x, y: activation.y } : null;
-        layoutHold.holdLayout(
-          activation.control,
-          { review: sections.review.map((line) => line.index), confirmed: sections.confirmed.map((line) => line.index) },
-          mouse,
-        );
+        layoutHold.holdLayout(activation.control, {
+          review: sections.review.map((line) => line.index),
+          confirmed: sections.confirmed.map((line) => line.index),
+        });
       }}
       onKeyDownCapture={(event) => {
         if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
