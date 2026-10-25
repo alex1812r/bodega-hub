@@ -58,10 +58,10 @@ const searched: InvoiceReviewAction = {
 const searchFailed: InvoiceReviewAction = { type: "setLastUnitCost", index: 0, productId: BUSCADO, result: "error" };
 
 describe("REP10-02 · B1 aviso con la consulta del costo previo fallida", () => {
-  it("sin elegir la opción: dice qué elegir, sin coma ni «y» de más", () => {
+  it("sin elegir la opción: texto neutro (D48-a), sin coma ni «y» de más", () => {
     const state = run(build(), searched, searchFailed);
     expect(lineNeedMessages(state, state.lines[0])).toContain(
-      "No se pudo consultar el costo previo: elige «Por unidad», revisa el costo y confírmalo.",
+      "No se pudo consultar el costo previo: elige cómo viene (Por unidad o Por bulto), revisa el costo y confírmalo.",
     );
   });
 
