@@ -19,8 +19,8 @@ import {
   getLineLastCost,
   getTaxInclusion,
   getUnitConversion,
-  isExplicitChoiceIssue,
   isPendingStatus,
+  lineOffersPack,
   linePackWord,
   MAX_REVIEW_QUANTITY,
   needsExplicitChoice,
@@ -40,8 +40,6 @@ import {
   lineNeedMessages,
   REVIEW_STATUS_META,
 } from "./invoiceReviewView";
-
-const PACK_UNITS = new Set(["caja", "bulto", "paquete", "display"]);
 
 const ARROW_KEYS = new Set(["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"]);
 
@@ -101,15 +99,9 @@ export function InvoiceReviewLineRow({
   const pending = isPendingStatus(line.status);
   const index = line.index;
   const title = line.productName || (line.productId ? "Producto elegido" : "Sin producto");
-  const readUnit = state.extraction.lines[index]?.unit;
-  // Una cantidad fraccionaria (0,50) también ofrece "Por bulto": así se puede cargar como unidades.
   const fractional = Number.isFinite(line.quantity) && line.quantity > 0 && !Number.isInteger(line.quantity);
-  // D31: un aviso de precio o de empaque se responde eligiendo la opción, aunque se leyera por unidad.
-  const showPack =
-    line.entryMode === "pack" ||
-    fractional ||
-    (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
-    line.issues.some(isExplicitChoiceIssue);
+  // D54-b (C12B-M2): ofrecida una vez, «Por empaque» no desaparece al elegir «Por unidad».
+  const showPack = lineOffersPack(state, line);
   // D42: el costo de ESE producto con su modo frente a su último costo. Desviado o sin poder
   // comparar, se elige la opción y se reconoce aparte (D43): aunque solo tenga un modo, se muestra.
   const costReview = getLineCostReview(state, line);
