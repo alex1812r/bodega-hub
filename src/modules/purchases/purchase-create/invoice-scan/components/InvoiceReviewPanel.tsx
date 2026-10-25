@@ -48,7 +48,14 @@ import {
   getChoiceChips,
   lineNeedMessages,
 } from "./invoiceReviewView";
-import { isSpatialRebound, type PointerActivation, readPointerActivation, useLayoutHold } from "./useLayoutHold";
+import {
+  isSpatialRebound,
+  POINTER_GUARD_RADIUS_PX,
+  type PointerActivation,
+  readPointerActivation,
+  REVEAL_GUARD_MS,
+  useLayoutHold,
+} from "./useLayoutHold";
 
 export type InvoiceReviewPanelProps = {
   /** Respuesta de `POST /api/purchases/invoice-scan`. Otro escaneo = montar de nuevo (`key`). */
@@ -316,6 +323,27 @@ export function InvoiceReviewPanel({
     (row?.hasAttribute("tabindex") ? row : footerRef.current)?.focus({ preventScroll: true });
   });
   const lastPointerActivationRef = useRef<PointerActivation | null>(null);
+  // B-p11-1: elección con el puntero en una lista flotante (portal); lo que destapó al cerrarse no se
+  // acciona en ese punto hasta que el puntero se aleje o pase REVEAL_GUARD_MS.
+  const revealActivationRef = useRef<PointerActivation | null>(null);
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const reveal = revealActivationRef.current;
+      if (reveal && Math.hypot(event.clientX - reveal.x, event.clientY - reveal.y) >= POINTER_GUARD_RADIUS_PX) {
+        revealActivationRef.current = null;
+      }
+    };
+    window.addEventListener("pointermove", onPointerMove, true);
+    return () => window.removeEventListener("pointermove", onPointerMove, true);
+  }, []);
+  /** D46-b, D49 y B-p11-1: la activación con el puntero cae en algo que apareció o se movió bajo él. */
+  function isPointerGuarded(activation: PointerActivation) {
+    return (
+      isSpatialRebound(lastPointerActivationRef.current, activation) ||
+      isSpatialRebound(revealActivationRef.current, activation, REVEAL_GUARD_MS) ||
+      layoutHold.movedByCompaction(activation.control)
+    );
+  }
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const modelSections = getReviewSections(state);
   const sections = keepRowOrder(keepInConfirmed(modelSections, heldConfirmedIndex), layoutHold.order, state.lines);
@@ -782,16 +810,16 @@ export function InvoiceReviewPanel({
           return;
         }
         // D46-b: lo que apareció bajo el dedo tras la activación anterior no se acciona. D49: tampoco
-        // lo que movió la aplicación del layout pendiente hace menos de 1 s.
-        if (
-          isSpatialRebound(lastPointerActivationRef.current, activation) ||
-          layoutHold.movedByCompaction(activation.control)
-        ) {
+        // lo que movió la aplicación del layout pendiente hace menos de 1 s. B-p11-1: ni lo que destapó
+        // una lista flotante al elegir en ella.
+        if (isPointerGuarded(activation)) {
           event.preventDefault();
           event.stopPropagation();
           return;
         }
         lastPointerActivationRef.current = activation;
+        // La lista del buscador vive en un portal: su clic llega por el árbol de React, no por el DOM.
+        revealActivationRef.current = rootRef.current?.contains(activation.control) ? null : activation;
         // D46-a: antes de que la acción cambie nada, se fijan las cajas y el orden actuales.
         layoutHold.holdLayout(activation.control, {
           review: sections.review.map((line) => line.index),
@@ -806,6 +834,14 @@ export function InvoiceReviewPanel({
         }
         if (ACTIVATION_KEYS.has(event.key)) {
           pressedRef.current.add(`key:${event.key}`);
+        }
+      }}
+      // B-p11-2 (caos p11): el foco (y el teclado en pantalla) llega en el `mousedown`, antes del clic
+      // que la guarda ignora: sobre un control guardado tampoco entra el foco.
+      onMouseDownCapture={(event) => {
+        const activation = readPointerActivation(event);
+        if (activation && isPointerGuarded(activation)) {
+          event.preventDefault();
         }
       }}
       onPointerDownCapture={(event) => {
