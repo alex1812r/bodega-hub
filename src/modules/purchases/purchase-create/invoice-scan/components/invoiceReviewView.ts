@@ -173,6 +173,23 @@ function productConfirmationMessage(state: InvoiceReviewState, line: InvoiceRevi
   return [`Falta confirmar el producto: toca «${chip?.name ?? "Producto propuesto"}» o pulsa Enter.`];
 }
 
+/**
+ * B-p12-1: «Sin producto» con candidatos dice qué falta: el marcado (el que acepta Enter) aún no
+ * está elegido; sin marcado (empate, D24-d), uno de los candidatos.
+ */
+function productChoiceMessage(line: InvoiceReviewLine): string[] {
+  if (line.productId || line.discarded || line.candidates.length === 0) {
+    return [];
+  }
+  const target = enterTargetProductId(line);
+  const chip = getChoiceChips(line).find((item) => item.productId === target);
+  return [
+    chip
+      ? `Falta elegir el producto: toca «${chip.name}» o pulsa Enter para confirmarlo.`
+      : "Falta elegir el producto: toca uno de los candidatos.",
+  ];
+}
+
 /** D48(a): sin opción coherente con el último costo, no se recomienda ninguna. */
 function neutralChoiceText(line: InvoiceReviewLine): string {
   return `elige cómo viene (Por unidad o Por ${linePackWord(line)}), revisa el costo y confírmalo.`;
@@ -272,7 +289,12 @@ export function lineNeedMessages(state: InvoiceReviewState, line: InvoiceReviewL
       return ["Revisa el costo: no puede ser negativo ni estar vacío."];
     }
     return [];
-  }).concat(choice, line.discarded ? [] : costNeedMessages(state, line), productConfirmationMessage(state, line));
+  }).concat(
+    productChoiceMessage(line),
+    choice,
+    line.discarded ? [] : costNeedMessages(state, line),
+    productConfirmationMessage(state, line),
+  );
 }
 
 /**

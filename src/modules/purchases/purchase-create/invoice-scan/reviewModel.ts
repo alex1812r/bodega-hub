@@ -409,8 +409,12 @@ export type InvoiceUnitConversion =
   | { ok: true; units: number; unitPrice: number }
   | { ok: false; reason: string };
 
+/**
+ * B-p13-1: la cantidad que se cita como no entera va sin redondear (2,9999 no se lee «3»); 15 cifras
+ * significativas quitan solo el ruido de coma flotante (0,1 × 3 = 0,3).
+ */
 function formatQuantity(value: number): string {
-  return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
+  return value.toLocaleString("es-VE", { maximumSignificantDigits: 15 });
 }
 
 /** Palabra del empaque de la línea («bulto», «caja»…): la misma en la opción y en los textos (REP6-04). */
