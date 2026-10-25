@@ -973,6 +973,7 @@ export function InvoiceReviewPanel({
       <InvoiceReviewFooter
         detailStyle={layoutHold.boxStyle("footer-detail")}
         footerRef={footerRef}
+        footerStyle={layoutHold.boxStyle("footer")}
         onAction={dispatch}
         onDiscard={() => setDiscardScanOpen(true)}
         onLoad={handleLoad}

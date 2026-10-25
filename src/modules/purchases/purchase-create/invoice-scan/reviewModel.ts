@@ -763,10 +763,6 @@ function deriveStatus(state: InvoiceReviewState, line: InvoiceReviewLine): Invoi
   return "pending_doubtful";
 }
 
-/**
- * Recalcula el estado de TODAS las líneas: el costo REF de una depende de la tasa, del IVA
- * incluido y del último costo consultado, no solo de la propia línea (D42).
- */
 const PACK_READ_UNITS = new Set(["caja", "bulto", "paquete", "display"]);
 
 /**
@@ -793,6 +789,10 @@ export function lineOffersPack(state: InvoiceReviewState, line: InvoiceReviewLin
   return line.packOffered === true || offersPackNow(state, line);
 }
 
+/**
+ * Recalcula el estado de TODAS las líneas: el costo REF de una depende de la tasa, del IVA
+ * incluido y del último costo consultado, no solo de la propia línea (D42).
+ */
 function withStatuses(state: InvoiceReviewState): InvoiceReviewState {
   let changed = false;
   const lines = state.lines.map((line) => {
