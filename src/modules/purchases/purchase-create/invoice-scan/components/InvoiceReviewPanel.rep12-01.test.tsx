@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { InvoiceDuplicateMatch, InvoiceDuplicateQuery } from "@/modules/invoice-scan/contracts";
@@ -164,5 +164,79 @@ describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12
     await waitFor(() => expect(duplicateFetcher).toHaveBeenCalledTimes(2));
     expect(signals[0].aborted).toBe(true);
     expect(signals[1].aborted).toBe(false);
+  });
+});
+
+describe("InvoiceReviewPanel · Cargar espera la consulta del proveedor elegido (REP12-01 intento 2)", () => {
+  it("tras cambiar el proveedor, mientras la consulta espera o está en vuelo, Cargar no carga", async () => {
+    const user = userEvent.setup();
+    let resolveFarmatodo: (matches: InvoiceDuplicateMatch[]) => void = () => undefined;
+    const duplicateFetcher = jest.fn((query: InvoiceDuplicateQuery) =>
+      query.supplierId === FARMATODO
+        ? new Promise<InvoiceDuplicateMatch[]>((resolve) => {
+            resolveFarmatodo = resolve;
+          })
+        : Promise.resolve([]),
+    );
+    const props = renderPanel({
+      duplicateFetcher,
+      response: makeReviewResponse({ lines: [{}], matched: { supplier: { contactId: REVIEW_SUPPLIER_ID } } }),
+    });
+
+    // El escaneo ya respondió por su proveedor leído (sin duplicado): Cargar disponible.
+    expect(loadButton()).toBeEnabled();
+
+    await chooseFarmatodo(user);
+
+    // Espera de 300 ms y luego en vuelo: Cargar no carga y el pie dice por qué.
+    expect(loadButton()).toBeDisabled();
+    expect(screen.getByText(/Comprobando duplicados/)).toBeInTheDocument();
+    await waitFor(() => expect(duplicateFetcher).toHaveBeenLastCalledWith(expect.objectContaining({ supplierId: FARMATODO }), expect.any(AbortSignal)));
+    expect(loadButton()).toBeDisabled();
+    await user.click(loadButton());
+    expect(props.onLoad).not.toHaveBeenCalled();
+
+    await act(async () => resolveFarmatodo([]));
+    expect(loadButton()).toBeEnabled();
+    expect(screen.queryByText(/Comprobando duplicados/)).not.toBeInTheDocument();
+  });
+
+  it("si la consulta falla, no bloquea para siempre: vuelve al aviso del escaneo", async () => {
+    const user = userEvent.setup();
+    const duplicateFetcher = jest.fn(async (query: InvoiceDuplicateQuery) => {
+      if (query.supplierId === FARMATODO) {
+        throw new Error("red");
+      }
+      return [];
+    });
+    renderPanel({
+      duplicateFetcher,
+      response: makeReviewResponse({ lines: [{}], matched: { supplier: { contactId: REVIEW_SUPPLIER_ID } } }),
+    });
+
+    await chooseFarmatodo(user);
+
+    expect(loadButton()).toBeDisabled();
+    await waitFor(() => expect(loadButton()).toBeEnabled());
+    expect(screen.queryByText(/Comprobando duplicados/)).not.toBeInTheDocument();
+  });
+});
+
+describe("InvoiceReviewPanel · el pie explica el aviso de duplicado sin reconocer (REP12-01 intento 2)", () => {
+  it("el detalle del pie pide marcar el aviso y lleva el foco a su casilla", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      duplicateFetcher: jest.fn(async () => [{ scanId: "scan-anterior", purchaseId: null, number: "000123", date: null }]),
+      response: makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }),
+    });
+
+    const blockers = screen.getByTestId("invoice-review-blockers");
+    const reason = within(blockers).getByRole("button", { name: /Marca el aviso de factura duplicada/ });
+    await user.click(reason);
+    expect(screen.getByRole("checkbox", { name: /cargarla igual/i })).toHaveFocus();
+
+    await user.click(screen.getByRole("checkbox", { name: /cargarla igual/i }));
+    expect(screen.queryByRole("button", { name: /Marca el aviso de factura duplicada/ })).not.toBeInTheDocument();
+    expect(loadButton()).toBeEnabled();
   });
 });

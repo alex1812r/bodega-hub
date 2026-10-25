@@ -173,6 +173,11 @@ export type MatchPreviousScan = {
   matchedContactId?: string | null;
   /** RIF leído en ese escaneo (`extracted->supplier->taxId`). */
   supplierTaxId?: string | null;
+  /**
+   * REP12-01 (D53): RIF guardado (`contacts.tax_id` de la tienda) de `supplierId` y de
+   * `matchedContactId`; se cruza con el RIF leído y con el de los contactos del actual.
+   */
+  contactTaxIds?: string[];
   /** Número de factura leído en ese escaneo (`extracted->number`). */
   number: string | null;
   /** Fecha leída en ese escaneo (`extracted->date`, ISO), para el posible duplicado. */

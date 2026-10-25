@@ -15,6 +15,11 @@ export type DuplicateScanInput = {
   supplierId?: string | undefined;
   /** RIF leído del escaneo actual. */
   taxId: string | undefined;
+  /**
+   * REP12-01 (D53): RIF guardado (`contacts.tax_id` de la tienda) del proveedor elegido y del
+   * contacto leído del escaneo actual.
+   */
+  contactTaxIds?: (string | null | undefined)[];
   previousScans: MatchPreviousScan[];
 };
 
@@ -22,7 +27,8 @@ export type DuplicateScanInput = {
  * Escaneos anteriores que serían la misma factura (REP12-01, D53: la única regla, la usan el
  * emparejamiento y `POST /api/purchases/invoice-scan/duplicates`). Mismo proveedor si casa
  * cualquiera de los del actual (elegido o contacto leído) con cualquiera del previo (elegido al
- * confirmar o contacto leído), o el RIF leído (`sameTaxId`). Con el mismo número de factura
+ * confirmar o contacto leído), o cualquier RIF del actual (el leído o el guardado de sus contactos) con
+ * cualquiera del previo (`sameTaxId`). Con el mismo número de factura
  * normalizado; si no hay ninguno, posible duplicado (caos 5.4): mismo proveedor, mismo total
  * (±0,01) y
  * - número que difiere en un solo carácter y misma fecha, o
@@ -37,7 +43,9 @@ export function findDuplicateScans(input: DuplicateScanInput): MatchPreviousScan
   const mine = [input.contactId, input.supplierId].filter((id): id is string => Boolean(id));
   const sameSupplier = (scan: MatchPreviousScan) =>
     [scan.supplierId, scan.matchedContactId].some((id) => typeof id === "string" && mine.includes(id)) ||
-    sameTaxId(input.taxId, scan.supplierTaxId);
+    [input.taxId, ...(input.contactTaxIds ?? [])].some((mineTaxId) =>
+      [scan.supplierTaxId, ...(scan.contactTaxIds ?? [])].some((theirTaxId) => sameTaxId(mineTaxId, theirTaxId)),
+    );
 
   if (number) {
     const exact = previousScans.filter((scan) => normalizeInvoiceNumber(scan.number) === number && sameSupplier(scan));

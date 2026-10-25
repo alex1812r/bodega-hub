@@ -114,3 +114,63 @@ describe("findDuplicateScans · todos los que coinciden, el confirmado primero",
     ).toEqual(["scan-confirmado", "scan-abandonado"]);
   });
 });
+
+/**
+ * REP12-01 intento 2 (D53 «cualquier combinación» incluye el RIF): el RIF de los contactos
+ * implicados (proveedor elegido o contacto leído, del actual y del previo; resuelto desde
+ * `contacts` de la tienda) se cruza con el RIF leído del otro lado y entre sí.
+ */
+describe("findDuplicateScan · RIF de los contactos cruzado con el RIF leído (D53)", () => {
+  type Prev = Partial<MatchPreviousScan>;
+  type Cur = Partial<Parameters<typeof findDuplicateScan>[0]>;
+  const base = (prev: Prev, cur: Cur) => ({
+    ...current({}, cur),
+    previousScans: [previous({}, { supplierId: null, matchedContactId: null, supplierTaxId: null, ...prev })],
+  });
+
+  it.each<[string, Prev, Cur]>([
+    [
+      "RIF leído del previo = RIF del proveedor ELEGIDO actual",
+      { supplierId: OTRO, supplierTaxId: RIF },
+      { supplierId: NORTE, contactTaxIds: ["J409998881"] },
+    ],
+    [
+      "RIF del proveedor elegido del previo = RIF leído actual",
+      { supplierId: NORTE, contactTaxIds: [RIF] },
+      { supplierId: OTRO, taxId: "j-40999888-1" },
+    ],
+    [
+      "RIF del contacto leído del previo (cargado con otro) = RIF leído actual",
+      { supplierId: OTRO, matchedContactId: CAOS, contactTaxIds: [RIF] },
+      { contactId: NORTE, taxId: RIF },
+    ],
+    [
+      "RIF del elegido del previo = RIF del elegido actual (contactos distintos, mismo RIF)",
+      { supplierId: NORTE, contactTaxIds: [RIF] },
+      { supplierId: OTRO, contactTaxIds: [RIF] },
+    ],
+    [
+      "RIF leído del previo = RIF del contacto leído actual",
+      { supplierId: OTRO, supplierTaxId: RIF },
+      { contactId: NORTE, contactTaxIds: [RIF] },
+    ],
+  ])("%s → duplicado", (_label, prev, cur) => {
+    expect(findDuplicateScan(base(prev, cur))).toBe("scan-previo");
+  });
+
+  it.each<[string, Prev, Cur]>([
+    [
+      "RIF distintos en todos los contactos",
+      { supplierId: NORTE, supplierTaxId: "J-22222222-2", contactTaxIds: [RIF] },
+      { supplierId: OTRO, taxId: "J-11111111-1", contactTaxIds: ["J-33333333-3"] },
+    ],
+    [
+      "mismos dígitos con otra letra (V ≠ J)",
+      { supplierId: NORTE, contactTaxIds: [RIF] },
+      { supplierId: OTRO, contactTaxIds: ["V-40999888-1"] },
+    ],
+    ["contacto sin RIF guardado", { supplierId: NORTE, contactTaxIds: [] }, { supplierId: OTRO, contactTaxIds: [] }],
+  ])("%s → sin duplicado", (_label, prev, cur) => {
+    expect(findDuplicateScan(base(prev, cur))).toBeUndefined();
+  });
+});

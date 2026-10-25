@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Camera, Copy } from "lucide-react";
 import Link from "next/link";
+import type { Ref } from "react";
 
 import { useInvoiceScanPurchase } from "@/modules/invoice-scan/client/useInvoiceScanPurchase";
 import type { InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
@@ -38,6 +39,8 @@ export type InvoiceReviewHeaderProps = {
   /** Casilla del aviso de duplicado marcada (Cargar la exige). */
   duplicateAcknowledged?: boolean;
   onDuplicateAcknowledge?: (acknowledged: boolean) => void;
+  /** Casilla del aviso de duplicado: el motivo del pie lleva el foco a ella. */
+  duplicateCheckboxRef?: Ref<HTMLInputElement>;
 };
 
 /**
@@ -47,6 +50,7 @@ export type InvoiceReviewHeaderProps = {
  */
 export function InvoiceReviewHeader({
   duplicateAcknowledged = false,
+  duplicateCheckboxRef,
   duplicates,
   onAction,
   onDuplicateAcknowledge,
@@ -128,6 +132,7 @@ export function InvoiceReviewHeader({
                   checked={duplicateAcknowledged}
                   className="size-4 rounded border-border"
                   onChange={(event) => onDuplicateAcknowledge(event.target.checked)}
+                  ref={duplicateCheckboxRef}
                   type="checkbox"
                 />
                 No es la misma compra, o quiero cargarla igual

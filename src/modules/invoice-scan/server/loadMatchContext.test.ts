@@ -1011,3 +1011,57 @@ describe("loadMatchContext · más de 1000 filas por proveedor (C6-M3, REP6-03)"
     expect(ctx.products.find((product) => product.id === SKU_PRODUCT_ID)?.linkedToSupplier).toBe(true);
   });
 });
+
+describe("loadMatchContext · RIF de los contactos en el duplicado (REP12-01, D53)", () => {
+  const rifRows = (row: Record<string, unknown>) => [
+    { id: "scan-rif", number: "0123", supplier_tax_id: null, matched_contact_id: null, purchase_id: "purchase-1", ...row },
+  ];
+
+  it("resuelve el RIF del proveedor del escaneo previo desde contacts de la tienda y lo cruza con el RIF leído", async () => {
+    const tables = fullTables();
+    tables.invoice_scans = (query) => ({
+      data: argsOf(query, "ilike").length > 0 ? rifRows({ supplier_id: OTHER_SUPPLIER_ID }) : [],
+      error: null,
+    });
+    tables.contacts = (query) => ({
+      data: hasEq(query, "store_id", STORE_ID) ? [{ id: OTHER_SUPPLIER_ID, tax_id: "J-12345678-9" }] : [],
+      error: null,
+    });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    const contactQueries = queriesOf(stub.queries, "contacts");
+    expect(contactQueries).toHaveLength(1);
+    expect(hasEq(contactQueries[0], "store_id", STORE_ID)).toBe(true);
+    expect(argsOf(contactQueries[0], "in")).toEqual([["id", [OTHER_SUPPLIER_ID]]]);
+    expect(ctx.previousScans).toEqual([expect.objectContaining({ scanId: "scan-rif", contactTaxIds: ["J-12345678-9"] })]);
+    expect(matchInvoice(extraction, ctx).duplicateOfScanId).toBe("scan-rif");
+  });
+
+  it("el RIF del proveedor resuelto (candidato) cruza con el RIF leído del previo aunque el actual no traiga RIF", async () => {
+    const tables = fullTables();
+    tables.invoice_scans = (query) => ({
+      data: argsOf(query, "ilike").length > 0 ? rifRows({ supplier_id: OTHER_SUPPLIER_ID, supplier_tax_id: "J123456789" }) : [],
+      error: null,
+    });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+    const withoutTaxId: InvoiceExtraction = { ...extraction, supplier: { name: extraction.supplier.name } };
+
+    const ctx = await loadMatchContext(stub.client, STORE_ID, withoutTaxId);
+    const matched = matchInvoice(withoutTaxId, ctx);
+
+    expect(matched.supplier.contactId).toBe(SUPPLIER_ID);
+    expect(matched.duplicateOfScanId).toBe("scan-rif");
+  });
+
+  it("sin escaneos previos no consulta contacts", async () => {
+    const tables = fullTables();
+    tables.invoice_scans = () => ({ data: [], error: null });
+    const stub = createSupabaseStub({ candidates, tables, rpcs: { tax_rates_for_store: taxRateRows } });
+
+    await loadMatchContext(stub.client, STORE_ID, extraction);
+
+    expect(queriesOf(stub.queries, "contacts")).toHaveLength(0);
+  });
+});

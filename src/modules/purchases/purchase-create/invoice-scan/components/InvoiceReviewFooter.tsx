@@ -26,6 +26,10 @@ export type InvoiceReviewFooterProps = {
   detailStyle?: CSSProperties;
   /** REP12-01 (D52): aviso de factura duplicada sin reconocer; Cargar lo exige. */
   duplicateUnacknowledged?: boolean;
+  /** REP12-01: consulta de duplicados vigente sin respuesta; Cargar espera. */
+  duplicatePending?: boolean;
+  /** REP12-01: el motivo «Marca el aviso…» lleva a la casilla del aviso. */
+  onReviewDuplicate?: () => void;
 };
 
 /**
@@ -48,11 +52,13 @@ const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { labe
 
 export function InvoiceReviewFooter({
   detailStyle,
+  duplicatePending = false,
   duplicateUnacknowledged = false,
   footerRef,
   onAction,
   onDiscard,
   onLoad,
+  onReviewDuplicate,
   state,
   summary,
 }: InvoiceReviewFooterProps) {
@@ -71,6 +77,8 @@ export function InvoiceReviewFooter({
     readLabel = `IVA a registrar ${money(summary.totals.tax)} · ${sourceCopy.label}`;
   }
   const collapsible = detailOpen ? null : "hidden sm:flex";
+  // REP12-01: motivos del duplicado junto a los bloqueos (mientras se comprueba, solo ese).
+  const duplicateReason = duplicatePending ? "pending" : duplicateUnacknowledged ? "unacknowledged" : null;
 
   return (
     <footer
@@ -123,7 +131,7 @@ export function InvoiceReviewFooter({
         aria-label="Cargar en la compra"
         className="col-start-2 row-start-1 sm:col-start-3 sm:row-span-2"
         data-load-button
-        disabled={!summary.canLoad || duplicateUnacknowledged}
+        disabled={!summary.canLoad || duplicatePending || duplicateUnacknowledged}
         onClick={onLoad}
       >
         <span className="sm:hidden">Cargar</span>
@@ -167,11 +175,24 @@ export function InvoiceReviewFooter({
             ? ` · ${summary.totals.lineMismatches.length} con cantidad × costo distinto del total leído`
             : ""}
         </p>
-        {summary.blockers.length > 0 ? (
+        {summary.blockers.length > 0 || duplicateReason ? (
           <ul aria-live="polite" className="text-xs text-on-surface-variant" data-testid="invoice-review-blockers">
             {summary.blockers.map((blocker) => (
               <li key={blocker}>{blocker}</li>
             ))}
+            {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
+            {duplicateReason === "unacknowledged" ? (
+              <li>
+                <button
+                  className="cursor-pointer text-left underline underline-offset-2 hover:text-foreground"
+                  data-guarded-activation
+                  onClick={onReviewDuplicate}
+                  type="button"
+                >
+                  Marca el aviso de factura duplicada.
+                </button>
+              </li>
+            ) : null}
           </ul>
         ) : null}
       </div>

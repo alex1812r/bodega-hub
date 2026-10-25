@@ -3000,7 +3000,8 @@ paths:
         factura normalizado (o, sin numero exacto, el mismo total +-0,01 con la
         misma fecha y numero ausente o a un caracter) y proveedor coincidente por
         cualquiera de los tres, en cualquier combinacion con el elegido al
-        confirmar o el leido del escaneo previo. Misma regla que
+        confirmar o el leido del escaneo previo; los RIF incluyen el guardado en
+        los contactos de la tienda de ambos lados (elegido y leido). Misma regla que
         `matched.duplicateOfScanId`. Los de compras anuladas no cuentan; el
         escaneo `scanId` nunca cuenta. Por POST porque el numero es texto de la
         factura y no va en la URL. Confirmados con compra primero. Se autoriza

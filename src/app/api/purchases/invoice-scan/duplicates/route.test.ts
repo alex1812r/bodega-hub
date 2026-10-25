@@ -11,6 +11,7 @@
 import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
 import { putMockScanRow, resetMockScanStore } from "@/modules/invoice-scan/server/scans.mock-server";
 import type { InvoiceScanRow } from "@/modules/invoice-scan/server/scans.types";
+import { mockContacts } from "@/shared/mocks/erp-data";
 
 import { POST } from "./route";
 
@@ -143,6 +144,68 @@ describe("POST /api/purchases/invoice-scan/duplicates", () => {
 
     expect((await (await post({ supplierId: CAOS, number: "DUP12-1" })).json()).data).toEqual([]);
     expect((await (await post({ scanId: PREVIO, supplierId: NORTE, number: "DUP12-1" })).json()).data).toEqual([]);
+  });
+
+  describe("RIF del proveedor elegido o del previo, resuelto desde contacts de la tienda (D53)", () => {
+    const CON_RIF = "contact-rep12-rif";
+    const RIF = "J-40999888-1";
+
+    function addContact(storeId: string) {
+      mockContacts.push({
+        address: "",
+        email: "",
+        id: CON_RIF,
+        isActive: true,
+        name: "Proveedor con RIF",
+        phone: "",
+        storeId,
+        taxId: RIF,
+        type: "proveedor",
+      });
+    }
+
+    afterEach(() => {
+      for (let index = mockContacts.length - 1; index >= 0; index -= 1) {
+        if (mockContacts[index].id === CON_RIF) {
+          mockContacts.splice(index, 1);
+        }
+      }
+    });
+
+    it("RIF del proveedor ELEGIDO actual = RIF leído del escaneo previo → duplicado", async () => {
+      addContact(STORE);
+      seed(PREVIO, {
+        status: "confirmed",
+        supplierId: NORTE,
+        purchaseId: "purchase-1",
+        extracted: extraction({ supplier: { name: "Otro nombre", taxId: "J409998881" } }),
+      });
+
+      const body = await (await post({ supplierId: CON_RIF, number: "DUP12-1" })).json();
+
+      expect(body.data.map((match: { scanId: string }) => match.scanId)).toEqual([PREVIO]);
+    });
+
+    it("RIF del proveedor elegido del previo = RIF leído actual → duplicado", async () => {
+      addContact(STORE);
+      seed(PREVIO, { status: "confirmed", supplierId: CON_RIF, purchaseId: "purchase-1" });
+
+      const body = await (await post({ supplierId: NORTE, taxId: "j-40999888-1", number: "DUP12-1" })).json();
+
+      expect(body.data.map((match: { scanId: string }) => match.scanId)).toEqual([PREVIO]);
+    });
+
+    it("el contacto de otra tienda no aporta su RIF", async () => {
+      addContact("otra-tienda");
+      seed(PREVIO, {
+        status: "confirmed",
+        supplierId: NORTE,
+        purchaseId: "purchase-1",
+        extracted: extraction({ supplier: { name: "Otro nombre", taxId: RIF } }),
+      });
+
+      expect((await (await post({ supplierId: CON_RIF, number: "DUP12-1" })).json()).data).toEqual([]);
+    });
   });
 
   it.each([

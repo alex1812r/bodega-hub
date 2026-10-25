@@ -7,8 +7,8 @@ import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { toInvoiceDuplicateMatches } from "@/modules/invoice-scan/server/duplicates";
-import { loadPreviousScans } from "@/modules/invoice-scan/server/loadMatchContext";
-import { listMockPreviousScans } from "@/modules/invoice-scan/server/matchContext.mock-server";
+import { loadContactTaxIds, loadPreviousScans } from "@/modules/invoice-scan/server/loadMatchContext";
+import { listMockContactTaxIds, listMockPreviousScans } from "@/modules/invoice-scan/server/matchContext.mock-server";
 
 const MAX_ID_LENGTH = 64;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -49,7 +49,8 @@ const bodySchema = z
 /**
  * REP12-01 (M-p12-1, M-p12A-1; D52/D53): solo lectura. Escaneos de la tienda que serían la
  * misma factura que la revisión: mismo número (o fecha + total) y proveedor coincidente por el
- * elegido, el contacto leído o el RIF leído, con la regla de `matched.duplicateOfScanId`. Por
+ * elegido, el contacto leído o el RIF (leído o guardado en los contactos de la tienda de ambos
+ * lados), con la regla de `matched.duplicateOfScanId`. Por
  * POST porque el número es texto de la factura y no va en la URL (D35). Se autoriza con
  * `purchases.create`.
  */
@@ -59,12 +60,24 @@ export async function POST(request: Request) {
     const query = bodySchema.parse(await readJsonBody(request));
     const keys = { number: query.number, date: query.date, total: query.total };
 
-    const previousScans =
-      resolveDataSource() === "supabase"
-        ? await loadPreviousScans(await createRouteSupabaseClient(), keys, query.scanId)
-        : listMockPreviousScans(auth.storeId, keys, query.scanId);
+    const contactIds = [query.supplierId, query.contactId];
 
-    return jsonData(toInvoiceDuplicateMatches(query, previousScans));
+    if (resolveDataSource() === "supabase") {
+      const supabase = await createRouteSupabaseClient();
+      const [previousScans, taxIds] = await Promise.all([
+        loadPreviousScans(supabase, auth.storeId, keys, query.scanId),
+        loadContactTaxIds(supabase, auth.storeId, contactIds),
+      ]);
+      return jsonData(toInvoiceDuplicateMatches(query, previousScans, [...taxIds.values()]));
+    }
+
+    return jsonData(
+      toInvoiceDuplicateMatches(
+        query,
+        listMockPreviousScans(auth.storeId, keys, query.scanId),
+        listMockContactTaxIds(auth.storeId, contactIds),
+      ),
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

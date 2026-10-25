@@ -94,3 +94,54 @@ describe("useInvoiceDuplicates", () => {
     expect(result.current.matches).toBeUndefined();
   });
 });
+
+describe("useInvoiceDuplicates · consulta vigente sin respuesta (REP12-01 intento 2)", () => {
+  it("pending durante la espera y en vuelo; deja de estarlo con la respuesta", async () => {
+    let resolve: (matches: InvoiceDuplicateMatch[]) => void = () => undefined;
+    const fetcher = jest.fn(
+      () =>
+        new Promise<InvoiceDuplicateMatch[]>((done) => {
+          resolve = done;
+        }),
+    );
+    const { result } = renderHook(() => useInvoiceDuplicates({ supplierId: "a", number: "1" }, fetcher));
+
+    // En la espera de 300 ms.
+    expect(result.current.pending).toBe(true);
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    // En vuelo.
+    expect(result.current.pending).toBe(true);
+    await act(async () => resolve([]));
+    expect(result.current.pending).toBe(false);
+    expect(result.current.matches).toEqual([]);
+  });
+
+  it("si falla deja de estar pendiente (vuelve al aviso del escaneo)", async () => {
+    const fetcher = jest.fn(async () => {
+      throw new Error("red");
+    });
+    const { result } = renderHook(() => useInvoiceDuplicates({ supplierId: "a", number: "1" }, fetcher));
+
+    expect(result.current.pending).toBe(true);
+    await waitFor(() => expect(result.current.pending).toBe(false));
+    expect(result.current.matches).toBeUndefined();
+  });
+
+  it("la consulta que ya respondió el escaneo (answered) no queda pendiente; otra sí", () => {
+    const fetcher = jest.fn(() => new Promise<InvoiceDuplicateMatch[]>(() => undefined));
+    const scanQuery: InvoiceDuplicateQuery = { contactId: "a", number: "1" };
+    const { rerender, result } = renderHook(({ query }) => useInvoiceDuplicates(query, fetcher, scanQuery), {
+      initialProps: { query: { contactId: "a", number: "1" } as InvoiceDuplicateQuery },
+    });
+
+    expect(result.current.pending).toBe(false);
+    rerender({ query: { contactId: "a", supplierId: "b", number: "1" } });
+    expect(result.current.pending).toBe(true);
+  });
+
+  it("sin consulta no está pendiente", () => {
+    const { result } = renderHook(() => useInvoiceDuplicates(null, jest.fn()));
+
+    expect(result.current.pending).toBe(false);
+  });
+});

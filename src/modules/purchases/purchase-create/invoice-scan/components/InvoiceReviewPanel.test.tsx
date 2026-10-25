@@ -678,11 +678,14 @@ describe("InvoiceReviewPanel", () => {
           },
         },
       }),
+      { duplicateFetcher: jest.fn(async () => []) },
     );
 
     expect(screen.getByTestId("invoice-review-blockers")).toHaveTextContent("Elige el proveedor.");
     await user.click(screen.getByRole("button", { name: /Chevere Depot C\.A\./ }));
-    expect(loadButton()).toBeEnabled();
+    // REP12-01: con el proveedor elegido, Cargar espera la consulta de duplicados de ese proveedor.
+    expect(loadButton()).toBeDisabled();
+    await waitFor(() => expect(loadButton()).toBeEnabled());
   });
 
   it("SCN-08-F1 (6.17): la siguiente dudosa con empaque recibe el foco en la fila; Enter acepta, luego unidades y Enter salta", async () => {
