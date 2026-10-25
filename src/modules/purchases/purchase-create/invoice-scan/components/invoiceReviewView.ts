@@ -172,9 +172,23 @@ function productConfirmationMessage(state: InvoiceReviewState, line: InvoiceRevi
   return [`Falta confirmar el producto: toca «${chip?.name ?? "Producto propuesto"}» o pulsa Enter.`];
 }
 
-/** Nombre de la opción del modo actual de la línea: «Por unidad» / «Por caja». */
-function entryModeLabel(line: InvoiceReviewLine): string {
-  return line.entryMode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`;
+/** D48(a): sin opción coherente con el último costo, no se recomienda ninguna. */
+function neutralChoiceText(line: InvoiceReviewLine): string {
+  return `elige cómo viene (Por unidad o Por ${linePackWord(line)}), revisa el costo y confírmalo.`;
+}
+
+/**
+ * D48(a): qué elegir con el costo actual desviado. Solo se nombra la otra opción si deja el costo
+ * coherente con el último (nunca la actual, que es la desviada); si no, el texto es neutro.
+ */
+function chooseOptionText(state: InvoiceReviewState, line: InvoiceReviewLine): string {
+  const other = line.entryMode === "unit" ? "pack" : "unit";
+  const outcome = getEntryModeOutcome(state, line, other);
+  if (outcome?.unitCost?.currency !== "REF" || outcome.lastUnitCostRef === undefined || outcome.deviates) {
+    return neutralChoiceText(line);
+  }
+  const label = other === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`;
+  return `«${label}» lo deja en ${formatRefAmount(outcome.unitCost.amount)} REF por unidad: si viene así, elígela; si no, elige cómo viene y confirma el costo.`;
 }
 
 /**
@@ -192,13 +206,14 @@ function costNeedMessages(state: InvoiceReviewState, line: InvoiceReviewLine): s
   // D43: elegir la opción no confirma el costo; tras elegirla, se confirma con su botón.
   const howTo = line.choiceMade
     ? "si es correcto, confírmalo con «Sí, el costo es…»."
-    : `elige «${entryModeLabel(line)}» y confirma el costo.`;
+    : chooseOptionText(state, line);
   if (review.reason === "error") {
-    // B1: «revisa el costo y, elige…» no se lee; sin la opción elegida, primero elegirla.
+    // B1: «revisa el costo y, elige…» no se lee; sin la opción elegida, primero elegirla. Sin
+    // último costo ninguna opción es coherente (D48-a): texto neutro.
     return [
       line.choiceMade
         ? `No se pudo consultar el costo previo: revisa el costo y, ${howTo}`
-        : `No se pudo consultar el costo previo: elige «${entryModeLabel(line)}», revisa el costo y confírmalo.`,
+        : `No se pudo consultar el costo previo: ${neutralChoiceText(line)}`,
     ];
   }
   const outcome = needsExplicitChoice(line) ? undefined : getEntryModeOutcome(state, line, line.entryMode);
