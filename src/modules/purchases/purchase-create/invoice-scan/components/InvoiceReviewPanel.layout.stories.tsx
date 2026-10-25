@@ -895,6 +895,8 @@ export const OrdenTabBuscador390 = ordenTabBuscador(390);
 /**
  * B-p11-2 (caos p11): tras aplicarse el layout (aquí al desplazar), el toque que cae en un campo de
  * texto que se movió no le da el foco (ni abre el teclado) antes de 1 s; pasado 1 s, sí.
+ * REP12-04 (B-qa02-1): la fila que sigue a la compactada ya no se mueve (anclaje); se descarta L1 y el
+ * campo es la Cantidad de L0, que la compactación sí mueve.
  */
 export const CampoMovidoSinFocoTactil390: Story = {
   args: { response: c11ThreeResponse },
@@ -905,13 +907,14 @@ export const CampoMovidoSinFocoTactil390: Story = {
     }
     row(0).scrollIntoView({ block: "start" });
     await sleep(POINTER_GUARD_MS + 200);
-    await tapAt(browser, centerOf(button(row(0), /Descartar línea/)));
+    await tapAt(browser, centerOf(button(row(1), /Descartar línea/)));
     await sleep(POINTER_GUARD_MS + 200);
-    const quantity = within(row(1)).getByLabelText(/^Cantidad/);
+    const quantity = within(row(0)).getByLabelText(/^Cantidad/);
     const before = quantity.getBoundingClientRect().top;
     window.scrollBy({ top: 40, behavior: "instant" });
     await sleep(150);
-    await expect(quantity.getBoundingClientRect().top, "al desplazar se aplica el layout").not.toBe(before);
+    const moved = quantity.getBoundingClientRect().top - (before - 40);
+    await expect(Math.abs(moved), `al desplazar se aplica el layout y mueve el campo (${Math.round(moved)} px)`).toBeGreaterThan(40);
 
     await tapAt(browser, centerOf(quantity));
     await sleep(150);
@@ -1117,3 +1120,128 @@ export const C12BM1Pie390Tactil1500 = c12bm1Pie(390, "touch", 1500);
 export const C12BM1Pie390Tactil700Pegado = c12bm1Pie(390, "touch", 700, 600);
 export const C12BM1Pie1280Raton700 = c12bm1Pie(1280, "mouse", 700);
 export const C12BM1Pie1280Raton700Pegado = c12bm1Pie(1280, "mouse", 700, 560);
+
+type Compaction = "salir" | "desplazar" | "teclado";
+
+/** Mueve el ratón real (CDP) a un punto de la pantalla, sin que Playwright desplace la página. */
+async function mouseMoveTo(browser: Browser, point: Point) {
+  const target = pagePoint(point);
+  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
+}
+
+/** Aplica el layout pendiente como el usuario: sacando el ratón del panel, desplazando o con el teclado. */
+async function compact(browser: Browser, how: Compaction) {
+  if (how === "salir") {
+    // Margen izquierdo del decorador (p-4): fuera del panel, sobre nada accionable.
+    await mouseMoveTo(browser, { x: 4, y: Math.round(window.innerHeight / 2) });
+  } else if (how === "desplazar") {
+    window.scrollBy({ top: 40, behavior: "instant" });
+  } else {
+    await browser.userEvent.keyboard("{Shift}");
+  }
+  await sleep(300);
+}
+
+/**
+ * B-qa02-1 (D52): con L1 arriba de la vista, descartarla y aplicar el layout (salir del panel,
+ * desplazar o teclado). La fila siguiente (L2) no se va: su posición en pantalla cambia < 2 px
+ * (descontando los 40 px que desplaza el usuario), aunque L1 encoja.
+ */
+function anclajeCompactacion(width: number, pointer: Pointer, how: Compaction): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      if (width >= 640) {
+        await browser.page.viewport(width, 560);
+      }
+      row(1).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      await activateAt(browser, centerOf(button(row(1), /Descartar línea/)), pointer);
+      await sleep(POINTER_GUARD_MS + 200);
+      await expect(row(1).dataset.status, "L1 descartada").toBe("discarded");
+      const heldHeight = row(1).getBoundingClientRect().height;
+      const before = row(2).getBoundingClientRect().top;
+      const expected = before - (how === "desplazar" ? 40 : 0);
+      await compact(browser, how);
+      const after = row(2).getBoundingClientRect().top;
+      const report = `${width} ${pointer} ${how} · L1 ${Math.round(heldHeight)}→${Math.round(row(1).getBoundingClientRect().height)} px · L2 antes ${Math.round(before)} esperado ${Math.round(expected)} después ${Math.round(after)} · scrollY ${Math.round(window.scrollY)}`;
+      console.log(`[B-qa02-1] ${report}`);
+      await expect(row(1).getBoundingClientRect().height, `se aplicó el layout: ${report}`).toBeLessThan(heldHeight - 40);
+      await expect(Math.abs(after - expected), `L2 se desplazó ${Math.round(after - expected)} px: ${report}`).toBeLessThan(2);
+    },
+  };
+}
+
+export const AnclajeCompactacion1280RatonSalir = anclajeCompactacion(1280, "mouse", "salir");
+export const AnclajeCompactacion1280RatonDesplazar = anclajeCompactacion(1280, "mouse", "desplazar");
+export const AnclajeCompactacion1280RatonTeclado = anclajeCompactacion(1280, "mouse", "teclado");
+export const AnclajeCompactacion390TactilDesplazar = anclajeCompactacion(390, "touch", "desplazar");
+export const AnclajeCompactacion390TactilTeclado = anclajeCompactacion(390, "touch", "teclado");
+
+/**
+ * B-p12B-2 (caos p12 B): con pocas líneas y la página casi sin desplazamiento, la compactación acorta
+ * el documento, el navegador recorta el desplazamiento y lo que está ENCIMA del panel baja: un campo
+ * del formulario (aquí la fecha, fuera del panel) queda bajo el puntero que acaba de salir del panel.
+ * La activación antes de 1 s desde la compactación no le da el foco (D49, guarda anclada a la
+ * compactación); pasado 1 s, sí.
+ */
+function campoFueraDelPanel(width: number, pointer: Pointer): Story {
+  return {
+    args: { response: homonymsResponse },
+    render: (args) => (
+      <>
+        <input aria-label="Fecha de la compra" className="mb-1.5 block h-10 w-full rounded border" type="date" />
+        <InvoiceReviewPanel {...args} />
+      </>
+    ),
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      // Ventana 30 px más baja que el documento: al fondo, la fecha (encima del panel) se ve.
+      await browser.page.viewport(width, document.documentElement.scrollHeight - 30);
+      await sleep(300);
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const date = screen.getByLabelText("Fecha de la compra");
+      const discard = button(row(1), /Descartar línea/);
+      const aimDiscard = centerOf(discard);
+      await expect(document.elementFromPoint(aimDiscard.x, aimDiscard.y)?.closest("button"), "«Descartar línea» de L1 a la vista").toBe(discard);
+      await activateAt(browser, aimDiscard, pointer);
+      await sleep(POINTER_GUARD_MS + 200);
+      await expect(row(1).dataset.status, "L1 descartada").toBe("discarded");
+      const geo = () =>
+        `scrollY ${Math.round(window.scrollY)} doc ${document.documentElement.scrollHeight} L1 ${Math.round(row(1).getBoundingClientRect().height)} fecha ${Math.round(date.getBoundingClientRect().top)}`;
+      const geoBefore = geo();
+      // Entre la fecha y el panel (fuera del panel, nada accionable).
+      const point = { x: centerOf(date).x, y: panel().getBoundingClientRect().top - 3 };
+      if (pointer === "mouse") {
+        await mouseMoveTo(browser, point);
+      } else {
+        window.scrollBy({ top: -10, behavior: "instant" });
+      }
+      const start = performance.now();
+      await sleepUntil(start, 300);
+      const under = document.elementFromPoint(point.x, point.y);
+      const report = `${width} ${pointer} · antes ${geoBefore} · después ${geo()} · punto (${Math.round(point.x)},${Math.round(point.y)}) · bajo el punto: ${describeControl(under?.closest("button, input, textarea, label") ?? null)}`;
+      console.log(`[B-p12B-2] ${report}`);
+      await expect(row(1).getBoundingClientRect().height, `se aplicó el layout: ${report}`).toBeLessThan(150);
+      await expect(under, `tras compactar, la fecha quedó bajo el puntero: ${report}`).toBe(date);
+      await activateAt(browser, point, pointer);
+      await sleep(150);
+      await expect(document.activeElement, `antes de 1 s el campo que bajó no recibe el foco: ${report}`).not.toBe(date);
+      await sleepUntil(start, POINTER_GUARD_MS + 400);
+      await activateAt(browser, point, pointer);
+      await sleep(150);
+      await expect(document.activeElement, "pasado 1 s, sí").toBe(date);
+    },
+  };
+}
+
+export const CampoFueraDelPanel1280Raton = campoFueraDelPanel(1280, "mouse");
+export const CampoFueraDelPanel390Tactil = campoFueraDelPanel(390, "touch");

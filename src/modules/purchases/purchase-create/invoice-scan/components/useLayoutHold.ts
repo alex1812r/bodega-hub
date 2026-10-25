@@ -2,7 +2,6 @@
 
 import {
   type CSSProperties,
-  type MouseEvent,
   type RefObject,
   useCallback,
   useEffect,
@@ -22,6 +21,9 @@ export const COMPACTION_GUARD_MS = 1000;
 const CONTROL_SELECTOR =
   "button, a[href], input, select, textarea, label, [role='button'], [role='checkbox'], [role='radio'], [role='option'], [role='switch'], [role='tab']";
 
+/** B-qa02-3: campos en que se escribe; con el teclado, el enfocado no se mueve al aplicar el layout. */
+const TYPING_SELECTOR = "input, textarea, select, [contenteditable='true']";
+
 /** Cajas cuya altura se conserva mientras el layout está pendiente (`data-layout-box="<clave>"`). */
 const LAYOUT_BOX_SELECTOR = "[data-layout-box]";
 
@@ -38,7 +40,9 @@ export type PointerActivation = { x: number; y: number; at: number; control: Ele
  * de teclado (`detail` 0) o sin coordenadas no tiene punto bajo el dedo que proteger. Solo desde
  * manejadores de eventos (lee el reloj).
  */
-export function readPointerActivation(event: MouseEvent<Element>): PointerActivation | null {
+export function readPointerActivation(
+  event: { detail: number; clientX: number; clientY: number; target: EventTarget | null },
+): PointerActivation | null {
   if (event.detail < 1 || (event.clientX === 0 && event.clientY === 0) || !(event.target instanceof Element)) {
     return null;
   }
@@ -137,6 +141,56 @@ function scrollParent(element: Element): Element {
 
 type OwnScroll = { scroller: Element; top: number };
 
+/** B-qa02-1: caja de cada fila (`[data-layout-box^="row:"]`) de `root`, por clave. */
+type RowBox = { element: Element; top: number; height: number };
+
+function rowBoxes(root: Element): Map<string, RowBox> {
+  const boxes = new Map<string, RowBox>();
+  for (const element of root.querySelectorAll<HTMLElement>('[data-layout-box^="row:"]')) {
+    const { top, height } = element.getBoundingClientRect();
+    boxes.set(element.dataset.layoutBox ?? "", { element, top, height });
+  }
+  return boxes;
+}
+
+/** Franja vertical visible del contenedor que desplaza a `element`. */
+function visibleRange(element: Element): { top: number; bottom: number } {
+  const scroller = scrollParent(element);
+  if (scroller === document.scrollingElement || scroller === document.documentElement) {
+    return { top: 0, bottom: window.innerHeight };
+  }
+  const { top, bottom } = scroller.getBoundingClientRect();
+  return { top: Math.max(0, top), bottom: Math.min(window.innerHeight, bottom) };
+}
+
+/**
+ * B-qa02-1 (D52): al aplicar el layout, la fila que sigue a la primera que encogió (o se fue) a la
+ * vista, y que no cambió de alto, vuelve a su punto de pantalla: lo compactado no la saca de la vista.
+ */
+function anchorNextRow(root: Element, before: ReadonlyMap<string, RowBox>): OwnScroll | null {
+  const view = visibleRange(root);
+  const now = rowBoxes(root);
+  const sorted = [...before].sort(([, left], [, right]) => left.top - right.top);
+  const changed = (key: string, box: RowBox) => {
+    const current = now.get(key);
+    return !current || Math.abs(current.height - box.height) >= 1;
+  };
+  const compacted = sorted.find(([key, box]) => box.top < view.bottom && changed(key, box));
+  if (!compacted) {
+    return null;
+  }
+  const anchor = sorted.find(
+    ([key, box]) =>
+      box.top > compacted[1].top && box.top < view.bottom && box.top + box.height > view.top && !changed(key, box),
+  );
+  const current = anchor ? now.get(anchor[0]) : undefined;
+  if (!anchor || !current) {
+    return null;
+  }
+  const delta = current.top - anchor[1].top;
+  return Math.abs(delta) >= 1 ? scrollBack(current.element, delta) : null;
+}
+
 /**
  * Desplaza el contenedor de `element` para devolverlo `delta` px a su sitio. Dentro de algo fijo o
  * `sticky` ya pegado (el pie) desplazar no lo devuelve y solo movería lo demás: se deshace (`null`).
@@ -183,6 +237,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const ownScrollRef = useRef<OwnScroll | null>(null);
   // B-qa02-3: el teclado aplicó el layout; el control enfocado (donde se escribe) y su posición antes.
   const typingAnchorRef = useRef<{ element: Element; top: number } | null>(null);
+  // B-qa02-1: cajas de las filas justo antes de aplicar el layout.
+  const rowBoxesBeforeRef = useRef<Map<string, RowBox> | null>(null);
   const focusedKeyRef = useRef<string | undefined>(undefined);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
@@ -197,10 +253,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       const focused = document.activeElement instanceof Element ? document.activeElement : null;
       focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
       positionsBeforeRef.current = controlPositions();
+      rowBoxesBeforeRef.current = rootRef.current ? rowBoxes(rootRef.current) : null;
       holdRef.current = null;
       setHold(null);
     }
-  }, []);
+  }, [rootRef]);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
@@ -286,14 +343,43 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     // punto de pantalla antes de comparar: lo que se escribe no salta y ese control no cuenta como movido.
     const typing = typingAnchorRef.current;
     typingAnchorRef.current = null;
+    const rowsBefore = rowBoxesBeforeRef.current;
+    rowBoxesBeforeRef.current = null;
     if (typing && typing.element.isConnected && document.activeElement === typing.element) {
       const delta = typing.element.getBoundingClientRect().top - typing.top;
       if (Math.abs(delta) >= 1) {
         ownScrollRef.current = scrollBack(typing.element, delta);
       }
+    } else if (rowsBefore && rootRef.current) {
+      // B-qa02-1: sin campo en que se escribe, la fila siguiente a la compactada no se va de la vista.
+      anchorNextRow(rootRef.current, rowsBefore);
     }
     markMoved(movedAtRef.current, movedControls(before, controlPositions()));
-  }, [holding]);
+  }, [holding, rootRef]);
+
+  // B-p12B-2 (D49): la guarda anclada a la compactación vale también FUERA del panel (el formulario,
+  // la cabecera): el recorte del desplazamiento al acortarse la página baja lo que está encima.
+  useEffect(() => {
+    const onActivation = (event: MouseEvent) => {
+      const activation = readPointerActivation(event);
+      const at = activation ? movedAtRef.current.get(activation.control) : undefined;
+      if (
+        activation &&
+        at !== undefined &&
+        Date.now() - at < COMPACTION_GUARD_MS &&
+        !rootRef.current?.contains(activation.control)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("mousedown", onActivation, true);
+    window.addEventListener("click", onActivation, true);
+    return () => {
+      window.removeEventListener("mousedown", onActivation, true);
+      window.removeEventListener("click", onActivation, true);
+    };
+  }, [rootRef]);
 
   useEffect(() => {
     if (holding) {
@@ -332,7 +418,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     };
     const onKeyDown = () => {
       const focused = document.activeElement;
-      if (holdRef.current && focused instanceof Element && rootRef.current?.contains(focused)) {
+      // B-qa02-1: solo un campo en que se escribe; con el foco en una fila o un botón manda el anclaje de la fila.
+      if (holdRef.current && focused instanceof Element && focused.matches(TYPING_SELECTOR) && rootRef.current?.contains(focused)) {
         typingAnchorRef.current = { element: focused, top: focused.getBoundingClientRect().top };
       }
       release();
