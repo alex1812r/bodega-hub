@@ -719,7 +719,9 @@ describe("InvoiceReviewPanel", () => {
     expect(props.onLoad).toHaveBeenCalledTimes(1);
   });
 
-  it("SCN-UI-C1 (6.17): en una sin emparejar, Tab hacia delante desde el buscador llega a «Descartar línea»", async () => {
+  // D48-c (REP11-03): el orden de Tab es el visual; «Descartar línea» está encima del buscador, así que
+  // desde él se llega con Mayús+Tab sin salir de la fila.
+  it("SCN-UI-C1 (6.17): en una sin emparejar, Mayús+Tab desde el buscador llega a «Descartar línea»", async () => {
     const user = userEvent.setup();
     const props = renderPanel(
       makeReviewResponse({ lines: [unmatchedLine(1, false), doubtfulLine(2)] }),
@@ -733,7 +735,7 @@ describe("InvoiceReviewPanel", () => {
     const discard = within(row(0)).getByRole("button", { name: "Descartar línea" });
     for (let presses = 0; presses < 8 && document.activeElement !== discard; presses += 1) {
       expect(row(0)).toContainElement(document.activeElement as HTMLElement);
-      await user.tab();
+      await user.tab({ shift: true });
     }
     expect(discard).toHaveFocus();
 

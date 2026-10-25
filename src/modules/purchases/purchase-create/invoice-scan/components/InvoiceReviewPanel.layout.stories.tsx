@@ -770,3 +770,156 @@ export const SalirDelPanelRaton1280: Story = {
     await expect(row(2).dataset.status, "pasado 1 s, sí").toBe("resolved");
   },
 };
+
+/** REP11-03 · B-p11-1: una lista larga del buscador, abierta hacia arriba, tapa los chips de su fila. */
+const galletas: ProductEntityOption[] = Array.from({ length: 8 }, (_, index) => ({
+  barcode: null,
+  categoryId: "cat-1",
+  currentCostRef: 0.5,
+  currentStock: 5,
+  id: productUuid(700 + index),
+  isActive: true,
+  label: `CAOSG Galleta Maria ${index + 1}`,
+  salePriceRef: 1,
+  sku: `CAOSG-G${index + 1}`,
+}));
+
+/**
+ * Abre el buscador de L0 con su campo al pie de la ventana (la lista se abre hacia arriba, sobre los
+ * chips de la fila) y busca «Galleta».
+ */
+async function openSearchAtBottom(browser: Browser, opener: RegExp) {
+  row(0).scrollIntoView({ block: "start" });
+  await setupClick(browser, button(row(0), opener));
+  const input = within(row(0)).getByLabelText("Producto de la línea 1");
+  input.scrollIntoView({ block: "end" });
+  await browser.userEvent.fill(input, "Galleta");
+  await screen.findAllByRole("option", { name: /CAOSG Galleta Maria/ });
+  await sleep(POINTER_GUARD_MS + 200);
+}
+
+/**
+ * B-p11-1 (caos p11): se elige con el puntero una opción que tapa el chip candidato de la misma fila;
+ * la lista se cierra y el chip queda bajo el punto. Una 2.ª activación en el mismo punto a `at` ms no
+ * reemplaza el producto elegido. Antes se elige otra galleta con el teclado (sin guarda): así el chip
+ * «Elegido por ti» ya existe y el candidato no cambia de sitio al elegir.
+ */
+function chipBajoOpcion(width: number, pointer: Pointer, at: number): Story {
+  return {
+    args: { productFetcher: async () => galletas, response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      // Ventana baja: el campo puede quedar al pie y la lista se abre hacia arriba.
+      await browser.page.viewport(width, 560);
+      await openSearchAtBottom(browser, /Buscar producto/);
+      await browser.userEvent.keyboard("{ArrowDown}{Enter}");
+      await sleep(300);
+      await openSearchAtBottom(browser, /Cambiar producto/);
+
+      const chip = button(row(0), /^CAOSG Harina Maiz 1kg/);
+      const chipBox = chip.getBoundingClientRect();
+      const options = screen.getAllByRole("option").filter((item) => !/Maria 1(?!\d)/.test(item.textContent ?? ""));
+      const option = options.find((item) => {
+        const box = item.getBoundingClientRect();
+        return box.top < chipBox.bottom - 4 && box.bottom > chipBox.top + 4;
+      });
+      if (!option) {
+        throw new Error(`Ninguna opción de la lista tapa el chip de la fila (chip ${Math.round(chipBox.top)})`);
+      }
+      const box = option.getBoundingClientRect();
+      const point = {
+        x: (Math.max(box.left, chipBox.left) + Math.min(box.right, chipBox.right)) / 2,
+        y: (Math.max(box.top, chipBox.top) + Math.min(box.bottom, chipBox.bottom)) / 2,
+      };
+      await expect(document.elementFromPoint(point.x, point.y)?.closest("[role='option']"), "el punto es de la opción").toBe(option);
+      const picked = (option.textContent ?? "").match(/CAOSG Galleta Maria \d/)?.[0] ?? "";
+
+      await activateAt(browser, point, pointer);
+      const start = performance.now();
+      await sleepUntil(start, 100);
+      await expect(describeControl(decisionAt(point)), "al cerrarse la lista, bajo el punto").toBe(describeControl(chip));
+      await expect(chip, "elegida la opción, el chip no está marcado").toHaveAttribute("aria-pressed", "false");
+      await expect(row(0)).toHaveTextContent(picked);
+      await sleepUntil(start, at);
+      await activateAt(browser, point, pointer);
+      await sleep(300);
+      await expect(chip, `la 2.ª activación a ${at} ms no acepta el chip`).toHaveAttribute("aria-pressed", "false");
+      await expect(row(0)).toHaveTextContent(picked);
+    },
+  };
+}
+
+export const ChipBajoOpcion1280Raton1200 = chipBajoOpcion(1280, "mouse", 1200);
+export const ChipBajoOpcion1280Tactil1200 = chipBajoOpcion(1280, "touch", 1200);
+export const ChipBajoOpcion390Raton1200 = chipBajoOpcion(390, "mouse", 1200);
+export const ChipBajoOpcion390Tactil1200 = chipBajoOpcion(390, "touch", 1200);
+export const ChipBajoOpcion390Tactil600 = chipBajoOpcion(390, "touch", 600);
+
+/**
+ * B-p11-2 (QA p11, D48-c): con el buscador abierto, Tab recorre la fila en el orden visual: cada
+ * control al que llega está a la misma altura o más abajo que el anterior.
+ */
+function ordenTabBuscador(width: number): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      row(0).scrollIntoView({ block: "start" });
+      await setupClick(browser, button(row(0), /Buscar producto/));
+      button(row(0), /^CAOSG Harina Maiz 1kg/).focus();
+      const visited: string[] = [];
+      let previousTop = -Infinity;
+      for (let presses = 0; presses < 8 && row(0).contains(document.activeElement); presses += 1) {
+        const focused = document.activeElement as HTMLElement;
+        const { top } = focused.getBoundingClientRect();
+        visited.push(`${describeControl(focused)}@${Math.round(top)}`);
+        await expect(top, `Tab sube: ${visited.join(" → ")}`).toBeGreaterThanOrEqual(previousTop - 1);
+        previousTop = top;
+        await browser.userEvent.keyboard("{Tab}");
+        await sleep(50);
+      }
+      await expect(visited.some((item) => item.startsWith("INPUT")), `pasa por el buscador: ${visited.join(" → ")}`).toBe(true);
+    },
+  };
+}
+
+export const OrdenTabBuscador1280 = ordenTabBuscador(1280);
+export const OrdenTabBuscador390 = ordenTabBuscador(390);
+
+/**
+ * B-p11-2 (caos p11): tras aplicarse el layout (aquí al desplazar), el toque que cae en un campo de
+ * texto que se movió no le da el foco (ni abre el teclado) antes de 1 s; pasado 1 s, sí.
+ */
+export const CampoMovidoSinFocoTactil390: Story = {
+  args: { response: c11ThreeResponse },
+  play: async () => {
+    const browser = await prepare(390);
+    if (!browser) {
+      return;
+    }
+    row(0).scrollIntoView({ block: "start" });
+    await sleep(POINTER_GUARD_MS + 200);
+    await tapAt(browser, centerOf(button(row(0), /Descartar línea/)));
+    await sleep(POINTER_GUARD_MS + 200);
+    const quantity = within(row(1)).getByLabelText(/^Cantidad/);
+    const before = quantity.getBoundingClientRect().top;
+    window.scrollBy({ top: 40, behavior: "instant" });
+    await sleep(150);
+    await expect(quantity.getBoundingClientRect().top, "al desplazar se aplica el layout").not.toBe(before);
+
+    await tapAt(browser, centerOf(quantity));
+    await sleep(150);
+    await expect(document.activeElement, "antes de 1 s el campo movido no recibe el foco").not.toBe(quantity);
+
+    await sleep(POINTER_GUARD_MS);
+    await tapAt(browser, centerOf(quantity));
+    await sleep(150);
+    await expect(document.activeElement, "pasado 1 s, sí").toBe(quantity);
+  },
+};

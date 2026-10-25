@@ -42,11 +42,23 @@ export function readPointerActivation(event: MouseEvent<Element>): PointerActiva
   return control ? { x: event.clientX, y: event.clientY, at: Date.now(), control } : null;
 }
 
-/** D46-b: otra activación con el puntero, en el mismo sitio y antes de 1 s, sobre un control distinto. */
-export function isSpatialRebound(previous: PointerActivation | null, next: PointerActivation): boolean {
+/**
+ * B-p11-1 (caos p11): al elegir en una lista flotante (portal, fuera del panel) la lista se cierra y
+ * destapa lo que tenía debajo. Ese control no acepta un clic en el mismo punto hasta que el puntero se
+ * aleje de él (más de POINTER_GUARD_RADIUS_PX) o pasen REVEAL_GUARD_MS: un doble clic/toque lento llega
+ * a ~1,2 s (el del reporte), 2 s lo cubre con margen y deja aceptar un toque deliberado tras una pausa.
+ */
+export const REVEAL_GUARD_MS = 2000;
+
+/** D46-b: otra activación con el puntero, en el mismo sitio y antes de `windowMs`, sobre un control distinto. */
+export function isSpatialRebound(
+  previous: PointerActivation | null,
+  next: PointerActivation,
+  windowMs: number = POINTER_GUARD_MS,
+): boolean {
   return (
     previous !== null &&
-    next.at - previous.at < POINTER_GUARD_MS &&
+    next.at - previous.at < windowMs &&
     Math.hypot(next.x - previous.x, next.y - previous.y) < POINTER_GUARD_RADIUS_PX &&
     next.control !== previous.control
   );
