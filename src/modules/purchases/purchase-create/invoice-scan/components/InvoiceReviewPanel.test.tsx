@@ -596,13 +596,16 @@ describe("InvoiceReviewPanel", () => {
     expect(screen.queryByRole("radio", { name: /Tasa de la factura/ })).not.toBeInTheDocument();
 
     const mayonesa = row(0);
-    expect(within(mayonesa).getByText(/elige «Por bulto» e indica las unidades/)).toBeInTheDocument();
+    // D48(a) (REP11-04): sin comparar con el último costo, el texto de la fracción no recomienda opción.
+    expect(
+      within(mayonesa).getByText(/La cantidad 0,5 no es entera .* si viene por bulto, indica las unidades/),
+    ).toBeInTheDocument();
     await user.click(within(mayonesa).getByRole("button", { name: "Por bulto" }));
     await user.type(within(mayonesa).getByLabelText("Unidades por bulto"), "12");
     await user.click(within(mayonesa).getByRole("button", { name: "Cargar como 6 unidades" }));
 
     expect(within(mayonesa).getByLabelText("Cantidad")).toHaveValue("6");
-    expect(within(mayonesa).queryByText(/solo admite cantidades enteras/)).not.toBeInTheDocument();
+    expect(within(mayonesa).queryByText(/solo admite (cantidades )?enteras/)).not.toBeInTheDocument();
     // BAJO-N2 (CIE-03a): el aviso del servidor de cantidad con decimales también se va.
     expect(within(mayonesa).queryByText(/Cantidad con decimales en la factura/)).not.toBeInTheDocument();
   });
