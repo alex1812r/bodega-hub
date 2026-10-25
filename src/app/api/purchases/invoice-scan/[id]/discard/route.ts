@@ -21,6 +21,6 @@ export async function POST(
 
     return jsonData(discarded);
   } catch (error) {
-    return toErrorResponse(error);
+    return toErrorResponse(error, { zodIssues: "public" });
   }
 }

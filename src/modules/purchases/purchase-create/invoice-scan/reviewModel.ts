@@ -143,6 +143,11 @@ export type InvoiceReviewLine = {
    * (`sameCostAck`) y se retira al cambiar de opción.
    */
   costAck?: InvoiceCostAcknowledgement;
+  /**
+   * D54-b (C12B-M2): la línea ofreció «Por empaque» alguna vez. Las opciones no dependen de la
+   * elegida: una vez ofrecida, sigue visible y elegible (lo mantiene `withStatuses`).
+   */
+  packOffered?: boolean;
 };
 
 /** D42: último costo unitario (REF) del producto de la línea, o por qué no se conoce. */
@@ -404,8 +409,12 @@ export type InvoiceUnitConversion =
   | { ok: true; units: number; unitPrice: number }
   | { ok: false; reason: string };
 
+/**
+ * B-p13-1: la cantidad que se cita como no entera va sin redondear (2,9999 no se lee «3»); 15 cifras
+ * significativas quitan solo el ruido de coma flotante (0,1 × 3 = 0,3).
+ */
 function formatQuantity(value: number): string {
-  return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
+  return value.toLocaleString("es-VE", { maximumSignificantDigits: 15 });
 }
 
 /** Palabra del empaque de la línea («bulto», «caja»…): la misma en la opción y en los textos (REP6-04). */
@@ -758,6 +767,32 @@ function deriveStatus(state: InvoiceReviewState, line: InvoiceReviewLine): Invoi
   return "pending_doubtful";
 }
 
+const PACK_READ_UNITS = new Set(["caja", "bulto", "paquete", "display"]);
+
+/**
+ * Motivos para ofrecer «Por empaque» con la línea como está ahora: el modo empaque, una cantidad
+ * fraccionaria (0,50 se carga como unidades), la unidad leída de empaque o un aviso de precio o
+ * de empaque (D31: se responde eligiendo la opción, aunque se leyera por unidad).
+ */
+function offersPackNow(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
+  const readUnit = state.extraction.lines[line.index]?.unit;
+  const fractional = Number.isFinite(line.quantity) && line.quantity > 0 && !Number.isInteger(line.quantity);
+  return (
+    line.entryMode === "pack" ||
+    fractional ||
+    (readUnit !== undefined && PACK_READ_UNITS.has(readUnit)) ||
+    line.issues.some(isExplicitChoiceIssue)
+  );
+}
+
+/**
+ * D54-b (C12B-M2): la fila ofrece «Por empaque». No depende de la opción elegida: si se ofreció
+ * alguna vez (p. ej. la propuesta del servidor «Por bulto»), elegir «Por unidad» no la retira.
+ */
+export function lineOffersPack(state: InvoiceReviewState, line: InvoiceReviewLine): boolean {
+  return line.packOffered === true || offersPackNow(state, line);
+}
+
 /**
  * Recalcula el estado de TODAS las líneas: el costo REF de una depende de la tasa, del IVA
  * incluido y del último costo consultado, no solo de la propia línea (D42).
@@ -766,11 +801,12 @@ function withStatuses(state: InvoiceReviewState): InvoiceReviewState {
   let changed = false;
   const lines = state.lines.map((line) => {
     const status = deriveStatus(state, line);
-    if (status === line.status) {
+    const packOffered = lineOffersPack(state, line);
+    if (status === line.status && packOffered === (line.packOffered === true)) {
       return line;
     }
     changed = true;
-    return { ...line, status };
+    return { ...line, status, ...(packOffered ? { packOffered } : {}) };
   });
   return changed ? { ...state, lines } : state;
 }

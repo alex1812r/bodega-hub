@@ -20,14 +20,18 @@ import {
  * para todas las páginas. Todas las páginas deben tener el mismo formato, como
  * exige el POST (las rutas p2..pN se derivan de la página 1).
  */
+const PAGES_MESSAGE = `Indica de 1 a ${INVOICE_MAX_PAGES} páginas (pages).`;
+const TYPES_MESSAGE = "Indica el tipo de cada página (types): image/jpeg, image/png o image/webp.";
+
+// REP12-06 (B-qa-rep12-01-2): cada esquema con su mensaje en español (zod los da en inglés).
 const uploadUrlQuerySchema = z
   .object({
-    pages: z.coerce.number().int().min(1).max(INVOICE_MAX_PAGES),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/, "El hash de la factura no es válido."),
+    pages: z.coerce.number(PAGES_MESSAGE).int(PAGES_MESSAGE).min(1, PAGES_MESSAGE).max(INVOICE_MAX_PAGES, PAGES_MESSAGE),
+    sha256: z.string("El hash de la factura no es válido.").regex(/^[0-9a-f]{64}$/, "El hash de la factura no es válido."),
     types: z
-      .string()
+      .string(TYPES_MESSAGE)
       .transform((value) => value.split(",").map((type) => type.trim()))
-      .pipe(z.array(z.enum(invoiceScanMediaTypes)).min(1)),
+      .pipe(z.array(z.enum(invoiceScanMediaTypes, TYPES_MESSAGE), TYPES_MESSAGE).min(1, TYPES_MESSAGE)),
   })
   .refine((query) => query.types.length === 1 || query.types.length === query.pages, {
     message: "Indica un tipo por página o uno solo para todas.",
@@ -97,6 +101,6 @@ export async function GET(request: Request) {
 
     return jsonData({ alreadyUploaded: uploads.length === 0, storagePaths, uploads });
   } catch (error) {
-    return toErrorResponse(error);
+    return toErrorResponse(error, { zodIssues: "public" });
   }
 }

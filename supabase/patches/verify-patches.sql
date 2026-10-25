@@ -3122,4 +3122,33 @@ select
     from pg_proc p
     where p.oid = to_regprocedure('public.save_invoice_scan_match(uuid, uuid, jsonb)')
   ), false)
+union all
+select
+  'invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[]): jsonb, security invoker, stable, search_path=public, execute solo authenticated (sin public ni anon) (20261026a, REP12-06)',
+  coalesce((
+    select not p.prosecdef
+      and p.prorettype = 'jsonb'::regtype
+      and p.provolatile = 's'
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false)
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not exists (
+        select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      )
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
+union all
+select
+  'invoice_duplicate_candidates: tienda de assert_store_context(), rol admin | almacen (PT403), acotada (PT400, exige proveedor) y proveedor filtrado antes del limit (20261026a, REP12-06)',
+  coalesce((
+    select p.prosrc ilike '%v_store_id := public.assert_store_context()%'
+      and p.prosrc ilike '%(''admin'', ''almacen'')%errcode = ''PT403''%'
+      and p.prosrc ilike '%p_limit > 200%'
+      and p.prosrc ilike '%array_length(v_ids, 1), 0) + coalesce(array_length(v_digits, 1), 0) = 0%errcode = ''PT400''%'
+      and p.prosrc ilike '%s.store_id = v_store_id%s.status not in (''discarded'', ''failed'')%s.supplier_id::text = any(v_ids)%c.store_id = v_store_id%limit p_limit%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
 order by 1;

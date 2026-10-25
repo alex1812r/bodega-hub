@@ -19,6 +19,6 @@ export async function GET(request: Request) {
 
     return jsonData(limits);
   } catch (error) {
-    return toErrorResponse(error);
+    return toErrorResponse(error, { zodIssues: "public" });
   }
 }

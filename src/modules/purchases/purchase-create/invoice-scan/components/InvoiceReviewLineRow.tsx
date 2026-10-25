@@ -19,8 +19,8 @@ import {
   getLineLastCost,
   getTaxInclusion,
   getUnitConversion,
-  isExplicitChoiceIssue,
   isPendingStatus,
+  lineOffersPack,
   linePackWord,
   MAX_REVIEW_QUANTITY,
   needsExplicitChoice,
@@ -40,8 +40,6 @@ import {
   lineNeedMessages,
   REVIEW_STATUS_META,
 } from "./invoiceReviewView";
-
-const PACK_UNITS = new Set(["caja", "bulto", "paquete", "display"]);
 
 const ARROW_KEYS = new Set(["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"]);
 
@@ -101,15 +99,9 @@ export function InvoiceReviewLineRow({
   const pending = isPendingStatus(line.status);
   const index = line.index;
   const title = line.productName || (line.productId ? "Producto elegido" : "Sin producto");
-  const readUnit = state.extraction.lines[index]?.unit;
-  // Una cantidad fraccionaria (0,50) también ofrece "Por bulto": así se puede cargar como unidades.
   const fractional = Number.isFinite(line.quantity) && line.quantity > 0 && !Number.isInteger(line.quantity);
-  // D31: un aviso de precio o de empaque se responde eligiendo la opción, aunque se leyera por unidad.
-  const showPack =
-    line.entryMode === "pack" ||
-    fractional ||
-    (readUnit !== undefined && PACK_UNITS.has(readUnit)) ||
-    line.issues.some(isExplicitChoiceIssue);
+  // D54-b (C12B-M2): ofrecida una vez, «Por empaque» no desaparece al elegir «Por unidad».
+  const showPack = lineOffersPack(state, line);
   // D42: el costo de ESE producto con su modo frente a su último costo. Desviado o sin poder
   // comparar, se elige la opción y se reconoce aparte (D43): aunque solo tenga un modo, se muestra.
   const costReview = getLineCostReview(state, line);
@@ -211,17 +203,23 @@ export function InvoiceReviewLineRow({
           {chips.length > 0 ? (
             <div aria-label="Candidatos" className="flex flex-wrap gap-2" role="group">
               {chips.map((candidate) => {
+                // B-p12-1: pulsado = el producto de la línea; el que solo aceptaría Enter (sin producto
+                // aún) se distingue con el borde discontinuo, no como pulsado.
+                const isChosen = candidate.productId === line.productId;
                 const isMarked = candidate.productId === marked;
                 return (
                   <button
-                    aria-pressed={isMarked}
+                    aria-pressed={isChosen}
                     className={cn(
                       "flex min-w-0 max-w-full cursor-pointer flex-col items-start rounded-lg border px-3 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      isMarked
+                      isChosen
                         ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                        : "border-outline-variant bg-surface-container-lowest text-foreground hover:bg-surface-container-low",
+                        : isMarked
+                          ? "border-dashed border-indigo-400 bg-surface-container-lowest text-foreground hover:bg-surface-container-low dark:border-indigo-500"
+                          : "border-outline-variant bg-surface-container-lowest text-foreground hover:bg-surface-container-low",
                     )}
                     data-candidate
+                    data-marked={isMarked || undefined}
                     key={candidate.productId}
                     onClick={() => onAction({ type: "acceptCandidate", index, productId: candidate.productId })}
                     onKeyDown={(event) => {

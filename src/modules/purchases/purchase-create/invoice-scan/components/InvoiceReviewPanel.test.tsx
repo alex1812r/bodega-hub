@@ -646,6 +646,8 @@ describe("InvoiceReviewPanel", () => {
     );
 
     expect(screen.getByText(/ya se escaneó antes/)).toBeInTheDocument();
+    // REP12-01 (D52): el aviso de duplicado se reconoce con su casilla para poder cargar.
+    await user.click(screen.getByRole("checkbox", { name: /cargarla igual/i }));
     expect(screen.getByText(/confianza baja \(40 %\)/)).toBeInTheDocument();
     expect(screen.getByText("La foto está borrosa.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Repetir foto" }));
@@ -676,11 +678,14 @@ describe("InvoiceReviewPanel", () => {
           },
         },
       }),
+      { duplicateFetcher: jest.fn(async () => []) },
     );
 
     expect(screen.getByTestId("invoice-review-blockers")).toHaveTextContent("Elige el proveedor.");
     await user.click(screen.getByRole("button", { name: /Chevere Depot C\.A\./ }));
-    expect(loadButton()).toBeEnabled();
+    // REP12-01: con el proveedor elegido, Cargar espera la consulta de duplicados de ese proveedor.
+    expect(loadButton()).toBeDisabled();
+    await waitFor(() => expect(loadButton()).toBeEnabled());
   });
 
   it("SCN-08-F1 (6.17): la siguiente dudosa con empaque recibe el foco en la fila; Enter acepta, luego unidades y Enter salta", async () => {
@@ -783,8 +788,9 @@ describe("InvoiceReviewPanel", () => {
     expect(within(row(0)).getByText("Sin emparejar")).toBeInTheDocument();
   });
 
-  it("SCN-08-F1: factura duplicada ya registrada en una compra enlaza «Ver» a esa compra, sin bloquear", async () => {
+  it("SCN-08-F1: factura duplicada ya registrada en una compra enlaza «Ver» a esa compra; Cargar pide reconocerla (REP12-01, D52)", async () => {
     mockDuplicatePurchaseId = "00000000-0000-4000-8000-0000000000aa";
+    const user = userEvent.setup();
     try {
       renderPanel(makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }));
 
@@ -795,6 +801,8 @@ describe("InvoiceReviewPanel", () => {
         "href",
         "/purchases/00000000-0000-4000-8000-0000000000aa",
       );
+      expect(loadButton()).toBeDisabled();
+      await user.click(screen.getByRole("checkbox", { name: /cargarla igual/i }));
       expect(loadButton()).toBeEnabled();
     } finally {
       mockDuplicatePurchaseId = null;

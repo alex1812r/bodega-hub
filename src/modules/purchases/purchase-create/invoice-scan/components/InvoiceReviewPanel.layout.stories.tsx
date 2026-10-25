@@ -26,6 +26,9 @@ import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
+/** f19d (REP12-05): proveedor que el usuario elige a mano en la revisión. */
+const FARMATODO = "00000000-0000-4000-8000-0000000000f1";
+const farmatodo = { id: FARMATODO, isActive: true, name: "Farmatodo", taxId: "J-00030426-5" };
 
 /** c10-move: «CAOSG Harina Maiz 1kg» por nombre; a 4.500 Bs se desvía del último costo (0,50 REF). */
 function harinaByName(unitPrice: number, taxRateCode = "exento"): ReviewFixtureLine {
@@ -131,6 +134,7 @@ const products: ProductEntityOption[] = [
 ];
 
 const productFetcher: EntityFetcher<"product"> = async () => products;
+const noSuppliers: EntityFetcher<"contact"> = async () => [];
 
 /** Clics y viewport reales de Vitest browser (Playwright); `null` fuera de Vitest. */
 async function loadBrowser() {
@@ -446,7 +450,7 @@ const meta = {
     onRescan: fn(),
     productFetcher,
     response: linesResponse,
-    supplierFetcher: async () => [],
+    supplierFetcher: noSuppliers,
   },
   component: InvoiceReviewPanel,
   decorators: [
@@ -459,6 +463,7 @@ const meta = {
         taxId: "J-12345678-9",
       });
       queryClient.setQueryData(invoiceScanQueryKeys.images(REVIEW_SCAN_ID), []);
+      queryClient.setQueryData(purchaseSuppliersQueryKeys.detail(FARMATODO), farmatodo);
       return (
         <QueryClientProvider client={queryClient}>
           <div className="min-h-screen bg-surface p-4">
@@ -895,6 +900,8 @@ export const OrdenTabBuscador390 = ordenTabBuscador(390);
 /**
  * B-p11-2 (caos p11): tras aplicarse el layout (aquí al desplazar), el toque que cae en un campo de
  * texto que se movió no le da el foco (ni abre el teclado) antes de 1 s; pasado 1 s, sí.
+ * REP12-04 (B-qa02-1): la fila que sigue a la compactada ya no se mueve (anclaje); se descarta L1 y el
+ * campo es la Cantidad de L0, que la compactación sí mueve.
  */
 export const CampoMovidoSinFocoTactil390: Story = {
   args: { response: c11ThreeResponse },
@@ -905,13 +912,14 @@ export const CampoMovidoSinFocoTactil390: Story = {
     }
     row(0).scrollIntoView({ block: "start" });
     await sleep(POINTER_GUARD_MS + 200);
-    await tapAt(browser, centerOf(button(row(0), /Descartar línea/)));
+    await tapAt(browser, centerOf(button(row(1), /Descartar línea/)));
     await sleep(POINTER_GUARD_MS + 200);
-    const quantity = within(row(1)).getByLabelText(/^Cantidad/);
+    const quantity = within(row(0)).getByLabelText(/^Cantidad/);
     const before = quantity.getBoundingClientRect().top;
     window.scrollBy({ top: 40, behavior: "instant" });
     await sleep(150);
-    await expect(quantity.getBoundingClientRect().top, "al desplazar se aplica el layout").not.toBe(before);
+    const moved = quantity.getBoundingClientRect().top - (before - 40);
+    await expect(Math.abs(moved), `al desplazar se aplica el layout y mueve el campo (${Math.round(moved)} px)`).toBeGreaterThan(40);
 
     await tapAt(browser, centerOf(quantity));
     await sleep(150);
@@ -1003,3 +1011,387 @@ function teclearTrasDescartar(width: number, pointer: Pointer): Story {
 
 export const TeclearTrasDescartar390Tactil = teclearTrasDescartar(390, "touch");
 export const TeclearTrasDescartar1280Raton = teclearTrasDescartar(1280, "mouse");
+
+/** c12-foot (C12B-M1): L0 «CG-HARINA» 1 × 450 confirmada por SKU; L1 «FLETE Y TRANSPORTE» 1 × 900 sin emparejar; leído 1.350. */
+const footResponse = makeReviewResponse({
+  extraction: { subtotal: 1350, total: 1350 },
+  lines: [
+    {
+      read: {
+        rawText: "CG-HARINA HARINA MAIZ 1KG 1 450,00 450,00",
+        description: "HARINA MAIZ 1KG",
+        supplierSku: "CG-HARINA",
+        unit: "unidad",
+        quantity: 1,
+        unitPrice: 450,
+        lineTotal: 450,
+      },
+      match: {
+        status: "confirmed",
+        productId: HARINA,
+        taxRateCode: "exento",
+        candidates: [{ productId: HARINA, name: "CAOSG Harina Maiz 1kg", score: 1, reason: "SKU del proveedor", lastUnitCostRef: 0.5 }],
+        lastUnitCostRef: 0.5,
+      },
+    },
+    {
+      read: {
+        rawText: "FLETE Y TRANSPORTE 1 900,00 900,00",
+        description: "FLETE Y TRANSPORTE",
+        unit: "otro",
+        quantity: 1,
+        unitPrice: 900,
+        lineTotal: 900,
+      },
+      match: { status: "unmatched", productId: undefined, candidates: undefined, taxRateCode: "exento" },
+    },
+  ],
+});
+
+const boxText = (box: DOMRect) =>
+  `(${Math.round(box.left)},${Math.round(box.top)} ${Math.round(box.width)}×${Math.round(box.height)})`;
+
+function intersects(a: DOMRect, b: DOMRect) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/**
+ * C12B-M1 (REP12-02 · D54(a)): descartar la última pendiente (L1) y, a los `at` ms, activar el punto
+ * donde estaba «Cargar». La casilla de diferencia aparece en un sitio que no es el de «Cargar», que no
+ * se mueve (0 px); el 2.º toque no marca la casilla ni habilita «Cargar». Con `height` la ventana es
+ * más baja y el pie queda pegado abajo, como en el reporte (crecía hacia arriba; B-p12B-1 a 1280).
+ */
+function c12bm1Pie(width: number, pointer: Pointer, at: number, height?: number): Story {
+  return {
+    args: { response: footResponse },
+    play: async ({ args }) => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      if (height) {
+        await browser.page.viewport(width, height);
+      }
+      const discard = button(row(1), /Descartar línea/);
+      discard.scrollIntoView({ block: "center" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const load = screen.getByRole("button", { name: "Cargar en la compra" });
+      const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
+      const loadBefore = load.getBoundingClientRect();
+      const footerBefore = footer.getBoundingClientRect();
+      const aim = centerOf(load);
+      await expect(load, "antes, «Cargar» está deshabilitado (falta L1)").toBeDisabled();
+      // «Cargar» deshabilitado no recibe el puntero (pointer-events: none): el punto cae en el pie.
+      await expect(
+        document.elementFromPoint(aim.x, aim.y)?.closest("footer"),
+        `antes, el punto de «Cargar» ${boxText(loadBefore)} está en el pie ${boxText(footerBefore)} (ventana ${window.innerHeight})`,
+      ).toBe(footer);
+
+      await activateAt(browser, centerOf(discard), pointer);
+      const start = performance.now();
+      await sleepUntil(start, 100);
+      await expect(row(1).dataset.status, "el 1.er toque descarta L1").toBe("discarded");
+      const slot = screen.getByTestId("invoice-review-confirm-difference");
+      const box = within(slot).getByRole("checkbox");
+      const loadAfter = load.getBoundingClientRect();
+      const footerAfter = footer.getBoundingClientRect();
+      const report =
+        `${width} ${pointer} @${at}ms · viewport ${window.innerWidth}×${window.innerHeight} · ` +
+        `pie antes ${boxText(footerBefore)} después ${boxText(footerAfter)} · ` +
+        `Cargar antes ${boxText(loadBefore)} después ${boxText(loadAfter)} ` +
+        `Δ=(${Math.round(loadAfter.left - loadBefore.left)},${Math.round(loadAfter.top - loadBefore.top)}) · ` +
+        `casilla ${boxText(box.getBoundingClientRect())} zona ${boxText(slot.getBoundingClientRect())} · ` +
+        `bajo el punto de Cargar: ${describeControl(document.elementFromPoint(aim.x, aim.y)?.closest("button, input, label") ?? null)}`;
+      console.log(`[C12B-M1] ${report}`);
+
+      await sleepUntil(start, at);
+      await activateAt(browser, aim, pointer);
+      await sleep(300);
+      console.log(`[C12B-M1] ${width} ${pointer} @${at}ms · casilla=${String(box instanceof HTMLInputElement && box.checked)} · Cargar=${String(!(load as HTMLButtonElement).disabled)}`);
+      await expect(box, `${report}: el toque a ${at} ms no marca la casilla`).not.toBeChecked();
+      await expect(load, "ni habilita «Cargar»").toBeDisabled();
+      await expect(Math.abs(loadAfter.top - loadBefore.top), `«Cargar» no se mueve: ${report}`).toBeLessThan(0.5);
+      await expect(Math.abs(loadAfter.left - loadBefore.left), `«Cargar» no se mueve: ${report}`).toBeLessThan(0.5);
+      await expect(intersects(box.getBoundingClientRect(), loadBefore), `la casilla no cae en la caja previa de «Cargar»: ${report}`).toBe(false);
+      await expect(intersects(slot.getBoundingClientRect(), loadBefore), `ni su texto: ${report}`).toBe(false);
+      await expect(args.onLoad).not.toHaveBeenCalled();
+    },
+  };
+}
+
+export const C12BM1Pie390Tactil300 = c12bm1Pie(390, "touch", 300);
+export const C12BM1Pie390Tactil700 = c12bm1Pie(390, "touch", 700);
+export const C12BM1Pie390Tactil1500 = c12bm1Pie(390, "touch", 1500);
+export const C12BM1Pie390Tactil700Pegado = c12bm1Pie(390, "touch", 700, 600);
+export const C12BM1Pie1280Raton700 = c12bm1Pie(1280, "mouse", 700);
+export const C12BM1Pie1280Raton700Pegado = c12bm1Pie(1280, "mouse", 700, 560);
+
+type Compaction = "salir" | "desplazar" | "teclado";
+
+/** Mueve el ratón real (CDP) a un punto de la pantalla, sin que Playwright desplace la página. */
+async function mouseMoveTo(browser: Browser, point: Point) {
+  const target = pagePoint(point);
+  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
+}
+
+/** Aplica el layout pendiente como el usuario: sacando el ratón del panel, desplazando o con el teclado. */
+async function compact(browser: Browser, how: Compaction) {
+  if (how === "salir") {
+    // Margen izquierdo del decorador (p-4): fuera del panel, sobre nada accionable.
+    await mouseMoveTo(browser, { x: 4, y: Math.round(window.innerHeight / 2) });
+  } else if (how === "desplazar") {
+    window.scrollBy({ top: 40, behavior: "instant" });
+  } else {
+    await browser.userEvent.keyboard("{Shift}");
+  }
+  await sleep(300);
+}
+
+/**
+ * B-qa02-1 (D52): con L1 arriba de la vista, descartarla y aplicar el layout (salir del panel,
+ * desplazar o teclado). La fila siguiente (L2) no se va: su posición en pantalla cambia < 2 px
+ * (descontando los 40 px que desplaza el usuario), aunque L1 encoja.
+ */
+function anclajeCompactacion(width: number, pointer: Pointer, how: Compaction): Story {
+  return {
+    args: { response: c11ThreeResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      if (width >= 640) {
+        await browser.page.viewport(width, 560);
+      }
+      row(1).scrollIntoView({ block: "start" });
+      await sleep(POINTER_GUARD_MS + 200);
+      await activateAt(browser, centerOf(button(row(1), /Descartar línea/)), pointer);
+      await sleep(POINTER_GUARD_MS + 200);
+      await expect(row(1).dataset.status, "L1 descartada").toBe("discarded");
+      const heldHeight = row(1).getBoundingClientRect().height;
+      const before = row(2).getBoundingClientRect().top;
+      const expected = before - (how === "desplazar" ? 40 : 0);
+      await compact(browser, how);
+      const after = row(2).getBoundingClientRect().top;
+      const report = `${width} ${pointer} ${how} · L1 ${Math.round(heldHeight)}→${Math.round(row(1).getBoundingClientRect().height)} px · L2 antes ${Math.round(before)} esperado ${Math.round(expected)} después ${Math.round(after)} · scrollY ${Math.round(window.scrollY)}`;
+      console.log(`[B-qa02-1] ${report}`);
+      await expect(row(1).getBoundingClientRect().height, `se aplicó el layout: ${report}`).toBeLessThan(heldHeight - 40);
+      await expect(Math.abs(after - expected), `L2 se desplazó ${Math.round(after - expected)} px: ${report}`).toBeLessThan(2);
+    },
+  };
+}
+
+export const AnclajeCompactacion1280RatonSalir = anclajeCompactacion(1280, "mouse", "salir");
+export const AnclajeCompactacion1280RatonDesplazar = anclajeCompactacion(1280, "mouse", "desplazar");
+export const AnclajeCompactacion1280RatonTeclado = anclajeCompactacion(1280, "mouse", "teclado");
+export const AnclajeCompactacion390TactilDesplazar = anclajeCompactacion(390, "touch", "desplazar");
+export const AnclajeCompactacion390TactilTeclado = anclajeCompactacion(390, "touch", "teclado");
+
+/**
+ * B-p12B-2 (caos p12 B): con pocas líneas y la página casi sin desplazamiento, la compactación acorta
+ * el documento, el navegador recorta el desplazamiento y lo que está ENCIMA del panel baja: un campo
+ * del formulario (aquí la fecha, fuera del panel) queda bajo el puntero que acaba de salir del panel.
+ * La activación antes de 1 s desde la compactación no le da el foco (D49, guarda anclada a la
+ * compactación); pasado 1 s, sí.
+ */
+function campoFueraDelPanel(width: number, pointer: Pointer): Story {
+  return {
+    args: { response: homonymsResponse },
+    render: (args) => (
+      <>
+        <input aria-label="Fecha de la compra" className="mb-1.5 block h-10 w-full rounded border" type="date" />
+        <InvoiceReviewPanel {...args} />
+      </>
+    ),
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      // Ventana 30 px más baja que el documento: al fondo, la fecha (encima del panel) se ve.
+      await browser.page.viewport(width, document.documentElement.scrollHeight - 30);
+      await sleep(300);
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const date = screen.getByLabelText("Fecha de la compra");
+      const discard = button(row(1), /Descartar línea/);
+      const aimDiscard = centerOf(discard);
+      await expect(document.elementFromPoint(aimDiscard.x, aimDiscard.y)?.closest("button"), "«Descartar línea» de L1 a la vista").toBe(discard);
+      await activateAt(browser, aimDiscard, pointer);
+      await sleep(POINTER_GUARD_MS + 200);
+      await expect(row(1).dataset.status, "L1 descartada").toBe("discarded");
+      const geo = () =>
+        `scrollY ${Math.round(window.scrollY)} doc ${document.documentElement.scrollHeight} L1 ${Math.round(row(1).getBoundingClientRect().height)} fecha ${Math.round(date.getBoundingClientRect().top)}`;
+      const geoBefore = geo();
+      // Entre la fecha y el panel (fuera del panel, nada accionable).
+      const point = { x: centerOf(date).x, y: panel().getBoundingClientRect().top - 3 };
+      if (pointer === "mouse") {
+        await mouseMoveTo(browser, point);
+      } else {
+        window.scrollBy({ top: -10, behavior: "instant" });
+      }
+      const start = performance.now();
+      await sleepUntil(start, 300);
+      const under = document.elementFromPoint(point.x, point.y);
+      const report = `${width} ${pointer} · antes ${geoBefore} · después ${geo()} · punto (${Math.round(point.x)},${Math.round(point.y)}) · bajo el punto: ${describeControl(under?.closest("button, input, textarea, label") ?? null)}`;
+      console.log(`[B-p12B-2] ${report}`);
+      await expect(row(1).getBoundingClientRect().height, `se aplicó el layout: ${report}`).toBeLessThan(150);
+      await expect(under, `tras compactar, la fecha quedó bajo el puntero: ${report}`).toBe(date);
+      await activateAt(browser, point, pointer);
+      await sleep(150);
+      await expect(document.activeElement, `antes de 1 s el campo que bajó no recibe el foco: ${report}`).not.toBe(date);
+      await sleepUntil(start, POINTER_GUARD_MS + 400);
+      await activateAt(browser, point, pointer);
+      await sleep(150);
+      await expect(document.activeElement, "pasado 1 s, sí").toBe(date);
+    },
+  };
+}
+
+export const CampoFueraDelPanel1280Raton = campoFueraDelPanel(1280, "mouse");
+export const CampoFueraDelPanel390Tactil = campoFueraDelPanel(390, "touch");
+
+const farmatodoFetcher: EntityFetcher<"contact"> = async () => [
+  { id: FARMATODO, isActive: true, label: "Farmatodo", phone: "", taxId: farmatodo.taxId, type: "proveedor" },
+];
+
+/** f19d: «FARMACIA OPALO», sin RIF ni proveedor reconocido; la línea ya está resuelta (Cargar solo espera el duplicado). */
+const f19Response = makeReviewResponse({
+  lines: [{ read: { quantity: 1, unitPrice: 1750, lineTotal: 1750 }, match: { taxRateCode: "exento" } }],
+  extraction: { supplier: { name: "FARMACIA OPALO" }, number: "00362952", date: "2026-09-03", total: 1750 },
+  matched: { supplier: {} },
+});
+
+/**
+ * M-qa-rep12-1 (REP12-05 · D49/D54): f19d. Escribir «Farma» en Proveedor, elegir «Farmatodo» y, a los
+ * `at` ms, volver a activar el punto del campo Proveedor. El aviso de duplicado aparece y empuja la
+ * cabecera; lo que quede en ese punto (su texto, su casilla) no marca la casilla ni habilita «Cargar».
+ */
+function f19dAviso(width: number, pointer: Pointer, at: number): Story {
+  return {
+    args: {
+      duplicateFetcher: async (query) =>
+        query.supplierId === FARMATODO
+          ? [{ scanId: "scan-previo", purchaseId: "00000000-0000-4000-8000-0000000000c8", number: "00362952", date: "2026-09-03" }]
+          : [],
+      response: f19Response,
+      supplierFetcher: farmatodoFetcher,
+    },
+    play: async ({ args }) => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      const field = screen.getByRole("combobox", { name: /proveedor/i });
+      field.scrollIntoView({ block: "center" });
+      await browser.userEvent.click(field);
+      await browser.userEvent.type(field, "Farma");
+      const option = await screen.findByRole("option", { name: /farmatodo/i });
+      await sleep(POINTER_GUARD_MS + 200);
+      const aim = centerOf(field);
+      const load = screen.getByRole("button", { name: "Cargar en la compra" });
+      await expect(screen.queryByText(/ya se registró en una compra/), "antes de elegir no hay aviso").toBeNull();
+
+      await activateAt(browser, centerOf(option), pointer);
+      const start = performance.now();
+      await waitFor(() => expect(screen.getByText(/ya se registró en una compra/)).toBeInTheDocument(), { timeout: 900 });
+      const shownAt = Math.round(performance.now() - start);
+      const box = screen.getByRole("checkbox", { name: /cargarla igual/i });
+      const under = document.elementFromPoint(aim.x, aim.y);
+      const report =
+        `${width} ${pointer} @${at}ms · aviso a los ${shownAt} ms · punto del campo (${Math.round(aim.x)},${Math.round(aim.y)}) · ` +
+        `casilla ${boxText(box.getBoundingClientRect())} · bajo el punto: ${describeControl(under?.closest("button, input, label, span, div") ?? null)}`;
+      console.log(`[M-qa-rep12-1] ${report}`);
+      await expect(box, "el aviso aparece sin marcar").not.toBeChecked();
+      await expect(load, "y «Cargar» espera la casilla").toBeDisabled();
+
+      await sleepUntil(start, at);
+      await activateAt(browser, aim, pointer);
+      await sleep(300);
+      console.log(
+        `[M-qa-rep12-1] ${width} ${pointer} @${at}ms · casilla=${String((box as HTMLInputElement).checked)} · Cargar=${String(!(load as HTMLButtonElement).disabled)}`,
+      );
+      await expect(box, `${report}: el toque a ${at} ms no marca la casilla`).not.toBeChecked();
+      await expect(load, `${report}: ni habilita «Cargar»`).toBeDisabled();
+      await expect(args.onLoad).not.toHaveBeenCalled();
+    },
+  };
+}
+
+export const MQaRep12F19d390Tactil400 = f19dAviso(390, "touch", 400);
+export const MQaRep12F19d390Tactil700 = f19dAviso(390, "touch", 700);
+export const MQaRep12F19d390Tactil1500 = f19dAviso(390, "touch", 1500);
+export const MQaRep12F19d1280Raton400 = f19dAviso(1280, "mouse", 400);
+export const MQaRep12F19d1280Raton700 = f19dAviso(1280, "mouse", 700);
+export const MQaRep12F19d1280Raton1500 = f19dAviso(1280, "mouse", 1500);
+
+/** REP12-06: aviso de duplicado del escaneo y diferencia frente al total leído a la vez. */
+const casillasResponse = makeReviewResponse({
+  extraction: { total: 9999 },
+  lines: [{}, { read: { description: "Arroz Mary 1kg", rawText: "ARROZ MARY 1KG" } }],
+  matched: { duplicateOfScanId: "scan-previo" },
+});
+
+/**
+ * REP12-06 (QA-05, observación): las casillas que reconocen dinero (aviso de duplicado y diferencia)
+ * solo responden a su propio control; su área táctil mide al menos 24 × 24 px (WCAG 2.5.8).
+ */
+function casillasTactiles(width: number): Story {
+  return {
+    args: { response: casillasResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      const boxes = {
+        duplicado: screen.getByRole("checkbox", { name: /cargarla igual/i }),
+        diferencia: within(screen.getByTestId("invoice-review-confirm-difference")).getByRole("checkbox"),
+      };
+      for (const [name, box] of Object.entries(boxes)) {
+        const rect = box.getBoundingClientRect();
+        await expect(Math.min(rect.width, rect.height), `${width} casilla de ${name}: ${boxText(rect)}`).toBeGreaterThanOrEqual(24);
+      }
+    },
+  };
+}
+
+export const Rep1206CasillasTactiles390 = casillasTactiles(390);
+export const Rep1206CasillasTactiles1280 = casillasTactiles(1280);
+
+/**
+ * REP12-06 (B-qa05-1): a 390, con la consulta de duplicados caída tras elegir el proveedor a mano, el
+ * pie PLEGADO dice que no se pudo comprobar (Cargar sigue habilitado: el fallo no bloquea, D52).
+ */
+export const Rep1206FalloDuplicadosPiePlegado390: Story = {
+  args: {
+    duplicateFetcher: async () => {
+      throw new Error("500");
+    },
+    response: f19Response,
+    supplierFetcher: farmatodoFetcher,
+  },
+  play: async () => {
+    const browser = await prepare(390);
+    if (!browser) {
+      return;
+    }
+    const field = screen.getByRole("combobox", { name: /proveedor/i });
+    field.scrollIntoView({ block: "center" });
+    await browser.userEvent.click(field);
+    await browser.userEvent.type(field, "Farma");
+    await browser.userEvent.click(await screen.findByRole("option", { name: /farmatodo/i }));
+    const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
+    await expect(within(footer).getByRole("button", { name: "Ver detalle del total" }), "pie plegado").toBeVisible();
+    await waitFor(
+      () => {
+        const shown = within(footer)
+          .queryAllByText(/No se pudo comprobar/)
+          .filter((element) => element.checkVisibility() && element.getBoundingClientRect().height > 0);
+        expect(shown.length, "texto de fallo visible en el pie plegado").toBeGreaterThan(0);
+      },
+      { timeout: 2000 },
+    );
+    await expect(screen.getByRole("button", { name: "Cargar en la compra" })).toBeEnabled();
+  },
+};

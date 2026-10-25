@@ -25,6 +25,6 @@ export async function GET(request: Request, context: RouteContext<"/api/purchase
 
     return jsonData(detail);
   } catch (error) {
-    return toErrorResponse(error);
+    return toErrorResponse(error, { zodIssues: "public" });
   }
 }

@@ -204,6 +204,8 @@ export function matchInvoice(extraction: InvoiceExtraction, ctx: MatchContext): 
     total: extraction.total,
     contactId: supplier.contactId,
     taxId: extraction.supplier.taxId,
+    // REP12-01 (D53): el RIF guardado del contacto resuelto también cruza con el RIF leído del previo.
+    contactTaxIds: [ctx.supplierCandidates.find((candidate) => candidate.contactId === supplier.contactId)?.taxId],
     previousScans: ctx.previousScans,
   });
 

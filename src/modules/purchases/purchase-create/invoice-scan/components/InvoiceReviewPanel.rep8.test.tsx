@@ -127,6 +127,8 @@ function expectTieUntouched() {
   expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   for (const chip of within(row(1)).getAllByRole("button", { name: /CAOSG Jabon Azul 250g/ })) {
     expect(chip).toHaveAttribute("aria-pressed", "false");
+    // B-p12-1: el marcado por flechas (lo que aceptaría Enter) no es «pulsado»; se lee en `data-marked`.
+    expect(chip).not.toHaveAttribute("data-marked");
   }
 }
 
@@ -221,10 +223,10 @@ describe("REP8-02 · D39-7: marcar con flechas exige guarda y acción del usuari
 
     now += 1000;
     await user.keyboard("{ArrowRight}");
-    const pressed = within(row(1))
+    const marked = within(row(1))
       .getAllByRole("button", { name: /CAOSG Jabon Azul 250g/ })
-      .map((chip) => chip.getAttribute("aria-pressed"));
-    expect(pressed).toContain("true");
+      .map((chip) => chip.getAttribute("data-marked"));
+    expect(marked).toContain("true");
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 });

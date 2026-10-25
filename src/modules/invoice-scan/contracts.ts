@@ -374,6 +374,33 @@ export type InvoiceMatch = {
   duplicateOfScanId?: string;
 };
 
+/**
+ * REP12-01 (D52/D53): consulta de `POST /api/purchases/invoice-scan/duplicates` con el
+ * proveedor elegido en la revisión, el contacto y el RIF leídos, y el número (o fecha + total).
+ */
+export type InvoiceDuplicateQuery = {
+  /** Escaneo en revisión: nunca cuenta como duplicado de sí mismo. */
+  scanId?: string;
+  /** Proveedor elegido en la revisión. */
+  supplierId?: string;
+  /** Contacto leído (`matched.supplier.contactId`). */
+  contactId?: string;
+  /** RIF leído. */
+  taxId?: string;
+  number?: string;
+  /** ISO `YYYY-MM-DD`. */
+  date?: string;
+  total?: number;
+};
+
+/** Escaneo anterior que sería la misma factura; `purchaseId` para «Ver» si ya está en una compra. */
+export type InvoiceDuplicateMatch = {
+  scanId: string;
+  purchaseId: string | null;
+  number: string | null;
+  date: string | null;
+};
+
 export type InvoiceScanLimits = {
   used: number;
   limit: number;

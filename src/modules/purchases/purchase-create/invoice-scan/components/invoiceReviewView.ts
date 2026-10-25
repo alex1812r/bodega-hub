@@ -24,6 +24,7 @@ import {
   getLineNeeds,
   getUnitConversion,
   isLineMismatch,
+  lineOffersPack,
   linePackWord,
   MAX_REVIEW_UNITS_PER_PACK,
   needsExplicitChoice,
@@ -172,6 +173,23 @@ function productConfirmationMessage(state: InvoiceReviewState, line: InvoiceRevi
   return [`Falta confirmar el producto: toca «${chip?.name ?? "Producto propuesto"}» o pulsa Enter.`];
 }
 
+/**
+ * B-p12-1: «Sin producto» con candidatos dice qué falta: el marcado (el que acepta Enter) aún no
+ * está elegido; sin marcado (empate, D24-d), uno de los candidatos.
+ */
+function productChoiceMessage(line: InvoiceReviewLine): string[] {
+  if (line.productId || line.discarded || line.candidates.length === 0) {
+    return [];
+  }
+  const target = enterTargetProductId(line);
+  const chip = getChoiceChips(line).find((item) => item.productId === target);
+  return [
+    chip
+      ? `Falta elegir el producto: toca «${chip.name}» o pulsa Enter para confirmarlo.`
+      : "Falta elegir el producto: toca uno de los candidatos.",
+  ];
+}
+
 /** D48(a): sin opción coherente con el último costo, no se recomienda ninguna. */
 function neutralChoiceText(line: InvoiceReviewLine): string {
   return `elige cómo viene (Por unidad o Por ${linePackWord(line)}), revisa el costo y confírmalo.`;
@@ -179,11 +197,12 @@ function neutralChoiceText(line: InvoiceReviewLine): string {
 
 /**
  * D48(a): qué elegir con el costo actual desviado. Solo se nombra la otra opción si deja el costo
- * coherente con el último (nunca la actual, que es la desviada); si no, el texto es neutro.
+ * coherente con el último (nunca la actual, que es la desviada) y la fila la ofrece (D54-b); si
+ * no, el texto es neutro.
  */
 function chooseOptionText(state: InvoiceReviewState, line: InvoiceReviewLine): string {
   const other = line.entryMode === "unit" ? "pack" : "unit";
-  const outcome = getEntryModeOutcome(state, line, other);
+  const outcome = other === "pack" && !lineOffersPack(state, line) ? undefined : getEntryModeOutcome(state, line, other);
   if (outcome?.unitCost?.currency !== "REF" || outcome.lastUnitCostRef === undefined || outcome.deviates) {
     return neutralChoiceText(line);
   }
@@ -270,7 +289,12 @@ export function lineNeedMessages(state: InvoiceReviewState, line: InvoiceReviewL
       return ["Revisa el costo: no puede ser negativo ni estar vacío."];
     }
     return [];
-  }).concat(choice, line.discarded ? [] : costNeedMessages(state, line), productConfirmationMessage(state, line));
+  }).concat(
+    productChoiceMessage(line),
+    choice,
+    line.discarded ? [] : costNeedMessages(state, line),
+    productConfirmationMessage(state, line),
+  );
 }
 
 /**
@@ -333,8 +357,9 @@ export function getDisplayedLineIssues(
   });
 }
 
+/** REP12-05 (B-qa-rep12-3): como el aviso de cantidad (REP12-04), sin redondear: 2,9999 no se lee «3». */
 function formatCount(value: number): string {
-  return value.toLocaleString("es-VE", { maximumFractionDigits: 3 });
+  return value.toLocaleString("es-VE", { maximumSignificantDigits: 15 });
 }
 
 /** Dos decimales como el aviso de precio del servidor («0,10 REF»). */
