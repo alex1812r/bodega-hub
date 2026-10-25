@@ -485,14 +485,16 @@ export function InvoiceReviewLineRow({
 
       {heldSummary ? (
         // Solo el alto sobrante de la caja retenida (`basis-0`, y `-mt-3` anula el `gap`): nunca
-        // empuja nada. En la descartada queda justo bajo el encabezado, en la parte alta de la caja.
+        // empuja nada. Sin padding propio (con `border-box` no baja de él: la fila crecería); la
+        // separación es el `mt-3` del texto, dentro del alto recortado. En la descartada queda justo
+        // bajo el encabezado, en la parte alta de la caja.
         <div
-          className="-mt-3 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden pt-3"
+          className="-mt-3 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden"
           data-testid="invoice-review-held-summary"
         >
           <p
             className={cn(
-              "text-xs text-on-surface-variant",
+              "mt-3 text-xs text-on-surface-variant",
               line.discarded ? "flex-1 rounded-lg border border-dashed border-outline-variant px-3 py-2" : null,
             )}
           >

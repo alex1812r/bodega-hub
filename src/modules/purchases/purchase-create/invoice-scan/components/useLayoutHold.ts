@@ -99,6 +99,24 @@ function scrollParent(element: Element): Element {
   return document.scrollingElement ?? document.documentElement;
 }
 
+type OwnScroll = { scroller: Element; top: number };
+
+/**
+ * Desplaza el contenedor de `element` para devolverlo `delta` px a su sitio. Dentro de algo fijo o
+ * `sticky` ya pegado (el pie) desplazar no lo devuelve y solo movería lo demás: se deshace (`null`).
+ * Devuelve el desplazamiento hecho, cuyo evento `scroll` no es del usuario.
+ */
+function scrollBack(element: Element, delta: number): OwnScroll | null {
+  const scroller = scrollParent(element);
+  const top = element.getBoundingClientRect().top;
+  scroller.scrollBy({ top: delta, behavior: "instant" });
+  if (Math.abs(element.getBoundingClientRect().top - top) < 1) {
+    scroller.scrollBy({ top: -delta, behavior: "instant" });
+    return null;
+  }
+  return { scroller, top: scroller.scrollTop };
+}
+
 /**
  * D46-a: «layout pendiente». `holdLayout` se llama en la captura del clic, antes de que la acción
  * cambie nada: fija el orden que se está pintando y el alto actual de cada `[data-layout-box]`
@@ -107,7 +125,8 @@ function scrollParent(element: Element): Element {
  * que siga bajo el puntero. Una nueva activación lo prolonga sin cambiar el orden fijado.
  * D48(b)/D49: nunca se aplica por tiempo. Se aplica al desplazar (rueda, arrastre o barra), al usar
  * el teclado o cuando el RATÓN sale del panel completo (`rootRef`) o de la ventana; tras un toque,
- * nunca solo. Al aplicarlo se comparan las posiciones de los controles antes y después: durante
+ * nunca solo. Si lo aplica el teclado, el control enfocado se queda en su punto de pantalla
+ * (B-qa02-3). Al aplicarlo se comparan las posiciones de los controles antes y después: durante
  * COMPACTION_GUARD_MS, `movedByCompaction` dice si un control se movió (o apareció) con ello.
  * `onFocusLost`: al aplicarse el layout, la caja que tenía el foco se volvió a montar (cambió de
  * lista) y el foco cayó en BODY; recibe su clave.
@@ -120,7 +139,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const positionsBeforeRef = useRef<Map<Element, Position> | null>(null);
   const compactionRef = useRef<Compaction | null>(null);
   // Desplazamiento que hizo la compensación: su evento `scroll` no es del usuario.
-  const ownScrollRef = useRef<{ scroller: Element; top: number } | null>(null);
+  const ownScrollRef = useRef<OwnScroll | null>(null);
+  // B-qa02-3: el teclado aplicó el layout; el control enfocado (donde se escribe) y su posición antes.
+  const typingAnchorRef = useRef<{ element: Element; top: number } | null>(null);
   const focusedKeyRef = useRef<string | undefined>(undefined);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
@@ -189,15 +210,10 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     if (Math.abs(delta) < 1) {
       return;
     }
-    const scroller = scrollParent(element);
-    const top = element.getBoundingClientRect().top;
-    scroller.scrollBy({ top: delta, behavior: "instant" });
-    if (Math.abs(element.getBoundingClientRect().top - top) < 1) {
-      // Dentro de algo fijo o `sticky` ya pegado (el pie): desplazar no lo devuelve, solo movería lo demás.
-      scroller.scrollBy({ top: -delta, behavior: "instant" });
-      return;
+    const own = scrollBack(element, delta);
+    if (own) {
+      ownScrollRef.current = own;
     }
-    ownScrollRef.current = { scroller, top: scroller.scrollTop };
   });
 
   const holding = hold !== null;
@@ -210,6 +226,16 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       return;
     }
     positionsBeforeRef.current = null;
+    // B-qa02-3: si lo aplicó el teclado, el control enfocado (sigue montado y con el foco) vuelve a su
+    // punto de pantalla antes de comparar: lo que se escribe no salta y ese control no cuenta como movido.
+    const typing = typingAnchorRef.current;
+    typingAnchorRef.current = null;
+    if (typing && typing.element.isConnected && document.activeElement === typing.element) {
+      const delta = typing.element.getBoundingClientRect().top - typing.top;
+      if (Math.abs(delta) >= 1) {
+        ownScrollRef.current = scrollBack(typing.element, delta);
+      }
+    }
     const moved = new Set<Element>();
     for (const [control, now] of controlPositions()) {
       const was = before.get(control);
@@ -255,19 +281,26 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         release();
       }
     };
+    const onKeyDown = () => {
+      const focused = document.activeElement;
+      if (holdRef.current && focused instanceof Element && rootRef.current?.contains(focused)) {
+        typingAnchorRef.current = { element: focused, top: focused.getBoundingClientRect().top };
+      }
+      release();
+    };
     // Desplazar (rueda, arrastre o barra), usar el teclado o sacar el ratón del panel (o de la
     // ventana) aplica el layout pendiente.
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("wheel", release, { passive: true });
     window.addEventListener("touchmove", release, { passive: true });
-    window.addEventListener("keydown", release, true);
+    window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("pointermove", onPointerMove, true);
     document.documentElement.addEventListener("pointerleave", onPointerLeave);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("wheel", release);
       window.removeEventListener("touchmove", release);
-      window.removeEventListener("keydown", release, true);
+      window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointermove", onPointerMove, true);
       document.documentElement.removeEventListener("pointerleave", onPointerLeave);
     };
