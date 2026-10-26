@@ -197,8 +197,12 @@ type PreviousScanRow = {
   read_number?: string | null;
   supplier_tax_id: string | null;
   matched_contact_id: string | null;
+  /** REP14-05: fecha y total EFECTIVOS (confirmados si no están vacíos, si no los leídos). */
   date?: string | null;
   total?: number | string | null;
+  /** REP14-05: fecha y total LEÍDOS (`extracted->date`, `extracted->total`). */
+  read_date?: string | null;
+  read_total?: number | string | null;
   purchase_id?: string | null;
   purchase?: { status: string | null } | null;
 };
@@ -343,7 +347,7 @@ async function loadSystemRate(): Promise<number | undefined> {
  * separadores y ceros sobrantes caen en los `%`) y aquí se filtra por igualdad
  * normalizada. `findDuplicateScan` decide después por proveedor/RIF. Los
  * descartados o fallidos no cuentan. Se suman los del posible duplicado
- * (`loadPreviousScansByDateTotal`), con fecha y total leídos. REP12-01 (D53): también la usa
+ * (`loadPreviousScansByDateTotal`), con fecha y total leídos o confirmados (REP14-05). REP12-01 (D53): también la usa
  * `POST /api/purchases/invoice-scan/duplicates` con el número, la fecha y el total de la revisión.
  * REP12-01 (D53): cada escaneo lleva el RIF guardado de su proveedor elegido y de su contacto
  * leído (`loadContactTaxIds`, contactos de la tienda).
@@ -381,7 +385,9 @@ export async function loadPreviousScans(
     number: row.number ?? null,
     readNumber: row.read_number ?? undefined,
     date: row.date ?? undefined,
+    readDate: row.read_date ?? undefined,
     total: toNumber(row.total),
+    readTotal: toNumber(row.read_total),
     purchaseId: row.purchase_id ?? undefined,
     purchaseStatus: row.purchase?.status ?? undefined,
   }));
@@ -425,7 +431,7 @@ export function contactTaxIdsOf(
 
 /**
  * Posible duplicado (caos 5.4, `findDuplicateScan`): escaneos con el mismo
- * total leído (±0,01) y, si se leyó, la misma fecha. Solo hace falta si el
+ * total leído o confirmado (±0,01; REP14-05) y, si se leyó, la misma fecha. Solo hace falta si el
  * número falta o puede estar mal leído; con número y sin fecha no aplica.
  * `extracted->>total` es el texto del número JSON (lo que da `String(n)` en
  * JS), así que se piden las tres variantes al céntimo. El proveedor lo decide

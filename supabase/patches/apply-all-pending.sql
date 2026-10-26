@@ -911,7 +911,9 @@ notify pgrst, 'reload schema';
 -- pasan de 17 s / 57014 a ~0,1 s), y save_invoice_scan_match (solo service_role): guarda solo matched de un escaneo
 -- extracted tras un MATCH_ERROR. REP14-01 (D63): invoice_match_previous_scans casa por numero el leido o el EFECTIVO
 -- (el confirmado por el usuario si no esta vacio) y devuelve number (efectivo) y read_number (leido); si ya se aplico
--- la version anterior, reaplicar el parche. No toca stock ni dinero.
+-- la version anterior, reaplicar el parche. REP14-05 (M-qa1401-1): sin numero casa el total y la fecha leidos o los
+-- EFECTIVOS (confirmados si no estan vacios) y devuelve date/total (efectivos) y read_date/read_total (leidos);
+-- reaplicar el parche. No toca stock ni dinero.
 -- OJO: reaplicar 20261019d devuelve invoice_match_candidates sin indice: volver a aplicar este parche despues.
 -- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP7-01, y correr verify-patches.sql (filas "(20261019q").
 -- -----------------------------------------------------------------------------
@@ -927,7 +929,8 @@ notify pgrst, 'reload schema';
 -- leido (loadMatchContext). No redefine nada (reaplicar 19q no la
 -- deshace). REP14-01 (D63): casa por numero el leido o el EFECTIVO (el confirmado por el usuario si no esta vacio,
 -- si no el leido) y devuelve number (efectivo) y read_number (leido); si ya se aplico la version anterior, reaplicar
--- el parche. No toca stock ni dinero.
+-- el parche. REP14-05 (M-qa1401-1): sin numero casa el total y la fecha leidos o los EFECTIVOS (confirmados si no estan
+-- vacios) y devuelve date/total (efectivos) y read_date/read_total (leidos); reaplicar el parche. No toca stock ni dinero.
 -- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP12-06 (sin el, el ESCANEO con proveedor leido falla al
 -- emparejar con PGRST202, y la consulta de duplicados da 500 y la
 -- revision muestra "No se pudo comprobar...", sin bloquear), y correr verify-patches.sql (filas "(20261026a").

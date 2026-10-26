@@ -35,7 +35,8 @@ export type DuplicateScanInput = {
  * - sin número leído y misma fecha (o sin fecha leída tampoco), o
  * - previo sin ningún número (ni leído ni confirmado) y misma fecha (REP14-01).
  * El número del previo es el leído (`readNumber`) o el efectivo (`number`): casa cualquiera
- * (REP14-01, D63). El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó registrada
+ * (REP14-01, D63). Igual la fecha y el total del previo: casa el leído (`readDate`, `readTotal`)
+ * o el efectivo (`date`, `total`: el confirmado si no está vacío) (REP14-05). El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó registrada
  * (REP3-03a). La compra `devuelto` sí (D26). Los confirmados con compra van primero
  * (SCN-UI-C2); si no, en el orden de `previousScans` (del más reciente al más antiguo).
  */
@@ -70,10 +71,12 @@ export function findDuplicateScans(input: DuplicateScanInput): MatchPreviousScan
 
   return confirmedFirst(
     previousScans.filter((scan) => {
-      if (typeof scan.total !== "number" || Math.abs(scan.total - total) > DUPLICATE_TOTAL_TOLERANCE) {
+      // REP14-05: total y fecha, el leído o el efectivo (confirmado) del previo.
+      const totals = [scan.total, scan.readTotal].filter((value): value is number => typeof value === "number");
+      if (!totals.some((their) => Math.abs(their - total) <= DUPLICATE_TOTAL_TOLERANCE)) {
         return false;
       }
-      if (date && scan.date?.trim() !== date) {
+      if (date && ![scan.date, scan.readDate].some((their) => their?.trim() === date)) {
         return false;
       }
       // REP14-01: un previo sin ningún número no descarta; con número, a un carácter de alguno.
