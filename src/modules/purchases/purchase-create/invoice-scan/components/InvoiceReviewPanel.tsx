@@ -1018,6 +1018,7 @@ export function InvoiceReviewPanel({
         duplicateCheckFailed={duplicates.failed}
         duplicatePending={duplicates.pending}
         duplicateUnacknowledged={duplicateUnacknowledged}
+        duplicateWarning={duplicateKey !== null}
         footerRef={footerRef}
         footerStyle={layoutHold.boxStyle("footer")}
         onAction={dispatch}

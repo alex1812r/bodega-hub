@@ -7,6 +7,7 @@ import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
 
 import {
+  getHeaderDateMessage,
   getTaxInclusion,
   type InvoiceReviewAction,
   type InvoiceReviewState,
@@ -29,6 +30,8 @@ export type InvoiceReviewFooterProps = {
   footerStyle?: CSSProperties;
   /** REP12-01 (D52): aviso de factura duplicada sin reconocer; Cargar lo exige. */
   duplicateUnacknowledged?: boolean;
+  /** REP13-06 (B-qa05-2): hay aviso de duplicado (reconocido o no); su alto reservado no cambia al marcarlo. */
+  duplicateWarning?: boolean;
   /** REP12-01: consulta de duplicados vigente sin respuesta; Cargar espera. */
   duplicatePending?: boolean;
   /** REP12-05 (B-qa-rep12-2): la consulta de duplicados vigente falló; no bloquea (D52), pero se dice. */
@@ -65,6 +68,7 @@ export function InvoiceReviewFooter({
   duplicateCheckFailed = false,
   duplicatePending = false,
   duplicateUnacknowledged = false,
+  duplicateWarning = false,
   footerRef,
   footerStyle,
   onAction,
@@ -101,6 +105,8 @@ export function InvoiceReviewFooter({
   }
   // REP12-01: motivos del duplicado junto a los bloqueos (mientras se comprueba, solo ese).
   const duplicateReason = duplicatePending ? "pending" : duplicateUnacknowledged ? "unacknowledged" : null;
+  // REP13-06 (B-qa05-1): la fecha inválida también se dice en el pie compacto.
+  const dateInvalid = getHeaderDateMessage(state) !== undefined;
 
   return (
     <footer
@@ -122,11 +128,14 @@ export function InvoiceReviewFooter({
     >
       {/* D54(a): en móvil, dos líneas reservadas (con la diferencia el total pasa a dos y empujaría «Cargar»).
           REP12-06: con el fallo de duplicados a la vista, tres (que aparezca la diferencia no lo hace crecer).
-          REP13-05: también con el aviso de duplicado por marcar. */}
+          REP13-05: también con el aviso de duplicado por marcar. REP13-06: y con la fecha inválida; el del
+          duplicado sigue reservado tras marcarlo (B-qa05-2: «Cargar» subía al quitarse el motivo). */}
       <p
         className={cn(
           "col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0",
-          (duplicateCheckFailed || duplicateReason === "unacknowledged") && !detailOpen ? "min-h-16" : "min-h-11",
+          (duplicateCheckFailed || duplicateWarning || duplicateUnacknowledged || dateInvalid) && !detailOpen
+            ? "min-h-16"
+            : "min-h-11",
         )}
         data-testid="invoice-review-totals"
       >
@@ -172,6 +181,9 @@ export function InvoiceReviewFooter({
           >
             Marca el aviso de factura duplicada.
           </button>
+        ) : null}
+        {dateInvalid && !detailOpen ? (
+          <span className="text-xs text-amber-700 sm:hidden dark:text-amber-300">Corrige la fecha de la factura.</span>
         ) : null}
       </p>
 

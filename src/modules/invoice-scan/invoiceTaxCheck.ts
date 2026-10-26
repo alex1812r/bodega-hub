@@ -34,8 +34,9 @@ import { roundMoney } from "@bodega/core/currency";
  *   El tope literal de D59, mín(máx(1, 0,5 % del total), ½ IVA), no es compatible con B20
  *   (1,6 de diferencia sobre 106 > 1) y es más estricto que el pie (perdería sugerencias
  *   correctas que el pie da por cuadradas): se usa la tolerancia del pie, acotada además
- *   por ½ IVA. Con solo subtotal o solo IVA leídos (`assessSingleFigure`) sigue la regla del
- *   ¼ del IVA en juego.
+ *   por ½ IVA. REP13-06: la excepción B20 exige también que "sin IVA" no cuadre mejor el
+ *   subtotal ni el IVA leídos; con solo subtotal o solo IVA (`assessSingleFigure`) la incluida
+ *   se sugiere solo si cuadra con la tolerancia del pie y la otra no.
  * - IVA leído 0,00 (o subtotal = total): nunca se sugiere (N12). Si además Σ líneas da la
  *   referencia con líneas gravadas, no se puede saber si es exenta o una nota de despacho
  *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin
@@ -137,7 +138,15 @@ function fitTolerance(read: number, gap: number, minTolerance: number): number {
   return Math.max(minTolerance, Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TAX_GAP_TOLERANCE_SHARE * gap));
 }
 
-/** Solo subtotal o solo IVA leídos: la cifra frente a su homóloga sin IVA y con IVA incluido. */
+/** Desajuste de una hipótesis con una cifra leída, en tolerancias del pie para esa cifra (≤ 1: cuadra). */
+function misfit(read: number, ifThis: number, ifPlain: number, ifIncluded: number, minTolerance: number): number {
+  return Math.abs(ifThis - read) / fitTolerance(read, Math.abs(roundMoney(ifPlain - ifIncluded)), minTolerance);
+}
+
+/**
+ * Solo subtotal o solo IVA leídos: la cifra frente a su homóloga sin IVA y con IVA incluido.
+ * REP13-06 (D59): se sugiere la incluida solo si cuadra con la tolerancia del pie y la otra no.
+ */
 function assessSingleFigure(
   reference: InvoiceTaxReference,
   ifPlain: number,
@@ -147,14 +156,10 @@ function assessSingleFigure(
 ): InvoiceTaxAssessment {
   const read = reference.amount;
   const gap = Math.abs(roundMoney(ifPlain - ifIncluded));
-  const gapTolerance = Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * gap);
   const zeroTax = reference.source === "tax" && Math.abs(read) < ZERO_TAX_EPSILON;
-  const includedSuggested =
-    !zeroTax &&
-    addedTax > 0 &&
-    Math.abs(ifIncluded - read) <= gapTolerance &&
-    Math.abs(ifPlain - read) > gapTolerance;
   const tolerance = fitTolerance(read, gap, minTolerance);
+  const includedSuggested =
+    !zeroTax && addedTax > 0 && Math.abs(ifIncluded - read) <= tolerance && Math.abs(ifPlain - read) > tolerance;
   return { reference, includedSuggested, exemptOrIncluded: false, tolerance };
 }
 
@@ -200,10 +205,17 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
   const includedGap = Math.abs(net - reference.amount);
   const suggestionTolerance = Math.max(minTolerance, SUGGESTION_TAX_SHARE * Math.abs(tax ?? addedTax));
   const tolerance = fitTolerance(reference.amount, gap, minTolerance);
-  const subtotalFitsIncluded =
-    total === undefined &&
-    subtotal !== undefined &&
-    Math.abs(baseIfIncluded - subtotal) <= fitTolerance(subtotal, Math.abs(net - baseIfIncluded), minTolerance);
+  // REP13-06 (D59): la excepción B20 exige además que "sin IVA" no cuadre mejor ninguna cifra leída
+  // (subtotal o IVA): si el IVA leído es justo el de las alícuotas, el mal leído es el subtotal.
+  let subtotalFitsIncluded = false;
+  if (total === undefined && subtotal !== undefined && tax !== undefined) {
+    const includedMisfit = misfit(subtotal, baseIfIncluded, net, baseIfIncluded, minTolerance);
+    const plainMisfit = Math.min(
+      misfit(subtotal, net, net, baseIfIncluded, minTolerance),
+      misfit(tax, addedTax, addedTax, roundMoney(net - baseIfIncluded), minTolerance),
+    );
+    subtotalFitsIncluded = includedMisfit <= 1 && includedMisfit < plainMisfit;
+  }
   const includedSuggested =
     !zeroTax &&
     addedTax > 0 &&

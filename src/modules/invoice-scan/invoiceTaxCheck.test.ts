@@ -199,6 +199,91 @@ const cases: Case[] = [
     mismatch: true,
     fitsSubtotalOnly: true,
   },
+  // REP13-06 (D59, D61): sin total, solo subtotal o solo IVA: ninguna hipótesis cuadra → no se preselecciona.
+  {
+    name: "QA REP13-05 qa-04 sin total: incluido roza el subtotal, sin IVA da el IVA leído exacto; no se sugiere",
+    lines: [L(162.19, 0), L(127.72, 0), L(680.82, 16)],
+    figures: { subtotal: 881.2, tax: 108.93 },
+    suggested: false,
+    mismatch: true,
+  },
+  {
+    name: "sin total, IVA incluido real con desglose",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 10000, tax: 1600 },
+    suggested: true,
+    mismatch: false,
+  },
+  {
+    name: "sin total, sin IVA real",
+    lines: [L(10000, 16)],
+    figures: { subtotal: 10000, tax: 1600 },
+    suggested: false,
+    mismatch: false,
+  },
+  {
+    name: "sin total, mixta con exento e IVA incluido",
+    lines: [L(5000, 0), L(11600, 16)],
+    figures: { subtotal: 15000, tax: 1600 },
+    suggested: true,
+    mismatch: false,
+  },
+  {
+    name: "solo subtotal: incluido a 200 de 10.200 (tolerancia del pie 102); ninguna cuadra",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 10200 },
+    suggested: false,
+    mismatch: true,
+  },
+  {
+    name: "solo subtotal, IVA incluido real",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 10000 },
+    suggested: true,
+    mismatch: false,
+  },
+  {
+    name: "solo subtotal, mixta con exento e IVA incluido",
+    lines: [L(5000, 0), L(11600, 16)],
+    figures: { subtotal: 15000 },
+    suggested: true,
+    mismatch: false,
+  },
+  {
+    name: "solo subtotal, exenta",
+    lines: [L(5000, 0)],
+    figures: { subtotal: 5000 },
+    suggested: false,
+    mismatch: false,
+  },
+  {
+    name: "solo IVA: incluido a 50 de 1.650 (tolerancia del pie 16,50); ninguna cuadra",
+    lines: [L(11600, 16)],
+    figures: { tax: 1650 },
+    suggested: false,
+    mismatch: true,
+  },
+  {
+    name: "solo IVA, IVA incluido real",
+    lines: [L(11600, 16)],
+    figures: { tax: 1600 },
+    suggested: true,
+    mismatch: false,
+  },
+  {
+    name: "solo IVA, mixta sin IVA",
+    lines: [L(5000, 0), L(10000, 16)],
+    figures: { tax: 1600 },
+    suggested: false,
+    mismatch: false,
+  },
+  {
+    name: "solo IVA 0,00, exenta",
+    lines: [L(5000, 0)],
+    figures: { tax: 0 },
+    suggested: false,
+    mismatch: false,
+  },
 ];
 
 describe("assessInvoiceTax · sugerencia de IVA incluido (D59)", () => {
@@ -220,5 +305,62 @@ describe("assessInvoiceTax · sugerencia de IVA incluido (D59)", () => {
     }
     // El servidor decide con la misma regla (D60-a).
     expect(serverTotals(lines, figures).mismatch).toBe(mismatch);
+  });
+});
+
+/**
+ * REP13-06 (D59): fuzz determinista sin total / solo subtotal / solo IVA, con la verdad conocida y
+ * una cifra mal leída. Si se sugiere "incluye IVA", la hipótesis incluida cuadra con la tolerancia
+ * del pie la referencia o (sin total, B20) el subtotal leído, y la de "sin IVA" no cuadra mejor
+ * ninguna cifra leída.
+ */
+describe("assessInvoiceTax · sin total, solo subtotal o solo IVA: no sugiere si la incluida no cuadra (D59)", () => {
+  /** Desajuste de una hipótesis con una cifra leída, en tolerancias del pie (≤ 1: cuadra). */
+  function misfit(lines: InvoiceTaxLine[], figure: "subtotal" | "tax", read: number, included: boolean): number {
+    const single = assessInvoiceTax({ lines, [figure]: read, minTolerance: 1 });
+    const registered = getInvoiceRegisteredAmounts(lines, included);
+    const compared = figure === "subtotal" ? registered.base : registered.tax;
+    return Math.abs(read - compared) / single.tolerance;
+  }
+
+  it("20.000 casos con semilla 1306: 0 sugerencias que no cuadran", () => {
+    let seed = 1306;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const kinds = ["sub+tax", "sub", "tax"] as const;
+    const errors = ["ok", "sub=exento", "sub=BIG", "sub×1.02", "tax=2x", "tax=16", "tax×1.04"] as const;
+    const failures: string[] = [];
+    for (let i = 0; i < 20000; i++) {
+      const incl = rnd() < 0.4;
+      const E = rnd() < 0.5 ? 0 : r2(rnd() * 20000);
+      const G16 = r2(10 + rnd() * 20000);
+      const G8 = rnd() < 0.2 ? r2(rnd() * 5000) : 0;
+      const plainLines = [L(E, 0), L(G16, 16), L(G8, 8)].filter((line) => line.amount > 0);
+      const lines = incl ? plainLines.map((l) => L(r2(l.amount * (1 + l.ratePct / 100)), l.ratePct)) : plainLines;
+      let subtotal = r2(E + G16 + G8);
+      let tax = r2(G16 * 0.16 + G8 * 0.08);
+      const error = errors[Math.floor(rnd() * errors.length)];
+      if (error === "sub=exento" && E) subtotal = E;
+      if (error === "sub=BIG" && E) subtotal = r2(G16 + G8);
+      if (error === "sub×1.02") subtotal = r2(subtotal * 1.02);
+      if (error === "tax=2x") tax = r2(tax * 2);
+      if (error === "tax=16") tax = 16;
+      if (error === "tax×1.04") tax = r2(tax * 1.04);
+      const kind = kinds[Math.floor(rnd() * kinds.length)];
+      const figures: Figures = kind === "sub+tax" ? { subtotal, tax } : kind === "sub" ? { subtotal } : { tax };
+      const assessment = assessInvoiceTax({ lines, ...figures, minTolerance: 1 });
+      if (!assessment.includedSuggested) continue;
+      const fitsReference =
+        getInvoiceTotalsGap(assessment, getInvoiceRegisteredAmounts(lines, true)) === undefined;
+      const fitsSubtotalBetter =
+        kind === "sub+tax" &&
+        misfit(lines, "subtotal", subtotal, true) <= 1 &&
+        misfit(lines, "subtotal", subtotal, true) <
+          Math.min(misfit(lines, "subtotal", subtotal, false), misfit(lines, "tax", tax, false));
+      if (!fitsReference && !fitsSubtotalBetter) {
+        failures.push(JSON.stringify({ kind, error, incl, lines, ...figures }));
+      }
+    }
+    expect(failures.slice(0, 3)).toEqual([]);
   });
 });
