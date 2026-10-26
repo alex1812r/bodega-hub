@@ -11,8 +11,10 @@ import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
 import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import { Input } from "@/shared/components/Input";
+import { formControlErrorClassName, formHelperClassName, formHelperErrorClassName } from "@/shared/styles/form-controls";
+import { cn } from "@/shared/utils/cn";
 
-import type { InvoiceReviewAction, InvoiceReviewState } from "../reviewModel";
+import { getHeaderDateMessage, type InvoiceReviewAction, type InvoiceReviewState } from "../reviewModel";
 import {
   duplicateCriterionLabel,
   formatConfidencePct,
@@ -78,6 +80,9 @@ export function InvoiceReviewHeader({
   const ownCheckboxRef = useRef<HTMLInputElement>(null);
   const acknowledgeRef = duplicateCheckboxRef ?? ownCheckboxRef;
   const acknowledge = useFreshPressCheckbox(acknowledgeRef);
+  // REP13-02 (M-p14B-1): la fecha se valida con la regla del servidor; el motivo va junto al campo.
+  const dateMessage = getHeaderDateMessage(state);
+  const dateMessageId = useId();
 
   return (
     <section aria-label="Datos de la factura" className="flex flex-col gap-4">
@@ -108,57 +113,60 @@ export function InvoiceReviewHeader({
         </div>
       ) : null}
 
-      {showDuplicate ? (
-        <div
-          className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
-          // REP12-05 (D49): aparece tras la consulta, con el dedo aún cerca; lo que aparece o se mueve en
-          // él queda guardado 1 s (useLayoutHold), como el pie.
-          data-layout-shift-guard
-          role="status"
-        >
-          <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
-          <div className="flex min-w-0 flex-col gap-2">
-            {duplicatePurchaseId ? (
-              <span>
-                Esta factura ({duplicateCriterionLabel(extraction)}) ya se registró en una compra. Revisa que no la cargues dos
-                veces.{" "}
-                <Link
-                  className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
-                  href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
-                >
-                  Ver
-                </Link>
-              </span>
-            ) : (
-              <span>
-                Esta factura ({duplicateCriterionLabel(extraction)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
-                veces.
-              </span>
-            )}
-            {onDuplicateAcknowledge ? (
-              // REP12-05 (M-qa-rep12-1): el texto no es su etiqueta; la casilla solo cambia con su propio
-              // control y una pulsación nueva sobre ella (como la de diferencia del pie, D54(a)(3)).
-              <div className="flex items-center gap-2 text-xs font-medium">
-                <input
-                  aria-labelledby={acknowledgeTextId}
-                  checked={duplicateAcknowledged}
-                  className="size-6 shrink-0 rounded border-border"
-                  onChange={(event) => {
-                    if (acknowledge.accepts(event)) {
-                      onDuplicateAcknowledge(event.target.checked);
-                    }
-                  }}
-                  onPointerDown={acknowledge.onPointerDown}
-                  onPointerUp={acknowledge.onPointerUp}
-                  ref={acknowledgeRef}
-                  type="checkbox"
-                />
-                <span id={acknowledgeTextId}>No es la misma compra, o quiero cargarla igual</span>
-              </div>
-            ) : null}
+      {/* D60(c): llega tras la consulta; useLayoutHold devuelve las filas a su punto. */}
+      <div className="empty:hidden" data-layout-notice>
+        {showDuplicate ? (
+          <div
+            className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
+            // REP12-05 (D49): aparece tras la consulta, con el dedo aún cerca; lo que aparece o se mueve en
+            // él queda guardado 1 s (useLayoutHold), como el pie.
+            data-layout-shift-guard
+            role="status"
+          >
+            <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <div className="flex min-w-0 flex-col gap-2">
+              {duplicatePurchaseId ? (
+                <span>
+                  Esta factura ({duplicateCriterionLabel(extraction)}) ya se registró en una compra. Revisa que no la cargues dos
+                  veces.{" "}
+                  <Link
+                    className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
+                    href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
+                  >
+                    Ver
+                  </Link>
+                </span>
+              ) : (
+                <span>
+                  Esta factura ({duplicateCriterionLabel(extraction)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
+                  veces.
+                </span>
+              )}
+              {onDuplicateAcknowledge ? (
+                // REP12-05 (M-qa-rep12-1): el texto no es su etiqueta; la casilla solo cambia con su propio
+                // control y una pulsación nueva sobre ella (como la de diferencia del pie, D54(a)(3)).
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <input
+                    aria-labelledby={acknowledgeTextId}
+                    checked={duplicateAcknowledged}
+                    className="size-6 shrink-0 rounded border-border"
+                    onChange={(event) => {
+                      if (acknowledge.accepts(event)) {
+                        onDuplicateAcknowledge(event.target.checked);
+                      }
+                    }}
+                    onPointerDown={acknowledge.onPointerDown}
+                    onPointerUp={acknowledge.onPointerUp}
+                    ref={acknowledgeRef}
+                    type="checkbox"
+                  />
+                  <span id={acknowledgeTextId}>No es la misma compra, o quiero cargarla igual</span>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-2">
@@ -208,12 +216,21 @@ export function InvoiceReviewHeader({
             label="Número de factura"
             onChange={(event) => onAction({ type: "editHeader", number: event.target.value })}
           />
-          <Input
-            label="Fecha"
-            onChange={(event) => onAction({ type: "editHeader", date: event.target.value })}
-            type="date"
-            value={header.date ?? ""}
-          />
+          <div>
+            <Input
+              aria-describedby={dateMessage ? dateMessageId : undefined}
+              aria-invalid={dateMessage ? true : undefined}
+              className={dateMessage ? formControlErrorClassName : undefined}
+              label="Fecha"
+              onChange={(event) => onAction({ type: "editHeader", date: event.target.value })}
+              type="date"
+              value={header.date ?? ""}
+            />
+            {/* Línea reservada (3 renglones caben el motivo a 1280 y 390): al aparecer no empuja lo de debajo. */}
+            <p className={cn(formHelperClassName, formHelperErrorClassName, "mt-2 min-h-[3lh]")} id={dateMessageId}>
+              {dateMessage}
+            </p>
+          </div>
           <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-1">
             <span className="text-xs font-medium text-on-surface-variant">Moneda de la factura</span>
             <span>

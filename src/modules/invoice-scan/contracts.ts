@@ -149,7 +149,8 @@ export const INVOICE_DATE_FORMAT_MESSAGE =
   "La fecha de la factura no tiene un formato válido. Escríbela como AAAA-MM-DD o DD/MM/AAAA, o déjala vacía.";
 export const INVOICE_DATE_OUT_OF_RANGE_MESSAGE = `La fecha de la factura debe ser de un año entre ${INVOICE_DATE_MIN_YEAR} y ${INVOICE_DATE_MAX_YEAR}. Corrígela o déjala vacía.`;
 
-const INVOICE_DATE_MESSAGES: Record<InvoiceDateIssue, string> = {
+/** Motivo en español de cada `InvoiceDateIssue`: el del servidor y el de la revisión (REP13-02). */
+export const INVOICE_DATE_MESSAGES: Record<InvoiceDateIssue, string> = {
   format: INVOICE_DATE_FORMAT_MESSAGE,
   range: INVOICE_DATE_OUT_OF_RANGE_MESSAGE,
   calendar: INVOICE_IMPOSSIBLE_DATE_MESSAGE,

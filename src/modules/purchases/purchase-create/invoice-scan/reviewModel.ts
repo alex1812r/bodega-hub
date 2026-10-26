@@ -21,6 +21,7 @@ import type {
   InvoiceScanConfirmedPurchase,
   InvoiceScanResponse,
 } from "@/modules/invoice-scan/contracts";
+import { getInvoiceDateIssue, INVOICE_DATE_MESSAGES } from "@/modules/invoice-scan/contracts";
 import {
   assessInvoiceTax,
   getInvoiceTotalsGap,
@@ -1619,14 +1620,37 @@ function differenceBlocker(source: InvoiceReviewTotals["readSource"]): string {
 }
 
 /**
+ * REP13-02 (M-p14B-1, D60(b)): por qué no vale la fecha de la cabecera, con la misma regla y el
+ * mismo mensaje que el servidor (`getInvoiceDateIssue`). `undefined` si vale o está vacía.
+ */
+export function getHeaderDateMessage(state: InvoiceReviewState): string | undefined {
+  const issue = state.header.date ? getInvoiceDateIssue(state.header.date) : undefined;
+  return issue ? INVOICE_DATE_MESSAGES[issue] : undefined;
+}
+
+/** REP13-06b: de qué trata cada bloqueo de Cargar (el pie compacto los nombra en breve). */
+export type InvoiceReviewBlockerReason =
+  | "purchase"
+  | "lines"
+  | "noLines"
+  | "supplier"
+  | "date"
+  | "usd"
+  | "rate"
+  | "difference";
+
+type InvoiceReviewBlocker = { reason: InvoiceReviewBlockerReason; message: string };
+
+/**
  * Por qué "Cargar en la compra" está deshabilitado, en español. Vacío = se puede cargar.
  * Además de las líneas pendientes exige proveedor confirmado, al menos una línea,
  * aceptar la anomalía de dólares y una tasa (salvo dólares aceptados, que ya son REF).
  */
-export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
-  const blockers: string[] = [];
+function collectInvoiceReviewBlockers(state: InvoiceReviewState): InvoiceReviewBlocker[] {
+  const blockers: InvoiceReviewBlocker[] = [];
+  const push = (reason: InvoiceReviewBlockerReason, message: string) => blockers.push({ reason, message });
   if (state.confirmedPurchase) {
-    blockers.push(confirmedPurchaseMessage(state.confirmedPurchase) + ".");
+    push("purchase", confirmedPurchaseMessage(state.confirmedPurchase) + ".");
   }
   const pending = getPendingCount(state);
   // REP6-04 (B-p6-1): líneas con el producto aceptado y completas a las que solo les falta elegir
@@ -1654,52 +1678,69 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   const costOnly = costPending.filter((line) => awaitsCostAcknowledgement(state, line)).length;
   const otherPending = pending - choiceOnly - productOnly - lookupOnly - costOnly;
   if (otherPending > 0) {
-    blockers.push(
+    push(
+      "lines",
       otherPending === 1 ? "Queda 1 línea por resolver." : `Quedan ${otherPending} líneas por resolver.`,
     );
   }
   if (choiceOnly > 0) {
-    blockers.push(
+    push(
+      "lines",
       choiceOnly === 1 ? "Falta elegir cómo viene en 1 línea." : `Falta elegir cómo viene en ${choiceOnly} líneas.`,
     );
   }
   if (lookupOnly > 0) {
-    blockers.push(
+    push(
+      "lines",
       lookupOnly === 1
         ? "Consultando el costo previo de 1 línea."
         : `Consultando el costo previo de ${lookupOnly} líneas.`,
     );
   }
   if (costOnly > 0) {
-    blockers.push(
+    push(
+      "lines",
       costOnly === 1
         ? "Falta confirmar el costo en 1 línea."
         : `Falta confirmar el costo en ${costOnly} líneas.`,
     );
   }
   if (productOnly > 0) {
-    blockers.push(
+    push(
+      "lines",
       productOnly === 1
         ? "Falta confirmar el producto en 1 línea."
         : `Falta confirmar el producto en ${productOnly} líneas.`,
     );
   }
   if (!state.lines.some((line) => !line.discarded)) {
-    blockers.push("No queda ninguna línea para cargar.");
+    push("noLines", "No queda ninguna línea para cargar.");
   }
   if (!state.header.supplier.contactId) {
-    blockers.push("Elige el proveedor.");
+    push("supplier", "Elige el proveedor.");
+  }
+  if (getHeaderDateMessage(state)) {
+    push("date", "Corrige la fecha de la factura.");
   }
   if (state.usd.anomaly && !state.usd.accepted) {
-    blockers.push("Confirma que la factura está en dólares para cargar los costos como REF.");
+    push("usd", "Confirma que la factura está en dólares para cargar los costos como REF.");
   }
   if (!isUsdAccepted(state) && getEffectiveRate(state) === undefined) {
-    blockers.push("Escribe la tasa para convertir los costos a REF.");
+    push("rate", "Escribe la tasa para convertir los costos a REF.");
   }
   if (needsDifferenceConfirmation(state)) {
-    blockers.push(differenceBlocker(getInvoiceReviewTotals(state).readSource));
+    push("difference", differenceBlocker(getInvoiceReviewTotals(state).readSource));
   }
   return blockers;
+}
+
+export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
+  return collectInvoiceReviewBlockers(state).map((blocker) => blocker.message);
+}
+
+/** REP13-06b: los mismos bloqueos, sin repetir motivo y en el mismo orden, para el pie compacto. */
+export function getInvoiceReviewBlockerReasons(state: InvoiceReviewState): InvoiceReviewBlockerReason[] {
+  return [...new Set(collectInvoiceReviewBlockers(state).map((blocker) => blocker.reason))];
 }
 
 export function canLoad(state: InvoiceReviewState): boolean {
@@ -1711,19 +1752,23 @@ export type InvoiceReviewSummary = {
   confirmedCount: number;
   canLoad: boolean;
   blockers: string[];
+  /** REP13-06b: motivos de los bloqueos, sin repetir (pie compacto). */
+  blockerReasons: InvoiceReviewBlockerReason[];
   totals: InvoiceReviewTotals;
   effectiveRate?: number;
 };
 
 /** Todo lo derivado que pinta el pie y la cabecera, en una llamada. */
 export function summarizeInvoiceReview(state: InvoiceReviewState): InvoiceReviewSummary {
-  const blockers = getInvoiceReviewBlockers(state);
+  const collected = collectInvoiceReviewBlockers(state);
+  const blockers = collected.map((blocker) => blocker.message);
   const effectiveRate = getEffectiveRate(state);
   return {
     pendingCount: getPendingCount(state),
     confirmedCount: getReviewSections(state).confirmedCount,
     canLoad: blockers.length === 0,
     blockers,
+    blockerReasons: [...new Set(collected.map((blocker) => blocker.reason))],
     totals: getInvoiceReviewTotals(state),
     ...(effectiveRate !== undefined ? { effectiveRate } : {}),
   };

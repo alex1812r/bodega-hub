@@ -19,10 +19,28 @@ import { roundMoney } from "@bodega/core/currency";
  *   precios incluyen IVA" exige que la hipótesis incluida quede a ≤ ¼ del IVA en juego de
  *   la cifra leída y la otra a más de ¼: con una parte gravada pequeña (≤ 6 % de una
  *   mixta) el 1 % del total la escondía (N11).
+ * - D59 (M-p14-1): además, frente a la referencia, la hipótesis incluida (Σ líneas) debe
+ *   cuadrar mejor que la otra (Σ líneas con su alícuota) y quedar a no más de
+ *   máx(mínimo, ½ del IVA leído o, sin él, del que añadirían las líneas): un subtotal o
+ *   un IVA mal leídos (el EXENTO, la BI G) inflan el IVA en juego y no pueden empujar
+ *   hacia la hipótesis que descuadra. Si ninguna cuadra, no se sugiere y la diferencia
+ *   exige la casilla.
+ * - REP13-04 (D59): la hipótesis sugerida cuadra la referencia con la MISMA tolerancia del
+ *   ✓ del pie (`tolerance`, `getInvoiceTotalsGap`), así el aviso («la suma de las líneas da
+ *   el total leído») nunca contradice el pie; ser solo la más cercana no basta (descuento
+ *   global, total redondeado, IVA al 8 %). Única excepción, sin total leído: si el subtotal
+ *   leído cuadra la base con IVA incluido (con la tolerancia del pie para un subtotal), se
+ *   sugiere aunque el IVA leído descuadre (B20 de caos p5: IVA leído = 16, la alícuota).
+ *   El tope literal de D59, mín(máx(1, 0,5 % del total), ½ IVA), no es compatible con B20
+ *   (1,6 de diferencia sobre 106 > 1) y es más estricto que el pie (perdería sugerencias
+ *   correctas que el pie da por cuadradas): se usa la tolerancia del pie, acotada además
+ *   por ½ IVA. REP13-06: la excepción B20 exige también que "sin IVA" no cuadre mejor el
+ *   subtotal ni el IVA leídos; con solo subtotal o solo IVA (`assessSingleFigure`) la incluida
+ *   se sugiere solo si cuadra con la tolerancia del pie y la otra no.
  * - IVA leído 0,00 (o subtotal = total): nunca se sugiere (N12). Si además Σ líneas da la
  *   referencia con líneas gravadas, no se puede saber si es exenta o una nota de despacho
  *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin
- *   preselección (D28). Con solo IVA 0,00 leído y líneas gravadas ninguna hipótesis lo
+ *   preselección (D28); REP13-06b: "da" es con la tolerancia del pie. Con solo IVA 0,00 leído y líneas gravadas ninguna hipótesis lo
  *   cuadra: no se pregunta, se pide la casilla (o marcar las líneas exentas).
  * - El cuadre con la cifra leída usa máx(mínimo, mín(1 % de la cifra, ¼ del IVA en
  *   juego)): el 1 % nunca tapa un IVA de más o de menos.
@@ -32,6 +50,8 @@ import { roundMoney } from "@bodega/core/currency";
 export const TOTALS_RELATIVE_TOLERANCE = 0.01;
 /** Fracción del IVA en juego que separa "cuadra" de "no cuadra" en la sugerencia y en el cuadre. */
 export const TAX_GAP_TOLERANCE_SHARE = 0.25;
+/** D59: la hipótesis incluida nunca se sugiere a más de la mitad del IVA (leído o, sin él, el de las líneas). */
+const SUGGESTION_TAX_SHARE = 0.5;
 /** Por debajo de medio céntimo el IVA leído es 0,00. */
 const ZERO_TAX_EPSILON = 0.005;
 
@@ -62,6 +82,8 @@ export type InvoiceTaxAssessment = {
   reference?: InvoiceTaxReference;
   /** De dónde sale la hipótesis "precios sin IVA" frente a un total (para explicar la sugerencia). */
   plainSource?: "subtotal" | "totalMinusTax" | "linesTax";
+  /** REP13-05: Σ líneas tal como se escribieron, frente a un total (para decir si lo da o solo se acerca). */
+  linesTotal?: number;
   /** La hipótesis "IVA incluido" cuadra la cifra leída y la otra no: los precios parecen incluirlo. */
   includedSuggested: boolean;
   /**
@@ -111,7 +133,20 @@ export function getInvoiceRegisteredAmounts(lines: InvoiceTaxLine[], included: b
     : { base: net, tax: roundMoney(withTax - net), total: withTax };
 }
 
-/** Solo subtotal o solo IVA leídos: la cifra frente a su homóloga sin IVA y con IVA incluido. */
+/** Tolerancia del cuadre con una cifra leída (la del ✓ del pie): máx(mínimo, mín(1 % de la cifra, ¼ del IVA en juego)). */
+function fitTolerance(read: number, gap: number, minTolerance: number): number {
+  return Math.max(minTolerance, Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TAX_GAP_TOLERANCE_SHARE * gap));
+}
+
+/** Desajuste de una hipótesis con una cifra leída, en tolerancias del pie para esa cifra (≤ 1: cuadra). */
+function misfit(read: number, ifThis: number, ifPlain: number, ifIncluded: number, minTolerance: number): number {
+  return Math.abs(ifThis - read) / fitTolerance(read, Math.abs(roundMoney(ifPlain - ifIncluded)), minTolerance);
+}
+
+/**
+ * Solo subtotal o solo IVA leídos: la cifra frente a su homóloga sin IVA y con IVA incluido.
+ * REP13-06 (D59): se sugiere la incluida solo si cuadra con la tolerancia del pie y la otra no.
+ */
 function assessSingleFigure(
   reference: InvoiceTaxReference,
   ifPlain: number,
@@ -121,17 +156,10 @@ function assessSingleFigure(
 ): InvoiceTaxAssessment {
   const read = reference.amount;
   const gap = Math.abs(roundMoney(ifPlain - ifIncluded));
-  const gapTolerance = Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * gap);
   const zeroTax = reference.source === "tax" && Math.abs(read) < ZERO_TAX_EPSILON;
+  const tolerance = fitTolerance(read, gap, minTolerance);
   const includedSuggested =
-    !zeroTax &&
-    addedTax > 0 &&
-    Math.abs(ifIncluded - read) <= gapTolerance &&
-    Math.abs(ifPlain - read) > gapTolerance;
-  const tolerance = Math.max(
-    minTolerance,
-    Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TAX_GAP_TOLERANCE_SHARE * gap),
-  );
+    !zeroTax && addedTax > 0 && Math.abs(ifIncluded - read) <= tolerance && Math.abs(ifPlain - read) > tolerance;
   return { reference, includedSuggested, exemptOrIncluded: false, tolerance };
 }
 
@@ -174,22 +202,37 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
   const gap = Math.abs(roundMoney(reference.amount - plainTarget));
   const gapTolerance = Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * gap);
   const zeroTax = tax !== undefined && Math.abs(tax) < ZERO_TAX_EPSILON;
+  const includedGap = Math.abs(net - reference.amount);
+  const suggestionTolerance = Math.max(minTolerance, SUGGESTION_TAX_SHARE * Math.abs(tax ?? addedTax));
+  const tolerance = fitTolerance(reference.amount, gap, minTolerance);
+  // REP13-06 (D59): la excepción B20 exige además que "sin IVA" no cuadre mejor ninguna cifra leída
+  // (subtotal o IVA): si el IVA leído es justo el de las alícuotas, el mal leído es el subtotal.
+  let subtotalFitsIncluded = false;
+  if (total === undefined && subtotal !== undefined && tax !== undefined) {
+    const includedMisfit = misfit(subtotal, baseIfIncluded, net, baseIfIncluded, minTolerance);
+    const plainMisfit = Math.min(
+      misfit(subtotal, net, net, baseIfIncluded, minTolerance),
+      misfit(tax, addedTax, addedTax, roundMoney(net - baseIfIncluded), minTolerance),
+    );
+    subtotalFitsIncluded = includedMisfit <= 1 && includedMisfit < plainMisfit;
+  }
   const includedSuggested =
     !zeroTax &&
     addedTax > 0 &&
-    Math.abs(net - reference.amount) <= gapTolerance &&
+    (includedGap <= tolerance || subtotalFitsIncluded) &&
+    includedGap <= gapTolerance &&
+    includedGap <= suggestionTolerance &&
+    includedGap < Math.abs(withTax - reference.amount) &&
     Math.abs(net - plainTarget) > gapTolerance;
   const noTaxRead = zeroTax || (plainSource === "subtotal" && gap < ZERO_TAX_EPSILON);
+  // REP13-06b (D59): se pregunta solo si Σ líneas cuadra la referencia con la tolerancia del pie
+  // (acotada por ½ del IVA de las alícuotas); antes bastaba ¼ de ese IVA, más que el pie.
   const exemptOrIncluded =
     noTaxRead &&
     addedTax > 0 &&
-    Math.abs(net - reference.amount) <= Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * addedTax);
-  const tolerance = Math.max(
-    minTolerance,
-    Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(reference.amount), TAX_GAP_TOLERANCE_SHARE * gap),
-  );
+    includedGap <= Math.min(tolerance, Math.max(minTolerance, SUGGESTION_TAX_SHARE * addedTax));
 
-  return { reference, plainSource, includedSuggested, exemptOrIncluded, tolerance };
+  return { reference, plainSource, linesTotal: net, includedSuggested, exemptOrIncluded, tolerance };
 }
 
 /** La cifra registrada homóloga de la referencia: total, base imponible o IVA. */

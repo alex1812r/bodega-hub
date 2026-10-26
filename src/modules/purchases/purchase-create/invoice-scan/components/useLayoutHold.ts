@@ -33,6 +33,16 @@ const LAYOUT_BOX_SELECTOR = "[data-layout-box]";
  */
 const SHIFT_GUARD_SELECTOR = "[data-layout-shift-guard]";
 
+/**
+ * D60(c): avisos dinámicos (duplicado, tasa, IVA) que aparecen, cambian o se van sin que se toquen
+ * (`[data-layout-notice]`, siempre montados), y la caja que no deben mover bajo el puntero
+ * (`[data-layout-notice-anchor]`, las filas). El pie fijo no se mueve con lo de arriba.
+ */
+const NOTICE_SELECTOR = "[data-layout-notice]";
+const NOTICE_ANCHOR_SELECTOR = "[data-layout-notice-anchor]";
+const STICKY_FOOTER_SELECTOR = '[data-layout-box="footer"]';
+const ROW_BOX_SELECTOR = '[data-layout-box^="row:"]';
+
 export type PointerActivation = { x: number; y: number; at: number; control: Element };
 
 /**
@@ -75,6 +85,35 @@ export function isSpatialRebound(
 }
 
 type LayoutHold<TOrder> = { order: TOrder; heights: ReadonlyMap<string, number> };
+
+/**
+ * D60(c): alto de cada aviso dinámico y punto de pantalla de las filas en la última medición.
+ * B-qa23-2: de cada aviso de una fila, el alto del bloque de la fila que lo contiene.
+ */
+type NoticeLayout = {
+  heights: ReadonlyMap<Element, number>;
+  anchorTop: number;
+  rowBlocks: ReadonlyMap<Element, number>;
+};
+
+/** `element` va después de `notice` en el documento, fuera de él: lo que crece `notice` lo desplaza. */
+function follows(notice: Element, element: Element) {
+  const position = notice.compareDocumentPosition(element);
+  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (position & Node.DOCUMENT_POSITION_CONTAINED_BY) === 0;
+}
+
+/**
+ * B-qa23-2: hijo directo de la fila (`[data-layout-box^="row:"]`) que contiene `notice`; si cambia de
+ * alto, lo que le sigue se mueve. `null` si el aviso no está en una fila.
+ */
+function rowBlock(notice: Element): Element | null {
+  const row = notice.closest(ROW_BOX_SELECTOR);
+  let block: Element | null = notice;
+  while (row && block && block.parentElement !== row) {
+    block = block.parentElement;
+  }
+  return row ? block : null;
+}
 
 /** Control pulsado y su caja, con su posición vertical antes de la acción. */
 type Anchor = { control: Element; controlTop: number; zone: Element | null; zoneTop: number };
@@ -199,9 +238,11 @@ function anchorNextRow(root: Element, before: ReadonlyMap<string, RowBox>): OwnS
 function scrollBack(element: Element, delta: number): OwnScroll | null {
   const scroller = scrollParent(element);
   const top = element.getBoundingClientRect().top;
+  const start = scroller.scrollTop;
   scroller.scrollBy({ top: delta, behavior: "instant" });
   if (Math.abs(element.getBoundingClientRect().top - top) < 1) {
-    scroller.scrollBy({ top: -delta, behavior: "instant" });
+    // REP13-03: se vuelve a donde estaba (con el desplazamiento ya en su tope, deshacer -delta lo movería).
+    scroller.scrollTop = start;
     return null;
   }
   return { scroller, top: scroller.scrollTop };
@@ -240,6 +281,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // B-qa02-1: cajas de las filas justo antes de aplicar el layout.
   const rowBoxesBeforeRef = useRef<Map<string, RowBox> | null>(null);
   const focusedKeyRef = useRef<string | undefined>(undefined);
+  // D60(c): avisos dinámicos y filas en la última medición.
+  const noticeLayoutRef = useRef<NoticeLayout | null>(null);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
     onFocusLostRef.current = onFocusLost;
@@ -356,6 +399,80 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     markMoved(movedAtRef.current, movedControls(before, controlPositions()));
   }, [holding, rootRef]);
+
+  /**
+   * D60(c): si un aviso dinámico cambió de alto y movió las filas, vuelven a su punto de pantalla
+   * (salvo que el control pulsado con el layout pendiente esté en el aviso o encima: manda su ancla).
+   * Lo que no se pudo devolver (no hay desplazamiento) queda guardado desde ESTE momento.
+   */
+  const followNotices = useCallback(() => {
+    const root = rootRef.current;
+    const anchor = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
+    if (!root || !anchor) {
+      noticeLayoutRef.current = null;
+      return;
+    }
+    const notices = [...root.querySelectorAll(NOTICE_SELECTOR)];
+    const heights = new Map(notices.map((notice) => [notice, notice.getBoundingClientRect().height] as const));
+    const rowBlocks = new Map(
+      notices.flatMap((notice) => {
+        const block = rowBlock(notice);
+        return block ? [[notice, block.getBoundingClientRect().height] as const] : [];
+      }),
+    );
+    const previous = noticeLayoutRef.current;
+    const resized = (notice: Element) =>
+      previous !== null && Math.abs((previous.heights.get(notice) ?? 0) - (heights.get(notice) ?? 0)) >= 1;
+    const changed = notices.find((notice) => !rowBlocks.has(notice) && resized(notice));
+    if (previous && changed && Math.abs(anchor.getBoundingClientRect().top - previous.anchorTop) >= 1) {
+      const held = holdRef.current ? anchorRef.current?.control : undefined;
+      const heldAbove = held?.isConnected === true && !follows(changed, held);
+      if (!heldAbove && previous.anchorTop < visibleRange(anchor).bottom) {
+        const own = scrollBack(anchor, anchor.getBoundingClientRect().top - previous.anchorTop);
+        if (own) {
+          ownScrollRef.current = own;
+        }
+      }
+      if (Math.abs(anchor.getBoundingClientRect().top - previous.anchorTop) >= 1) {
+        const moved = [...root.querySelectorAll(CONTROL_SELECTOR)].filter(
+          (control) => follows(changed, control) && !control.closest(STICKY_FOOTER_SELECTOR),
+        );
+        markMoved(movedAtRef.current, moved);
+      }
+    }
+    // B-qa23-2: el aviso de una fila que aparece al teclear y cambia el alto de su bloque mueve lo que le
+    // sigue (el resto de la fila y las de abajo): queda guardado desde ESTE momento.
+    for (const [notice, blockHeight] of rowBlocks) {
+      const blockBefore = previous?.rowBlocks.get(notice);
+      if (blockBefore !== undefined && resized(notice) && Math.abs(blockBefore - blockHeight) >= 1) {
+        const moved = [...root.querySelectorAll(CONTROL_SELECTOR)].filter(
+          (control) => follows(notice, control) && !control.closest(STICKY_FOOTER_SELECTOR),
+        );
+        markMoved(movedAtRef.current, moved);
+      }
+    }
+    noticeLayoutRef.current = { heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
+  }, [rootRef]);
+
+  // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
+  useLayoutEffect(() => followNotices());
+
+  // Lo que cambia sin render del panel (el aviso de duplicado al saber si ya está en una compra), y
+  // el desplazamiento del usuario, que solo renueva la medición.
+  useEffect(() => {
+    const root = rootRef.current;
+    window.addEventListener("scroll", followNotices, { capture: true, passive: true });
+    // jsdom no implementa ResizeObserver.
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followNotices);
+    if (root && observer) {
+      observer.observe(root);
+      root.querySelectorAll(NOTICE_SELECTOR).forEach((notice) => observer.observe(notice));
+    }
+    return () => {
+      window.removeEventListener("scroll", followNotices, { capture: true });
+      observer?.disconnect();
+    };
+  }, [followNotices, rootRef]);
 
   // B-p12B-2 (D49): la guarda anclada a la compactación vale también FUERA del panel (el formulario,
   // la cabecera): el recorte del desplazamiento al acortarse la página baja lo que está encima.

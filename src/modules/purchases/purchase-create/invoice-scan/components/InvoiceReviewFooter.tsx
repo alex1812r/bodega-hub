@@ -9,6 +9,7 @@ import { cn } from "@/shared/utils/cn";
 import {
   getTaxInclusion,
   type InvoiceReviewAction,
+  type InvoiceReviewBlockerReason,
   type InvoiceReviewState,
   type InvoiceReviewSummary,
   type InvoiceReviewTotals,
@@ -53,6 +54,17 @@ export type InvoiceReviewFooterProps = {
  * cambia con su propio control (el texto no es su etiqueta) y, con el puntero, con una pulsación que
  * empezó y terminó en ella después de su último cambio de sitio.
  */
+/** REP13-06b: nombre breve de cada motivo de bloqueo en el pie compacto (móvil). */
+const REASON_LABELS: Record<Exclude<InvoiceReviewBlockerReason, "lines">, string> = {
+  purchase: "ya registrada",
+  noLines: "ninguna línea",
+  supplier: "proveedor",
+  date: "fecha",
+  usd: "dólares",
+  rate: "tasa",
+  difference: "diferencia",
+};
+
 const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { label: string; against: string }> = {
   total: { label: "Leído", against: "total leído" },
   subtotalPlusTax: { label: "Subtotal + IVA leídos", against: "subtotal + IVA leídos" },
@@ -101,6 +113,37 @@ export function InvoiceReviewFooter({
   }
   // REP12-01: motivos del duplicado junto a los bloqueos (mientras se comprueba, solo ese).
   const duplicateReason = duplicatePending ? "pending" : duplicateUnacknowledged ? "unacknowledged" : null;
+  // REP13-06b: el pie compacto nombra todos los motivos, el duplicado antes de la diferencia.
+  const reasons: Array<InvoiceReviewBlockerReason | "duplicate"> = summary.blockerReasons.filter(
+    (reason) => reason !== "difference",
+  );
+  if (duplicateReason) {
+    reasons.push("duplicate");
+  }
+  if (summary.blockerReasons.includes("difference")) {
+    reasons.push("difference");
+  }
+  function reasonLabel(reason: InvoiceReviewBlockerReason | "duplicate") {
+    if (reason === "duplicate") {
+      return duplicateReason === "pending" ? (
+        "comprobando duplicados"
+      ) : (
+        <button
+          aria-label="Marca el aviso de factura duplicada (duplicado)"
+          className="cursor-pointer text-amber-700 underline underline-offset-2 hover:text-foreground dark:text-amber-300"
+          data-guarded-activation
+          onClick={onReviewDuplicate}
+          type="button"
+        >
+          duplicado
+        </button>
+      );
+    }
+    if (reason === "lines") {
+      return summary.pendingCount === 1 ? "1 pendiente" : `${summary.pendingCount} pendientes`;
+    }
+    return REASON_LABELS[reason];
+  }
 
   return (
     <footer
@@ -121,12 +164,9 @@ export function InvoiceReviewFooter({
       style={footerStyle}
     >
       {/* D54(a): en móvil, dos líneas reservadas (con la diferencia el total pasa a dos y empujaría «Cargar»).
-          REP12-06: con el fallo de duplicados a la vista, tres (que aparezca la diferencia no lo hace crecer). */}
+          REP13-06b: los motivos de bloqueo van en su propia línea reservada, debajo; esta no cambia de alto. */}
       <p
-        className={cn(
-          "col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0",
-          duplicateCheckFailed && !detailOpen ? "min-h-16" : "min-h-11",
-        )}
+        className="col-start-1 row-start-2 flex min-h-11 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0"
         data-testid="invoice-review-totals"
       >
         <span>
@@ -156,10 +196,6 @@ export function InvoiceReviewFooter({
             {totals.difference !== undefined ? `Diferencia ${money(totals.difference)}` : "Los totales no cuadran"}
           </span>
         )}
-        {/* REP12-06 (B-qa05-1): en móvil, con el detalle plegado, el fallo de la consulta de duplicados también se ve. */}
-        {duplicateCheckFailed && !detailOpen ? (
-          <span className="text-xs text-amber-700 sm:hidden dark:text-amber-300">No se pudo comprobar duplicados</span>
-        ) : null}
       </p>
 
       <Button
@@ -184,6 +220,35 @@ export function InvoiceReviewFooter({
       >
         {detailOpen ? <ChevronDown aria-hidden className="size-4" /> : <ChevronUp aria-hidden className="size-4" />}
       </button>
+
+      {/* REP13-06b: en móvil, con el detalle plegado, todos los motivos que bloquean Cargar en una línea
+          breve (dos como mucho) con alto fijo: que aparezca o se resuelva un motivo no mueve «Cargar».
+          REP12-06 / REP13-05: incluye el fallo de la consulta de duplicados y el aviso por marcar. */}
+      {detailOpen ? null : (
+        <p
+          className="col-span-3 row-start-3 line-clamp-2 h-8 min-w-0 text-xs leading-4 text-on-surface-variant sm:hidden"
+          data-testid="invoice-review-compact-blockers"
+        >
+          {reasons.length > 0 ? (
+            <span className="text-amber-700 dark:text-amber-300">
+              {"Falta: "}
+              {reasons.map((reason, index) => (
+                <span key={reason}>
+                  {index > 0 ? " · " : null}
+                  {reasonLabel(reason)}
+                </span>
+              ))}
+            </span>
+          ) : summary.canLoad ? (
+            "Lista para cargar."
+          ) : null}
+          {duplicateCheckFailed ? (
+            <span className="text-amber-700 dark:text-amber-300">
+              {reasons.length > 0 || summary.canLoad ? " · " : null}No se pudo comprobar duplicados
+            </span>
+          ) : null}
+        </p>
+      )}
 
       <div
         className={cn(
