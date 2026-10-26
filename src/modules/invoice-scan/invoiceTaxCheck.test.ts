@@ -47,7 +47,17 @@ function serverTotals(lines: InvoiceTaxLine[], figures: Figures) {
   return computeTotals(extraction, lines);
 }
 
-type Case = { name: string; lines: InvoiceTaxLine[]; figures: Figures; suggested: boolean; mismatch: boolean };
+type Case = {
+  name: string;
+  lines: InvoiceTaxLine[];
+  figures: Figures;
+  suggested: boolean;
+  mismatch: boolean;
+  /** 0,01 en dólares; por defecto 1 Bs. */
+  minTolerance?: number;
+  /** B20: sin total leído, la hipótesis incluida cuadra el subtotal leído aunque el IVA leído sea erróneo. */
+  fitsSubtotalOnly?: boolean;
+};
 
 const realF12 = f12Extraction();
 
@@ -150,11 +160,50 @@ const cases: Case[] = [
     suggested: false,
     mismatch: false,
   },
+  // REP13-04 (QA REP13-01): ninguna hipótesis cuadra; "incluido" es solo la más cercana y no se sugiere.
+  {
+    name: "QA REP13-01: descuento global, sin IVA real; ninguna cuadra",
+    lines: [L(46876.64, 16)],
+    figures: { subtotal: 41374.49, tax: 6619.92, total: 47994.41 },
+    suggested: false,
+    mismatch: true,
+  },
+  {
+    name: "descuento global sin subtotal (USD); ninguna cuadra",
+    lines: [L(280.24, 16)],
+    figures: { tax: 39.84, total: 288.81 },
+    suggested: false,
+    mismatch: true,
+    minTolerance: 0.01,
+  },
+  {
+    name: "IVA incluido real con el total redondeado a 10 (USD); ninguna cuadra",
+    lines: [L(112.73, 16)],
+    figures: { subtotal: 97.18, tax: 15.55, total: 110 },
+    suggested: false,
+    mismatch: true,
+    minTolerance: 0.01,
+  },
+  {
+    name: "IVA incluido real, IVA leído al 8 % de la base; ninguna cuadra",
+    lines: [L(70174.85, 0), L(116094.81, 16), L(5589.21, 8)],
+    figures: { subtotal: 175431.77, tax: 14034.54, total: 189466.31 },
+    suggested: false,
+    mismatch: true,
+  },
+  {
+    name: "B20 caos p5: IVA leído como 16 (la alícuota); el subtotal cuadra con IVA incluido",
+    lines: [L(104.4, 16)],
+    figures: { subtotal: 90, tax: 16 },
+    suggested: true,
+    mismatch: true,
+    fitsSubtotalOnly: true,
+  },
 ];
 
 describe("assessInvoiceTax · sugerencia de IVA incluido (D59)", () => {
-  it.each(cases)("$name", ({ lines, figures, suggested, mismatch }) => {
-    const assessment = assessInvoiceTax({ lines, ...figures, minTolerance: 1 });
+  it.each(cases)("$name", ({ lines, figures, suggested, mismatch, minTolerance = 1, fitsSubtotalOnly }) => {
+    const assessment = assessInvoiceTax({ lines, ...figures, minTolerance });
     const gapIncluded = getInvoiceTotalsGap(assessment, getInvoiceRegisteredAmounts(lines, true));
     const gapPlain = getInvoiceTotalsGap(assessment, getInvoiceRegisteredAmounts(lines, false));
 
@@ -162,6 +211,13 @@ describe("assessInvoiceTax · sugerencia de IVA incluido (D59)", () => {
     // La hipótesis elegida nunca descuadra si la otra cuadra.
     const [chosenGap, otherGap] = suggested ? [gapIncluded, gapPlain] : [gapPlain, gapIncluded];
     expect(chosenGap !== undefined && otherGap === undefined).toBe(false);
+    // REP13-04: la sugerida cuadra con el mismo criterio que el ✓ del pie (o, B20, con el subtotal leído).
+    if (assessment.includedSuggested) {
+      const fitted = fitsSubtotalOnly
+        ? assessInvoiceTax({ lines, subtotal: figures.subtotal, minTolerance })
+        : assessment;
+      expect(getInvoiceTotalsGap(fitted, getInvoiceRegisteredAmounts(lines, true))).toBeUndefined();
+    }
     // El servidor decide con la misma regla (D60-a).
     expect(serverTotals(lines, figures).mismatch).toBe(mismatch);
   });

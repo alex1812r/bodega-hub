@@ -25,6 +25,17 @@ import { roundMoney } from "@bodega/core/currency";
  *   un IVA mal leídos (el EXENTO, la BI G) inflan el IVA en juego y no pueden empujar
  *   hacia la hipótesis que descuadra. Si ninguna cuadra, no se sugiere y la diferencia
  *   exige la casilla.
+ * - REP13-04 (D59): la hipótesis sugerida cuadra la referencia con la MISMA tolerancia del
+ *   ✓ del pie (`tolerance`, `getInvoiceTotalsGap`), así el aviso («la suma de las líneas da
+ *   el total leído») nunca contradice el pie; ser solo la más cercana no basta (descuento
+ *   global, total redondeado, IVA al 8 %). Única excepción, sin total leído: si el subtotal
+ *   leído cuadra la base con IVA incluido (con la tolerancia del pie para un subtotal), se
+ *   sugiere aunque el IVA leído descuadre (B20 de caos p5: IVA leído = 16, la alícuota).
+ *   El tope literal de D59, mín(máx(1, 0,5 % del total), ½ IVA), no es compatible con B20
+ *   (1,6 de diferencia sobre 106 > 1) y es más estricto que el pie (perdería sugerencias
+ *   correctas que el pie da por cuadradas): se usa la tolerancia del pie, acotada además
+ *   por ½ IVA. Con solo subtotal o solo IVA leídos (`assessSingleFigure`) sigue la regla del
+ *   ¼ del IVA en juego.
  * - IVA leído 0,00 (o subtotal = total): nunca se sugiere (N12). Si además Σ líneas da la
  *   referencia con líneas gravadas, no se puede saber si es exenta o una nota de despacho
  *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin
@@ -119,6 +130,11 @@ export function getInvoiceRegisteredAmounts(lines: InvoiceTaxLine[], included: b
     : { base: net, tax: roundMoney(withTax - net), total: withTax };
 }
 
+/** Tolerancia del cuadre con una cifra leída (la del ✓ del pie): máx(mínimo, mín(1 % de la cifra, ¼ del IVA en juego)). */
+function fitTolerance(read: number, gap: number, minTolerance: number): number {
+  return Math.max(minTolerance, Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TAX_GAP_TOLERANCE_SHARE * gap));
+}
+
 /** Solo subtotal o solo IVA leídos: la cifra frente a su homóloga sin IVA y con IVA incluido. */
 function assessSingleFigure(
   reference: InvoiceTaxReference,
@@ -136,10 +152,7 @@ function assessSingleFigure(
     addedTax > 0 &&
     Math.abs(ifIncluded - read) <= gapTolerance &&
     Math.abs(ifPlain - read) > gapTolerance;
-  const tolerance = Math.max(
-    minTolerance,
-    Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(read), TAX_GAP_TOLERANCE_SHARE * gap),
-  );
+  const tolerance = fitTolerance(read, gap, minTolerance);
   return { reference, includedSuggested, exemptOrIncluded: false, tolerance };
 }
 
@@ -184,9 +197,15 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
   const zeroTax = tax !== undefined && Math.abs(tax) < ZERO_TAX_EPSILON;
   const includedGap = Math.abs(net - reference.amount);
   const suggestionTolerance = Math.max(minTolerance, SUGGESTION_TAX_SHARE * Math.abs(tax ?? addedTax));
+  const tolerance = fitTolerance(reference.amount, gap, minTolerance);
+  const subtotalFitsIncluded =
+    total === undefined &&
+    subtotal !== undefined &&
+    Math.abs(baseIfIncluded - subtotal) <= fitTolerance(subtotal, Math.abs(net - baseIfIncluded), minTolerance);
   const includedSuggested =
     !zeroTax &&
     addedTax > 0 &&
+    (includedGap <= tolerance || subtotalFitsIncluded) &&
     includedGap <= gapTolerance &&
     includedGap <= suggestionTolerance &&
     includedGap < Math.abs(withTax - reference.amount) &&
@@ -196,10 +215,6 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
     noTaxRead &&
     addedTax > 0 &&
     Math.abs(net - reference.amount) <= Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * addedTax);
-  const tolerance = Math.max(
-    minTolerance,
-    Math.min(TOTALS_RELATIVE_TOLERANCE * Math.abs(reference.amount), TAX_GAP_TOLERANCE_SHARE * gap),
-  );
 
   return { reference, plainSource, includedSuggested, exemptOrIncluded, tolerance };
 }
