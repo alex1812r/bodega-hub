@@ -292,37 +292,41 @@ export function InvoiceReviewLineRow({
             ) : null}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,8rem)_minmax(0,10rem)_auto] sm:items-end">
-            <NumberInput
-              data-need="quantity"
-              decimals={0}
-              label={line.entryMode === "pack" ? `Cantidad (${line.packLabel.toLowerCase()})` : "Cantidad"}
-              max={MAX_REVIEW_QUANTITY}
-              onValueChange={(value) =>
-                onAction({ type: "editQuantity", index, quantity: value ?? Number.NaN })
-              }
-              thousandsHint={false}
-              value={finiteOrNull(line.quantity)}
-            />
-            <NumberInput
-              data-need="unitPrice"
-              decimals={2}
-              label={`Costo (${currencyLabel}, ${taxLabel})`}
-              min={0}
-              onValueChange={(value) =>
-                onAction({ type: "editUnitPrice", index, unitPrice: value ?? Number.NaN })
-              }
-              thousandsHintPlacement="floating"
-              value={finiteOrNull(line.unitPrice)}
-            />
-            <div className="col-span-2 flex flex-col gap-2 sm:col-span-1">
-              <span className="text-xs font-medium text-on-surface-variant">IVA</span>
-              <TaxRateChips
-                label={`IVA de la línea ${index + 1}`}
-                onChange={(code) => onAction({ type: "editTaxRate", index, taxRateCode: code })}
-                rates={taxRates}
-                value={line.taxRateCode || null}
+          {/* REP14-02 (M-p15-2, D63): cantidad, costo e IVA en una fila según el ancho de la línea, no el de la
+              pantalla: a 1024 px con el menú lateral y la imagen la línea mide ~290 px y el costo se cortaba. */}
+          <div className="@container">
+            <div className="grid grid-cols-2 gap-3 @md:grid-cols-[minmax(0,8rem)_minmax(0,10rem)_auto] @md:items-end">
+              <NumberInput
+                data-need="quantity"
+                decimals={0}
+                label={line.entryMode === "pack" ? `Cantidad (${line.packLabel.toLowerCase()})` : "Cantidad"}
+                max={MAX_REVIEW_QUANTITY}
+                onValueChange={(value) =>
+                  onAction({ type: "editQuantity", index, quantity: value ?? Number.NaN })
+                }
+                thousandsHint={false}
+                value={finiteOrNull(line.quantity)}
               />
+              <NumberInput
+                data-need="unitPrice"
+                decimals={2}
+                label={`Costo (${currencyLabel}, ${taxLabel})`}
+                min={0}
+                onValueChange={(value) =>
+                  onAction({ type: "editUnitPrice", index, unitPrice: value ?? Number.NaN })
+                }
+                thousandsHintPlacement="floating"
+                value={finiteOrNull(line.unitPrice)}
+              />
+              <div className="col-span-2 flex flex-col gap-2 @md:col-span-1">
+                <span className="text-xs font-medium text-on-surface-variant">IVA</span>
+                <TaxRateChips
+                  label={`IVA de la línea ${index + 1}`}
+                  onChange={(code) => onAction({ type: "editTaxRate", index, taxRateCode: code })}
+                  rates={taxRates}
+                  value={line.taxRateCode || null}
+                />
+              </div>
             </div>
           </div>
 
