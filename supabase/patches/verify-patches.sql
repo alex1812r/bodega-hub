@@ -3173,4 +3173,30 @@ select
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
   ), false)
+union all
+select
+  'invoice_duplicate_candidates: sin numero casa el total y la fecha LEIDOS o los EFECTIVOS (confirmados si no vacios); devuelve ''date''/''total'' efectivos y ''read_date''/''read_total'' leidos (20261026a, REP14-05, M-qa1401-1; false = version anterior, solo leidos)',
+  coalesce((
+    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') as effective_date%'
+      and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') as effective_total%'
+      and p.prosrc ilike '%(s.extracted ->> ''total'') = any(p_totals)%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') = any(p_totals))%'
+      and p.prosrc ilike '%or (s.extracted ->> ''date'') = p_date%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') = p_date))%'
+      and p.prosrc ilike '%''date'', f.effective_date%''read_date'', f.extracted ->> ''date''%'
+      and p.prosrc ilike '%''total'', f.effective_total%''read_total'', f.extracted ->> ''total''%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
+union all
+select
+  'invoice_match_previous_scans: sin numero casa el total y la fecha LEIDOS o los EFECTIVOS (confirmados si no vacios); devuelve ''date''/''total'' efectivos y ''read_date''/''read_total'' leidos (20261019q, REP14-05, M-qa1401-1; false = version anterior, solo leidos)',
+  coalesce((
+    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') as effective_date%'
+      and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') as effective_total%'
+      and p.prosrc ilike '%(s.extracted ->> ''total'') = any(p_totals)%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') = any(p_totals))%'
+      and p.prosrc ilike '%or (s.extracted ->> ''date'') = p_date%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') = p_date))%'
+      and p.prosrc ilike '%''date'', f.effective_date%''read_date'', f.extracted ->> ''date''%'
+      and p.prosrc ilike '%''total'', f.effective_total%''read_total'', f.extracted ->> ''total''%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
+  ), false)
 order by 1;

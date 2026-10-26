@@ -25,6 +25,10 @@
 --    devuelve el efectivo y 'read_number' el leído (el BFF casa con cualquiera). Así, teclear
 --    el número correcto encuentra la compra confirmada tecleándolo aunque el modelo no lo
 --    leyera, y volver a leer el mismo número erróneo sin corregirlo sigue avisando.
+--    REP14-05 (M-qa1401-1, mismo criterio; edición idempotente, no desplegado): sin número,
+--    un escaneo casa por total y fecha si casan los LEÍDOS o los EFECTIVOS (los confirmados,
+--    confirmed.extraction.total / .date, si no están vacíos; si no los leídos). 'date' y
+--    'total' devuelven los efectivos y 'read_date' / 'read_total' los leídos.
 --    Los ids y RIF viajan en el cuerpo POST (D35: nada de texto de la factura en la URL).
 --    La usan POST /api/purchases/invoice-scan/duplicates (proveedor elegido / leído) y el
 --    emparejamiento del escaneo (loadMatchContext, con el proveedor LEÍDO: contacto resuelto y
@@ -94,7 +98,9 @@ begin
 
   with found as (
     select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status,
-           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') as effective_number
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') as effective_number,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), ''), s.extracted ->> 'date') as effective_date,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'total'), ''), s.extracted ->> 'total') as effective_total
     from public.invoice_scans s
     left join public.purchases pu on pu.id = s.purchase_id
     where s.store_id = v_store_id
@@ -105,9 +111,13 @@ begin
         (v_pattern is not null
          and (coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern
               or (s.extracted ->> 'number') ilike v_pattern))
+        -- REP14-05: total y fecha, los leídos o los efectivos (confirmados si no están vacíos).
         or (v_pattern is null
-            and (s.extracted ->> 'total') = any(p_totals)
-            and (p_date is null or (s.extracted ->> 'date') = p_date))
+            and ((s.extracted ->> 'total') = any(p_totals)
+                 or coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'total'), ''), s.extracted ->> 'total') = any(p_totals))
+            and (p_date is null
+                 or (s.extracted ->> 'date') = p_date
+                 or coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), ''), s.extracted ->> 'date') = p_date))
       )
       -- Proveedor antes del tope (superconjunto; el BFF aplica findDuplicateScans).
       and (
@@ -134,8 +144,10 @@ begin
            'read_number', f.extracted ->> 'number',
            'supplier_tax_id', f.extracted -> 'supplier' ->> 'taxId',
            'matched_contact_id', f.matched -> 'supplier' ->> 'contactId',
-           'date', f.extracted ->> 'date',
-           'total', f.extracted ->> 'total',
+           'date', f.effective_date,
+           'read_date', f.extracted ->> 'date',
+           'total', f.effective_total,
+           'read_total', f.extracted ->> 'total',
            'purchase_id', f.purchase_id,
            'purchase', case when f.purchase_status is null then null
                             else jsonb_build_object('status', f.purchase_status) end
