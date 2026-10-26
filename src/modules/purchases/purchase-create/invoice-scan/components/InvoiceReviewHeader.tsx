@@ -29,6 +29,12 @@ const CURRENCY_LABELS: Record<InvoiceReviewState["header"]["currency"], string> 
   unknown: "Sin identificar",
 };
 
+/** ISO `AAAA-MM-DD` → `DD/MM/AAAA` (como la muestra el campo). */
+function formatReadDate(date: string | undefined): string {
+  const [year, month, day] = (date ?? "").split("-");
+  return year && month && day ? `${day}/${month}/${year}` : (date ?? "");
+}
+
 export type InvoiceReviewHeaderProps = {
   state: InvoiceReviewState;
   onAction: (action: InvoiceReviewAction) => void;
@@ -83,6 +89,15 @@ export function InvoiceReviewHeader({
   // REP13-02 (M-p14B-1): la fecha se valida con la regla del servidor; el motivo va junto al campo.
   const dateMessage = getHeaderDateMessage(state);
   const dateMessageId = useId();
+  // REP14-03 (M-p15B-1, D64): el campo nativo da "" con 31/02 o dd/10/2026; `badInput` lo distingue de
+  // vaciarlo. De 31/02 a dd/02 no hay evento `input` (sigue ""): se mira también al soltar la tecla y salir.
+  const syncDate = (input: HTMLInputElement) =>
+    onAction({ type: "editHeader", date: input.value, dateInvalid: input.validity.badInput });
+  // Borrar la fecha leída pide confirmar registrar sin ella.
+  const askNoDate = Boolean(extraction.date) && !header.date && !header.dateInvalid;
+  const noDateTextId = useId();
+  const noDateRef = useRef<HTMLInputElement>(null);
+  const noDate = useFreshPressCheckbox(noDateRef);
 
   return (
     <section aria-label="Datos de la factura" className="@container flex flex-col gap-4">
@@ -222,18 +237,43 @@ export function InvoiceReviewHeader({
           />
           <div>
             <Input
-              aria-describedby={dateMessage ? dateMessageId : undefined}
+              aria-describedby={dateMessage || askNoDate ? dateMessageId : undefined}
               aria-invalid={dateMessage ? true : undefined}
               className={dateMessage ? formControlErrorClassName : undefined}
               label="Fecha"
-              onChange={(event) => onAction({ type: "editHeader", date: event.target.value })}
+              onBlur={(event) => syncDate(event.currentTarget)}
+              onChange={(event) => syncDate(event.currentTarget)}
+              onKeyUp={(event) => syncDate(event.currentTarget)}
               type="date"
               value={header.date ?? ""}
             />
             {/* Línea reservada: con el campo de ≥ 256 px (la rejilla de arriba lo asegura de 320 a 1440) el motivo
                 cabe en 3 renglones y al aparecer no empuja lo de debajo. */}
-            <p className={cn(formHelperClassName, formHelperErrorClassName, "mt-2 min-h-[3lh]")} id={dateMessageId}>
-              {dateMessage}
+            <p
+              className={cn(formHelperClassName, !askNoDate && formHelperErrorClassName, "mt-2 min-h-[3lh]")}
+              id={dateMessageId}
+            >
+              {askNoDate ? (
+                <span className="inline-flex items-center gap-2 font-medium">
+                  <input
+                    aria-labelledby={noDateTextId}
+                    checked={header.noDateConfirmed === true}
+                    className="size-6 shrink-0 rounded border-border"
+                    onChange={(event) => {
+                      if (noDate.accepts(event)) {
+                        onAction({ type: "confirmNoDate", confirmed: event.target.checked });
+                      }
+                    }}
+                    onPointerDown={noDate.onPointerDown}
+                    onPointerUp={noDate.onPointerUp}
+                    ref={noDateRef}
+                    type="checkbox"
+                  />
+                  <span id={noDateTextId}>Registrar sin fecha (se leyó {formatReadDate(extraction.date)})</span>
+                </span>
+              ) : (
+                dateMessage
+              )}
             </p>
           </div>
           <div className="flex flex-col gap-2 @xl:col-span-2 @2xl:col-span-1">
