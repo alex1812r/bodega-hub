@@ -3179,8 +3179,8 @@ select
   coalesce((
     select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') as effective_date%'
       and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') as effective_total%'
-      and p.prosrc ilike '%(s.extracted ->> ''total'') = any(p_totals)%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') = any(p_totals))%'
-      and p.prosrc ilike '%or (s.extracted ->> ''date'') = p_date%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') = p_date))%'
+      and p.prosrc ilike '%(jsonb_path_query_first(s.extracted, v_total_path)%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path)%'
+      and p.prosrc ilike '%else btrim((s.extracted ->> ''date'')) end) = v_date%else btrim(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), '''')) end) = v_date))%'
       and p.prosrc ilike '%''date'', f.effective_date%''read_date'', f.extracted ->> ''date''%'
       and p.prosrc ilike '%''total'', f.effective_total%''read_total'', f.extracted ->> ''total''%'
     from pg_proc p
@@ -3192,10 +3192,40 @@ select
   coalesce((
     select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') as effective_date%'
       and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') as effective_total%'
-      and p.prosrc ilike '%(s.extracted ->> ''total'') = any(p_totals)%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') = any(p_totals))%'
-      and p.prosrc ilike '%or (s.extracted ->> ''date'') = p_date%or coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') = p_date))%'
+      and p.prosrc ilike '%(jsonb_path_query_first(s.extracted, v_total_path)%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path)%'
+      and p.prosrc ilike '%else btrim((s.extracted ->> ''date'')) end) = v_date%else btrim(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), '''')) end) = v_date))%'
       and p.prosrc ilike '%''date'', f.effective_date%''read_date'', f.extracted ->> ''date''%'
       and p.prosrc ilike '%''total'', f.effective_total%''read_total'', f.extracted ->> ''total''%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
+  ), false)
+union all
+select
+  'invoice_duplicate_candidates: total comparado como numeric al centimo (solo decimal plano, sin error con basura) y fecha como clave ISO (DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD) en la fila y en p_totals/p_date (20261026a, REP14-05b; false = version anterior, texto contra texto)',
+  coalesce((
+    select p.prosrc ilike '%v_total_path constant jsonpath := ''$.total ? (@.type() == "number" || (@.type() == "string" && @ like_regex "^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$"))''%'
+      and p.prosrc ilike '%v_totals := array(select round(btrim(t)::numeric, 2) from unnest(p_totals) t%where t ~ ''^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$'')%'
+      and p.prosrc ilike '%and (round((jsonb_path_query_first(s.extracted, v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals)%'
+      and p.prosrc ilike '%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals))%'
+      and p.prosrc ilike '%v_date := (case when p_date ~ ''^ *[0-9]{1,2}([/-])[0-9]{1,2}%then split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 3)%lpad(split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 1), 2, ''0'')%'
+      and p.prosrc ilike '%then split_part(translate(btrim((s.extracted ->> ''date'')), ''/'', ''-''), ''-'', 3)%'
+      and p.prosrc not ilike '%= any(p_totals)%'
+      and p.prosrc not ilike '%= p_date%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
+union all
+select
+  'invoice_match_previous_scans: total comparado como numeric al centimo (solo decimal plano, sin error con basura) y fecha como clave ISO (DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD) en la fila y en p_totals/p_date (20261019q, REP14-05b; false = version anterior, texto contra texto)',
+  coalesce((
+    select p.prosrc ilike '%v_total_path constant jsonpath := ''$.total ? (@.type() == "number" || (@.type() == "string" && @ like_regex "^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$"))''%'
+      and p.prosrc ilike '%v_totals := array(select round(btrim(t)::numeric, 2) from unnest(p_totals) t%where t ~ ''^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$'')%'
+      and p.prosrc ilike '%and (round((jsonb_path_query_first(s.extracted, v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals)%'
+      and p.prosrc ilike '%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals))%'
+      and p.prosrc ilike '%v_date := (case when p_date ~ ''^ *[0-9]{1,2}([/-])[0-9]{1,2}%then split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 3)%lpad(split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 1), 2, ''0'')%'
+      and p.prosrc ilike '%then split_part(translate(btrim((s.extracted ->> ''date'')), ''/'', ''-''), ''-'', 3)%'
+      and p.prosrc not ilike '%= any(p_totals)%'
+      and p.prosrc not ilike '%= p_date%'
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
   ), false)

@@ -43,6 +43,15 @@
 --    la fecha LEÍDOS o los EFECTIVOS (confirmed->extraction->>total / ->>date si no están
 --    vacíos, si no los leídos); 'date'/'total' son los efectivos y 'read_date'/'read_total'
 --    los leídos.
+--    REP14-05b (edición idempotente): el total se compara como numeric redondeado al
+--    céntimo, no como texto (p_totals llega como String(cents/100), "27895", y el JSON
+--    guarda 27895.00 o el texto "7708.80"); lo que no es un número JSON ni un texto decimal
+--    plano (^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$) no casa y no lanza error, ni en la fila ni
+--    en p_totals (filtro en el jsonpath, antes del cast). «Leído o efectivo» = leído o
+--    confirmado (vacío -> el efectivo es el leído): una lectura del jsonb por campo. La fecha se compara como clave ISO: DD/MM/AAAA o DD-MM-AAAA (día y mes de
+--    1-2 dígitos, mismo separador, como admite la revisión) pasa a AAAA-MM-DD en la fila y
+--    en p_date; otro texto, tal cual (sin cast a date: lo imposible no casa, no falla).
+--    Día primero siempre. Igual que invoice_duplicate_candidates (20261026a).
 --
 -- Las tres devuelven un único jsonb: PostgREST no lo corta en max_rows.
 --
@@ -190,6 +199,10 @@ as $$
 declare
   v_store_id uuid;
   v_pattern text;
+  v_totals numeric[];
+  v_date text;
+  -- REP14-05b: número JSON, o texto decimal plano (sin exponente ni comas); lo demás no casa.
+  v_total_path constant jsonpath := '$.total ? (@.type() == "number" || (@.type() == "string" && @ like_regex "^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$"))';
   v_result jsonb;
 begin
   v_store_id := public.assert_store_context();
@@ -211,6 +224,16 @@ begin
     v_pattern := '%' || array_to_string(regexp_split_to_array(p_number, ''), '%');
   end if;
 
+  -- REP14-05b: p_totals a numeric al céntimo (los que no son un decimal plano se ignoran, sin
+  -- error) y p_date a clave ISO (DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD; si no, el texto).
+  v_totals := array(select round(btrim(t)::numeric, 2) from unnest(p_totals) t
+                    where t ~ '^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$');
+  v_date := (case when p_date ~ '^ *[0-9]{1,2}([/-])[0-9]{1,2}\1[0-9]{4} *$'
+            then split_part(translate(btrim(p_date), '/', '-'), '-', 3)
+                 || '-' || lpad(split_part(translate(btrim(p_date), '/', '-'), '-', 2), 2, '0')
+                 || '-' || lpad(split_part(translate(btrim(p_date), '/', '-'), '-', 1), 2, '0')
+            else btrim(p_date) end);
+
   with found as (
     select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status,
            coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') as effective_number,
@@ -227,12 +250,24 @@ begin
          and (coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern
               or (s.extracted ->> 'number') ilike v_pattern))
         -- REP14-05: total y fecha, los leídos o los efectivos (confirmados si no están vacíos).
+        -- REP14-05b: «leído o efectivo» = leído o confirmado (si el confirmado está vacío, el efectivo
+        -- es el leído; si no vale, no casa). Total: número JSON o texto decimal plano (v_total_path),
+        -- a numeric al céntimo, leyendo el jsonb una vez por campo. Fecha: clave ISO (DD/MM/AAAA o
+        -- DD-MM-AAAA -> AAAA-MM-DD; otro texto tal cual).
         or (v_pattern is null
-            and ((s.extracted ->> 'total') = any(p_totals)
-                 or coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'total'), ''), s.extracted ->> 'total') = any(p_totals))
-            and (p_date is null
-                 or (s.extracted ->> 'date') = p_date
-                 or coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), ''), s.extracted ->> 'date') = p_date))
+            and (round((jsonb_path_query_first(s.extracted, v_total_path) #>> '{}')::numeric, 2) = any(v_totals)
+                 or round((jsonb_path_query_first(s.confirmed -> 'extraction', v_total_path) #>> '{}')::numeric, 2) = any(v_totals))
+            and (v_date is null
+                 or (case when (s.extracted ->> 'date') ~ '^ *[0-9]{1,2}([/-])[0-9]{1,2}\1[0-9]{4} *$'
+                       then split_part(translate(btrim((s.extracted ->> 'date')), '/', '-'), '-', 3)
+                            || '-' || lpad(split_part(translate(btrim((s.extracted ->> 'date')), '/', '-'), '-', 2), 2, '0')
+                            || '-' || lpad(split_part(translate(btrim((s.extracted ->> 'date')), '/', '-'), '-', 1), 2, '0')
+                       else btrim((s.extracted ->> 'date')) end) = v_date
+                 or (case when nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '') ~ '^ *[0-9]{1,2}([/-])[0-9]{1,2}\1[0-9]{4} *$'
+                       then split_part(translate(btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')), '/', '-'), '-', 3)
+                            || '-' || lpad(split_part(translate(btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')), '/', '-'), '-', 2), 2, '0')
+                            || '-' || lpad(split_part(translate(btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')), '/', '-'), '-', 1), 2, '0')
+                       else btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')) end) = v_date))
       )
     order by s.created_at desc, s.id
     limit p_limit
