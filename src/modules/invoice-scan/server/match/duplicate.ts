@@ -32,8 +32,10 @@ export type DuplicateScanInput = {
  * normalizado; si no hay ninguno, posible duplicado (caos 5.4): mismo proveedor, mismo total
  * (±0,01) y
  * - número que difiere en un solo carácter y misma fecha, o
- * - sin número leído y misma fecha (o sin fecha leída tampoco).
- * El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó registrada
+ * - sin número leído y misma fecha (o sin fecha leída tampoco), o
+ * - previo sin ningún número (ni leído ni confirmado) y misma fecha (REP14-01).
+ * El número del previo es el leído (`readNumber`) o el efectivo (`number`): casa cualquiera
+ * (REP14-01, D63). El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó registrada
  * (REP3-03a). La compra `devuelto` sí (D26). Los confirmados con compra van primero
  * (SCN-UI-C2); si no, en el orden de `previousScans` (del más reciente al más antiguo).
  */
@@ -47,8 +49,11 @@ export function findDuplicateScans(input: DuplicateScanInput): MatchPreviousScan
       [scan.supplierTaxId, ...(scan.contactTaxIds ?? [])].some((theirTaxId) => sameTaxId(mineTaxId, theirTaxId)),
     );
 
+  const numbersOf = (scan: MatchPreviousScan) =>
+    [scan.number, scan.readNumber].map(normalizeInvoiceNumber).filter((value) => value !== "");
+
   if (number) {
-    const exact = previousScans.filter((scan) => normalizeInvoiceNumber(scan.number) === number && sameSupplier(scan));
+    const exact = previousScans.filter((scan) => numbersOf(scan).includes(number) && sameSupplier(scan));
     if (exact.length > 0) {
       return confirmedFirst(exact);
     }
@@ -71,7 +76,9 @@ export function findDuplicateScans(input: DuplicateScanInput): MatchPreviousScan
       if (date && scan.date?.trim() !== date) {
         return false;
       }
-      if (number && !withinOneEdit(number, normalizeInvoiceNumber(scan.number))) {
+      // REP14-01: un previo sin ningún número no descarta; con número, a un carácter de alguno.
+      const theirs = numbersOf(scan);
+      if (number && theirs.length > 0 && !theirs.some((their) => withinOneEdit(number, their))) {
         return false;
       }
       return sameSupplier(scan);

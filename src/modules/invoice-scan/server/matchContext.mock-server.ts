@@ -275,6 +275,16 @@ function mockScanOfSupplier(
 }
 
 /**
+ * Paridad mock de `invoice_duplicate_candidates` e `invoice_match_previous_scans` (REP14-01, M-p15-1, D63): número EFECTIVO del
+ * escaneo, el confirmado por el usuario (`confirmed.extraction.number`) si existe y no está vacío;
+ * si no, el leído.
+ */
+function mockEffectiveNumber(scan: ReturnType<typeof listMockScansOfStore>[number]): string | null {
+  const typed = (scan.confirmed as { extraction?: { number?: unknown } | null } | null)?.extraction?.number;
+  return typeof typed === "string" && typed.trim() !== "" ? typed : (scan.extracted?.number ?? null);
+}
+
+/**
  * REP12-01: también la usa `POST /api/purchases/invoice-scan/duplicates` en mock (paridad con `loadPreviousScans`).
  * REP12-06: con `supplier`, el proveedor se filtra antes del tope, como `invoice_duplicate_candidates`.
  */
@@ -290,6 +300,7 @@ export function listMockPreviousScans(
   const date = extraction.date?.trim();
   const cents = typeof total === "number" && Number.isFinite(total) && total > 0 && (date || !number) ? Math.round(total * 100) : undefined;
   const supplierParams = supplier ? duplicateSupplierParams(supplier) : undefined;
+  // REP14-01 (D63): como 20261026a y 20261019q, casa el número efectivo o el leído.
   const live = listMockScansOfStore(storeId).filter(
     (scan) =>
       scan.id !== excludeScanId &&
@@ -298,7 +309,11 @@ export function listMockPreviousScans(
       (!supplierParams || mockScanOfSupplier(storeId, scan, supplierParams)),
   );
   const byNumber = number
-    ? live.filter((scan) => normalizeInvoiceNumber(scan.extracted?.number) === number).slice(0, PREVIOUS_SCANS_LIMIT)
+    ? live
+        .filter((scan) =>
+          [mockEffectiveNumber(scan), scan.extracted?.number].some((value) => normalizeInvoiceNumber(value) === number),
+        )
+        .slice(0, PREVIOUS_SCANS_LIMIT)
     : [];
   const byDateTotal =
     cents === undefined
@@ -326,7 +341,8 @@ export function listMockPreviousScans(
     matchedContactId: scan.matched?.supplier.contactId ?? undefined,
     supplierTaxId: scan.extracted?.supplier.taxId ?? null,
     ...contactTaxIdsOf(taxIds, [scan.supplierId, scan.matched?.supplier.contactId]),
-    number: scan.extracted?.number ?? null,
+    number: mockEffectiveNumber(scan),
+    readNumber: scan.extracted?.number ?? undefined,
     date: scan.extracted?.date,
     total: scan.extracted?.total,
     purchaseId: scan.purchaseId ?? undefined,

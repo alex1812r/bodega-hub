@@ -34,8 +34,11 @@
 --        quien llama filtra después por igualdad normalizada;
 --      * sin p_number: extracted->>total es uno de p_totals (texto del número
 --        JSON) y, si viene p_date, extracted->>date = p_date.
---    [{ id, supplier_id, number, supplier_tax_id, matched_contact_id, date,
---       total, purchase_id, purchase: { status } | null }].
+--    [{ id, supplier_id, number, read_number, supplier_tax_id, matched_contact_id,
+--       date, total, purchase_id, purchase: { status } | null }].
+--    REP14-01 (M-p15-1, D63; edición idempotente, 19q no desplegado): con p_number casa
+--    el número LEÍDO (extracted->>number) o el EFECTIVO (confirmed->extraction->>number
+--    si no está vacío, si no el leído); 'number' es el efectivo y 'read_number' el leído.
 --
 -- Las tres devuelven un único jsonb: PostgREST no lo corta en max_rows.
 --
@@ -205,14 +208,18 @@ begin
   end if;
 
   with found as (
-    select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status
+    select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') as effective_number
     from public.invoice_scans s
     left join public.purchases pu on pu.id = s.purchase_id
     where s.store_id = v_store_id
       and s.status not in ('discarded', 'failed')
       and (p_exclude_scan_id is null or s.id <> p_exclude_scan_id)
       and (
-        (v_pattern is not null and (s.extracted ->> 'number') ilike v_pattern)
+        -- REP14-01 (D63): número efectivo (el confirmado si no está vacío, si no el leído) o el leído.
+        (v_pattern is not null
+         and (coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern
+              or (s.extracted ->> 'number') ilike v_pattern))
         or (v_pattern is null
             and (s.extracted ->> 'total') = any(p_totals)
             and (p_date is null or (s.extracted ->> 'date') = p_date))
@@ -223,7 +230,8 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
            'id', f.id,
            'supplier_id', f.supplier_id,
-           'number', f.extracted ->> 'number',
+           'number', f.effective_number,
+           'read_number', f.extracted ->> 'number',
            'supplier_tax_id', f.extracted -> 'supplier' ->> 'taxId',
            'matched_contact_id', f.matched -> 'supplier' ->> 'contactId',
            'date', f.extracted ->> 'date',

@@ -178,8 +178,16 @@ export type MatchPreviousScan = {
    * `matchedContactId`; se cruza con el RIF leído y con el de los contactos del actual.
    */
   contactTaxIds?: string[];
-  /** Número de factura leído en ese escaneo (`extracted->number`). */
+  /**
+   * Número de factura EFECTIVO de ese escaneo (REP14-01, D63): el confirmado
+   * (`confirmed->extraction->number`) si existe y no está vacío, si no el leído.
+   */
   number: string | null;
+  /**
+   * REP14-01: número LEÍDO (`extracted->number`). La regla casa con este o con `number`: si el
+   * modelo vuelve a leer el mismo número erróneo y el usuario no lo corrige, el aviso sigue.
+   */
+  readNumber?: string | null;
   /** Fecha leída en ese escaneo (`extracted->date`, ISO), para el posible duplicado. */
   date?: string | null;
   /** Total leído en ese escaneo (`extracted->total`), para el posible duplicado. */

@@ -191,7 +191,10 @@ export function duplicateSupplierParams(filter: DuplicateSupplierFilter): {
 type PreviousScanRow = {
   id: string;
   supplier_id: string | null;
+  /** REP14-01 (D63): número EFECTIVO (confirmado si no está vacío, si no el leído). */
   number: string | null;
+  /** REP14-01: número LEÍDO (`extracted->number`). */
+  read_number?: string | null;
   supplier_tax_id: string | null;
   matched_contact_id: string | null;
   date?: string | null;
@@ -376,6 +379,7 @@ export async function loadPreviousScans(
     supplierTaxId: row.supplier_tax_id ?? null,
     ...contactTaxIdsOf(taxIds, [row.supplier_id, row.matched_contact_id]),
     number: row.number ?? null,
+    readNumber: row.read_number ?? undefined,
     date: row.date ?? undefined,
     total: toNumber(row.total),
     purchaseId: row.purchase_id ?? undefined,
@@ -476,7 +480,8 @@ async function loadPreviousScansByNumber(
   throwIfSupabaseError(error);
 
   return ((data ?? []) as PreviousScanRow[])
-    .filter((row) => normalizeInvoiceNumber(row.number) === number)
+    // REP14-01: casa el número efectivo o el leído (la RPC filtra por cualquiera de los dos).
+    .filter((row) => [row.number, row.read_number].some((value) => normalizeInvoiceNumber(value) === number))
     .slice(0, PREVIOUS_SCANS_LIMIT);
 }
 
