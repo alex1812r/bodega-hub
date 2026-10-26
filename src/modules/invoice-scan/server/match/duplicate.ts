@@ -1,6 +1,6 @@
 import type { MatchPreviousScan } from "../match.types";
 
-import { normalizeInvoiceNumber, sameTaxId, withinOneEdit } from "./text";
+import { invoiceDateKey, normalizeInvoiceNumber, sameTaxId, withinOneEdit } from "./text";
 
 /** Tolerancia del total para el posible duplicado (caos 5.4). */
 const DUPLICATE_TOTAL_TOLERANCE = 0.01 + 1e-9;
@@ -36,7 +36,8 @@ export type DuplicateScanInput = {
  * - previo sin ningún número (ni leído ni confirmado) y misma fecha (REP14-01).
  * El número del previo es el leído (`readNumber`) o el efectivo (`number`): casa cualquiera
  * (REP14-01, D63). Igual la fecha y el total del previo: casa el leído (`readDate`, `readTotal`)
- * o el efectivo (`date`, `total`: el confirmado si no está vacío) (REP14-05). El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó registrada
+ * o el efectivo (`date`, `total`: el confirmado si no está vacío) (REP14-05); la fecha se compara
+ * por `invoiceDateKey` (DD/MM/AAAA = AAAA-MM-DD, REP14-05b). El escaneo de una compra anulada (`cancelado`) no cuenta: la factura no quedó registrada
  * (REP3-03a). La compra `devuelto` sí (D26). Los confirmados con compra van primero
  * (SCN-UI-C2); si no, en el orden de `previousScans` (del más reciente al más antiguo).
  */
@@ -64,7 +65,7 @@ export function findDuplicateScans(input: DuplicateScanInput): MatchPreviousScan
   if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
     return [];
   }
-  const date = input.date?.trim() || undefined;
+  const date = invoiceDateKey(input.date) || undefined;
   if (!date && number) {
     return [];
   }
@@ -76,7 +77,8 @@ export function findDuplicateScans(input: DuplicateScanInput): MatchPreviousScan
       if (!totals.some((their) => Math.abs(their - total) <= DUPLICATE_TOTAL_TOLERANCE)) {
         return false;
       }
-      if (date && ![scan.date, scan.readDate].some((their) => their?.trim() === date)) {
+      // REP14-05b: por la fecha del calendario (DD/MM/AAAA = AAAA-MM-DD), no por el texto.
+      if (date && ![scan.date, scan.readDate].some((their) => invoiceDateKey(their) === date)) {
         return false;
       }
       // REP14-01: un previo sin ningún número no descarta; con número, a un carácter de alguno.

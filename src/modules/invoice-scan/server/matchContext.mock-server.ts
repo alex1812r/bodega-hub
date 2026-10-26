@@ -60,7 +60,7 @@ import type {
 } from "./match.types";
 import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
-import { normalizeInvoiceNumber, normalizeTaxId, sameTaxId, textSimilarity } from "./match/text";
+import { invoiceDateKey, normalizeInvoiceNumber, normalizeTaxId, sameTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
 
 /** Mismos umbrales que `invoice_match_candidates` (20261019d). */
@@ -344,7 +344,9 @@ export function listMockPreviousScans(
             (scan) =>
               [scan.extracted?.total, mockEffectiveTotal(scan)].some(
                 (scanTotal) => typeof scanTotal === "number" && Math.abs(Math.round(scanTotal * 100) - cents) <= 1,
-              ) && (!date || [scan.extracted?.date, mockEffectiveDate(scan)].includes(date)),
+              ) &&
+              // REP14-05b: fecha por clave ISO (DD/MM/AAAA = AAAA-MM-DD), como 20261026a y 20261019q.
+              (!date || [scan.extracted?.date, mockEffectiveDate(scan)].some((value) => invoiceDateKey(value) === invoiceDateKey(date))),
           )
           .slice(0, PREVIOUS_SCANS_LIMIT);
 
