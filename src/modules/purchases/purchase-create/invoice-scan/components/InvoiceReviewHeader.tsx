@@ -190,10 +190,12 @@ export function InvoiceReviewHeader({
         <div className="flex flex-col gap-2">
           <PurchaseSupplierCard
             onSupplierChange={(contactId, name) => {
-              // Quitarlo no tiene acción en el modelo: hace falta un proveedor para cargar.
-              if (contactId) {
-                onAction({ type: "setSupplier", supplier: { contactId, name: name ?? supplier.readName } });
-              }
+              // REP14-04 (B-p14-1): la × lo quita de verdad; sin proveedor Cargar pide elegirlo.
+              onAction(
+                contactId
+                  ? { type: "setSupplier", supplier: { contactId, name: name ?? supplier.readName } }
+                  : { type: "clearSupplier" },
+              );
             }}
             selectedSupplierId={supplier.contactId ?? ""}
             supplierFetcher={supplierFetcher}
