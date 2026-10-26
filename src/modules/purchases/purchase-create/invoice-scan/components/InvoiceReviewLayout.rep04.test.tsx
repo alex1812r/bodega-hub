@@ -54,14 +54,17 @@ function row(index: number) {
 }
 
 describe("revisión · layout y candidatos (REP-04)", () => {
-  it("número y fecha se apilan desde lg (1280 px) para que la fecha no se corte; lado a lado solo en sm..lg", () => {
+  // REP14-02 (D63): por el ancho de la cabecera (@container), no del viewport; los anchos reales los mide
+  // InvoiceReviewPanel.rep14-02.stories.tsx (320–1440 con el menú lateral).
+  it("número y fecha se apilan si la cabecera es estrecha o va en dos columnas; lado a lado solo con @xl en una columna", () => {
     renderPanel(makeReviewResponse({ lines: [{}] }));
 
     const date = screen.getByLabelText("Fecha");
     const fields = date.closest("div.grid");
     expect(fields).not.toBeNull();
     expect(fields).toContainElement(screen.getByLabelText("Número de factura"));
-    expect(fields).toHaveClass("grid-cols-1", "sm:grid-cols-2", "lg:grid-cols-1");
+    expect(fields).toHaveClass("grid-cols-1", "@xl:grid-cols-2", "@2xl:grid-cols-1");
+    expect(screen.getByRole("region", { name: "Datos de la factura" })).toHaveClass("@container");
   });
 
   it("el texto leído de la línea envuelve (no trunca) y conserva el title", () => {
