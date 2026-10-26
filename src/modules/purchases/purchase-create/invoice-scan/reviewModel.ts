@@ -293,6 +293,8 @@ export type InvoiceReviewAction =
   /** D25-a: confirma (o retira) cargar con la diferencia actual frente al total leído. */
   | { type: "confirmTotalsDifference"; confirmed: boolean }
   | { type: "setSupplier"; supplier: { contactId: string; name: string } }
+  /** REP14-04 (B-p14-1): la × del proveedor lo quita; sin él Cargar pide elegirlo. */
+  | { type: "clearSupplier" }
   | { type: "editHeader"; number?: string; date?: string; dateInvalid?: boolean }
   /** REP14-03 (D64): confirma (o retira) registrar sin fecha tras borrar la leída. */
   | { type: "confirmNoDate"; confirmed: boolean }
@@ -1063,8 +1065,25 @@ function rateReducer(state: InvoiceReviewState, choice: InvoiceRateChoice, manua
  */
 function adoptSystemRate(state: InvoiceReviewState, system: number): InvoiceReviewState {
   const { rate } = state;
-  if (!isPositive(system) || rate.system !== undefined || rate.explicit) {
+  if (!isPositive(system) || rate.system !== undefined) {
     return state;
+  }
+  if (rate.explicit) {
+    // REP14-04 (B-p15B-2): la elección del usuario se respeta, pero ya hay tasa del día: se ofrece
+    // y deja de valer el aviso de «no hay tasa del día» (`notice`, `unverified`).
+    const warning = rate.printed !== undefined ? printedRateWarning(system, rate.printed) : undefined;
+    return {
+      ...state,
+      rate: {
+        system,
+        ...(rate.printed !== undefined ? { printed: rate.printed } : {}),
+        ...(rate.ignoredWarning ? { ignoredWarning: rate.ignoredWarning } : {}),
+        choice: rate.choice,
+        ...(rate.manual !== undefined ? { manual: rate.manual } : {}),
+        ...(warning ? { warning } : {}),
+        explicit: true,
+      },
+    };
   }
   const ignored = rate.printed !== undefined && isPlausiblePrintedRate(rate.printed, { system }) === false;
   const printed = ignored ? undefined : rate.printed;
@@ -1217,6 +1236,13 @@ function applyAction(state: InvoiceReviewState, action: InvoiceReviewAction): In
           supplier: { ...state.header.supplier, contactId: action.supplier.contactId, name: action.supplier.name },
         },
       };
+    case "clearSupplier": {
+      if (!state.header.supplier.contactId) {
+        return state;
+      }
+      const { candidates, readName } = state.header.supplier;
+      return { ...state, header: { ...state.header, supplier: { name: readName, readName, candidates } } };
+    }
     case "editHeader": {
       const header = { ...state.header };
       if (action.number !== undefined) {
@@ -1354,6 +1380,28 @@ export function getEffectiveRate(state: InvoiceReviewState): number | undefined 
     return rate.printed;
   }
   return rate.manual;
+}
+
+/**
+ * REP14-04 (B-p15B-2): aviso de la tasa en uso. `rate.notice` describe la tasa de partida (sin
+ * tasa del día); con la tasa escrita a mano, o con la del día ya llegada, dice cuál se usa.
+ */
+export function getRateNotice(state: InvoiceReviewState): string | undefined {
+  const { rate } = state;
+  if (rate.choice !== "manual") {
+    return rate.system === undefined ? rate.notice : undefined;
+  }
+  if (rate.system !== undefined) {
+    return rate.manual !== undefined
+      ? `Ya hay tasa del día (${formatVesBs(rate.system)}); se usa la tasa escrita (${formatVesBs(rate.manual)}).`
+      : `Ya hay tasa del día (${formatVesBs(rate.system)}): escribe la tasa o elige la de hoy.`;
+  }
+  if (rate.manual !== undefined) {
+    return `No hay tasa del día: se usa la tasa escrita (${formatVesBs(rate.manual)}).`;
+  }
+  return rate.printed === undefined
+    ? rate.notice
+    : "No hay tasa del día: escribe la tasa para convertir los costos.";
 }
 
 /** Costos aceptados como REF directamente: factura en dólares aceptada (USD = REF). */

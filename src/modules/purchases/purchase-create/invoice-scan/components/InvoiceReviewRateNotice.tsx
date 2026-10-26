@@ -7,6 +7,7 @@ import { NumberInput } from "@/shared/components/NumberInput";
 import { cn } from "@/shared/utils/cn";
 
 import {
+  getRateNotice,
   USD_ANOMALY_NOTICE,
   type InvoiceRateChoice,
   type InvoiceReviewAction,
@@ -92,8 +93,27 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
   const choose = (choice: InvoiceRateChoice, manualRate?: number) =>
     onAction({ type: "setRateChoice", choice, ...(manualRate !== undefined ? { manualRate } : {}) });
 
+  // REP14-04 (B-p15B-2): el aviso dice la tasa en uso (escrita, impresa o la del día ya llegada).
+  const notice = getRateNotice(state);
+  const manualInput =
+    rate.choice === "manual" ? (
+      <div className="max-w-56 text-foreground">
+        <NumberInput
+          decimals={2}
+          label="Tasa Bs por REF"
+          min={0}
+          onValueChange={(value) => choose("manual", value ?? undefined)}
+          required
+          value={rate.manual ?? null}
+        />
+      </div>
+    ) : null;
+
   if (rate.system !== undefined) {
-    if (!rate.warning || rate.printed === undefined) {
+    // Con la tasa escrita antes de que llegara la del día, se respeta y se ofrece la de hoy.
+    const manual = rate.choice === "manual";
+    const printedDiffers = rate.warning !== undefined && rate.printed !== undefined;
+    if (!manual && !printedDiffers) {
       return ignored ? (
         <div className={noticeClassName} role="status">
           {ignored}
@@ -103,10 +123,18 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
     return (
       <div className={noticeClassName} role="status">
         {ignored}
-        <p className="flex items-start gap-2">
-          <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-          {rate.warning}
-        </p>
+        {printedDiffers ? (
+          <p className="flex items-start gap-2">
+            <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+            {rate.warning}
+          </p>
+        ) : null}
+        {notice ? (
+          <p className="flex items-start gap-2">
+            <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+            {notice}
+          </p>
+        ) : null}
         <div
           aria-label="Tasa para convertir los costos"
           className="flex flex-wrap gap-2"
@@ -116,10 +144,18 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
           <ChoiceButton checked={rate.choice === "system"} onClick={() => choose("system")}>
             {`Tasa de hoy (${formatRate(rate.system)})`}
           </ChoiceButton>
-          <ChoiceButton checked={rate.choice === "printed"} onClick={() => choose("printed")}>
-            {`Tasa de la factura (${formatRate(rate.printed)})`}
-          </ChoiceButton>
+          {rate.printed !== undefined ? (
+            <ChoiceButton checked={rate.choice === "printed"} onClick={() => choose("printed")}>
+              {`Tasa de la factura (${formatRate(rate.printed)})`}
+            </ChoiceButton>
+          ) : null}
+          {manual ? (
+            <ChoiceButton checked onClick={() => choose("manual", rate.manual)}>
+              Escribir la tasa
+            </ChoiceButton>
+          ) : null}
         </div>
+        {manualInput}
       </div>
     );
   }
@@ -136,10 +172,10 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
       role={rate.unverified && rate.choice === "printed" ? "alert" : "status"}
     >
       {ignored}
-      {rate.notice ? (
+      {notice ? (
         <p className="flex items-start gap-2">
           <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-          {rate.notice}
+          {notice}
         </p>
       ) : null}
       {rate.printed !== undefined ? (
@@ -157,18 +193,7 @@ export function InvoiceReviewRateNotice({ onAction, state }: InvoiceReviewRateNo
           </ChoiceButton>
         </div>
       ) : null}
-      {rate.choice === "manual" ? (
-        <div className="max-w-56 text-foreground">
-          <NumberInput
-            decimals={2}
-            label="Tasa Bs por REF"
-            min={0}
-            onValueChange={(value) => choose("manual", value ?? undefined)}
-            required
-            value={rate.manual ?? null}
-          />
-        </div>
-      ) : null}
+      {manualInput}
     </div>
   );
 }

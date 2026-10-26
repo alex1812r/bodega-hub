@@ -21,6 +21,7 @@ import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModa
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
 import {
   awaitsCostAcknowledgement,
+  confirmedPurchaseMessage,
   enterTargetProductId,
   getLineNeeds,
   getReviewSections,
@@ -1032,11 +1033,16 @@ export function InvoiceReviewPanel({
         summary={summary}
       />
 
-      {/* D36 (C7-M3): descartar tira la revisión y volver a escanear cobra otra página. */}
+      {/* D36 (C7-M3): descartar tira la revisión y volver a escanear cobra otra página. REP14-04
+          (B-p14-2): un escaneo ya confirmado no se vuelve a cargar; descartar solo cierra la revisión. */}
       <ConfirmActionModal
         cancelLabel="Seguir revisando"
         confirmLabel="Descartar escaneo"
-        description="Se cierra la revisión y se pierde lo que hayas corregido. Para usar esta factura habrá que escanearla otra vez, y cuenta como un escaneo nuevo."
+        description={
+          state.confirmedPurchase
+            ? `Se cierra la revisión. ${confirmedPurchaseMessage(state.confirmedPurchase)}. La compra registrada no cambia.`
+            : "Se cierra la revisión y se pierde lo que hayas corregido. Para usar esta factura habrá que escanearla otra vez, y cuenta como un escaneo nuevo."
+        }
         onConfirm={() => {
           setDiscardScanOpen(false);
           onDiscard();

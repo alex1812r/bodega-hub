@@ -26,9 +26,10 @@ export function implausiblePrintedRateWarning(printed: number): string {
 }
 /** Desvío relativo del costo unitario vs el último conocido que hace dudar del empaque (6.18). */
 export const PRICE_DEVIATION_LIMIT = 0.4;
-/** Tolerancia de totales: 1 % del total leído, mínimo 1 Bs. */
+/** Tolerancia de totales: 1 % del total leído, mínimo 1 Bs (0,01 en una factura en dólares). */
 export const TOTALS_RELATIVE_TOLERANCE = 0.01;
 export const TOTALS_MIN_TOLERANCE_VES = 1;
+export const TOTALS_MIN_TOLERANCE_USD = 0.01;
 
 export const USD_DOCUMENT_ISSUE =
   "La factura parece estar en dólares ($/USD): revisa los precios, no se precargaron como Bs.";
@@ -299,7 +300,8 @@ export function computeTotals(extraction: InvoiceExtraction, lines: InvoiceTaxLi
     subtotal: extraction.subtotal,
     tax: extraction.tax,
     total: extraction.total,
-    minTolerance: TOTALS_MIN_TOLERANCE_VES,
+    // REP14-04 (B-p15A-1): el mismo mínimo que la revisión (`usd.anomaly` = documento en dólares).
+    minTolerance: isUsdDocument(extraction) ? TOTALS_MIN_TOLERANCE_USD : TOTALS_MIN_TOLERANCE_VES,
   });
   const notIncluded = getInvoiceRegisteredAmounts(lines, false);
   const registered = assessment.includedSuggested ? getInvoiceRegisteredAmounts(lines, true) : notIncluded;
