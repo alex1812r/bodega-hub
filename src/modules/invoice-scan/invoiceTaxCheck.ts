@@ -40,7 +40,7 @@ import { roundMoney } from "@bodega/core/currency";
  * - IVA leído 0,00 (o subtotal = total): nunca se sugiere (N12). Si además Σ líneas da la
  *   referencia con líneas gravadas, no se puede saber si es exenta o una nota de despacho
  *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin
- *   preselección (D28). Con solo IVA 0,00 leído y líneas gravadas ninguna hipótesis lo
+ *   preselección (D28); REP13-06b: "da" es con la tolerancia del pie. Con solo IVA 0,00 leído y líneas gravadas ninguna hipótesis lo
  *   cuadra: no se pregunta, se pide la casilla (o marcar las líneas exentas).
  * - El cuadre con la cifra leída usa máx(mínimo, mín(1 % de la cifra, ¼ del IVA en
  *   juego)): el 1 % nunca tapa un IVA de más o de menos.
@@ -225,10 +225,12 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
     includedGap < Math.abs(withTax - reference.amount) &&
     Math.abs(net - plainTarget) > gapTolerance;
   const noTaxRead = zeroTax || (plainSource === "subtotal" && gap < ZERO_TAX_EPSILON);
+  // REP13-06b (D59): se pregunta solo si Σ líneas cuadra la referencia con la tolerancia del pie
+  // (acotada por ½ del IVA de las alícuotas); antes bastaba ¼ de ese IVA, más que el pie.
   const exemptOrIncluded =
     noTaxRead &&
     addedTax > 0 &&
-    Math.abs(net - reference.amount) <= Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * addedTax);
+    includedGap <= Math.min(tolerance, Math.max(minTolerance, SUGGESTION_TAX_SHARE * addedTax));
 
   return { reference, plainSource, linesTotal: net, includedSuggested, exemptOrIncluded, tolerance };
 }

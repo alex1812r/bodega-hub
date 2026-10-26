@@ -249,16 +249,17 @@ describe("InvoiceReviewPanel · el pie compacto menciona el aviso de duplicado (
       response: makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }),
     });
 
-    const totals = screen.getByTestId("invoice-review-totals");
-    const reason = within(totals).getByRole("button", { name: /Marca el aviso de factura duplicada/ });
+    // REP13-06b: el motivo va en la línea compacta de bloqueos del pie (antes, en la del total).
+    const compact = screen.getByTestId("invoice-review-compact-blockers");
+    const reason = within(compact).getByRole("button", { name: /Marca el aviso de factura duplicada/ });
     // Solo en móvil: desde `sm` el detalle (con el mismo motivo) se ve siempre.
-    expect(reason).toHaveClass("sm:hidden");
+    expect(compact).toHaveClass("sm:hidden");
     await user.click(reason);
     expect(screen.getByRole("checkbox", { name: /cargarla igual/i })).toHaveFocus();
 
     // Con el detalle abierto el motivo se dice una vez, en el detalle.
     await user.click(screen.getByRole("button", { name: "Ver detalle del total" }));
-    expect(within(totals).queryByRole("button", { name: /Marca el aviso de factura duplicada/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("invoice-review-compact-blockers")).not.toBeInTheDocument();
     expect(
       within(screen.getByTestId("invoice-review-blockers")).getByRole("button", { name: /Marca el aviso de factura duplicada/ }),
     ).toBeInTheDocument();

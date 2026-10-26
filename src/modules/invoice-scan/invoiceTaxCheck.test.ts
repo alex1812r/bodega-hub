@@ -57,6 +57,8 @@ type Case = {
   minTolerance?: number;
   /** B20: sin total leído, la hipótesis incluida cuadra el subtotal leído aunque el IVA leído sea erróneo. */
   fitsSubtotalOnly?: boolean;
+  /** REP13-06b: se pregunta «exenta o IVA incluido» sin preselección. */
+  exemptOrIncluded?: boolean;
 };
 
 const realF12 = f12Extraction();
@@ -284,18 +286,62 @@ const cases: Case[] = [
     suggested: false,
     mismatch: false,
   },
+  // REP13-06b (D59): «exenta o IVA incluido» solo si Σ líneas cuadra la referencia con la tolerancia del pie.
+  {
+    name: "IVA 0,00 y Σ líneas a 200 del total: ninguna cuadra; no pregunta exenta o incluido",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 11400, tax: 0, total: 11400 },
+    suggested: false,
+    mismatch: true,
+    exemptOrIncluded: false,
+  },
+  {
+    name: "subtotal = total sin IVA leído y Σ líneas a 50: ninguna cuadra; no pregunta",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 11550, total: 11550 },
+    suggested: false,
+    mismatch: true,
+    exemptOrIncluded: false,
+  },
+  {
+    name: "nota de despacho f01: IVA 0,00 y Σ líneas = total; pregunta exenta o incluido",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 11600, tax: 0, total: 11600 },
+    suggested: false,
+    mismatch: true,
+    exemptOrIncluded: true,
+  },
+  {
+    name: "nota de despacho f02: subtotal = total y Σ líneas = total; pregunta",
+    lines: [L(11600, 16)],
+    figures: { subtotal: 11600, total: 11600 },
+    suggested: false,
+    mismatch: true,
+    exemptOrIncluded: true,
+  },
+  {
+    name: "solo total con IVA 0,00 y Σ líneas = total; pregunta",
+    lines: [L(5000, 0), L(11600, 16)],
+    figures: { tax: 0, total: 16600 },
+    suggested: false,
+    mismatch: true,
+    exemptOrIncluded: true,
+  },
 ];
 
 describe("assessInvoiceTax · sugerencia de IVA incluido (D59)", () => {
-  it.each(cases)("$name", ({ lines, figures, suggested, mismatch, minTolerance = 1, fitsSubtotalOnly }) => {
+  it.each(cases)("$name", ({ lines, figures, suggested, mismatch, minTolerance = 1, fitsSubtotalOnly, exemptOrIncluded }) => {
     const assessment = assessInvoiceTax({ lines, ...figures, minTolerance });
+    if (exemptOrIncluded !== undefined) {
+      expect(assessment.exemptOrIncluded).toBe(exemptOrIncluded);
+    }
     const gapIncluded = getInvoiceTotalsGap(assessment, getInvoiceRegisteredAmounts(lines, true));
     const gapPlain = getInvoiceTotalsGap(assessment, getInvoiceRegisteredAmounts(lines, false));
 
     expect(assessment.includedSuggested).toBe(suggested);
-    // La hipótesis elegida nunca descuadra si la otra cuadra.
+    // La hipótesis elegida nunca descuadra si la otra cuadra (con «exenta o incluido» no hay elegida).
     const [chosenGap, otherGap] = suggested ? [gapIncluded, gapPlain] : [gapPlain, gapIncluded];
-    expect(chosenGap !== undefined && otherGap === undefined).toBe(false);
+    expect(!assessment.exemptOrIncluded && chosenGap !== undefined && otherGap === undefined).toBe(false);
     // REP13-04: la sugerida cuadra con el mismo criterio que el ✓ del pie (o, B20, con el subtotal leído).
     if (assessment.includedSuggested) {
       const fitted = fitsSubtotalOnly
@@ -361,6 +407,39 @@ describe("assessInvoiceTax · sin total, solo subtotal o solo IVA: no sugiere si
         failures.push(JSON.stringify({ kind, error, incl, lines, ...figures }));
       }
     }
+    expect(failures.slice(0, 3)).toEqual([]);
+  });
+
+  it("REP13-06b · 20.000 casos con IVA 0,00 o subtotal = total (semilla 13062): «exenta o incluido» solo si Σ líneas cuadra con el pie", () => {
+    let seed = 13062;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const failures: string[] = [];
+    let asked = 0;
+    for (let i = 0; i < 20000; i++) {
+      const minTolerance = rnd() < 0.3 ? 0.01 : 1;
+      const scale = minTolerance === 1 ? 20000 : 300;
+      const E = rnd() < 0.5 ? 0 : r2(rnd() * scale);
+      const G16 = r2(1 + rnd() * scale);
+      const G8 = rnd() < 0.2 ? r2(rnd() * scale * 0.25) : 0;
+      const plainLines = [L(E, 0), L(G16, 16), L(G8, 8)].filter((line) => line.amount > 0);
+      const incl = rnd() < 0.5;
+      const lines = incl ? plainLines.map((l) => L(r2(l.amount * (1 + l.ratePct / 100)), l.ratePct)) : plainLines;
+      const sum = r2(lines.reduce((acc, line) => acc + line.amount, 0));
+      // Total leído = Σ líneas, o desviado entre −3 % y +3 % (descuento, redondeo, mal leído).
+      const drift = rnd() < 0.4 ? 0 : (rnd() - 0.5) * 0.06;
+      const total = r2(sum * (1 + drift));
+      const shape = Math.floor(rnd() * 3);
+      const figures: Figures =
+        shape === 0 ? { subtotal: total, tax: 0, total } : shape === 1 ? { subtotal: total, total } : { tax: 0, total };
+      const assessment = assessInvoiceTax({ lines, ...figures, minTolerance });
+      if (!assessment.exemptOrIncluded) continue;
+      asked++;
+      if (getInvoiceTotalsGap(assessment, getInvoiceRegisteredAmounts(lines, true)) !== undefined) {
+        failures.push(JSON.stringify({ minTolerance, lines, ...figures }));
+      }
+    }
+    expect(asked).toBeGreaterThan(1000);
     expect(failures.slice(0, 3)).toEqual([]);
   });
 });

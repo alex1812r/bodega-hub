@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { InvoiceReviewContext } from "../reviewModel";
@@ -36,7 +36,7 @@ function loadButton() {
 }
 
 describe("InvoiceReviewPanel · pie compacto (REP13-06)", () => {
-  it("B-qa05-1: con la fecha 0026-10-17, la línea del total del pie compacto dice «Corrige la fecha de la factura.»", async () => {
+  it("B-qa05-1: con la fecha 0026-10-17, el pie compacto nombra la fecha entre los motivos (REP13-06b)", async () => {
     render(
       <InvoiceReviewPanel
         context={CONTEXT}
@@ -47,17 +47,18 @@ describe("InvoiceReviewPanel · pie compacto (REP13-06)", () => {
         response={makeReviewResponse({ lines: [EXEMPT_LINE], extraction: { date: "2026-10-17", total: 1750 } })}
       />,
     );
-    const compact = screen.getByTestId("invoice-review-totals");
+    const compact = screen.getByTestId("invoice-review-compact-blockers");
     await waitFor(() => expect(loadButton()).toBeEnabled());
-    expect(within(compact).queryByText("Corrige la fecha de la factura.")).not.toBeInTheDocument();
+    expect(compact).not.toHaveTextContent(/fecha/);
 
     fireEvent.change(screen.getByLabelText("Fecha"), { target: { value: "0026-10-17" } });
 
     await waitFor(() => expect(loadButton()).toBeDisabled());
-    expect(within(compact).getByText("Corrige la fecha de la factura.")).toHaveClass("sm:hidden");
+    expect(compact).toHaveTextContent("Falta: fecha");
+    expect(compact).toHaveClass("sm:hidden");
 
     fireEvent.change(screen.getByLabelText("Fecha"), { target: { value: "2026-10-17" } });
-    expect(within(compact).queryByText("Corrige la fecha de la factura.")).not.toBeInTheDocument();
+    await waitFor(() => expect(compact).not.toHaveTextContent(/fecha/));
   });
 
   it("B-qa05-2: marcar la casilla del duplicado no cambia el alto reservado de la línea del total (Cargar no se mueve)", async () => {
@@ -80,11 +81,12 @@ describe("InvoiceReviewPanel · pie compacto (REP13-06)", () => {
     await waitFor(() => expect(screen.queryByText("Comprobando duplicados…")).not.toBeInTheDocument());
     expect(loadButton()).toBeDisabled();
     const reservedBefore = compact.className;
-    expect(reservedBefore).toContain("min-h-16");
+    const compactBefore = screen.getByTestId("invoice-review-compact-blockers").className;
 
     await user.click(screen.getByRole("checkbox", { name: /cargarla igual/i }));
 
     expect(loadButton()).toBeEnabled();
     expect(compact.className).toBe(reservedBefore);
+    expect(screen.getByTestId("invoice-review-compact-blockers").className).toBe(compactBefore);
   });
 });
