@@ -278,27 +278,32 @@ export function InvoiceReviewFooter({
             ? ` · ${summary.totals.lineMismatches.length} con cantidad × costo distinto del total leído`
             : ""}
         </p>
-        {summary.blockers.length > 0 || duplicateReason || duplicateCheckFailed ? (
-          <ul aria-live="polite" className="text-xs text-on-surface-variant" data-testid="invoice-review-blockers">
-            {summary.blockers.map((blocker) => (
-              <li key={blocker}>{blocker}</li>
-            ))}
-            {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
-            {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
-            {duplicateReason === "unacknowledged" ? (
-              <li>
-                <button
-                  className="cursor-pointer text-left underline underline-offset-2 hover:text-foreground"
-                  data-guarded-activation
-                  onClick={onReviewDuplicate}
-                  type="button"
-                >
-                  Marca el aviso de factura duplicada.
-                </button>
-              </li>
-            ) : null}
-          </ul>
-        ) : null}
+        {/* REP14-06 (B-qa234-2): desde `sm` la lista tiene su alto reservado (3 renglones; si hay más, se desplaza
+            dentro): que aparezca o se resuelva un motivo no mueve «Cargar» ni la casilla de la diferencia. En móvil
+            el detalle se abre a mano y la línea compacta ya tiene alto fijo. */}
+        <ul
+          aria-live="polite"
+          className="text-xs text-on-surface-variant max-sm:empty:hidden sm:h-[3lh] sm:overflow-y-auto"
+          data-testid="invoice-review-blockers"
+        >
+          {summary.blockers.map((blocker) => (
+            <li key={blocker}>{blocker}</li>
+          ))}
+          {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
+          {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
+          {duplicateReason === "unacknowledged" ? (
+            <li>
+              <button
+                className="cursor-pointer text-left underline underline-offset-2 hover:text-foreground"
+                data-guarded-activation
+                onClick={onReviewDuplicate}
+                type="button"
+              >
+                Marca el aviso de factura duplicada.
+              </button>
+            </li>
+          ) : null}
+        </ul>
       </div>
 
       <div
