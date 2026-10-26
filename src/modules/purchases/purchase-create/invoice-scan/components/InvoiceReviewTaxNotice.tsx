@@ -49,6 +49,15 @@ export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoti
   } else if (plainSource === "totalMinusTax") {
     reason = `la suma de las líneas da ${referenceText}, no el total menos el IVA leído${money(tax)}`;
   }
+  // B-p14B-1: elegida y ya sin sugerencia con los costos actuales, el motivo no afirma un cuadre que no existe.
+  let message = `Los precios de esta factura parecen incluir IVA: ${reason}.`;
+  if (exemptOrIncluded && !inclusion.suggested) {
+    message = `La factura no trae IVA y la suma de las líneas ya da ${referenceText}: si es exenta, marca las líneas como exentas; si los precios incluyen IVA, indícalo.`;
+  } else if (!inclusion.suggested) {
+    message = inclusion.included
+      ? "Indicaste que los precios incluyen IVA. Con los costos actuales la suma de las líneas ya no lo indica: revisa la elección con la factura."
+      : "Indicaste que los precios no incluyen IVA. Con los costos actuales la suma de las líneas ya no indica que lo incluyan: revisa la elección con la factura.";
+  }
 
   return (
     <div
@@ -58,11 +67,7 @@ export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoti
     >
       <p className="flex items-start gap-2">
         <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-        <span>
-          {exemptOrIncluded && !inclusion.suggested
-            ? `La factura no trae IVA y la suma de las líneas ya da ${referenceText}: si es exenta, marca las líneas como exentas; si los precios incluyen IVA, indícalo.`
-            : `Los precios de esta factura parecen incluir IVA: ${reason}.`}
-        </span>
+        <span>{message}</span>
       </p>
       <div aria-label="IVA en los precios de la factura" className="flex flex-wrap gap-2" role="radiogroup">
         <ChoiceButton

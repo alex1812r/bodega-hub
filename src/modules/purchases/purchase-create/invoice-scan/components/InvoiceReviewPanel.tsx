@@ -939,12 +939,18 @@ export function InvoiceReviewPanel({
                 supplierFetcher={supplierFetcher}
               />
             </div>
-            <InvoiceReviewRateNotice onAction={applyPanelAction} state={state} />
-            <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
+            {/* D60(c): avisos que cambian sin tocarlos; useLayoutHold devuelve las filas a su punto. */}
+            <div className="empty:hidden" data-layout-notice>
+              <InvoiceReviewRateNotice onAction={applyPanelAction} state={state} />
+            </div>
+            <div className="empty:hidden" data-layout-notice>
+              <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
+            </div>
           </div>
 
           <section
             aria-label="Líneas de la factura"
+            data-layout-notice-anchor
             className="overflow-hidden rounded-xl border border-border bg-surface-container-lowest dark:border-slate-800"
           >
             {state.lines.length === 0 ? (

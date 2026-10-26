@@ -14,6 +14,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MockDate from "mockdate";
+import { type ComponentProps, useEffect, useState } from "react";
 import { expect, fn, screen, waitFor, within } from "storybook/test";
 
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
@@ -405,12 +406,12 @@ const SERIES = [100, 600, 1000, 1500, 2000, 3000] as const;
 const MOUSE_3S: Timing = { pointer: "mouse", probes: SERIES, secondAt: 3000 };
 const TOUCH_3S: Timing = { pointer: "touch", probes: SERIES, secondAt: 3000 };
 
-async function prepare(width: number) {
+async function prepare(width: number, height = width < 640 ? 844 : 900) {
   const browser = await loadBrowser();
   if (!browser) {
     return null;
   }
-  await browser.page.viewport(width, width < 640 ? 844 : 900);
+  await browser.page.viewport(width, height);
   // El botón flotante de React Query Devtools (AppProviders) tapa el pie a 390 px.
   const hideDevtools = document.createElement("style");
   hideDevtools.textContent = ".tsqd-parent-container { display: none !important; }";
@@ -1395,3 +1396,252 @@ export const Rep1206FalloDuplicadosPiePlegado390: Story = {
     await expect(screen.getByRole("button", { name: "Cargar en la compra" })).toBeEnabled();
   },
 };
+
+/** Arriba de cada fila de la revisión, en orden (px de pantalla). */
+function rowTops() {
+  return [...panel().querySelectorAll<HTMLElement>("li[data-line-index]")].map((item) => item.getBoundingClientRect().top);
+}
+
+function shifts(before: readonly number[], after: readonly number[]) {
+  return after.map((top, index) => Math.round(top - (before[index] ?? top)));
+}
+
+/** Espera a que `find` encuentre el aviso (al render que lo monta) y a que se pinte. */
+function whenShown(find: () => Element | null, timeout: number) {
+  return new Promise<Element>((resolve, reject) => {
+    const settle = (element: Element) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(element)));
+    const found = find();
+    if (found) {
+      settle(found);
+      return;
+    }
+    const timer = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error(`el aviso no apareció en ${timeout} ms`));
+    }, timeout);
+    const observer = new MutationObserver(() => {
+      const element = find();
+      if (element) {
+        observer.disconnect();
+        clearTimeout(timer);
+        settle(element);
+      }
+    });
+    observer.observe(document.body, { characterData: true, childList: true, subtree: true });
+  });
+}
+
+/** c14-jabonfirst: L0 y L3 jabón con dos homónimos, L1 y L2 harina; proveedor leído desconocido. */
+const jabonFirstResponse = makeReviewResponse({
+  lines: [
+    jabonHomonyms(),
+    harinaByName(450),
+    (() => {
+      const line = harinaByName(450);
+      return { ...line, read: { ...line.read, quantity: 2, lineTotal: 900 } };
+    })(),
+    jabonHomonyms(),
+  ],
+  extraction: {
+    supplier: { name: "Comercial Desconocida 14B" },
+    number: "CG14-JABON1",
+    date: "2026-10-17",
+    subtotal: 2250,
+    total: 2250,
+  },
+  matched: { supplier: {} },
+});
+
+const DUPLICATE_DELAY_MS = 1500;
+
+/**
+ * M-p14B-2 / B-p13B-2 (REP13-03 · D60(c)): arriba del todo, elegir «Farmatodo» a mano; la consulta de
+ * duplicados tarda 1,5 s. Al llegar, el aviso no mueve las filas: el toque destinado a «Descartar línea»
+ * de L0 (justo al llegar o `after` ms después) la descarta y nunca acepta un homónimo.
+ */
+function avisoDuplicadoFilas(width: number, height: number, pointer: Pointer, after: number): Story {
+  return {
+    args: {
+      duplicateFetcher: async (query) => {
+        await sleep(DUPLICATE_DELAY_MS);
+        return query.supplierId === FARMATODO
+          ? [{ scanId: "scan-previo", purchaseId: null, number: "CG14-JABON1", date: "2026-10-17" }]
+          : [];
+      },
+      response: jabonFirstResponse,
+      supplierFetcher: farmatodoFetcher,
+    },
+    play: async () => {
+      const browser = await prepare(width, height);
+      if (!browser) {
+        return;
+      }
+      const field = screen.getByRole("combobox", { name: /proveedor/i });
+      await browser.userEvent.click(field);
+      await browser.userEvent.type(field, "Farma");
+      const option = await screen.findByRole("option", { name: /farmatodo/i });
+      await sleep(POINTER_GUARD_MS + 200);
+      await activateAt(browser, centerOf(option), pointer);
+      await sleep(200);
+      window.scrollTo({ top: 0, behavior: "instant" });
+      await sleep(100);
+      const discard = button(row(0), /Descartar línea/);
+      const aim = centerOf(discard);
+      const footerTop = screen.getByRole("contentinfo", { name: "Resumen de la revisión" }).getBoundingClientRect().top;
+      await expect(aim.y < footerTop && decisionAt(aim) === discard, `«Descartar línea» de L0 a la vista en ${width}×${height}`).toBe(true);
+      const before = rowTops();
+      const boxBefore = discard.getBoundingClientRect();
+
+      await whenShown(() => screen.queryByText(/ya se escaneó antes en la tienda/), DUPLICATE_DELAY_MS + 2000);
+      const moved = shifts(before, rowTops());
+      const under = decisionAt(aim);
+      const report =
+        `${width}×${height} ${pointer} +${after}ms · scrollY=${Math.round(window.scrollY)} · Descartar L0 antes ${boxText(boxBefore)} ` +
+        `después ${boxText(discard.getBoundingClientRect())} · Δ filas ${moved.join(",")} · bajo el punto: ${describeControl(under)}`;
+      console.log(`[M-p14B-2] ${report}`);
+      if (after > 0) {
+        await sleep(after);
+      }
+      await activateAt(browser, aim, pointer);
+      await sleep(400);
+      console.log(`[M-p14B-2] ${width}×${height} ${pointer} +${after}ms · L0=${row(0).dataset.status ?? "?"}`);
+      await expect(row(0).dataset.status, `${report}: L0 nunca queda resuelta`).not.toBe("resolved");
+      await expect(within(row(0)).queryByRole("button", { name: /Restaurar/ }), `${report}: el toque descarta L0`).not.toBeNull();
+      await expect(moved.every((shift) => shift === 0), `${report}: las filas no se mueven`).toBe(true);
+    },
+  };
+}
+
+export const MP14B2Duplicado1024x1366Tactil0 = avisoDuplicadoFilas(1024, 1366, "touch", 0);
+export const MP14B2Duplicado1024x1366Tactil150 = avisoDuplicadoFilas(1024, 1366, "touch", 150);
+export const MP14B2Duplicado390x1100Tactil0 = avisoDuplicadoFilas(390, 1100, "touch", 0);
+export const MP14B2Duplicado1280x900Raton0 = avisoDuplicadoFilas(1280, 900, "mouse", 0);
+
+type ControlPoint = { control: HTMLElement; point: Point };
+
+/**
+ * D60(c), tras aparecer o cambiar un aviso: las filas siguen en su punto y cada control de `points` también.
+ * Solo si la página ya no da para desplazar lo que creció (o encogió) el aviso se mueven; entonces lo que quedó bajo esos
+ * puntos no actúa (guarda de 1 s anclada a la aparición del aviso).
+ */
+async function expectRowsKept(browser: Browser, label: string, before: readonly number[], points: readonly ControlPoint[]) {
+  const moved = shifts(before, rowTops());
+  const lost = points.filter(({ control, point }) => decisionAt(point) !== control);
+  const scroller = document.scrollingElement ?? document.documentElement;
+  // Lo que creció el aviso se compensa bajando; lo que encogió, subiendo.
+  const atLimit =
+    moved.some((shift) => shift > 0)
+      ? Math.ceil(scroller.scrollTop) >= scroller.scrollHeight - scroller.clientHeight - 1
+      : scroller.scrollTop < 1;
+  const report =
+    `${label} · scrollY=${Math.round(window.scrollY)}${atLimit ? " (tope del desplazamiento)" : ""} · Δ filas ${moved.join(",")} · ` +
+    `controles que dejan su punto: ${lost.map(({ control, point }) => `${describeControl(control)} punto (${Math.round(point.x)},${Math.round(point.y)}) ahora ${boxText(control.getBoundingClientRect())}, en el punto ${describeControl(document.elementFromPoint(point.x, point.y))}`).join(" | ") || "ninguno"}`;
+  console.log(report);
+  if (moved.every((shift) => shift === 0)) {
+    await expect(lost.length, report).toBe(0);
+    return;
+  }
+  await expect(atLimit, `${report}: las filas solo se mueven si no queda desplazamiento`).toBe(true);
+  const state = observableState();
+  for (const { point } of lost) {
+    await clickAt(browser, point);
+  }
+  await sleep(200);
+  await expect(observableState(), `${report}: lo que quedó bajo esos puntos no actúa`).toBe(state);
+}
+
+/** p14-ivaplain: harina confirmada y jabón dudoso a 450 con IVA 16 %; subtotal 900, IVA 144, total 1.044. */
+const ivaPlainResponse = makeReviewResponse({
+  lines: [
+    { read: { quantity: 1, unitPrice: 450, lineTotal: 450 } },
+    { ...jabonHomonyms(), match: { ...jabonHomonyms().match, taxRateCode: "general" } },
+  ],
+  extraction: { subtotal: 900, tax: 144, total: 1044 },
+});
+
+/**
+ * B-p14B-2 (REP13-03 · D60(c)): con la moneda de la cabecera arriba de la vista (el anclaje del navegador
+ * elige la cabecera), teclear 594 en el costo de L1 hace que la suma dé el total leído y aparece el aviso
+ * de IVA. Las filas y los controles de L1 siguen donde estaban.
+ */
+function avisoIvaAlTeclear(width: number): Story {
+  return {
+    args: { response: ivaPlainResponse },
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      const currency = screen.getByText("Moneda de la factura");
+      window.scrollBy({ top: currency.getBoundingClientRect().top - 8, behavior: "instant" });
+      await sleep(200);
+      const cost = row(1).querySelector<HTMLInputElement>('input[data-need="unitPrice"]');
+      if (!cost) {
+        throw new Error("Sin costo en L1");
+      }
+      const controls = [...row(1).querySelectorAll<HTMLElement>("[data-candidate], [data-row-action]")];
+      const points = controls
+        .map((control): ControlPoint => ({ control, point: centerOf(control) }))
+        .filter(({ control, point }) => decisionAt(point) === control);
+      const before = rowTops();
+      await expect(screen.queryByTestId("invoice-review-tax-notice"), "sin aviso de IVA antes").toBeNull();
+
+      await browser.userEvent.fill(cost, "594");
+      await whenShown(() => screen.queryByTestId("invoice-review-tax-notice"), 2000);
+      await expectRowsKept(browser, `[B-p14B-2] ${width}`, before, points);
+    },
+  };
+}
+
+export const BP14B2Iva390 = avisoIvaAlTeclear(390);
+export const BP14B2Iva1280 = avisoIvaAlTeclear(1280);
+
+const RATE_DELAY_MS = 800;
+
+/** c11-three con tasa impresa 856,30 (a 4,9 % de la del día, 900) y todo exento: solo cambia el aviso de tasa. */
+const lateRateResponse = makeReviewResponse({
+  lines: [harinaByName(450), harinaByName(450), jabonHomonyms(), jabonHomonyms()],
+  extraction: { printedRate: 856.3 },
+});
+
+/** La tasa del día llega con la revisión ya abierta (REP6-05): el aviso de tasa cambia solo. */
+function LateRatePanel(props: ComponentProps<typeof InvoiceReviewPanel>) {
+  const [systemRateVes, setSystemRateVes] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const timer = setTimeout(() => setSystemRateVes(900), RATE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  return <InvoiceReviewPanel {...props} context={{ ...props.context, systemRateVes }} />;
+}
+
+/**
+ * D60(c) con la tasa (REP13-03): sin tasa del día al abrir, el aviso de tasa ofrece la impresa o escribirla;
+ * al llegar la del día cambia a «Tasa de hoy / Tasa de la factura» y encoge. Con la página algo desplazada,
+ * las filas y los controles a la vista siguen donde estaban.
+ */
+function avisoTasaTardia(width: number): Story {
+  return {
+    args: { response: lateRateResponse },
+    render: (args) => <LateRatePanel {...args} />,
+    play: async () => {
+      const browser = await prepare(width);
+      if (!browser) {
+        return;
+      }
+      await expect(screen.queryByRole("radio", { name: /Tasa de hoy/ }), "sin tasa del día al abrir").toBeNull();
+      // Algo desplazada (la cabecera arriba de la vista): lo que encoge el aviso se puede compensar.
+      window.scrollTo({ top: 150, behavior: "instant" });
+      await sleep(100);
+      const points = [...panel().querySelectorAll<HTMLElement>("[data-candidate], [data-row-action]")]
+        .map((control): ControlPoint => ({ control, point: centerOf(control) }))
+        .filter(({ control, point }) => decisionAt(point) === control);
+      const before = rowTops();
+      const scrollBefore = Math.round(window.scrollY);
+      await whenShown(() => screen.queryByRole("radio", { name: /Tasa de hoy/ }), RATE_DELAY_MS + 2000);
+      await expectRowsKept(browser, `[tasa] ${width} · scrollY antes ${scrollBefore}`, before, points);
+    },
+  };
+}
+
+export const Rep1303TasaTardia390 = avisoTasaTardia(390);
+export const Rep1303TasaTardia1280 = avisoTasaTardia(1280);
