@@ -909,7 +909,9 @@ notify pgrst, 'reload schema';
 -- (PGRST202). REP7-04: indice GIN trigram sobre invoice_match_norm(products.name) (fastupdate=off, tambien en el de
 -- alias de 19b) e invoice_match_candidates redefinida con % (misma firma y resultado; 450 textos con ~1.200 productos
 -- pasan de 17 s / 57014 a ~0,1 s), y save_invoice_scan_match (solo service_role): guarda solo matched de un escaneo
--- extracted tras un MATCH_ERROR. No toca stock ni dinero.
+-- extracted tras un MATCH_ERROR. REP14-01 (D63): invoice_match_previous_scans casa por numero el leido o el EFECTIVO
+-- (el confirmado por el usuario si no esta vacio) y devuelve number (efectivo) y read_number (leido); si ya se aplico
+-- la version anterior, reaplicar el parche. No toca stock ni dinero.
 -- OJO: reaplicar 20261019d devuelve invoice_match_candidates sin indice: volver a aplicar este parche despues.
 -- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP7-01, y correr verify-patches.sql (filas "(20261019q").
 -- -----------------------------------------------------------------------------
@@ -923,8 +925,9 @@ notify pgrst, 'reload schema';
 -- guardado) filtrado ANTES del tope de 200/50; sin el filtro, un numero repetido con otros proveedores ocultaba el
 -- duplicado real. La usan POST /api/purchases/invoice-scan/duplicates y el emparejamiento del escaneo con proveedor
 -- leido (loadMatchContext). No redefine nada (reaplicar 19q no la
--- deshace). REP14-01 (D63): el numero de cada escaneo es el EFECTIVO (el confirmado por el usuario si no esta
--- vacio, si no el leido); si ya se aplico la version anterior, reaplicar el parche. No toca stock ni dinero.
+-- deshace). REP14-01 (D63): casa por numero el leido o el EFECTIVO (el confirmado por el usuario si no esta vacio,
+-- si no el leido) y devuelve number (efectivo) y read_number (leido); si ya se aplico la version anterior, reaplicar
+-- el parche. No toca stock ni dinero.
 -- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP12-06 (sin el, el ESCANEO con proveedor leido falla al
 -- emparejar con PGRST202, y la consulta de duplicados da 500 y la
 -- revision muestra "No se pudo comprobar...", sin bloquear), y correr verify-patches.sql (filas "(20261026a").

@@ -6,7 +6,9 @@
  * número EFECTIVO de cada escaneo previo, el confirmado por el usuario
  * (`confirmed.extraction.number`) si existe y no está vacío, y si no el leído. f12 en p15: la 1.ª
  * compra se confirmó tecleando 00001028 (el modelo no lo leyó); al teclear 00001028 en el 2.º
- * escaneo el aviso desaparecía y la factura se registraba dos veces.
+ * escaneo el aviso desaparecía y la factura se registraba dos veces. Intento 2: casa también el
+ * número LEÍDO del previo, y un previo sin ningún número sale por fecha + total + proveedor aunque
+ * el actual traiga número.
  */
 import type { InvoiceExtraction } from "@/modules/invoice-scan/contracts";
 import { putMockScanRow, resetMockScanStore } from "@/modules/invoice-scan/server/scans.mock-server";
@@ -109,14 +111,29 @@ describe("POST /api/purchases/invoice-scan/duplicates · REP14-01 (número efect
     ]);
   });
 
-  it("previo leído X y confirmado Y: cuenta Y (también sin fecha ni total en la consulta)", async () => {
+  it("previo leído X y confirmado Y: casa por Y y por X (también sin fecha ni total en la consulta)", async () => {
     seed(PREVIO, { ...confirmedWith("00001028"), extracted: extraction({ number: "00901028" }) });
 
     const byConfirmed = await post({ supplierId: CATIA, number: "00001028" });
     expect((await byConfirmed.json()).data.map((match: { scanId: string }) => match.scanId)).toEqual([PREVIO]);
 
+    // Intento 2 (supervisor): el modelo vuelve a leer X y el usuario no lo corrige → el aviso sigue.
     const byRead = await post({ supplierId: CATIA, number: "00901028" });
-    expect((await byRead.json()).data).toEqual([]);
+    expect((await byRead.json()).data).toEqual([
+      { scanId: PREVIO, purchaseId: "purchase-f12", number: "00001028", date: "2026-10-08" },
+    ]);
+  });
+
+  it("previo sin número leído ni confirmado; el actual teclea un número → sale por fecha + total + proveedor", async () => {
+    seed(PREVIO, { ...confirmedWith(""), extracted: extraction({ number: "" }) });
+
+    const sinNumero = await post({ supplierId: CATIA, date: "2026-10-08", total: 315708.83 });
+    expect((await sinNumero.json()).data.map((match: { scanId: string }) => match.scanId)).toEqual([PREVIO]);
+
+    const conNumero = await post({ supplierId: CATIA, number: "00001028", date: "2026-10-08", total: 315708.83 });
+    expect((await conNumero.json()).data).toEqual([
+      { scanId: PREVIO, purchaseId: "purchase-f12", number: "", date: "2026-10-08" },
+    ]);
   });
 
   it("confirmado con número vacío: cuenta el leído", async () => {

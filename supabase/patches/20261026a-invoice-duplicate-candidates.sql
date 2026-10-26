@@ -19,11 +19,12 @@
 --        de su contacto leído en p_tax_digits.
 --    "Dígitos" = normalizeTaxId del BFF: mayúsculas, solo [A-Z0-9] y sin la letra de tipo
 --    inicial [JVEGPC]; la letra la compara el BFF (sameTaxId).
---    REP14-01 (M-p15-1, D63): el número de cada escaneo (el filtro por número y la clave
---    'number' devuelta) es el EFECTIVO: el confirmado por el usuario
---    (confirmed.extraction.number) si existe y no está vacío, si no el leído
---    (extracted.number). Así, teclear el número correcto en la revisión encuentra la compra
---    que se confirmó tecleando ese número aunque el modelo no lo leyera.
+--    REP14-01 (M-p15-1, D63): un escaneo casa por número si casa su número LEÍDO
+--    (extracted.number) o su número EFECTIVO: el confirmado por el usuario
+--    (confirmed.extraction.number) si existe y no está vacío, si no el leído. 'number'
+--    devuelve el efectivo y 'read_number' el leído (el BFF casa con cualquiera). Así, teclear
+--    el número correcto encuentra la compra confirmada tecleándolo aunque el modelo no lo
+--    leyera, y volver a leer el mismo número erróneo sin corregirlo sigue avisando.
 --    Los ids y RIF viajan en el cuerpo POST (D35: nada de texto de la factura en la URL).
 --    La usan POST /api/purchases/invoice-scan/duplicates (proveedor elegido / leído) y el
 --    emparejamiento del escaneo (loadMatchContext, con el proveedor LEÍDO: contacto resuelto y
@@ -100,9 +101,10 @@ begin
       and s.status not in ('discarded', 'failed')
       and (p_exclude_scan_id is null or s.id <> p_exclude_scan_id)
       and (
-        -- Número efectivo (D63): el confirmado si existe y no está vacío, si no el leído.
+        -- REP14-01 (D63): número efectivo (el confirmado si no está vacío, si no el leído) o el leído.
         (v_pattern is not null
-         and coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern)
+         and (coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern
+              or (s.extracted ->> 'number') ilike v_pattern))
         or (v_pattern is null
             and (s.extracted ->> 'total') = any(p_totals)
             and (p_date is null or (s.extracted ->> 'date') = p_date))
@@ -129,6 +131,7 @@ begin
            'id', f.id,
            'supplier_id', f.supplier_id,
            'number', f.effective_number,
+           'read_number', f.extracted ->> 'number',
            'supplier_tax_id', f.extracted -> 'supplier' ->> 'taxId',
            'matched_contact_id', f.matched -> 'supplier' ->> 'contactId',
            'date', f.extracted ->> 'date',

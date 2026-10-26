@@ -3153,13 +3153,24 @@ select
   ), false)
 union all
 select
-  'invoice_duplicate_candidates: numero EFECTIVO (confirmado si no vacio, si no el leido) en el filtro y en ''number'' (20261026a, REP14-01, D63; false = version anterior, solo extracted)',
+  'invoice_duplicate_candidates: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261026a, REP14-01, D63; false = version anterior: solo leido, o solo efectivo)',
   coalesce((
     select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') as effective_number%'
-      and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') ilike v_pattern%'
+      and p.prosrc ilike '%s.extracted ->> ''number'') ilike v_pattern%or (s.extracted ->> ''number'') ilike v_pattern))%'
       and p.prosrc ilike '%''number'', f.effective_number%'
-      and p.prosrc not ilike '%(s.extracted ->> ''number'') ilike v_pattern%'
+      and p.prosrc ilike '%''read_number'', f.extracted ->> ''number''%'
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
+union all
+select
+  'invoice_match_previous_scans: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261019q, REP14-01, D63; false = version anterior, solo leido)',
+  coalesce((
+    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') as effective_number%'
+      and p.prosrc ilike '%s.extracted ->> ''number'') ilike v_pattern%or (s.extracted ->> ''number'') ilike v_pattern))%'
+      and p.prosrc ilike '%''number'', f.effective_number%'
+      and p.prosrc ilike '%''read_number'', f.extracted ->> ''number''%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
   ), false)
 order by 1;

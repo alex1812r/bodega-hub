@@ -179,11 +179,15 @@ export type MatchPreviousScan = {
    */
   contactTaxIds?: string[];
   /**
-   * Número de factura de ese escaneo: el leído (`extracted->number`) o, con la búsqueda filtrada
-   * por proveedor (`invoice_duplicate_candidates`), el EFECTIVO (REP14-01, D63): el confirmado
+   * Número de factura EFECTIVO de ese escaneo (REP14-01, D63): el confirmado
    * (`confirmed->extraction->number`) si existe y no está vacío, si no el leído.
    */
   number: string | null;
+  /**
+   * REP14-01: número LEÍDO (`extracted->number`). La regla casa con este o con `number`: si el
+   * modelo vuelve a leer el mismo número erróneo y el usuario no lo corrige, el aviso sigue.
+   */
+  readNumber?: string | null;
   /** Fecha leída en ese escaneo (`extracted->date`, ISO), para el posible duplicado. */
   date?: string | null;
   /** Total leído en ese escaneo (`extracted->total`), para el posible duplicado. */
