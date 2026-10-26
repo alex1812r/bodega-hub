@@ -923,7 +923,8 @@ notify pgrst, 'reload schema';
 -- guardado) filtrado ANTES del tope de 200/50; sin el filtro, un numero repetido con otros proveedores ocultaba el
 -- duplicado real. La usan POST /api/purchases/invoice-scan/duplicates y el emparejamiento del escaneo con proveedor
 -- leido (loadMatchContext). No redefine nada (reaplicar 19q no la
--- deshace). No toca stock ni dinero.
+-- deshace). REP14-01 (D63): el numero de cada escaneo es el EFECTIVO (el confirmado por el usuario si no esta
+-- vacio, si no el leido); si ya se aplico la version anterior, reaplicar el parche. No toca stock ni dinero.
 -- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP12-06 (sin el, el ESCANEO con proveedor leido falla al
 -- emparejar con PGRST202, y la consulta de duplicados da 500 y la
 -- revision muestra "No se pudo comprobar...", sin bloquear), y correr verify-patches.sql (filas "(20261026a").

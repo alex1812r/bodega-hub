@@ -178,7 +178,11 @@ export type MatchPreviousScan = {
    * `matchedContactId`; se cruza con el RIF leído y con el de los contactos del actual.
    */
   contactTaxIds?: string[];
-  /** Número de factura leído en ese escaneo (`extracted->number`). */
+  /**
+   * Número de factura de ese escaneo: el leído (`extracted->number`) o, con la búsqueda filtrada
+   * por proveedor (`invoice_duplicate_candidates`), el EFECTIVO (REP14-01, D63): el confirmado
+   * (`confirmed->extraction->number`) si existe y no está vacío, si no el leído.
+   */
   number: string | null;
   /** Fecha leída en ese escaneo (`extracted->date`, ISO), para el posible duplicado. */
   date?: string | null;

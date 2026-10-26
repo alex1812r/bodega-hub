@@ -3151,4 +3151,15 @@ select
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
   ), false)
+union all
+select
+  'invoice_duplicate_candidates: numero EFECTIVO (confirmado si no vacio, si no el leido) en el filtro y en ''number'' (20261026a, REP14-01, D63; false = version anterior, solo extracted)',
+  coalesce((
+    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') as effective_number%'
+      and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') ilike v_pattern%'
+      and p.prosrc ilike '%''number'', f.effective_number%'
+      and p.prosrc not ilike '%(s.extracted ->> ''number'') ilike v_pattern%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
 order by 1;

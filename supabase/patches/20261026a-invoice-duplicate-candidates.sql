@@ -19,6 +19,11 @@
 --        de su contacto leído en p_tax_digits.
 --    "Dígitos" = normalizeTaxId del BFF: mayúsculas, solo [A-Z0-9] y sin la letra de tipo
 --    inicial [JVEGPC]; la letra la compara el BFF (sameTaxId).
+--    REP14-01 (M-p15-1, D63): el número de cada escaneo (el filtro por número y la clave
+--    'number' devuelta) es el EFECTIVO: el confirmado por el usuario
+--    (confirmed.extraction.number) si existe y no está vacío, si no el leído
+--    (extracted.number). Así, teclear el número correcto en la revisión encuentra la compra
+--    que se confirmó tecleando ese número aunque el modelo no lo leyera.
 --    Los ids y RIF viajan en el cuerpo POST (D35: nada de texto de la factura en la URL).
 --    La usan POST /api/purchases/invoice-scan/duplicates (proveedor elegido / leído) y el
 --    emparejamiento del escaneo (loadMatchContext, con el proveedor LEÍDO: contacto resuelto y
@@ -87,14 +92,17 @@ begin
   end if;
 
   with found as (
-    select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status
+    select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') as effective_number
     from public.invoice_scans s
     left join public.purchases pu on pu.id = s.purchase_id
     where s.store_id = v_store_id
       and s.status not in ('discarded', 'failed')
       and (p_exclude_scan_id is null or s.id <> p_exclude_scan_id)
       and (
-        (v_pattern is not null and (s.extracted ->> 'number') ilike v_pattern)
+        -- Número efectivo (D63): el confirmado si existe y no está vacío, si no el leído.
+        (v_pattern is not null
+         and coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern)
         or (v_pattern is null
             and (s.extracted ->> 'total') = any(p_totals)
             and (p_date is null or (s.extracted ->> 'date') = p_date))
@@ -120,7 +128,7 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
            'id', f.id,
            'supplier_id', f.supplier_id,
-           'number', f.extracted ->> 'number',
+           'number', f.effective_number,
            'supplier_tax_id', f.extracted -> 'supplier' ->> 'taxId',
            'matched_contact_id', f.matched -> 'supplier' ->> 'contactId',
            'date', f.extracted ->> 'date',
