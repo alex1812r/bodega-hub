@@ -210,10 +210,25 @@ function observableState() {
   return JSON.stringify([document.body.innerText, statuses(), marks]);
 }
 
-/** Clic real en un punto de la pantalla: lo recibe lo que esté ahí (no un elemento concreto). */
+/**
+ * Clic real en un punto de la pantalla: lo recibe lo que esté ahí (no un elemento concreto).
+ * REP13-05 (M-qa23-1): ratón por CDP, como `tapAt`. `userEvent.click/hover(body, { position })` dejaba que
+ * Playwright desplazara la página antes del clic cuando el punto quedaba cerca del borde superior
+ * del iframe escalado (con 395 px de scroll, a 89 px de arriba volvía a 0): la medición veía mover
+ * las filas sin que la revisión las moviera.
+ */
 async function clickAt(browser: Browser, point: Point) {
-  const body = document.body.getBoundingClientRect();
-  await browser.userEvent.click(document.body, { force: true, position: { x: point.x - body.left, y: point.y - body.top } });
+  const { x, y } = await moveMouseTo(browser, point);
+  const session = browser.cdp();
+  await session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+  await session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+}
+
+/** Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`). */
+async function moveMouseTo(browser: Browser, point: Point): Promise<Point> {
+  const target = pagePoint(point);
+  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", ...target });
+  return target;
 }
 
 type Pointer = "mouse" | "touch";
@@ -745,11 +760,15 @@ export const MP112Raton390 = mp112(390);
 /**
  * D49: con el ratón, el layout se aplica al salir del panel completo; al volver, el clic antes de
  * 1 s sobre un control que se movió no actúa y pasado 1 s sí.
+ * REP13-05 (M-qa23-1): desde REP12-04 la fila que sigue a la compactada vuelve a su punto desplazando la
+ * página, y el chip de L2 ya no se mueve al salir (en la UI real resuelve al primer clic, QA-23). Solo
+ * lo movía el desplazamiento que hacía Playwright al pasar el ratón. En una ventana sin desplazamiento
+ * nada compensa la compactación: el chip de L2 sí se mueve y la guarda se mide sobre él.
  */
 export const SalirDelPanelRaton1280: Story = {
   args: { response: c11ThreeResponse },
   play: async () => {
-    const browser = await prepare(1280);
+    const browser = await prepare(1280, 1800);
     if (!browser) {
       return;
     }
@@ -760,12 +779,14 @@ export const SalirDelPanelRaton1280: Story = {
     await sleep(POINTER_GUARD_MS + 100);
     await expect(row(0).getBoundingClientRect().height, "ratón en el panel: la caja se conserva").toBe(heldHeight);
 
+    const chipTop = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ })[0]?.getBoundingClientRect().top ?? 0;
     const outside = panel().getBoundingClientRect();
-    await browser.userEvent.hover(document.body, { position: { x: 4, y: Math.max(4, outside.top - 8) } });
+    await moveMouseTo(browser, { x: 4, y: Math.max(4, outside.top - 8) });
     await sleep(100);
     await expect(row(0).getBoundingClientRect().height, "fuera del panel: se aplica").toBeLessThan(heldHeight);
 
     const [chip] = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ });
+    await expect(chip.getBoundingClientRect().top, "la compactación mueve el chip de L2").toBeLessThan(chipTop - 1);
     await clickAt(browser, centerOf(chip));
     await sleep(200);
     await expect(row(2).dataset.status, "antes de 1 s, el chip que se movió no actúa").toBe("pending_doubtful");
@@ -1645,3 +1666,66 @@ function avisoTasaTardia(width: number): Story {
 
 export const Rep1303TasaTardia390 = avisoTasaTardia(390);
 export const Rep1303TasaTardia1280 = avisoTasaTardia(1280);
+
+
+/** p14-ivaplain con L1 dudosa pero con producto (como en la UI real de QA-23): «Cambiar producto» y «Descartar línea». */
+const ivaChosenResponse = makeReviewResponse({
+  lines: [
+    { read: { quantity: 1, unitPrice: 450, lineTotal: 450 } },
+    { ...jabonHomonyms(), match: { ...jabonHomonyms().match, productId: productUuid(4), taxRateCode: "general" } },
+  ],
+  extraction: { subtotal: 900, tax: 144, total: 1044 },
+});
+
+/**
+ * B-qa23-2 (REP13-05 · D60(c)): teclear 594 en el costo de L1 hace aparecer «La factura dice …» bajo su
+ * importe y, en móvil, baja 36-44 px los controles de la propia fila. El toque a los 250 ms donde estaba
+ * «Descartar línea» la descarta o no hace nada; nunca acciona lo que quedó ahí («Cambiar producto», un
+ * candidato). Si no se movió (tableta, 1280), el toque la descarta.
+ */
+function toqueTrasTeclearCosto(width: number, height: number, pointer: Pointer): Story {
+  return {
+    args: { response: ivaChosenResponse },
+    play: async () => {
+      const browser = await prepare(width, height);
+      if (!browser) {
+        return;
+      }
+      const cost = row(1).querySelector<HTMLInputElement>('input[data-need="unitPrice"]');
+      if (!cost) {
+        throw new Error("Sin costo en L1");
+      }
+      const discard = button(row(1), /Descartar línea/);
+      cost.scrollIntoView({ block: "center" });
+      await sleep(POINTER_GUARD_MS + 200);
+      const aim = centerOf(discard);
+      const topBefore = discard.getBoundingClientRect().top;
+      await expect(decisionAt(aim), "«Descartar línea» en su punto antes de teclear").toBe(discard);
+
+      await browser.userEvent.fill(cost, "594");
+      const start = performance.now();
+      await whenShown(() => screen.queryByTestId("line-mismatch-1"), 2000);
+      const moved = Math.round(discard.getBoundingClientRect().top - topBefore);
+      const under = document.elementFromPoint(aim.x, aim.y)?.closest("button") ?? null;
+      const report = `${width}×${height} ${pointer} · «Descartar línea» bajó ${moved} px · en el punto: ${describeControl(under)}`;
+      const typed = observableState();
+      await sleepUntil(start, 250);
+      await activateAt(browser, aim, pointer);
+      await sleep(400);
+
+      const discarded = row(1).dataset.status === "discarded";
+      if (moved === 0) {
+        await expect(discarded, `${report}: sin moverse, el toque la descarta`).toBe(true);
+        return;
+      }
+      await expect(within(row(1)).queryByLabelText("Producto de la línea 2"), `${report}: no abre el buscador`).toBeNull();
+      await expect(discarded || observableState() === typed, `${report}: descarta o no hace nada`).toBe(true);
+    },
+  };
+}
+
+export const BQa232Toque360Tactil = toqueTrasTeclearCosto(360, 844, "touch");
+export const BQa232Toque375Tactil = toqueTrasTeclearCosto(375, 844, "touch");
+export const BQa232Toque390Tactil = toqueTrasTeclearCosto(390, 844, "touch");
+export const BQa232Toque1024Tactil = toqueTrasTeclearCosto(1024, 1366, "touch");
+export const BQa232Toque1280Raton = toqueTrasTeclearCosto(1280, 900, "mouse");

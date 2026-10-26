@@ -81,6 +81,8 @@ export type InvoiceTaxAssessment = {
   reference?: InvoiceTaxReference;
   /** De dónde sale la hipótesis "precios sin IVA" frente a un total (para explicar la sugerencia). */
   plainSource?: "subtotal" | "totalMinusTax" | "linesTax";
+  /** REP13-05: Σ líneas tal como se escribieron, frente a un total (para decir si lo da o solo se acerca). */
+  linesTotal?: number;
   /** La hipótesis "IVA incluido" cuadra la cifra leída y la otra no: los precios parecen incluirlo. */
   includedSuggested: boolean;
   /**
@@ -216,7 +218,7 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
     addedTax > 0 &&
     Math.abs(net - reference.amount) <= Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * addedTax);
 
-  return { reference, plainSource, includedSuggested, exemptOrIncluded, tolerance };
+  return { reference, plainSource, linesTotal: net, includedSuggested, exemptOrIncluded, tolerance };
 }
 
 /** La cifra registrada homóloga de la referencia: total, base imponible o IVA. */

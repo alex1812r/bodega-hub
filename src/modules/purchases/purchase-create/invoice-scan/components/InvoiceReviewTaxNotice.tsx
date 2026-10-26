@@ -26,7 +26,7 @@ export type InvoiceReviewTaxNoticeProps = {
  */
 export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoticeProps) {
   const inclusion = getTaxInclusion(state);
-  const { reference, plainSource, exemptOrIncluded } = getInvoiceTaxAssessment(state);
+  const { reference, plainSource, exemptOrIncluded, linesTotal } = getInvoiceTaxAssessment(state);
   const chosen = state.pricesIncludeTax !== undefined;
   if (!inclusion.suggested && !exemptOrIncluded && !chosen) {
     return null;
@@ -35,24 +35,32 @@ export function InvoiceReviewTaxNotice({ onAction, state }: InvoiceReviewTaxNoti
   const marked = inclusion.suggested || chosen;
   const { subtotal, tax } = state.extraction;
   const money = (value: number | undefined) => (value !== undefined ? ` (${formatInvoiceMoney(state, value)})` : "");
-  const referenceText =
+  const referenceNoun =
     reference?.source === "subtotalPlusTax"
-      ? `el subtotal más el IVA leídos${money(reference.amount)}`
-      : `el total leído${money(reference?.amount)}`;
-  let reason = `no lo desglosa y la suma de las líneas ya da ${referenceText}`;
+      ? `subtotal más el IVA leídos${money(reference.amount)}`
+      : `total leído${money(reference?.amount)}`;
+  const referenceText = `el ${referenceNoun}`;
+  // REP13-05 (B20, caos p5): el cuadre admite tolerancia; si la suma no da la cifra exacta, se dice
+  // cuánto da y que se acerca, en vez de afirmar que la da.
+  const approximate = reference !== undefined && linesTotal !== undefined && Math.abs(linesTotal - reference.amount) >= 0.005;
+  const sumText = approximate
+    ? `la suma de las líneas${money(linesTotal)} se acerca al ${referenceNoun}`
+    : `la suma de las líneas da ${referenceText}`;
+  const notThe = approximate ? "no al" : "no el";
+  let reason = approximate ? `no lo desglosa y ${sumText}` : `no lo desglosa y la suma de las líneas ya da ${referenceText}`;
   if (reference?.source === "subtotal") {
     reason = `quitándoselo, las líneas dan el subtotal leído${money(reference.amount)}`;
   } else if (reference?.source === "tax") {
     reason = `el IVA que llevan dentro las líneas da el IVA leído${money(reference.amount)}`;
   } else if (plainSource === "subtotal") {
-    reason = `la suma de las líneas da ${referenceText}, no el subtotal${money(subtotal)}`;
+    reason = `${sumText}, ${notThe} subtotal${money(subtotal)}`;
   } else if (plainSource === "totalMinusTax") {
-    reason = `la suma de las líneas da ${referenceText}, no el total menos el IVA leído${money(tax)}`;
+    reason = `${sumText}, ${notThe} total menos el IVA leído${money(tax)}`;
   }
   // B-p14B-1: elegida y ya sin sugerencia con los costos actuales, el motivo no afirma un cuadre que no existe.
   let message = `Los precios de esta factura parecen incluir IVA: ${reason}.`;
   if (exemptOrIncluded && !inclusion.suggested) {
-    message = `La factura no trae IVA y la suma de las líneas ya da ${referenceText}: si es exenta, marca las líneas como exentas; si los precios incluyen IVA, indícalo.`;
+    message = `La factura no trae IVA y ${approximate ? sumText : `la suma de las líneas ya da ${referenceText}`}: si es exenta, marca las líneas como exentas; si los precios incluyen IVA, indícalo.`;
   } else if (!inclusion.suggested) {
     message = inclusion.included
       ? "Indicaste que los precios incluyen IVA. Con los costos actuales la suma de las líneas ya no lo indica: revisa la elección con la factura."

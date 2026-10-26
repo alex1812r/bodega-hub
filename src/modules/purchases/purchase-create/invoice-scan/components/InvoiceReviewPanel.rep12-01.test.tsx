@@ -240,3 +240,27 @@ describe("InvoiceReviewPanel · el pie explica el aviso de duplicado sin reconoc
     expect(loadButton()).toBeEnabled();
   });
 });
+
+describe("InvoiceReviewPanel · el pie compacto menciona el aviso de duplicado (REP13-05, B-qa23-1)", () => {
+  it("con el detalle plegado (móvil), el pie pide marcar el aviso y lleva a su casilla", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      duplicateFetcher: jest.fn(async () => [{ scanId: "scan-anterior", purchaseId: null, number: "000123", date: null }]),
+      response: makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }),
+    });
+
+    const totals = screen.getByTestId("invoice-review-totals");
+    const reason = within(totals).getByRole("button", { name: /Marca el aviso de factura duplicada/ });
+    // Solo en móvil: desde `sm` el detalle (con el mismo motivo) se ve siempre.
+    expect(reason).toHaveClass("sm:hidden");
+    await user.click(reason);
+    expect(screen.getByRole("checkbox", { name: /cargarla igual/i })).toHaveFocus();
+
+    // Con el detalle abierto el motivo se dice una vez, en el detalle.
+    await user.click(screen.getByRole("button", { name: "Ver detalle del total" }));
+    expect(within(totals).queryByRole("button", { name: /Marca el aviso de factura duplicada/ })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("invoice-review-blockers")).getByRole("button", { name: /Marca el aviso de factura duplicada/ }),
+    ).toBeInTheDocument();
+  });
+});
