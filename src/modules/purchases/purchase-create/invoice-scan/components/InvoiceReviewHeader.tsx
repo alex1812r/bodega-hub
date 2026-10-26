@@ -199,6 +199,9 @@ export function InvoiceReviewHeader({
             }}
             selectedSupplierId={supplier.contactId ?? ""}
             supplierFetcher={supplierFetcher}
+            // REP14-06 (B-qa234-1, D63): a 1024 con el menú y a 320 la columna mide ~288 px; el nombre elegido
+            // se ve entero, envuelto, en vez de cortado en el campo.
+            wrapSelectedName
           />
           <p className="text-xs text-on-surface-variant">
             Leído en la factura: <span className="font-medium text-foreground">{supplier.readName || "—"}</span>
