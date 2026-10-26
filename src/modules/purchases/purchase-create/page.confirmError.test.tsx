@@ -411,3 +411,73 @@ describe("PurchaseCreatePage · confirmar sin conexión (COM-F10 · F-A5)", () =
     expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
   });
 });
+
+// REP13-02 (M-p14B-1, D60(b)): un 400 de validación trae el motivo en `issues`; el diálogo
+// solo decía «La solicitud no tiene un formato válido.».
+describe("PurchaseCreatePage · un 400 con issues muestra sus motivos (REP13-02)", () => {
+  const GENERIC = "La solicitud no tiene un formato válido.";
+  const DATE_ISSUE = "La fecha de la factura debe ser de un año entre 2000 y 2100. Corrígela o déjala vacía.";
+
+  it("enseña el mensaje de cada issue en vez del genérico", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost(
+      {
+        error: {
+          code: "BAD_REQUEST",
+          message: GENERIC,
+          issues: [
+            { code: "custom", message: DATE_ISSUE, path: ["invoiceScanExtraction", "date"] },
+            { code: "custom", message: "La factura puede tener como máximo 300 líneas.", path: ["invoiceScanExtraction", "lines"] },
+          ],
+        },
+      },
+      400,
+    );
+
+    renderPage();
+    addSupplierAndProduct();
+    fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(DATE_ISSUE);
+
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent(DATE_ISSUE));
+    expect(confirmAlert()).toHaveTextContent("La factura puede tener como máximo 300 líneas.");
+    expect(screen.queryByText(new RegExp(GENERIC))).not.toBeInTheDocument();
+  });
+
+  it("los issues de zod en inglés no se enseñan: queda el mensaje del servidor", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost(
+      {
+        error: {
+          code: "BAD_REQUEST",
+          message: GENERIC,
+          issues: [{ code: "invalid_type", message: "Invalid input: expected number, received string", path: ["taxRef"] }],
+        },
+      },
+      400,
+    );
+
+    renderPage();
+    addSupplierAndProduct();
+    fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(GENERIC);
+
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent(GENERIC));
+    expect(screen.queryByText(/Invalid input/)).not.toBeInTheDocument();
+  });
+
+  it("sin issues, el mensaje del servidor tal cual", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost({ error: { code: "BAD_REQUEST", message: GENERIC } }, 400);
+
+    renderPage();
+    addSupplierAndProduct();
+    fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(GENERIC);
+
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent(GENERIC));
+  });
+});

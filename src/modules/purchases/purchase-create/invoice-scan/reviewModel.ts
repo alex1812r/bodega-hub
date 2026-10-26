@@ -21,6 +21,7 @@ import type {
   InvoiceScanConfirmedPurchase,
   InvoiceScanResponse,
 } from "@/modules/invoice-scan/contracts";
+import { getInvoiceDateIssue, INVOICE_DATE_MESSAGES } from "@/modules/invoice-scan/contracts";
 import {
   assessInvoiceTax,
   getInvoiceTotalsGap,
@@ -1619,6 +1620,15 @@ function differenceBlocker(source: InvoiceReviewTotals["readSource"]): string {
 }
 
 /**
+ * REP13-02 (M-p14B-1, D60(b)): por qué no vale la fecha de la cabecera, con la misma regla y el
+ * mismo mensaje que el servidor (`getInvoiceDateIssue`). `undefined` si vale o está vacía.
+ */
+export function getHeaderDateMessage(state: InvoiceReviewState): string | undefined {
+  const issue = state.header.date ? getInvoiceDateIssue(state.header.date) : undefined;
+  return issue ? INVOICE_DATE_MESSAGES[issue] : undefined;
+}
+
+/**
  * Por qué "Cargar en la compra" está deshabilitado, en español. Vacío = se puede cargar.
  * Además de las líneas pendientes exige proveedor confirmado, al menos una línea,
  * aceptar la anomalía de dólares y una tasa (salvo dólares aceptados, que ya son REF).
@@ -1689,6 +1699,9 @@ export function getInvoiceReviewBlockers(state: InvoiceReviewState): string[] {
   }
   if (!state.header.supplier.contactId) {
     blockers.push("Elige el proveedor.");
+  }
+  if (getHeaderDateMessage(state)) {
+    blockers.push("Corrige la fecha de la factura.");
   }
   if (state.usd.anomaly && !state.usd.accepted) {
     blockers.push("Confirma que la factura está en dólares para cargar los costos como REF.");
