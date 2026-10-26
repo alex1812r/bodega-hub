@@ -19,6 +19,12 @@ import { roundMoney } from "@bodega/core/currency";
  *   precios incluyen IVA" exige que la hipótesis incluida quede a ≤ ¼ del IVA en juego de
  *   la cifra leída y la otra a más de ¼: con una parte gravada pequeña (≤ 6 % de una
  *   mixta) el 1 % del total la escondía (N11).
+ * - D59 (M-p14-1): además, frente a la referencia, la hipótesis incluida (Σ líneas) debe
+ *   cuadrar mejor que la otra (Σ líneas con su alícuota) y quedar a no más de
+ *   máx(mínimo, ½ del IVA leído o, sin él, del que añadirían las líneas): un subtotal o
+ *   un IVA mal leídos (el EXENTO, la BI G) inflan el IVA en juego y no pueden empujar
+ *   hacia la hipótesis que descuadra. Si ninguna cuadra, no se sugiere y la diferencia
+ *   exige la casilla.
  * - IVA leído 0,00 (o subtotal = total): nunca se sugiere (N12). Si además Σ líneas da la
  *   referencia con líneas gravadas, no se puede saber si es exenta o una nota de despacho
  *   con IVA incluido sin desglosar (f01/f02): `exemptOrIncluded`, se pregunta sin
@@ -32,6 +38,8 @@ import { roundMoney } from "@bodega/core/currency";
 export const TOTALS_RELATIVE_TOLERANCE = 0.01;
 /** Fracción del IVA en juego que separa "cuadra" de "no cuadra" en la sugerencia y en el cuadre. */
 export const TAX_GAP_TOLERANCE_SHARE = 0.25;
+/** D59: la hipótesis incluida nunca se sugiere a más de la mitad del IVA (leído o, sin él, el de las líneas). */
+const SUGGESTION_TAX_SHARE = 0.5;
 /** Por debajo de medio céntimo el IVA leído es 0,00. */
 const ZERO_TAX_EPSILON = 0.005;
 
@@ -174,10 +182,14 @@ export function assessInvoiceTax(input: InvoiceTaxInput): InvoiceTaxAssessment {
   const gap = Math.abs(roundMoney(reference.amount - plainTarget));
   const gapTolerance = Math.max(minTolerance, TAX_GAP_TOLERANCE_SHARE * gap);
   const zeroTax = tax !== undefined && Math.abs(tax) < ZERO_TAX_EPSILON;
+  const includedGap = Math.abs(net - reference.amount);
+  const suggestionTolerance = Math.max(minTolerance, SUGGESTION_TAX_SHARE * Math.abs(tax ?? addedTax));
   const includedSuggested =
     !zeroTax &&
     addedTax > 0 &&
-    Math.abs(net - reference.amount) <= gapTolerance &&
+    includedGap <= gapTolerance &&
+    includedGap <= suggestionTolerance &&
+    includedGap < Math.abs(withTax - reference.amount) &&
     Math.abs(net - plainTarget) > gapTolerance;
   const noTaxRead = zeroTax || (plainSource === "subtotal" && gap < ZERO_TAX_EPSILON);
   const exemptOrIncluded =
