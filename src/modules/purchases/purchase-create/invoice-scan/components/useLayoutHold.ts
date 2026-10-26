@@ -41,6 +41,7 @@ const SHIFT_GUARD_SELECTOR = "[data-layout-shift-guard]";
 const NOTICE_SELECTOR = "[data-layout-notice]";
 const NOTICE_ANCHOR_SELECTOR = "[data-layout-notice-anchor]";
 const STICKY_FOOTER_SELECTOR = '[data-layout-box="footer"]';
+const ROW_BOX_SELECTOR = '[data-layout-box^="row:"]';
 
 export type PointerActivation = { x: number; y: number; at: number; control: Element };
 
@@ -85,13 +86,33 @@ export function isSpatialRebound(
 
 type LayoutHold<TOrder> = { order: TOrder; heights: ReadonlyMap<string, number> };
 
-/** D60(c): alto de cada aviso dinámico y punto de pantalla de las filas en la última medición. */
-type NoticeLayout = { heights: ReadonlyMap<Element, number>; anchorTop: number };
+/**
+ * D60(c): alto de cada aviso dinámico y punto de pantalla de las filas en la última medición.
+ * B-qa23-2: de cada aviso de una fila, el alto del bloque de la fila que lo contiene.
+ */
+type NoticeLayout = {
+  heights: ReadonlyMap<Element, number>;
+  anchorTop: number;
+  rowBlocks: ReadonlyMap<Element, number>;
+};
 
 /** `element` va después de `notice` en el documento, fuera de él: lo que crece `notice` lo desplaza. */
 function follows(notice: Element, element: Element) {
   const position = notice.compareDocumentPosition(element);
   return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && (position & Node.DOCUMENT_POSITION_CONTAINED_BY) === 0;
+}
+
+/**
+ * B-qa23-2: hijo directo de la fila (`[data-layout-box^="row:"]`) que contiene `notice`; si cambia de
+ * alto, lo que le sigue se mueve. `null` si el aviso no está en una fila.
+ */
+function rowBlock(notice: Element): Element | null {
+  const row = notice.closest(ROW_BOX_SELECTOR);
+  let block: Element | null = notice;
+  while (row && block && block.parentElement !== row) {
+    block = block.parentElement;
+  }
+  return row ? block : null;
 }
 
 /** Control pulsado y su caja, con su posición vertical antes de la acción. */
@@ -393,10 +414,16 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     const notices = [...root.querySelectorAll(NOTICE_SELECTOR)];
     const heights = new Map(notices.map((notice) => [notice, notice.getBoundingClientRect().height] as const));
-    const previous = noticeLayoutRef.current;
-    const changed = notices.find(
-      (notice) => previous && Math.abs((previous.heights.get(notice) ?? 0) - (heights.get(notice) ?? 0)) >= 1,
+    const rowBlocks = new Map(
+      notices.flatMap((notice) => {
+        const block = rowBlock(notice);
+        return block ? [[notice, block.getBoundingClientRect().height] as const] : [];
+      }),
     );
+    const previous = noticeLayoutRef.current;
+    const resized = (notice: Element) =>
+      previous !== null && Math.abs((previous.heights.get(notice) ?? 0) - (heights.get(notice) ?? 0)) >= 1;
+    const changed = notices.find((notice) => !rowBlocks.has(notice) && resized(notice));
     if (previous && changed && Math.abs(anchor.getBoundingClientRect().top - previous.anchorTop) >= 1) {
       const held = holdRef.current ? anchorRef.current?.control : undefined;
       const heldAbove = held?.isConnected === true && !follows(changed, held);
@@ -413,7 +440,18 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         markMoved(movedAtRef.current, moved);
       }
     }
-    noticeLayoutRef.current = { heights, anchorTop: anchor.getBoundingClientRect().top };
+    // B-qa23-2: el aviso de una fila que aparece al teclear y cambia el alto de su bloque mueve lo que le
+    // sigue (el resto de la fila y las de abajo): queda guardado desde ESTE momento.
+    for (const [notice, blockHeight] of rowBlocks) {
+      const blockBefore = previous?.rowBlocks.get(notice);
+      if (blockBefore !== undefined && resized(notice) && Math.abs(blockBefore - blockHeight) >= 1) {
+        const moved = [...root.querySelectorAll(CONTROL_SELECTOR)].filter(
+          (control) => follows(notice, control) && !control.closest(STICKY_FOOTER_SELECTOR),
+        );
+        markMoved(movedAtRef.current, moved);
+      }
+    }
+    noticeLayoutRef.current = { heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
   }, [rootRef]);
 
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.

@@ -121,11 +121,12 @@ export function InvoiceReviewFooter({
       style={footerStyle}
     >
       {/* D54(a): en móvil, dos líneas reservadas (con la diferencia el total pasa a dos y empujaría «Cargar»).
-          REP12-06: con el fallo de duplicados a la vista, tres (que aparezca la diferencia no lo hace crecer). */}
+          REP12-06: con el fallo de duplicados a la vista, tres (que aparezca la diferencia no lo hace crecer).
+          REP13-05: también con el aviso de duplicado por marcar. */}
       <p
         className={cn(
           "col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:row-start-1 sm:min-h-0",
-          duplicateCheckFailed && !detailOpen ? "min-h-16" : "min-h-11",
+          (duplicateCheckFailed || duplicateReason === "unacknowledged") && !detailOpen ? "min-h-16" : "min-h-11",
         )}
         data-testid="invoice-review-totals"
       >
@@ -159,6 +160,18 @@ export function InvoiceReviewFooter({
         {/* REP12-06 (B-qa05-1): en móvil, con el detalle plegado, el fallo de la consulta de duplicados también se ve. */}
         {duplicateCheckFailed && !detailOpen ? (
           <span className="text-xs text-amber-700 sm:hidden dark:text-amber-300">No se pudo comprobar duplicados</span>
+        ) : null}
+        {/* REP13-05 (B-qa23-1): el aviso que llega tarde puede quedar fuera de la vista; en móvil, con el
+            detalle plegado, el motivo de bloqueo se ve y lleva a su casilla (como el del detalle). */}
+        {duplicateReason === "unacknowledged" && !detailOpen ? (
+          <button
+            className="inline-flex min-h-6 cursor-pointer items-center text-left text-xs text-amber-700 underline underline-offset-2 hover:text-foreground sm:hidden dark:text-amber-300"
+            data-guarded-activation
+            onClick={onReviewDuplicate}
+            type="button"
+          >
+            Marca el aviso de factura duplicada.
+          </button>
         ) : null}
       </p>
 

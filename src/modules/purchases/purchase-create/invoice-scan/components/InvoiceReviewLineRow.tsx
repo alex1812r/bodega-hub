@@ -190,11 +190,14 @@ export function InvoiceReviewLineRow({
               Restaurar
             </Button>
           ) : null}
-          {mismatch ? (
-            <p className="text-xs text-red-700 dark:text-red-300" data-testid={`line-mismatch-${index}`}>
-              La factura dice {formatInvoiceMoney(state, line.lineTotalRead)}
-            </p>
-          ) : null}
+          {/* B-qa23-2 (D60(c)): aparece al teclear; si baja lo que le sigue, useLayoutHold lo guarda. */}
+          <div className="empty:hidden" data-layout-notice>
+            {mismatch ? (
+              <p className="text-xs text-red-700 dark:text-red-300" data-testid={`line-mismatch-${index}`}>
+                La factura dice {formatInvoiceMoney(state, line.lineTotalRead)}
+              </p>
+            ) : null}
+          </div>
         </div>
       </div>
 
