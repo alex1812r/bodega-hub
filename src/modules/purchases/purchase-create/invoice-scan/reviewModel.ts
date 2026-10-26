@@ -218,6 +218,13 @@ export type InvoiceReviewState = {
     number?: string;
     /** ISO `YYYY-MM-DD`. */
     date?: string;
+    /**
+     * REP14-03 (D64): el campo tiene una fecha imposible (31/02) o a medias (`validity.badInput`); el
+     * campo nativo la da como `""`, que no es lo mismo que vaciarlo.
+     */
+    dateInvalid?: boolean;
+    /** REP14-03 (D64): el usuario confirmó registrar sin la fecha leída tras borrarla. */
+    noDateConfirmed?: boolean;
     currency: InvoiceExtraction["currency"];
   };
   lines: InvoiceReviewLine[];
@@ -286,7 +293,9 @@ export type InvoiceReviewAction =
   /** D25-a: confirma (o retira) cargar con la diferencia actual frente al total leído. */
   | { type: "confirmTotalsDifference"; confirmed: boolean }
   | { type: "setSupplier"; supplier: { contactId: string; name: string } }
-  | { type: "editHeader"; number?: string; date?: string }
+  | { type: "editHeader"; number?: string; date?: string; dateInvalid?: boolean }
+  /** REP14-03 (D64): confirma (o retira) registrar sin fecha tras borrar la leída. */
+  | { type: "confirmNoDate"; confirmed: boolean }
   | { type: "setRateChoice"; choice: InvoiceRateChoice; manualRate?: number }
   /** REP6-05: la tasa del día llegó después de abrir la revisión (sin elección explícita, pasa a ser la elegida). */
   | { type: "adoptSystemRate"; systemRateVes: number }
@@ -1214,10 +1223,22 @@ function applyAction(state: InvoiceReviewState, action: InvoiceReviewAction): In
         header.number = action.number.trim() || undefined;
       }
       if (action.date !== undefined) {
-        header.date = action.date || undefined;
+        const date = action.date || undefined;
+        const dateInvalid = !date && action.dateInvalid === true ? true : undefined;
+        if (action.number === undefined && date === header.date && dateInvalid === header.dateInvalid) {
+          return state;
+        }
+        header.date = date;
+        header.dateInvalid = dateInvalid;
+        // Escribir una fecha o dejarla a medias retira la confirmación de registrar sin ella.
+        if (date || dateInvalid) {
+          header.noDateConfirmed = undefined;
+        }
       }
       return { ...state, header };
     }
+    case "confirmNoDate":
+      return { ...state, header: { ...state.header, noDateConfirmed: action.confirmed || undefined } };
     case "setRateChoice":
       return rateReducer(state, action.choice, action.manualRate);
     case "adoptSystemRate":
@@ -1624,8 +1645,24 @@ function differenceBlocker(source: InvoiceReviewTotals["readSource"]): string {
  * mismo mensaje que el servidor (`getInvoiceDateIssue`). `undefined` si vale o está vacía.
  */
 export function getHeaderDateMessage(state: InvoiceReviewState): string | undefined {
+  if (state.header.dateInvalid) {
+    return INVOICE_BAD_INPUT_DATE_MESSAGE;
+  }
   const issue = state.header.date ? getInvoiceDateIssue(state.header.date) : undefined;
   return issue ? INVOICE_DATE_MESSAGES[issue] : undefined;
+}
+
+/** REP14-03 (D64): el campo nativo no da el texto de una fecha imposible o a medias. */
+export const INVOICE_BAD_INPUT_DATE_MESSAGE =
+  "La fecha escrita no existe o está incompleta. Corrígela o bórrala del todo.";
+
+/**
+ * REP14-03 (D64): se leyó una fecha y el usuario la borró; Cargar pide confirmar registrar sin
+ * ella (no se pierde en silencio). Sin fecha leída, el campo vacío no pide nada.
+ */
+export function needsNoDateConfirmation(state: InvoiceReviewState): boolean {
+  const { header } = state;
+  return Boolean(state.extraction.date) && !header.date && !header.dateInvalid && !header.noDateConfirmed;
 }
 
 /** REP13-06b: de qué trata cada bloqueo de Cargar (el pie compacto los nombra en breve). */
@@ -1721,6 +1758,8 @@ function collectInvoiceReviewBlockers(state: InvoiceReviewState): InvoiceReviewB
   }
   if (getHeaderDateMessage(state)) {
     push("date", "Corrige la fecha de la factura.");
+  } else if (needsNoDateConfirmation(state)) {
+    push("date", "Confirma que registras la factura sin fecha.");
   }
   if (state.usd.anomaly && !state.usd.accepted) {
     push("usd", "Confirma que la factura está en dólares para cargar los costos como REF.");

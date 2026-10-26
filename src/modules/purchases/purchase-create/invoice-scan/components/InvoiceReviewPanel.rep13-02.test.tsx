@@ -74,7 +74,7 @@ describe("InvoiceReviewPanel · fecha con año fuera de rango (REP13-02, M-p14B-
     await waitFor(() => expect(loadButton()).toBeEnabled());
   });
 
-  it("vaciarla vale: la fecha es opcional", async () => {
+  it("vaciarla vale: la fecha es opcional (REP14-03, D64: borrada la leída, se confirma registrar sin ella)", async () => {
     renderPanel();
     const date = screen.getByLabelText("Fecha");
 
@@ -82,6 +82,7 @@ describe("InvoiceReviewPanel · fecha con año fuera de rango (REP13-02, M-p14B-
     fireEvent.change(date, { target: { value: "" } });
 
     expect(date).not.toHaveAttribute("aria-invalid");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Registrar sin fecha/ }));
     await waitFor(() => expect(loadButton()).toBeEnabled());
   });
 });
