@@ -1,5 +1,7 @@
 import { normalizeAlias } from "@bodega/core/invoice";
 
+import { withoutSpaces } from "../../contracts";
+
 /** Número finito y > 0. */
 export function isPositive(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -18,16 +20,18 @@ export function formatDecimal(value: number): string {
 /**
  * RIF/cédula comparable: mayúsculas, sin espacios, guiones ni puntos y sin la
  * letra de tipo inicial (J, V, E, G, P, C). "J-12345678-9" -> "123456789".
+ * REP15-02 (B-p16Q-2): un RIF de relleno, todo ceros ("J-00000000-0"), no es un RIF: "".
  */
 export function normalizeTaxId(taxId: string | null | undefined): string {
   if (!taxId) {
     return "";
   }
 
-  return taxId
+  const digits = taxId
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .replace(/^[JVEGPC]/, "");
+  return /^0*$/.test(digits) ? "" : digits;
 }
 
 /** Letra de tipo (J, V, E, G, P, C) con la que empieza el RIF/cédula, o "". */
@@ -80,10 +84,11 @@ export function normalizeInvoiceNumber(value: string | null | undefined): string
 /**
  * REP14-05b: fecha de factura comparable, como 20261026a/20261019q: DD/MM/AAAA o DD-MM-AAAA (día
  * y mes de 1 o 2 dígitos, mismo separador; los formatos que admite la revisión) pasa a AAAA-MM-DD;
- * cualquier otro texto queda tal cual (sin espacios en los extremos). "" si no hay fecha.
+ * cualquier otro texto queda tal cual. REP15-02 (B-p16-1): sin ningún espacio Unicode ni
+ * tabulador (`withoutSpaces`), como `invoice_date_key` de 20261026a. "" si no hay fecha.
  */
 export function invoiceDateKey(value: string | null | undefined): string {
-  const text = value?.trim() ?? "";
+  const text = withoutSpaces(value ?? "");
   const dayFirst = /^([0-9]{1,2})([/-])([0-9]{1,2})\2([0-9]{4})$/.exec(text);
   return dayFirst ? `${dayFirst[4]}-${dayFirst[3].padStart(2, "0")}-${dayFirst[1].padStart(2, "0")}` : text;
 }

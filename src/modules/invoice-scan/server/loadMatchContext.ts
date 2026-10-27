@@ -50,7 +50,7 @@ import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
 import { exactAliasTexts } from "./match/product";
 import { resolveSupplier } from "./match/supplier";
-import { normalizeCode, normalizeInvoiceNumber, normalizeTaxId } from "./match/text";
+import { invoiceDateKey, normalizeCode, normalizeInvoiceNumber, normalizeTaxId } from "./match/text";
 
 /** Mismo cliente que usan los `*.server.ts` (sesión del usuario: `auth.uid()` para la RPC). */
 export type MatchContextSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
@@ -444,7 +444,8 @@ async function loadPreviousScansByDateTotal(
   supplierParams?: ReturnType<typeof duplicateSupplierParams>,
 ): Promise<PreviousScanRow[]> {
   const total = extraction.total;
-  const date = extraction.date?.trim();
+  // REP15-02 (B-p16-1): la fecha va como clave ISO sin blancos Unicode, como la compara la regla.
+  const date = invoiceDateKey(extraction.date);
   if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
     return [];
   }

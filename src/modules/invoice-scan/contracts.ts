@@ -66,6 +66,15 @@ export function hasForbiddenInvoiceChar(value: string): boolean {
   return false;
 }
 
+/**
+ * REP15-02 (B-p16-1): sin ningún espacio Unicode ni tabulador (`\s` de JS: NBSP, U+2003, U+3000,
+ * U+FEFF, \t, \n…), en los extremos o en medio. Normaliza la fecha y el número de factura para
+ * validar y comparar; 20261026a quita la misma clase de blancos en las RPC.
+ */
+export function withoutSpaces(value: string): string {
+  return value.replace(/\s/gu, "");
+}
+
 /** REP4-02a (caos N9r / D29): ISO `AAAA-MM-DD` estricto, dígitos ASCII (`[0-9]`, no `\d` de otros sistemas). */
 const ISO_DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
 /** DD/MM/AAAA o DD-MM-AAAA (día y mes de 1 o 2 dígitos, mismo separador), como se imprime en Venezuela. */
@@ -89,11 +98,11 @@ export type InvoiceDateIssue = "format" | "range" | "calendar";
 /**
  * REP4-02a (caos N9r / D29): qué le falta a una fecha de factura para valer.
  * Solo `AAAA-MM-DD` o `DD/MM/AAAA` / `DD-MM-AAAA` con año de 4 dígitos ASCII
- * (se ignoran los espacios de los extremos); año entre 2000 y 2100 y día real
- * de calendario (31/04 no, 29/02 solo en bisiesto). `undefined` si vale.
+ * (se ignora todo espacio Unicode y tabulador, `withoutSpaces`, REP15-02); año entre 2000 y 2100
+ * y día real de calendario (31/04 no, 29/02 solo en bisiesto). `undefined` si vale.
  */
 export function getInvoiceDateIssue(value: string): InvoiceDateIssue | undefined {
-  const trimmed = value.trim();
+  const trimmed = withoutSpaces(value);
   const iso = ISO_DATE.exec(trimmed);
   const dayFirst = DAY_FIRST_DATE.exec(trimmed);
   const parts = iso ? [iso[1], iso[2], iso[3]] : dayFirst ? [dayFirst[4], dayFirst[3], dayFirst[1]] : undefined;
@@ -143,10 +152,11 @@ export const INVOICE_CORRECTED_TOO_LARGE_MESSAGE =
 export const INVOICE_CONFIRMED_MAX_BYTES = 262144;
 export const INVOICE_CONFIRMED_TOO_LARGE_MESSAGE =
   "La confirmación de la factura es demasiado grande. Vincula menos líneas, acorta las etiquetas de empaque o divide la compra.";
+/** REP15-02 (B-p16B-3): en DD/MM/AAAA, el formato del campo de fecha de la revisión. */
 export const INVOICE_IMPOSSIBLE_DATE_MESSAGE =
-  "La fecha de la factura no existe. Corrígela (AAAA-MM-DD) o déjala vacía.";
+  "La fecha de la factura no existe. Corrígela (DD/MM/AAAA) o déjala vacía.";
 export const INVOICE_DATE_FORMAT_MESSAGE =
-  "La fecha de la factura no tiene un formato válido. Escríbela como AAAA-MM-DD o DD/MM/AAAA, o déjala vacía.";
+  "La fecha de la factura no tiene un formato válido. Escríbela como DD/MM/AAAA o déjala vacía.";
 export const INVOICE_DATE_OUT_OF_RANGE_MESSAGE = `La fecha de la factura debe ser de un año entre ${INVOICE_DATE_MIN_YEAR} y ${INVOICE_DATE_MAX_YEAR}. Corrígela o déjala vacía.`;
 
 /** Motivo en español de cada `InvoiceDateIssue`: el del servidor y el de la revisión (REP13-02). */

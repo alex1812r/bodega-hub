@@ -19,6 +19,7 @@ const MATCH: InvoiceDuplicateMatch = { scanId: "scan-previo", purchaseId: "purch
 
 describe("buildInvoiceDuplicateQuery", () => {
   it("omite lo que el endpoint no aceptaría y exige proveedor y número o total", () => {
+    // REP15-02 (B-p16B-1): una fecha DD/MM/AAAA válida va como AAAA-MM-DD (antes se omitía).
     expect(
       buildInvoiceDuplicateQuery({
         scanId: SCAN,
@@ -29,7 +30,7 @@ describe("buildInvoiceDuplicateQuery", () => {
         date: "03/09/2026",
         total: 0,
       }),
-    ).toEqual({ scanId: SCAN, supplierId: "contact-norte", taxId: "J-1", number: "0001" });
+    ).toEqual({ scanId: SCAN, supplierId: "contact-norte", taxId: "J-1", number: "0001", date: "2026-09-03" });
     expect(buildInvoiceDuplicateQuery({ number: "1", total: 10 })).toBeNull();
     expect(buildInvoiceDuplicateQuery({ supplierId: "contact-norte", number: "x".repeat(65) })).toBeNull();
     expect(buildInvoiceDuplicateQuery({ supplierId: "contact-norte", date: "2026-09-03", total: 1750 })).toEqual({
