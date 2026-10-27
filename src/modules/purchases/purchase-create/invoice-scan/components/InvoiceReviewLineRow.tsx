@@ -330,119 +330,130 @@ export function InvoiceReviewLineRow({
             </div>
           </div>
 
-          {showOptions ? (
-            <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
-              <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
-                {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
-                  // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.
-                  const outcome = getEntryModeOutcome(state, line, mode);
-                  const deviates = outcome?.deviates === true;
-                  const unverified = outcome?.lastCost === "error";
-                  const optionId = `${optionsId}-${mode}`;
-                  return (
-                    <button
-                      aria-describedby={
-                        outcome ? `${optionId}-outcome${deviates ? ` ${optionId}-deviation` : ""}` : undefined
-                      }
-                      aria-labelledby={`${optionId}-label`}
-                      aria-pressed={checkedMode === mode}
-                      className={cn(
-                        "cursor-pointer border text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        // Con resultado, la opción envuelve el texto (cabe a 390 px).
-                        outcome
-                          ? "flex min-h-8 max-w-full flex-col items-start gap-0.5 rounded-lg px-3 py-1.5 text-left break-words whitespace-normal"
-                          : "h-8 rounded-full px-3",
-                        checkedMode === mode
-                          ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                          : "border-outline-variant text-foreground hover:bg-surface-container-low",
-                        deviates || unverified ? "border-amber-400 dark:border-amber-500" : null,
-                        (deviates || unverified) && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
-                      )}
-                      data-choice={mode}
-                      data-deviates={deviates || undefined}
-                      key={mode}
-                      onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
-                      onKeyDown={(event) => {
-                        if (!ARROW_KEYS.has(event.key)) {
-                          return;
+          {/* REP15-01 (D65): el último costo llega tarde y puede quitar las opciones (o la línea «Sin costo previo»);
+              useLayoutHold retiene el alto de este bloque hasta que el usuario desplace o use el teclado. */}
+          <div className="empty:hidden" data-layout-notice>
+            {showOptions ? (
+              <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
+                <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
+                  {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
+                    // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.
+                    const outcome = getEntryModeOutcome(state, line, mode);
+                    const deviates = outcome?.deviates === true;
+                    const unverified = outcome?.lastCost === "error";
+                    const optionId = `${optionsId}-${mode}`;
+                    return (
+                      <button
+                        aria-describedby={
+                          outcome ? `${optionId}-outcome${deviates ? ` ${optionId}-deviation` : ""}` : undefined
                         }
-                        event.preventDefault();
-                        if (event.repeat) {
-                          return;
-                        }
-                        // D39-5: botones de acción, no radios; cualquier flecha lleva el foco a la otra
-                        // opción sin elegirla (eligen Enter, Espacio o clic).
-                        const other = mode === "unit" ? "pack" : "unit";
-                        event.currentTarget.parentElement
-                          ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
-                          ?.focus();
-                      }}
-                      type="button"
-                    >
-                      <span id={`${optionId}-label`}>{mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}</span>
-                      {outcome ? (
-                        <span className="font-normal tabular-nums" id={`${optionId}-outcome`}>
-                          {entryModeOutcomeText(line, outcome)}
-                        </span>
-                      ) : null}
-                      {deviates ? (
-                        <span
-                          className="flex items-start gap-1 font-normal text-amber-700 dark:text-amber-300"
-                          id={`${optionId}-deviation`}
-                        >
-                          <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
-                          {ENTRY_MODE_DEVIATION_TEXT}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
+                        aria-labelledby={`${optionId}-label`}
+                        aria-pressed={checkedMode === mode}
+                        className={cn(
+                          "cursor-pointer border text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          // Con resultado, la opción envuelve el texto (cabe a 390 px).
+                          outcome
+                            ? "flex min-h-8 max-w-full flex-col items-start gap-0.5 rounded-lg px-3 py-1.5 text-left break-words whitespace-normal"
+                            : "h-8 rounded-full px-3",
+                          checkedMode === mode
+                            ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                            : "border-outline-variant text-foreground hover:bg-surface-container-low",
+                          deviates || unverified ? "border-amber-400 dark:border-amber-500" : null,
+                          (deviates || unverified) && checkedMode !== mode ? "bg-amber-50 dark:bg-amber-950" : null,
+                        )}
+                        data-choice={mode}
+                        data-deviates={deviates || undefined}
+                        key={mode}
+                        onClick={() => onAction({ type: "editEntryMode", index, entryMode: mode })}
+                        onKeyDown={(event) => {
+                          if (!ARROW_KEYS.has(event.key)) {
+                            return;
+                          }
+                          event.preventDefault();
+                          if (event.repeat) {
+                            return;
+                          }
+                          // D39-5: botones de acción, no radios; cualquier flecha lleva el foco a la otra
+                          // opción sin elegirla (eligen Enter, Espacio o clic).
+                          const other = mode === "unit" ? "pack" : "unit";
+                          event.currentTarget.parentElement
+                            ?.querySelector<HTMLElement>(`[data-choice="${other}"]`)
+                            ?.focus();
+                        }}
+                        type="button"
+                      >
+                        <span id={`${optionId}-label`}>{mode === "unit" ? "Por unidad" : `Por ${linePackWord(line)}`}</span>
+                        {outcome ? (
+                          <span className="font-normal tabular-nums" id={`${optionId}-outcome`}>
+                            {entryModeOutcomeText(line, outcome)}
+                          </span>
+                        ) : null}
+                        {deviates ? (
+                          <span
+                            className="flex items-start gap-1 font-normal text-amber-700 dark:text-amber-300"
+                            id={`${optionId}-deviation`}
+                          >
+                            <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
+                            {ENTRY_MODE_DEVIATION_TEXT}
+                          </span>
+                        ) : outcome?.lastCost === "loading" ? (
+                          // REP15-01 (D65): mientras se consulta el último costo, el sitio del aviso de desvío queda
+                          // reservado (invisible): si llega desviado, la opción no crece y no baja lo de debajo.
+                          <span aria-hidden className="invisible flex items-start gap-1 font-normal">
+                            <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
+                            {ENTRY_MODE_DEVIATION_TEXT}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* D43 (B-r9-1): debajo de las opciones (nunca en el sitio del control recién pulsado);
+                    reconocido, lo sustituye un texto del mismo tamaño para que nada se mueva. */}
+                {costAck && costReview.kind === "acknowledge" && !costReview.acknowledged ? (
+                  <button
+                    className="flex min-h-8 max-w-full cursor-pointer items-center gap-1 self-start rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-left text-xs font-medium break-words whitespace-normal text-amber-800 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-500 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
+                    data-cost-ack
+                    onClick={() => onAction({ type: "acknowledgeCost", index })}
+                    type="button"
+                  >
+                    <AlertTriangle aria-hidden className="size-3 shrink-0" />
+                    {costAck.ask}
+                  </button>
+                ) : costAck ? (
+                  <p
+                    className="flex min-h-8 max-w-full items-center gap-1 self-start rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium break-words text-on-surface-variant"
+                    data-testid="invoice-review-cost-acknowledged"
+                  >
+                    <Check aria-hidden className="size-3 shrink-0" />
+                    {costAck.done}
+                  </p>
+                ) : null}
+                {line.entryMode === "pack" ? (
+                  // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
+                  // corrige solo; la línea queda sin resolver y lo dice.
+                  <NumberInput
+                    allowNegative
+                    className="max-w-40"
+                    data-need="unitsPerPack"
+                    decimals={0}
+                    label={`Unidades por ${line.packLabel.toLowerCase()}`}
+                    onValueChange={(value) =>
+                      onAction({ type: "editUnitsPerPack", index, unitsPerPack: value ?? undefined })
+                    }
+                    required
+                    thousandsHint={false}
+                    value={line.unitsPerPack ?? null}
+                  />
+                ) : null}
               </div>
-              {/* D43 (B-r9-1): debajo de las opciones (nunca en el sitio del control recién pulsado);
-                  reconocido, lo sustituye un texto del mismo tamaño para que nada se mueva. */}
-              {costAck && costReview.kind === "acknowledge" && !costReview.acknowledged ? (
-                <button
-                  className="flex min-h-8 max-w-full cursor-pointer items-center gap-1 self-start rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-left text-xs font-medium break-words whitespace-normal text-amber-800 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-500 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
-                  data-cost-ack
-                  onClick={() => onAction({ type: "acknowledgeCost", index })}
-                  type="button"
-                >
-                  <AlertTriangle aria-hidden className="size-3 shrink-0" />
-                  {costAck.ask}
-                </button>
-              ) : costAck ? (
-                <p
-                  className="flex min-h-8 max-w-full items-center gap-1 self-start rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium break-words text-on-surface-variant"
-                  data-testid="invoice-review-cost-acknowledged"
-                >
-                  <Check aria-hidden className="size-3 shrink-0" />
-                  {costAck.done}
-                </p>
-              ) : null}
-              {line.entryMode === "pack" ? (
-                // Sin `min` y con signo (SCN-UI-C1, 6.19): un 0 o un negativo tecleado no se
-                // corrige solo; la línea queda sin resolver y lo dice.
-                <NumberInput
-                  allowNegative
-                  className="max-w-40"
-                  data-need="unitsPerPack"
-                  decimals={0}
-                  label={`Unidades por ${line.packLabel.toLowerCase()}`}
-                  onValueChange={(value) =>
-                    onAction({ type: "editUnitsPerPack", index, unitsPerPack: value ?? undefined })
-                  }
-                  required
-                  thousandsHint={false}
-                  value={line.unitsPerPack ?? null}
-                />
-              ) : null}
-            </div>
-          ) : lastCost?.status === "none" ? (
-            // D42: sin opciones a la vista, la fila dice que no hay con qué comparar el costo.
-            <p className="text-xs text-on-surface-variant" data-testid="invoice-review-no-last-cost">
-              Sin costo previo de este producto.
-            </p>
-          ) : null}
+            ) : lastCost?.status === "none" ? (
+              // D42: sin opciones a la vista, la fila dice que no hay con qué comparar el costo.
+              <p className="text-xs text-on-surface-variant" data-testid="invoice-review-no-last-cost">
+                Sin costo previo de este producto.
+              </p>
+            ) : null}
+          </div>
 
           {conversion?.ok && !line.discarded ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
@@ -459,32 +470,40 @@ export function InvoiceReviewLineRow({
             </div>
           ) : null}
 
-          {hasNotices ? (
-            <ul
-              className={cn(
-                "flex flex-col gap-1 text-xs",
-                noticeHighlighted
-                  ? "rounded-md bg-amber-50 p-2 ring-2 ring-amber-400 dark:bg-amber-950 dark:ring-amber-500"
-                  : null,
-              )}
-              data-highlighted={noticeHighlighted || undefined}
-              data-testid="invoice-review-line-notices"
-              id={noticesId}
-            >
-              {issues.map((issue) => (
-                <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue.key}`}>
-                  <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {issue.text}
-                </li>
-              ))}
-              {needs.map((need) => (
-                <li className="flex items-start gap-1.5 text-red-700 dark:text-red-300" key={`need-${need}`}>
-                  <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {need}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          {/* REP15-01 (D65(b)): lo que el último costo cambie aquí queda bajo useLayoutHold. */}
+          <div className="empty:hidden" data-layout-notice>
+            {hasNotices ? (
+              <ul
+                className={cn(
+                  "flex flex-col gap-1 text-xs",
+                  noticeHighlighted
+                    ? "rounded-md bg-amber-50 p-2 ring-2 ring-amber-400 dark:bg-amber-950 dark:ring-amber-500"
+                    : null,
+                )}
+                data-highlighted={noticeHighlighted || undefined}
+                data-testid="invoice-review-line-notices"
+                id={noticesId}
+              >
+                {issues.map((issue) => (
+                  <li className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300" key={`issue-${issue.key}`}>
+                    <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                    {issue.text}
+                  </li>
+                ))}
+                {needs.map((need) => (
+                  <li className="flex items-start gap-1.5 text-red-700 dark:text-red-300" key={`need-${need}`}>
+                    <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                    {need}
+                  </li>
+                ))}
+                {costReview.kind === "loading" ? (
+                  // REP15-01 (D65): el motivo del costo desviado (hasta 3 renglones más a 320 px) llega con el último
+                  // costo; su sitio queda reservado mientras se consulta y la fila no crece al llegar.
+                  <li aria-hidden className="min-h-[3lh]" />
+                ) : null}
+              </ul>
+            ) : null}
+          </div>
         </>
       )}
 
