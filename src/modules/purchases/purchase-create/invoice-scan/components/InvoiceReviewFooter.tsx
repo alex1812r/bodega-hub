@@ -1,7 +1,16 @@
 "use client";
 
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
-import { type ChangeEvent, type CSSProperties, type Ref, useId, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  type Ref,
+  type RefObject,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
@@ -64,6 +73,42 @@ const REASON_LABELS: Record<Exclude<InvoiceReviewBlockerReason, "lines">, string
   rate: "tasa",
   difference: "diferencia",
 };
+
+/** Atributo del indicio «y N más» (no cuenta como motivo). */
+const BELOW_FOLD_MARK = "data-blockers-more";
+
+/**
+ * REP14-06b (O-qa06-1): cuántos hijos de la lista acaban por debajo de su borde visible (alto reservado y
+ * desplazable). Se vuelve a medir al cambiar los motivos (`key`), al desplazar la lista y al cambiar su tamaño.
+ */
+function useItemsBelowFold(listRef: RefObject<HTMLElement | null>, key: string) {
+  const [count, setCount] = useState(0);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const measure = () => {
+      const bottom = list.getBoundingClientRect().bottom;
+      let below = 0;
+      for (const item of Array.from(list.children)) {
+        if (!item.hasAttribute(BELOW_FOLD_MARK) && item.getBoundingClientRect().bottom > bottom + 1) {
+          below += 1;
+        }
+      }
+      setCount(below);
+    };
+    measure();
+    list.addEventListener("scroll", measure, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(list);
+    return () => {
+      list.removeEventListener("scroll", measure);
+      observer?.disconnect();
+    };
+  }, [listRef, key]);
+  return count;
+}
 
 const READ_LABELS: Record<NonNullable<InvoiceReviewTotals["readSource"]>, { label: string; against: string }> = {
   total: { label: "Leído", against: "total leído" },
@@ -144,6 +189,10 @@ export function InvoiceReviewFooter({
     }
     return REASON_LABELS[reason];
   }
+  // REP14-06b (O-qa06-1): motivos que no caben en los 3 renglones reservados; se dice cuántos quedan debajo.
+  const blockersRef = useRef<HTMLUListElement>(null);
+  const blockersKey = [...summary.blockers, duplicateReason, duplicateCheckFailed].join("|");
+  const hiddenBlockers = useItemsBelowFold(blockersRef, blockersKey);
 
   return (
     <footer
@@ -278,27 +327,45 @@ export function InvoiceReviewFooter({
             ? ` · ${summary.totals.lineMismatches.length} con cantidad × costo distinto del total leído`
             : ""}
         </p>
-        {summary.blockers.length > 0 || duplicateReason || duplicateCheckFailed ? (
-          <ul aria-live="polite" className="text-xs text-on-surface-variant" data-testid="invoice-review-blockers">
-            {summary.blockers.map((blocker) => (
-              <li key={blocker}>{blocker}</li>
-            ))}
-            {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
-            {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
-            {duplicateReason === "unacknowledged" ? (
-              <li>
-                <button
-                  className="cursor-pointer text-left underline underline-offset-2 hover:text-foreground"
-                  data-guarded-activation
-                  onClick={onReviewDuplicate}
-                  type="button"
-                >
-                  Marca el aviso de factura duplicada.
-                </button>
-              </li>
-            ) : null}
-          </ul>
-        ) : null}
+        {/* REP14-06 (B-qa234-2): desde `sm` la lista tiene su alto reservado (3 renglones; si hay más, se desplaza
+            dentro): que aparezca o se resuelva un motivo no mueve «Cargar» ni la casilla de la diferencia. En móvil
+            el detalle se abre a mano y la línea compacta ya tiene alto fijo. */}
+        <ul
+          aria-live="polite"
+          className="text-xs text-on-surface-variant max-sm:empty:hidden sm:h-[3lh] sm:overflow-y-auto"
+          data-testid="invoice-review-blockers"
+          ref={blockersRef}
+        >
+          {summary.blockers.map((blocker) => (
+            <li key={blocker}>{blocker}</li>
+          ))}
+          {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
+          {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
+          {duplicateReason === "unacknowledged" ? (
+            <li>
+              <button
+                className="cursor-pointer text-left underline underline-offset-2 hover:text-foreground"
+                data-guarded-activation
+                onClick={onReviewDuplicate}
+                type="button"
+              >
+                Marca el aviso de factura duplicada.
+              </button>
+            </li>
+          ) : null}
+          {hiddenBlockers > 0 ? (
+            // REP14-06b (O-qa06-1): pegado al borde de abajo de los 3 renglones mientras queden motivos debajo (sin
+            // cambiar el alto). El lector de pantalla ya lee la lista entera.
+            <li
+              aria-hidden
+              className="sticky bottom-0 ml-auto w-fit bg-surface-container-lowest pl-2 font-medium text-amber-700 dark:text-amber-300"
+              data-blockers-more
+              data-testid="invoice-review-blockers-more"
+            >
+              {`y ${hiddenBlockers} más ↓`}
+            </li>
+          ) : null}
+        </ul>
       </div>
 
       <div

@@ -218,6 +218,13 @@ export type InvoiceReviewState = {
     number?: string;
     /** ISO `YYYY-MM-DD`. */
     date?: string;
+    /**
+     * REP14-03 (D64): el campo tiene una fecha imposible (31/02) o a medias (`validity.badInput`); el
+     * campo nativo la da como `""`, que no es lo mismo que vaciarlo.
+     */
+    dateInvalid?: boolean;
+    /** REP14-03 (D64): el usuario confirmó registrar sin la fecha leída tras borrarla. */
+    noDateConfirmed?: boolean;
     currency: InvoiceExtraction["currency"];
   };
   lines: InvoiceReviewLine[];
@@ -286,7 +293,11 @@ export type InvoiceReviewAction =
   /** D25-a: confirma (o retira) cargar con la diferencia actual frente al total leído. */
   | { type: "confirmTotalsDifference"; confirmed: boolean }
   | { type: "setSupplier"; supplier: { contactId: string; name: string } }
-  | { type: "editHeader"; number?: string; date?: string }
+  /** REP14-04 (B-p14-1): la × del proveedor lo quita; sin él Cargar pide elegirlo. */
+  | { type: "clearSupplier" }
+  | { type: "editHeader"; number?: string; date?: string; dateInvalid?: boolean }
+  /** REP14-03 (D64): confirma (o retira) registrar sin fecha tras borrar la leída. */
+  | { type: "confirmNoDate"; confirmed: boolean }
   | { type: "setRateChoice"; choice: InvoiceRateChoice; manualRate?: number }
   /** REP6-05: la tasa del día llegó después de abrir la revisión (sin elección explícita, pasa a ser la elegida). */
   | { type: "adoptSystemRate"; systemRateVes: number }
@@ -1054,8 +1065,25 @@ function rateReducer(state: InvoiceReviewState, choice: InvoiceRateChoice, manua
  */
 function adoptSystemRate(state: InvoiceReviewState, system: number): InvoiceReviewState {
   const { rate } = state;
-  if (!isPositive(system) || rate.system !== undefined || rate.explicit) {
+  if (!isPositive(system) || rate.system !== undefined) {
     return state;
+  }
+  if (rate.explicit) {
+    // REP14-04 (B-p15B-2): la elección del usuario se respeta, pero ya hay tasa del día: se ofrece
+    // y deja de valer el aviso de «no hay tasa del día» (`notice`, `unverified`).
+    const warning = rate.printed !== undefined ? printedRateWarning(system, rate.printed) : undefined;
+    return {
+      ...state,
+      rate: {
+        system,
+        ...(rate.printed !== undefined ? { printed: rate.printed } : {}),
+        ...(rate.ignoredWarning ? { ignoredWarning: rate.ignoredWarning } : {}),
+        choice: rate.choice,
+        ...(rate.manual !== undefined ? { manual: rate.manual } : {}),
+        ...(warning ? { warning } : {}),
+        explicit: true,
+      },
+    };
   }
   const ignored = rate.printed !== undefined && isPlausiblePrintedRate(rate.printed, { system }) === false;
   const printed = ignored ? undefined : rate.printed;
@@ -1208,16 +1236,35 @@ function applyAction(state: InvoiceReviewState, action: InvoiceReviewAction): In
           supplier: { ...state.header.supplier, contactId: action.supplier.contactId, name: action.supplier.name },
         },
       };
+    case "clearSupplier": {
+      if (!state.header.supplier.contactId) {
+        return state;
+      }
+      const { candidates, readName } = state.header.supplier;
+      return { ...state, header: { ...state.header, supplier: { name: readName, readName, candidates } } };
+    }
     case "editHeader": {
       const header = { ...state.header };
       if (action.number !== undefined) {
         header.number = action.number.trim() || undefined;
       }
       if (action.date !== undefined) {
-        header.date = action.date || undefined;
+        const date = action.date || undefined;
+        const dateInvalid = !date && action.dateInvalid === true ? true : undefined;
+        if (action.number === undefined && date === header.date && dateInvalid === header.dateInvalid) {
+          return state;
+        }
+        header.date = date;
+        header.dateInvalid = dateInvalid;
+        // Escribir una fecha o dejarla a medias retira la confirmación de registrar sin ella.
+        if (date || dateInvalid) {
+          header.noDateConfirmed = undefined;
+        }
       }
       return { ...state, header };
     }
+    case "confirmNoDate":
+      return { ...state, header: { ...state.header, noDateConfirmed: action.confirmed || undefined } };
     case "setRateChoice":
       return rateReducer(state, action.choice, action.manualRate);
     case "adoptSystemRate":
@@ -1333,6 +1380,28 @@ export function getEffectiveRate(state: InvoiceReviewState): number | undefined 
     return rate.printed;
   }
   return rate.manual;
+}
+
+/**
+ * REP14-04 (B-p15B-2): aviso de la tasa en uso. `rate.notice` describe la tasa de partida (sin
+ * tasa del día); con la tasa escrita a mano, o con la del día ya llegada, dice cuál se usa.
+ */
+export function getRateNotice(state: InvoiceReviewState): string | undefined {
+  const { rate } = state;
+  if (rate.choice !== "manual") {
+    return rate.system === undefined ? rate.notice : undefined;
+  }
+  if (rate.system !== undefined) {
+    return rate.manual !== undefined
+      ? `Ya hay tasa del día (${formatVesBs(rate.system)}); se usa la tasa escrita (${formatVesBs(rate.manual)}).`
+      : `Ya hay tasa del día (${formatVesBs(rate.system)}): escribe la tasa o elige la de hoy.`;
+  }
+  if (rate.manual !== undefined) {
+    return `No hay tasa del día: se usa la tasa escrita (${formatVesBs(rate.manual)}).`;
+  }
+  return rate.printed === undefined
+    ? rate.notice
+    : "No hay tasa del día: escribe la tasa para convertir los costos.";
 }
 
 /** Costos aceptados como REF directamente: factura en dólares aceptada (USD = REF). */
@@ -1624,8 +1693,24 @@ function differenceBlocker(source: InvoiceReviewTotals["readSource"]): string {
  * mismo mensaje que el servidor (`getInvoiceDateIssue`). `undefined` si vale o está vacía.
  */
 export function getHeaderDateMessage(state: InvoiceReviewState): string | undefined {
+  if (state.header.dateInvalid) {
+    return INVOICE_BAD_INPUT_DATE_MESSAGE;
+  }
   const issue = state.header.date ? getInvoiceDateIssue(state.header.date) : undefined;
   return issue ? INVOICE_DATE_MESSAGES[issue] : undefined;
+}
+
+/** REP14-03 (D64): el campo nativo no da el texto de una fecha imposible o a medias. */
+export const INVOICE_BAD_INPUT_DATE_MESSAGE =
+  "La fecha escrita no existe o está incompleta. Corrígela o bórrala del todo.";
+
+/**
+ * REP14-03 (D64): se leyó una fecha y el usuario la borró; Cargar pide confirmar registrar sin
+ * ella (no se pierde en silencio). Sin fecha leída, el campo vacío no pide nada.
+ */
+export function needsNoDateConfirmation(state: InvoiceReviewState): boolean {
+  const { header } = state;
+  return Boolean(state.extraction.date) && !header.date && !header.dateInvalid && !header.noDateConfirmed;
 }
 
 /** REP13-06b: de qué trata cada bloqueo de Cargar (el pie compacto los nombra en breve). */
@@ -1721,6 +1806,8 @@ function collectInvoiceReviewBlockers(state: InvoiceReviewState): InvoiceReviewB
   }
   if (getHeaderDateMessage(state)) {
     push("date", "Corrige la fecha de la factura.");
+  } else if (needsNoDateConfirmation(state)) {
+    push("date", "Confirma que registras la factura sin fecha.");
   }
   if (state.usd.anomaly && !state.usd.accepted) {
     push("usd", "Confirma que la factura está en dólares para cargar los costos como REF.");

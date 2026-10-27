@@ -91,6 +91,11 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
   renderSecondary?: (option: EntityOption<K>, context: EntitySecondaryContext) => ReactNode;
   required?: boolean;
   value: EntityAutocompleteValue | null;
+  /**
+   * El nombre elegido se ve entero, envuelto en varias líneas, mientras el campo no tiene el foco (el
+   * campo crece con él); al enfocarlo se edita como siempre. Para columnas estrechas (REP14-06, D63).
+   */
+  wrapValueLabel?: boolean;
 };
 
 type SearchState<K extends EntityKind> =
@@ -145,6 +150,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   renderSecondary,
   required = false,
   value,
+  wrapValueLabel = false,
 }: EntityAutocompleteProps<K>) {
   const config = entityConfig[entity];
   const inputId = useId();
@@ -1000,6 +1006,13 @@ export function EntityAutocomplete<K extends EntityKind>({
   ) : null;
 
   const showsClearButton = !disabled && (hasValue || text !== "");
+  // El nombre envuelto ocupa su sitio también al teclear encima y tras quitarlo (el último elegido, invisible): el
+  // campo no cambia de alto ni mueve lo de debajo hasta que se elige otro.
+  const [wrappedLabel, setWrappedLabel] = useState(value?.label ?? "");
+  if (wrapValueLabel && value?.label && value.label !== wrappedLabel) {
+    setWrappedLabel(value.label);
+  }
+  const wrapsValueLabel = wrapValueLabel && wrappedLabel !== "";
 
   return (
     <div className="w-full min-w-0 space-y-2">
@@ -1007,7 +1020,7 @@ export function EntityAutocomplete<K extends EntityKind>({
         {label}
         {required ? " *" : null}
       </label>
-      <div className="relative">
+      <div className={cn("relative", wrapsValueLabel && "grid")}>
         <Search
           aria-hidden
           className="pointer-events-none absolute top-1/2 left-3 size-[1.125rem] -translate-y-1/2 text-muted-foreground"
@@ -1027,6 +1040,8 @@ export function EntityAutocomplete<K extends EntityKind>({
             "pl-10",
             showsClearButton && "pr-10",
             error && formControlErrorClassName,
+            wrapsValueLabel && "peer col-start-1 row-start-1 h-auto min-h-10 min-w-0 self-stretch",
+            wrapsValueLabel && showsValueLabel && "text-transparent focus:text-foreground",
           )}
           disabled={disabled}
           id={inputId}
@@ -1043,6 +1058,20 @@ export function EntityAutocomplete<K extends EntityKind>({
           type="text"
           value={displayValue}
         />
+        {wrapsValueLabel ? (
+          // El campo lleva el mismo texto (lo lee el lector de pantalla); este solo se ve. `overflow-wrap: anywhere`
+          // (no `break-words`) y `min-w-0`: una palabra larga sin espacios se parte y no ensancha la celda (B-qa06-1).
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none col-start-1 row-start-1 block min-w-0 self-center border border-transparent py-2 pr-10 pl-10 text-sm [overflow-wrap:anywhere] text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
+              !showsValueLabel && "invisible",
+            )}
+            data-entity-value-label
+          >
+            {wrappedLabel}
+          </span>
+        ) : null}
         {showsClearButton ? (
           <button
             aria-label={`Limpiar ${label}`}

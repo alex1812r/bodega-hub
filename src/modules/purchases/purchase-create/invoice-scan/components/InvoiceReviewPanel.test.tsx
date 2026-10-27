@@ -1702,7 +1702,8 @@ describe("InvoiceReviewPanel", () => {
         rerender(<InvoiceReviewPanel {...props} context={CONTEXT} />);
 
         expect(screen.getByRole("radio", { name: "Escribir la tasa" })).toHaveAttribute("aria-checked", "true");
-        expect(screen.queryByRole("radio", { name: "Tasa de hoy (900,00)" })).not.toBeInTheDocument();
+        // REP14-04 (B-p15B-2): la de hoy se ofrece, sin elegirla por el usuario.
+        expect(todayRadio()).toHaveAttribute("aria-checked", "false");
       });
     });
   });

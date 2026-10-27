@@ -77,6 +77,17 @@ export function normalizeInvoiceNumber(value: string | null | undefined): string
   return /[1-9]/.test(number) ? number : "";
 }
 
+/**
+ * REP14-05b: fecha de factura comparable, como 20261026a/20261019q: DD/MM/AAAA o DD-MM-AAAA (día
+ * y mes de 1 o 2 dígitos, mismo separador; los formatos que admite la revisión) pasa a AAAA-MM-DD;
+ * cualquier otro texto queda tal cual (sin espacios en los extremos). "" si no hay fecha.
+ */
+export function invoiceDateKey(value: string | null | undefined): string {
+  const text = value?.trim() ?? "";
+  const dayFirst = /^([0-9]{1,2})([/-])([0-9]{1,2})\2([0-9]{4})$/.exec(text);
+  return dayFirst ? `${dayFirst[4]}-${dayFirst[3].padStart(2, "0")}-${dayFirst[1].padStart(2, "0")}` : text;
+}
+
 /** Distancia de edición <= 1 (una sustitución, omisión o carácter de más). */
 export function withinOneEdit(a: string, b: string): boolean {
   if (a === b) {

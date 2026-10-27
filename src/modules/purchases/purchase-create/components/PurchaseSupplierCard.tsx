@@ -32,12 +32,15 @@ type PurchaseSupplierCardProps = {
    * autoriza con `purchases.create` (quien registra compras puede no leer contactos).
    */
   supplierFetcher?: EntityFetcher<"contact">;
+  /** El nombre elegido se ve entero, envuelto, en columnas estrechas (revisión de factura, REP14-06). */
+  wrapSelectedName?: boolean;
 };
 
 export function PurchaseSupplierCard({
   onSupplierChange,
   selectedSupplierId,
   supplierFetcher = fetchPurchaseSupplierOptions,
+  wrapSelectedName = false,
 }: PurchaseSupplierCardProps) {
   // Nombre de cada proveedor elegido aquí, por id: si la página retiene un cambio, el
   // anterior sigue teniendo su nombre sin releer el proveedor.
@@ -80,6 +83,7 @@ export function PurchaseSupplierCard({
         renderSecondary={(option) => option.taxId}
         required
         value={value}
+        wrapValueLabel={wrapSelectedName}
       />
     </PurchaseCreateSectionCard>
   );

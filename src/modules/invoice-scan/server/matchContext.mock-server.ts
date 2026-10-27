@@ -60,7 +60,7 @@ import type {
 } from "./match.types";
 import { lastUnitCostRefOf } from "./match/money";
 import { searchTextVariants } from "./match/searchText";
-import { normalizeInvoiceNumber, normalizeTaxId, sameTaxId, textSimilarity } from "./match/text";
+import { invoiceDateKey, normalizeInvoiceNumber, normalizeTaxId, sameTaxId, textSimilarity } from "./match/text";
 import { listMockScansOfStore } from "./scans.mock-server";
 
 /** Mismos umbrales que `invoice_match_candidates` (20261019d). */
@@ -275,6 +275,36 @@ function mockScanOfSupplier(
 }
 
 /**
+ * Paridad mock de `invoice_duplicate_candidates` e `invoice_match_previous_scans` (REP14-01, M-p15-1, D63): número EFECTIVO del
+ * escaneo, el confirmado por el usuario (`confirmed.extraction.number`) si existe y no está vacío;
+ * si no, el leído.
+ */
+function mockEffectiveNumber(scan: ReturnType<typeof listMockScansOfStore>[number]): string | null {
+  const typed = (scan.confirmed as { extraction?: { number?: unknown } | null } | null)?.extraction?.number;
+  return typeof typed === "string" && typed.trim() !== "" ? typed : (scan.extracted?.number ?? null);
+}
+
+/**
+ * REP14-05 (M-qa1401-1): fecha y total EFECTIVOS del escaneo, como 20261026a y 20261019q: los
+ * confirmados (`confirmed.extraction.date` / `.total`, número JSON o texto) si no están vacíos;
+ * si no, los leídos.
+ */
+function mockConfirmedExtraction(scan: ReturnType<typeof listMockScansOfStore>[number]) {
+  return (scan.confirmed as { extraction?: { date?: unknown; total?: unknown } | null } | null)?.extraction;
+}
+
+function mockEffectiveDate(scan: ReturnType<typeof listMockScansOfStore>[number]): string | undefined {
+  const typed = mockConfirmedExtraction(scan)?.date;
+  return typeof typed === "string" && typed.trim() !== "" ? typed : scan.extracted?.date;
+}
+
+function mockEffectiveTotal(scan: ReturnType<typeof listMockScansOfStore>[number]): number | undefined {
+  const typed = mockConfirmedExtraction(scan)?.total;
+  const value = typeof typed === "string" && typed.trim() !== "" ? Number(typed) : typed;
+  return typeof value === "number" && Number.isFinite(value) ? value : scan.extracted?.total;
+}
+
+/**
  * REP12-01: también la usa `POST /api/purchases/invoice-scan/duplicates` en mock (paridad con `loadPreviousScans`).
  * REP12-06: con `supplier`, el proveedor se filtra antes del tope, como `invoice_duplicate_candidates`.
  */
@@ -290,6 +320,7 @@ export function listMockPreviousScans(
   const date = extraction.date?.trim();
   const cents = typeof total === "number" && Number.isFinite(total) && total > 0 && (date || !number) ? Math.round(total * 100) : undefined;
   const supplierParams = supplier ? duplicateSupplierParams(supplier) : undefined;
+  // REP14-01 (D63): como 20261026a y 20261019q, casa el número efectivo o el leído.
   const live = listMockScansOfStore(storeId).filter(
     (scan) =>
       scan.id !== excludeScanId &&
@@ -298,20 +329,25 @@ export function listMockPreviousScans(
       (!supplierParams || mockScanOfSupplier(storeId, scan, supplierParams)),
   );
   const byNumber = number
-    ? live.filter((scan) => normalizeInvoiceNumber(scan.extracted?.number) === number).slice(0, PREVIOUS_SCANS_LIMIT)
+    ? live
+        .filter((scan) =>
+          [mockEffectiveNumber(scan), scan.extracted?.number].some((value) => normalizeInvoiceNumber(value) === number),
+        )
+        .slice(0, PREVIOUS_SCANS_LIMIT)
     : [];
   const byDateTotal =
     cents === undefined
       ? []
       : live
-          .filter((scan) => {
-            const scanTotal = scan.extracted?.total;
-            return (
-              typeof scanTotal === "number" &&
-              Math.abs(Math.round(scanTotal * 100) - cents) <= 1 &&
-              (!date || scan.extracted?.date === date)
-            );
-          })
+          // REP14-05: total y fecha, los leídos o los efectivos (confirmados).
+          .filter(
+            (scan) =>
+              [scan.extracted?.total, mockEffectiveTotal(scan)].some(
+                (scanTotal) => typeof scanTotal === "number" && Math.abs(Math.round(scanTotal * 100) - cents) <= 1,
+              ) &&
+              // REP14-05b: fecha por clave ISO (DD/MM/AAAA = AAAA-MM-DD), como 20261026a y 20261019q.
+              (!date || [scan.extracted?.date, mockEffectiveDate(scan)].some((value) => invoiceDateKey(value) === invoiceDateKey(date))),
+          )
           .slice(0, PREVIOUS_SCANS_LIMIT);
 
   const scans = [...byNumber, ...byDateTotal.filter((scan) => !byNumber.includes(scan))];
@@ -326,9 +362,12 @@ export function listMockPreviousScans(
     matchedContactId: scan.matched?.supplier.contactId ?? undefined,
     supplierTaxId: scan.extracted?.supplier.taxId ?? null,
     ...contactTaxIdsOf(taxIds, [scan.supplierId, scan.matched?.supplier.contactId]),
-    number: scan.extracted?.number ?? null,
-    date: scan.extracted?.date,
-    total: scan.extracted?.total,
+    number: mockEffectiveNumber(scan),
+    readNumber: scan.extracted?.number ?? undefined,
+    date: mockEffectiveDate(scan),
+    readDate: scan.extracted?.date,
+    total: mockEffectiveTotal(scan),
+    readTotal: scan.extracted?.total,
     purchaseId: scan.purchaseId ?? undefined,
     purchaseStatus: scan.purchaseId ? findMockPurchase(scan.purchaseId)?.status : undefined,
   }));

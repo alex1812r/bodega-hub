@@ -178,12 +178,30 @@ export type MatchPreviousScan = {
    * `matchedContactId`; se cruza con el RIF leído y con el de los contactos del actual.
    */
   contactTaxIds?: string[];
-  /** Número de factura leído en ese escaneo (`extracted->number`). */
+  /**
+   * Número de factura EFECTIVO de ese escaneo (REP14-01, D63): el confirmado
+   * (`confirmed->extraction->number`) si existe y no está vacío, si no el leído.
+   */
   number: string | null;
-  /** Fecha leída en ese escaneo (`extracted->date`, ISO), para el posible duplicado. */
+  /**
+   * REP14-01: número LEÍDO (`extracted->number`). La regla casa con este o con `number`: si el
+   * modelo vuelve a leer el mismo número erróneo y el usuario no lo corrige, el aviso sigue.
+   */
+  readNumber?: string | null;
+  /**
+   * Fecha EFECTIVA de ese escaneo, para el posible duplicado (REP14-05, criterio de D63): la
+   * confirmada (`confirmed->extraction->date`) si existe y no está vacía, si no la leída.
+   */
   date?: string | null;
-  /** Total leído en ese escaneo (`extracted->total`), para el posible duplicado. */
+  /** REP14-05: fecha LEÍDA (`extracted->date`, ISO). La regla casa con esta o con `date`. */
+  readDate?: string | null;
+  /**
+   * Total EFECTIVO de ese escaneo, para el posible duplicado (REP14-05): el confirmado
+   * (`confirmed->extraction->total`) si existe, si no el leído.
+   */
   total?: number | null;
+  /** REP14-05: total LEÍDO (`extracted->total`). La regla casa con este o con `total`. */
+  readTotal?: number | null;
   /** Compra con la que se confirmó (`purchase_id`): el aviso prefiere estos (SCN-UI-C2). */
   purchaseId?: string | null;
   /** Estado de esa compra (`purchases.status`): con `cancelado` no es duplicado (REP3-03a). */

@@ -19,6 +19,29 @@
 --        de su contacto leído en p_tax_digits.
 --    "Dígitos" = normalizeTaxId del BFF: mayúsculas, solo [A-Z0-9] y sin la letra de tipo
 --    inicial [JVEGPC]; la letra la compara el BFF (sameTaxId).
+--    REP14-01 (M-p15-1, D63): un escaneo casa por número si casa su número LEÍDO
+--    (extracted.number) o su número EFECTIVO: el confirmado por el usuario
+--    (confirmed.extraction.number) si existe y no está vacío, si no el leído. 'number'
+--    devuelve el efectivo y 'read_number' el leído (el BFF casa con cualquiera). Así, teclear
+--    el número correcto encuentra la compra confirmada tecleándolo aunque el modelo no lo
+--    leyera, y volver a leer el mismo número erróneo sin corregirlo sigue avisando.
+--    REP14-05 (M-qa1401-1, mismo criterio; edición idempotente, no desplegado): sin número,
+--    un escaneo casa por total y fecha si casan los LEÍDOS o los EFECTIVOS (los confirmados,
+--    confirmed.extraction.total / .date, si no están vacíos; si no los leídos). 'date' y
+--    'total' devuelven los efectivos y 'read_date' / 'read_total' los leídos.
+--    REP14-05b (edición idempotente, no desplegado): el total se compara como numeric
+--    redondeado al céntimo, no como texto (el BFF manda String(cents/100), "27895", y
+--    el JSON guarda 27895.00 o el texto "7708.80"); lo que no es un número JSON ni un texto
+--    decimal plano (^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$: ni exponentes ni comas) no casa y
+--    no lanza error, ni en la fila ni en p_totals (el filtro va en el jsonpath, antes del
+--    cast). «Leído o efectivo» se evalúa como leído o confirmado (si el confirmado está
+--    vacío el efectivo es el leído): cada campo del jsonb se lee una vez por fila, el mismo
+--    coste que la comparación de texto (EXPLAIN en lab, .notes/factura-escaneo/rep14/
+--    05b-explain-*). La fecha se compara como clave ISO: DD/MM/AAAA
+--    o DD-MM-AAAA (día y mes de 1-2 dígitos, mismo separador: los formatos que admite la
+--    revisión, getInvoiceDateIssue) pasa a AAAA-MM-DD, en la fila y en p_date; cualquier
+--    otro texto se compara tal cual (sin cast a date: una fecha imposible no lanza error,
+--    solo no casa). Día primero siempre (Venezuela). 'date'/'total' se devuelven crudos.
 --    Los ids y RIF viajan en el cuerpo POST (D35: nada de texto de la factura en la URL).
 --    La usan POST /api/purchases/invoice-scan/duplicates (proveedor elegido / leído) y el
 --    emparejamiento del escaneo (loadMatchContext, con el proveedor LEÍDO: contacto resuelto y
@@ -61,6 +84,10 @@ declare
   v_pattern text;
   v_ids text[] := coalesce(p_supplier_ids, '{}'::text[]);
   v_digits text[] := coalesce(p_tax_digits, '{}'::text[]);
+  v_totals numeric[];
+  v_date text;
+  -- REP14-05b: número JSON, o texto decimal plano (sin exponente ni comas); lo demás no casa.
+  v_total_path constant jsonpath := '$.total ? (@.type() == "number" || (@.type() == "string" && @ like_regex "^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$"))';
   v_result jsonb;
 begin
   v_store_id := public.assert_store_context();
@@ -86,18 +113,50 @@ begin
     v_pattern := '%' || array_to_string(regexp_split_to_array(p_number, ''), '%');
   end if;
 
+  -- REP14-05b: p_totals a numeric al céntimo (los que no son un decimal plano se ignoran, sin
+  -- error) y p_date a clave ISO (DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD; si no, el texto).
+  v_totals := array(select round(btrim(t)::numeric, 2) from unnest(p_totals) t
+                    where t ~ '^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$');
+  v_date := (case when p_date ~ '^ *[0-9]{1,2}([/-])[0-9]{1,2}\1[0-9]{4} *$'
+            then split_part(translate(btrim(p_date), '/', '-'), '-', 3)
+                 || '-' || lpad(split_part(translate(btrim(p_date), '/', '-'), '-', 2), 2, '0')
+                 || '-' || lpad(split_part(translate(btrim(p_date), '/', '-'), '-', 1), 2, '0')
+            else btrim(p_date) end);
+
   with found as (
-    select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status
+    select s.id, s.supplier_id, s.extracted, s.matched, s.purchase_id, s.created_at, pu.status as purchase_status,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') as effective_number,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), ''), s.extracted ->> 'date') as effective_date,
+           coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'total'), ''), s.extracted ->> 'total') as effective_total
     from public.invoice_scans s
     left join public.purchases pu on pu.id = s.purchase_id
     where s.store_id = v_store_id
       and s.status not in ('discarded', 'failed')
       and (p_exclude_scan_id is null or s.id <> p_exclude_scan_id)
       and (
-        (v_pattern is not null and (s.extracted ->> 'number') ilike v_pattern)
+        -- REP14-01 (D63): número efectivo (el confirmado si no está vacío, si no el leído) o el leído.
+        (v_pattern is not null
+         and (coalesce(nullif(btrim(s.confirmed -> 'extraction' ->> 'number'), ''), s.extracted ->> 'number') ilike v_pattern
+              or (s.extracted ->> 'number') ilike v_pattern))
+        -- REP14-05: total y fecha, los leídos o los efectivos (confirmados si no están vacíos).
+        -- REP14-05b: «leído o efectivo» = leído o confirmado (si el confirmado está vacío, el efectivo
+        -- es el leído; si no vale, no casa). Total: número JSON o texto decimal plano (v_total_path),
+        -- a numeric al céntimo, leyendo el jsonb una vez por campo. Fecha: clave ISO (DD/MM/AAAA o
+        -- DD-MM-AAAA -> AAAA-MM-DD; otro texto tal cual).
         or (v_pattern is null
-            and (s.extracted ->> 'total') = any(p_totals)
-            and (p_date is null or (s.extracted ->> 'date') = p_date))
+            and (round((jsonb_path_query_first(s.extracted, v_total_path) #>> '{}')::numeric, 2) = any(v_totals)
+                 or round((jsonb_path_query_first(s.confirmed -> 'extraction', v_total_path) #>> '{}')::numeric, 2) = any(v_totals))
+            and (v_date is null
+                 or (case when (s.extracted ->> 'date') ~ '^ *[0-9]{1,2}([/-])[0-9]{1,2}\1[0-9]{4} *$'
+                       then split_part(translate(btrim((s.extracted ->> 'date')), '/', '-'), '-', 3)
+                            || '-' || lpad(split_part(translate(btrim((s.extracted ->> 'date')), '/', '-'), '-', 2), 2, '0')
+                            || '-' || lpad(split_part(translate(btrim((s.extracted ->> 'date')), '/', '-'), '-', 1), 2, '0')
+                       else btrim((s.extracted ->> 'date')) end) = v_date
+                 or (case when nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '') ~ '^ *[0-9]{1,2}([/-])[0-9]{1,2}\1[0-9]{4} *$'
+                       then split_part(translate(btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')), '/', '-'), '-', 3)
+                            || '-' || lpad(split_part(translate(btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')), '/', '-'), '-', 2), 2, '0')
+                            || '-' || lpad(split_part(translate(btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')), '/', '-'), '-', 1), 2, '0')
+                       else btrim(nullif(btrim(s.confirmed -> 'extraction' ->> 'date'), '')) end) = v_date))
       )
       -- Proveedor antes del tope (superconjunto; el BFF aplica findDuplicateScans).
       and (
@@ -120,11 +179,14 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
            'id', f.id,
            'supplier_id', f.supplier_id,
-           'number', f.extracted ->> 'number',
+           'number', f.effective_number,
+           'read_number', f.extracted ->> 'number',
            'supplier_tax_id', f.extracted -> 'supplier' ->> 'taxId',
            'matched_contact_id', f.matched -> 'supplier' ->> 'contactId',
-           'date', f.extracted ->> 'date',
-           'total', f.extracted ->> 'total',
+           'date', f.effective_date,
+           'read_date', f.extracted ->> 'date',
+           'total', f.effective_total,
+           'read_total', f.extracted ->> 'total',
            'purchase_id', f.purchase_id,
            'purchase', case when f.purchase_status is null then null
                             else jsonb_build_object('status', f.purchase_status) end

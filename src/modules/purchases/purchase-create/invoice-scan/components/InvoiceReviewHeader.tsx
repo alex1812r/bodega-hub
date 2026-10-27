@@ -29,6 +29,12 @@ const CURRENCY_LABELS: Record<InvoiceReviewState["header"]["currency"], string> 
   unknown: "Sin identificar",
 };
 
+/** ISO `AAAA-MM-DD` → `DD/MM/AAAA` (como la muestra el campo). */
+function formatReadDate(date: string | undefined): string {
+  const [year, month, day] = (date ?? "").split("-");
+  return year && month && day ? `${day}/${month}/${year}` : (date ?? "");
+}
+
 export type InvoiceReviewHeaderProps = {
   state: InvoiceReviewState;
   onAction: (action: InvoiceReviewAction) => void;
@@ -83,9 +89,18 @@ export function InvoiceReviewHeader({
   // REP13-02 (M-p14B-1): la fecha se valida con la regla del servidor; el motivo va junto al campo.
   const dateMessage = getHeaderDateMessage(state);
   const dateMessageId = useId();
+  // REP14-03 (M-p15B-1, D64): el campo nativo da "" con 31/02 o dd/10/2026; `badInput` lo distingue de
+  // vaciarlo. De 31/02 a dd/02 no hay evento `input` (sigue ""): se mira también al soltar la tecla y salir.
+  const syncDate = (input: HTMLInputElement) =>
+    onAction({ type: "editHeader", date: input.value, dateInvalid: input.validity.badInput });
+  // Borrar la fecha leída pide confirmar registrar sin ella.
+  const askNoDate = Boolean(extraction.date) && !header.date && !header.dateInvalid;
+  const noDateTextId = useId();
+  const noDateRef = useRef<HTMLInputElement>(null);
+  const noDate = useFreshPressCheckbox(noDateRef);
 
   return (
-    <section aria-label="Datos de la factura" className="flex flex-col gap-4">
+    <section aria-label="Datos de la factura" className="@container flex flex-col gap-4">
       {warnings.length > 0 || lowConfidence ? (
         <div
           className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 sm:flex-row sm:items-start sm:justify-between dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
@@ -168,17 +183,27 @@ export function InvoiceReviewHeader({
         ) : null}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-2">
+      {/* REP14-02 (M-p15-2, D63): las columnas dependen del ancho de la cabecera, no del de la pantalla. Con el menú
+          lateral y la imagen al lado, a 1024 px la cabecera mide ~290 px: partida en dos, el proveedor y la fecha
+          se cortaban. Dos columnas desde 42rem (cada una ≥ 328 px). */}
+      <div className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        {/* REP14-06b (B-qa06-1): un nombre sin espacios (elegido, leído o sugerido) se parte en vez de ensanchar
+            la columna y, con ella, número y fecha. */}
+        <div className="flex min-w-0 flex-col gap-2 [overflow-wrap:anywhere]">
           <PurchaseSupplierCard
             onSupplierChange={(contactId, name) => {
-              // Quitarlo no tiene acción en el modelo: hace falta un proveedor para cargar.
-              if (contactId) {
-                onAction({ type: "setSupplier", supplier: { contactId, name: name ?? supplier.readName } });
-              }
+              // REP14-04 (B-p14-1): la × lo quita de verdad; sin proveedor Cargar pide elegirlo.
+              onAction(
+                contactId
+                  ? { type: "setSupplier", supplier: { contactId, name: name ?? supplier.readName } }
+                  : { type: "clearSupplier" },
+              );
             }}
             selectedSupplierId={supplier.contactId ?? ""}
             supplierFetcher={supplierFetcher}
+            // REP14-06 (B-qa234-1, D63): a 1024 con el menú y a 320 la columna mide ~288 px; el nombre elegido
+            // se ve entero, envuelto, en vez de cortado en el campo.
+            wrapSelectedName
           />
           <p className="text-xs text-on-surface-variant">
             Leído en la factura: <span className="font-medium text-foreground">{supplier.readName || "—"}</span>
@@ -208,9 +233,10 @@ export function InvoiceReviewHeader({
           ) : null}
         </div>
 
-        {/* Desde lg la columna de datos es estrecha (~260 px a 1280): número y fecha se apilan para que
-            la fecha no se corte ni la etiqueta parta en dos líneas (QA global B1). */}
-        <div className="grid grid-cols-1 gap-4 rounded-xl border border-border bg-surface-container-lowest p-4 sm:grid-cols-2 lg:grid-cols-1 dark:border-slate-800">
+        {/* Número y fecha lado a lado solo con la cabecera en una columna y ≥ 36rem (cada campo ≥ 264 px): más
+            estrechos se apilan para que la fecha no se corte, la etiqueta no parta en dos líneas (QA global B1)
+            y el motivo de la fecha quepa en su línea reservada (B-p15B-1). */}
+        <div className="grid grid-cols-1 gap-4 rounded-xl border border-border bg-surface-container-lowest p-4 @xl:grid-cols-2 @2xl:grid-cols-1 dark:border-slate-800">
           <Input
             defaultValue={header.number ?? ""}
             label="Número de factura"
@@ -218,20 +244,46 @@ export function InvoiceReviewHeader({
           />
           <div>
             <Input
-              aria-describedby={dateMessage ? dateMessageId : undefined}
+              aria-describedby={dateMessage || askNoDate ? dateMessageId : undefined}
               aria-invalid={dateMessage ? true : undefined}
               className={dateMessage ? formControlErrorClassName : undefined}
               label="Fecha"
-              onChange={(event) => onAction({ type: "editHeader", date: event.target.value })}
+              onBlur={(event) => syncDate(event.currentTarget)}
+              onChange={(event) => syncDate(event.currentTarget)}
+              onKeyUp={(event) => syncDate(event.currentTarget)}
               type="date"
               value={header.date ?? ""}
             />
-            {/* Línea reservada (3 renglones caben el motivo a 1280 y 390): al aparecer no empuja lo de debajo. */}
-            <p className={cn(formHelperClassName, formHelperErrorClassName, "mt-2 min-h-[3lh]")} id={dateMessageId}>
-              {dateMessage}
+            {/* Línea reservada: con el campo de ≥ 256 px (la rejilla de arriba lo asegura de 320 a 1440) el motivo
+                cabe en 3 renglones y al aparecer no empuja lo de debajo. */}
+            <p
+              className={cn(formHelperClassName, !askNoDate && formHelperErrorClassName, "mt-2 min-h-[3lh]")}
+              id={dateMessageId}
+            >
+              {askNoDate ? (
+                <span className="inline-flex items-center gap-2 font-medium">
+                  <input
+                    aria-labelledby={noDateTextId}
+                    checked={header.noDateConfirmed === true}
+                    className="size-6 shrink-0 rounded border-border"
+                    onChange={(event) => {
+                      if (noDate.accepts(event)) {
+                        onAction({ type: "confirmNoDate", confirmed: event.target.checked });
+                      }
+                    }}
+                    onPointerDown={noDate.onPointerDown}
+                    onPointerUp={noDate.onPointerUp}
+                    ref={noDateRef}
+                    type="checkbox"
+                  />
+                  <span id={noDateTextId}>Registrar sin fecha (se leyó {formatReadDate(extraction.date)})</span>
+                </span>
+              ) : (
+                dateMessage
+              )}
             </p>
           </div>
-          <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-1">
+          <div className="flex flex-col gap-2 @xl:col-span-2 @2xl:col-span-1">
             <span className="text-xs font-medium text-on-surface-variant">Moneda de la factura</span>
             <span>
               <Badge variant={header.currency === "VES" ? "default" : "warning"}>
