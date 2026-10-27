@@ -59,13 +59,19 @@
 --    REP15-02 (B-p16Q-2, QA p16): un RIF de relleno (dígitos todo ceros, «J-00000000-0») no
 --    identifica proveedor: los p_tax_digits de solo ceros se ignoran (el BFF ya no los manda:
 --    normalizeTaxId da "").
+--    REP15-02b (B-qa1502-1, QA REP15-02; edición idempotente, no desplegado): el patrón del número
+--    ('%F%A%C%1', acaba en el último carácter) se comparaba con el texto crudo y un número guardado
+--    con un blanco Unicode, TAB o punto al FINAL («QA-R15-0203<NBSP>») no salía por número aunque el
+--    BFF lo considera igual. Ahora se compara con invoice_number_key(text) (mayúsculas, solo [A-Z0-9],
+--    como normalizeInvoiceNumber antes de quitar rótulo y ceros), en las dos RPC: siguen siendo un
+--    superconjunto del BFF, que decide.
 --
 -- Security INVOKER (RLS de invoice_scans, purchases y contacts), tienda de
 -- assert_store_context(), rol admin | almacen (PT403), como 20261019q.
 -- Acotada (PT400): p_limit fuera de 1..200, más de 10 totales, número de más de 4000
 -- caracteres o fuera de [A-Z0-9], sin número ni totales, ningún proveedor (ni id ni RIF),
 -- más de 10 ids o 10 RIF, id fuera de [A-Za-z0-9_-]{1,64}, RIF fuera de [A-Z0-9]{1,20}.
--- Grants: solo authenticated (las dos funciones de normalización: authenticated y service_role).
+-- Grants: solo authenticated (las tres funciones de normalización: authenticated y service_role).
 --
 -- Requiere 20261019a y 20261019o (columnas de invoice_scans legibles por authenticated) y
 -- 20261019q. REP15-02: redefine invoice_match_previous_scans, así que reaplicar 20261019q obliga a
@@ -114,6 +120,23 @@ $$;
 
 revoke all on function public.invoice_date_key(text) from public, anon;
 grant execute on function public.invoice_date_key(text) to authenticated, service_role;
+
+-- REP15-02b (B-qa1502-1): número de factura comparable con el patrón '%F%A%C%1': en mayúsculas y solo
+-- [A-Z0-9], como normalizeInvoiceNumber del BFF antes de quitar rótulo y ceros (de eso se encarga el
+-- '%' inicial del patrón). Sin ella, el patrón (que acaba en el último carácter) no casaba un número
+-- guardado con un blanco Unicode, TAB o punto al final. null -> null.
+create or replace function public.invoice_number_key(p_value text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = public
+as $$
+  select regexp_replace(upper(p_value), '[^A-Z0-9]', '', 'g')
+$$;
+
+revoke all on function public.invoice_number_key(text) from public, anon;
+grant execute on function public.invoice_number_key(text) to authenticated, service_role;
 
 create or replace function public.invoice_duplicate_candidates(
   p_number text default null,
@@ -187,10 +210,12 @@ begin
       and (p_exclude_scan_id is null or s.id <> p_exclude_scan_id)
       and (
         -- REP14-01 (D63): número efectivo (el confirmado si no está vacío, si no el leído) o el leído.
+        -- REP15-02b (B-qa1502-1): el patrón se compara con la clave (invoice_number_key), no con el texto
+        -- crudo: un blanco Unicode, TAB o punto al final ya no impide casar.
         (v_pattern is not null
-         and ((case when public.invoice_without_spaces(s.confirmed -> 'extraction' ->> 'number') <> ''
-                    then s.confirmed -> 'extraction' ->> 'number' else s.extracted ->> 'number' end) ilike v_pattern
-              or (s.extracted ->> 'number') ilike v_pattern))
+         and (public.invoice_number_key(case when public.invoice_without_spaces(s.confirmed -> 'extraction' ->> 'number') <> ''
+                    then s.confirmed -> 'extraction' ->> 'number' else s.extracted ->> 'number' end) like v_pattern
+              or public.invoice_number_key(s.extracted ->> 'number') like v_pattern))
         -- REP14-05: total y fecha, los leídos o los efectivos (confirmados si no están vacíos).
         -- REP14-05b: «leído o efectivo» = leído o confirmado (si el confirmado está vacío, el efectivo
         -- es el leído; si no vale, no casa). Total: número JSON o texto decimal plano (v_total_path),
@@ -311,10 +336,12 @@ begin
       and (p_exclude_scan_id is null or s.id <> p_exclude_scan_id)
       and (
         -- REP14-01 (D63): número efectivo (el confirmado si no está vacío, si no el leído) o el leído.
+        -- REP15-02b (B-qa1502-1): el patrón se compara con la clave (invoice_number_key), no con el texto
+        -- crudo: un blanco Unicode, TAB o punto al final ya no impide casar.
         (v_pattern is not null
-         and ((case when public.invoice_without_spaces(s.confirmed -> 'extraction' ->> 'number') <> ''
-                    then s.confirmed -> 'extraction' ->> 'number' else s.extracted ->> 'number' end) ilike v_pattern
-              or (s.extracted ->> 'number') ilike v_pattern))
+         and (public.invoice_number_key(case when public.invoice_without_spaces(s.confirmed -> 'extraction' ->> 'number') <> ''
+                    then s.confirmed -> 'extraction' ->> 'number' else s.extracted ->> 'number' end) like v_pattern
+              or public.invoice_number_key(s.extracted ->> 'number') like v_pattern))
         -- REP14-05: total y fecha, los leídos o los efectivos (confirmados si no están vacíos).
         -- REP14-05b: «leído o efectivo» = leído o confirmado (si el confirmado está vacío, el efectivo
         -- es el leído; si no vale, no casa). Total: número JSON o texto decimal plano (v_total_path),
