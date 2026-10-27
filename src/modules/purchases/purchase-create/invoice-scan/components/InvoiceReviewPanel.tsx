@@ -40,7 +40,7 @@ import {
 import { useInvoiceReview } from "../useInvoiceReview";
 import { InvoiceReviewConfirmedNotice } from "./InvoiceReviewConfirmedNotice";
 import { InvoiceReviewFooter } from "./InvoiceReviewFooter";
-import { InvoiceReviewHeader } from "./InvoiceReviewHeader";
+import { InvoiceReviewDuplicateNotice, InvoiceReviewHeader } from "./InvoiceReviewHeader";
 import { InvoiceReviewLineRow } from "./InvoiceReviewLineRow";
 import { InvoiceReviewRateNotice } from "./InvoiceReviewRateNotice";
 import { InvoiceReviewTaxNotice } from "./InvoiceReviewTaxNotice";
@@ -268,6 +268,25 @@ export function InvoiceReviewPanel({
       dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate });
     }
   }, [dispatch, lateSystemRate]);
+  // REP15-01b (D65(a)): abierta sin tasa del día, el aviso de tasa reserva desde el primer render el alto que tiene al
+  // abrir y el que tendrá cuando llegue sin que nadie actúe (con una del día que difiera de la impresa).
+  const [rateAtOpen] = useState(() => (state.rate.system === undefined ? state.rate : null));
+  // REP15-01c: también la última tasa elegida o escrita antes de que llegue la del día (al llegar se ofrece la de hoy
+  // junto a la del usuario); se conserva tras la llegada para que la reserva no cambie con ella.
+  const [rateBeforeSystem, setRateBeforeSystem] = useState(rateAtOpen);
+  if (rateAtOpen && state.rate.system === undefined && state.rate !== rateBeforeSystem) {
+    setRateBeforeSystem(state.rate);
+  }
+  const rateReserve = useMemo(
+    () =>
+      (rateAtOpen && rateBeforeSystem ? [rateAtOpen, rateBeforeSystem] : []).flatMap((rate) => {
+        const before = { ...state, rate };
+        const likely = rate.printed ?? 1000;
+        // A +30 %: aún verosímil frente a la impresa (±25 % de la del día) y con tantas cifras como la del día más alta.
+        return [before, reviewReducer(before, { type: "adoptSystemRate", systemRateVes: Math.round(likely * 130) / 100 })];
+      }),
+    [rateAtOpen, rateBeforeSystem, state],
+  );
   // D42: consulta el último costo de cada producto elegido en el buscador, una vez por (línea,
   // producto) en curso; la respuesta para un producto que ya no es el de la línea se ignora.
   const lastCostRequestsRef = useRef(new Set<string>());
@@ -930,19 +949,21 @@ export function InvoiceReviewPanel({
           <div className="flex min-w-0 flex-col gap-4" data-layout-box="header" style={layoutHold.boxStyle("header")}>
             <div ref={headerRef}>
               <InvoiceReviewHeader
-                duplicateAcknowledged={!duplicateUnacknowledged}
-                duplicateCheckboxRef={duplicateCheckboxRef}
-                duplicates={duplicates.matches}
                 onAction={applyPanelAction}
-                onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
                 onRescan={onRescan}
                 state={state}
                 supplierFetcher={supplierFetcher}
               />
             </div>
-            {/* D60(c): avisos que cambian sin tocarlos; useLayoutHold devuelve las filas a su punto. */}
-            <div className="empty:hidden" data-layout-notice>
-              <InvoiceReviewRateNotice onAction={applyPanelAction} state={state} />
+            {/* D60(c): avisos que cambian sin tocarlos; useLayoutHold devuelve las filas a su punto. REP15-01b: el de tasa
+                reserva su alto (lo que llega tarde no lo cambia); la retención queda para lo que cambia el usuario. */}
+            <div className="grid empty:hidden" data-layout-notice>
+              <InvoiceReviewRateNotice
+                onAction={applyPanelAction}
+                reserve={rateReserve}
+                state={state}
+                systemRateArrivedLate={rateAtOpen !== null && state.rate.system !== undefined}
+              />
             </div>
             <div className="empty:hidden" data-layout-notice>
               <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
@@ -1005,6 +1026,16 @@ export function InvoiceReviewPanel({
               </div>
             ) : null}
           </section>
+
+          {/* REP15-01b (D65(a)): el aviso de duplicado llega tras la consulta (o al teclear el número) y se va; tras las
+              líneas no mueve nada de encima ni las líneas (si acorta la página, lo retiene useLayoutHold, D65(b)). */}
+          <InvoiceReviewDuplicateNotice
+            duplicateAcknowledged={!duplicateUnacknowledged}
+            duplicateCheckboxRef={duplicateCheckboxRef}
+            duplicates={duplicates.matches}
+            onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
+            state={state}
+          />
         </div>
 
         <aside aria-label="Factura escaneada" className="hidden lg:block">

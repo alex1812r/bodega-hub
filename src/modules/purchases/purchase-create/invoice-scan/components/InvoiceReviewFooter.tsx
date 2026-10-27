@@ -74,29 +74,38 @@ const REASON_LABELS: Record<Exclude<InvoiceReviewBlockerReason, "lines">, string
   difference: "diferencia",
 };
 
-/** Atributo del indicio «y N más» (no cuenta como motivo). */
-const BELOW_FOLD_MARK = "data-blockers-more";
+/** Atributo de los indicios «y N más ↑/↓» (no cuentan como motivo). */
+const OUT_OF_VIEW_MARK = "data-blockers-more";
 
 /**
- * REP14-06b (O-qa06-1): cuántos hijos de la lista acaban por debajo de su borde visible (alto reservado y
- * desplazable). Se vuelve a medir al cambiar los motivos (`key`), al desplazar la lista y al cambiar su tamaño.
+ * REP14-06b (O-qa06-1) y REP15-03 (B-p16B-2): cuántos hijos de la lista acaban por encima y por debajo de su borde
+ * visible (alto reservado y desplazable). Se vuelve a medir al cambiar los motivos (`key`), al desplazar la lista y
+ * al cambiar su tamaño.
  */
-function useItemsBelowFold(listRef: RefObject<HTMLElement | null>, key: string) {
-  const [count, setCount] = useState(0);
+function useItemsOutOfView(listRef: RefObject<HTMLElement | null>, key: string) {
+  const [count, setCount] = useState({ above: 0, below: 0 });
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) {
       return;
     }
     const measure = () => {
-      const bottom = list.getBoundingClientRect().bottom;
+      const { bottom, top } = list.getBoundingClientRect();
+      let above = 0;
       let below = 0;
       for (const item of Array.from(list.children)) {
-        if (!item.hasAttribute(BELOW_FOLD_MARK) && item.getBoundingClientRect().bottom > bottom + 1) {
+        if (item.hasAttribute(OUT_OF_VIEW_MARK)) {
+          continue;
+        }
+        const box = item.getBoundingClientRect();
+        if (box.top < top - 1) {
+          above += 1;
+        }
+        if (box.bottom > bottom + 1) {
           below += 1;
         }
       }
-      setCount(below);
+      setCount((current) => (current.above === above && current.below === below ? current : { above, below }));
     };
     measure();
     list.addEventListener("scroll", measure, { passive: true });
@@ -189,10 +198,11 @@ export function InvoiceReviewFooter({
     }
     return REASON_LABELS[reason];
   }
-  // REP14-06b (O-qa06-1): motivos que no caben en los 3 renglones reservados; se dice cuántos quedan debajo.
+  // REP14-06b (O-qa06-1) y REP15-03 (B-p16B-2): motivos que no caben en los 3 renglones reservados; se dice cuántos
+  // quedan debajo y cuántos encima (al desplazar la lista).
   const blockersRef = useRef<HTMLUListElement>(null);
   const blockersKey = [...summary.blockers, duplicateReason, duplicateCheckFailed].join("|");
-  const hiddenBlockers = useItemsBelowFold(blockersRef, blockersKey);
+  const hiddenBlockers = useItemsOutOfView(blockersRef, blockersKey);
 
   return (
     <footer
@@ -329,13 +339,27 @@ export function InvoiceReviewFooter({
         </p>
         {/* REP14-06 (B-qa234-2): desde `sm` la lista tiene su alto reservado (3 renglones; si hay más, se desplaza
             dentro): que aparezca o se resuelva un motivo no mueve «Cargar» ni la casilla de la diferencia. En móvil
-            el detalle se abre a mano y la línea compacta ya tiene alto fijo. */}
+            el detalle se abre a mano y la línea compacta ya tiene alto fijo.
+            REP15-03: los indicios «y N más ↑/↓» van en un margen derecho reservado (`pr-[5em]`), fuera del texto de los
+            motivos: no tapan ninguno (O-qa06b-1) ni cambian el alto. El lector de pantalla ya lee la lista entera. */}
         <ul
           aria-live="polite"
-          className="text-xs text-on-surface-variant max-sm:empty:hidden sm:h-[3lh] sm:overflow-y-auto"
+          className="text-xs text-on-surface-variant max-sm:empty:hidden sm:h-[3lh] sm:overflow-y-auto sm:pr-[5em]"
           data-testid="invoice-review-blockers"
           ref={blockersRef}
         >
+          {hiddenBlockers.above > 0 ? (
+            // REP15-03 (B-p16B-2): pegado al borde de arriba mientras queden motivos encima; con `-mb-[1lh]` no ocupa
+            // renglón (aparecer o irse no desplaza los motivos).
+            <li
+              aria-hidden
+              className="sticky top-0 -mb-[1lh] ml-auto w-fit bg-surface-container-lowest font-medium text-amber-700 sm:-mr-[5em] dark:text-amber-300"
+              data-blockers-more
+              data-testid="invoice-review-blockers-more-above"
+            >
+              {`y ${hiddenBlockers.above} más ↑`}
+            </li>
+          ) : null}
           {summary.blockers.map((blocker) => (
             <li key={blocker}>{blocker}</li>
           ))}
@@ -353,16 +377,16 @@ export function InvoiceReviewFooter({
               </button>
             </li>
           ) : null}
-          {hiddenBlockers > 0 ? (
+          {hiddenBlockers.below > 0 ? (
             // REP14-06b (O-qa06-1): pegado al borde de abajo de los 3 renglones mientras queden motivos debajo (sin
-            // cambiar el alto). El lector de pantalla ya lee la lista entera.
+            // cambiar el alto).
             <li
               aria-hidden
-              className="sticky bottom-0 ml-auto w-fit bg-surface-container-lowest pl-2 font-medium text-amber-700 dark:text-amber-300"
+              className="sticky bottom-0 ml-auto w-fit bg-surface-container-lowest font-medium text-amber-700 sm:-mr-[5em] dark:text-amber-300"
               data-blockers-more
               data-testid="invoice-review-blockers-more"
             >
-              {`y ${hiddenBlockers} más ↓`}
+              {`y ${hiddenBlockers.below} más ↓`}
             </li>
           ) : null}
         </ul>

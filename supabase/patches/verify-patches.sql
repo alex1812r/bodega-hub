@@ -3155,8 +3155,8 @@ union all
 select
   'invoice_duplicate_candidates: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261026a, REP14-01, D63; false = version anterior: solo leido, o solo efectivo)',
   coalesce((
-    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') as effective_number%'
-      and p.prosrc ilike '%s.extracted ->> ''number'') ilike v_pattern%or (s.extracted ->> ''number'') ilike v_pattern))%'
+    select p.prosrc ilike '%case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%then s.confirmed -> ''extraction'' ->> ''number'' else s.extracted ->> ''number'' end as effective_number%'
+      and p.prosrc ilike '%else s.extracted ->> ''number'' end) like v_pattern%or public.invoice_number_key(s.extracted ->> ''number'') like v_pattern))%'
       and p.prosrc ilike '%''number'', f.effective_number%'
       and p.prosrc ilike '%''read_number'', f.extracted ->> ''number''%'
     from pg_proc p
@@ -3164,10 +3164,10 @@ select
   ), false)
 union all
 select
-  'invoice_match_previous_scans: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261019q, REP14-01, D63; false = version anterior, solo leido)',
+  'invoice_match_previous_scans: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261019q redefinida en 20261026a, REP14-01, D63; false = version anterior, solo leido)',
   coalesce((
-    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''number''), ''''), s.extracted ->> ''number'') as effective_number%'
-      and p.prosrc ilike '%s.extracted ->> ''number'') ilike v_pattern%or (s.extracted ->> ''number'') ilike v_pattern))%'
+    select p.prosrc ilike '%case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%then s.confirmed -> ''extraction'' ->> ''number'' else s.extracted ->> ''number'' end as effective_number%'
+      and p.prosrc ilike '%else s.extracted ->> ''number'' end) like v_pattern%or public.invoice_number_key(s.extracted ->> ''number'') like v_pattern))%'
       and p.prosrc ilike '%''number'', f.effective_number%'
       and p.prosrc ilike '%''read_number'', f.extracted ->> ''number''%'
     from pg_proc p
@@ -3177,10 +3177,10 @@ union all
 select
   'invoice_duplicate_candidates: sin numero casa el total y la fecha LEIDOS o los EFECTIVOS (confirmados si no vacios); devuelve ''date''/''total'' efectivos y ''read_date''/''read_total'' leidos (20261026a, REP14-05, M-qa1401-1; false = version anterior, solo leidos)',
   coalesce((
-    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') as effective_date%'
+    select p.prosrc ilike '%case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''date'') <> ''''%then s.confirmed -> ''extraction'' ->> ''date'' else s.extracted ->> ''date'' end as effective_date%'
       and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') as effective_total%'
       and p.prosrc ilike '%(jsonb_path_query_first(s.extracted, v_total_path)%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path)%'
-      and p.prosrc ilike '%else btrim((s.extracted ->> ''date'')) end) = v_date%else btrim(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), '''')) end) = v_date))%'
+      and p.prosrc ilike '%or public.invoice_date_key(s.extracted ->> ''date'') = v_date%or public.invoice_date_key(s.confirmed -> ''extraction'' ->> ''date'') = v_date))%'
       and p.prosrc ilike '%''date'', f.effective_date%''read_date'', f.extracted ->> ''date''%'
       and p.prosrc ilike '%''total'', f.effective_total%''read_total'', f.extracted ->> ''total''%'
     from pg_proc p
@@ -3188,12 +3188,12 @@ select
   ), false)
 union all
 select
-  'invoice_match_previous_scans: sin numero casa el total y la fecha LEIDOS o los EFECTIVOS (confirmados si no vacios); devuelve ''date''/''total'' efectivos y ''read_date''/''read_total'' leidos (20261019q, REP14-05, M-qa1401-1; false = version anterior, solo leidos)',
+  'invoice_match_previous_scans: sin numero casa el total y la fecha LEIDOS o los EFECTIVOS (confirmados si no vacios); devuelve ''date''/''total'' efectivos y ''read_date''/''read_total'' leidos (20261019q redefinida en 20261026a, REP14-05, M-qa1401-1; false = version anterior, solo leidos)',
   coalesce((
-    select p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), ''''), s.extracted ->> ''date'') as effective_date%'
+    select p.prosrc ilike '%case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''date'') <> ''''%then s.confirmed -> ''extraction'' ->> ''date'' else s.extracted ->> ''date'' end as effective_date%'
       and p.prosrc ilike '%coalesce(nullif(btrim(s.confirmed -> ''extraction'' ->> ''total''), ''''), s.extracted ->> ''total'') as effective_total%'
       and p.prosrc ilike '%(jsonb_path_query_first(s.extracted, v_total_path)%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path)%'
-      and p.prosrc ilike '%else btrim((s.extracted ->> ''date'')) end) = v_date%else btrim(nullif(btrim(s.confirmed -> ''extraction'' ->> ''date''), '''')) end) = v_date))%'
+      and p.prosrc ilike '%or public.invoice_date_key(s.extracted ->> ''date'') = v_date%or public.invoice_date_key(s.confirmed -> ''extraction'' ->> ''date'') = v_date))%'
       and p.prosrc ilike '%''date'', f.effective_date%''read_date'', f.extracted ->> ''date''%'
       and p.prosrc ilike '%''total'', f.effective_total%''read_total'', f.extracted ->> ''total''%'
     from pg_proc p
@@ -3207,8 +3207,8 @@ select
       and p.prosrc ilike '%v_totals := array(select round(btrim(t)::numeric, 2) from unnest(p_totals) t%where t ~ ''^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$'')%'
       and p.prosrc ilike '%and (round((jsonb_path_query_first(s.extracted, v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals)%'
       and p.prosrc ilike '%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals))%'
-      and p.prosrc ilike '%v_date := (case when p_date ~ ''^ *[0-9]{1,2}([/-])[0-9]{1,2}%then split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 3)%lpad(split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 1), 2, ''0'')%'
-      and p.prosrc ilike '%then split_part(translate(btrim((s.extracted ->> ''date'')), ''/'', ''-''), ''-'', 3)%'
+      and p.prosrc ilike '%v_date := nullif(public.invoice_date_key(p_date), '''');%'
+      and p.prosrc ilike '%public.invoice_date_key(s.extracted ->> ''date'') = v_date%'
       and p.prosrc not ilike '%= any(p_totals)%'
       and p.prosrc not ilike '%= p_date%'
     from pg_proc p
@@ -3216,17 +3216,113 @@ select
   ), false)
 union all
 select
-  'invoice_match_previous_scans: total comparado como numeric al centimo (solo decimal plano, sin error con basura) y fecha como clave ISO (DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD) en la fila y en p_totals/p_date (20261019q, REP14-05b; false = version anterior, texto contra texto)',
+  'invoice_match_previous_scans: total comparado como numeric al centimo (solo decimal plano, sin error con basura) y fecha como clave ISO (DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD) en la fila y en p_totals/p_date (20261019q redefinida en 20261026a, REP14-05b; false = version anterior, texto contra texto)',
   coalesce((
     select p.prosrc ilike '%v_total_path constant jsonpath := ''$.total ? (@.type() == "number" || (@.type() == "string" && @ like_regex "^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$"))''%'
       and p.prosrc ilike '%v_totals := array(select round(btrim(t)::numeric, 2) from unnest(p_totals) t%where t ~ ''^ *-?[0-9]{1,20}([.][0-9]{0,20})? *$'')%'
       and p.prosrc ilike '%and (round((jsonb_path_query_first(s.extracted, v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals)%'
       and p.prosrc ilike '%or round((jsonb_path_query_first(s.confirmed -> ''extraction'', v_total_path) #>> ''{}'')::numeric, 2) = any(v_totals))%'
-      and p.prosrc ilike '%v_date := (case when p_date ~ ''^ *[0-9]{1,2}([/-])[0-9]{1,2}%then split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 3)%lpad(split_part(translate(btrim(p_date), ''/'', ''-''), ''-'', 1), 2, ''0'')%'
-      and p.prosrc ilike '%then split_part(translate(btrim((s.extracted ->> ''date'')), ''/'', ''-''), ''-'', 3)%'
+      and p.prosrc ilike '%v_date := nullif(public.invoice_date_key(p_date), '''');%'
+      and p.prosrc ilike '%public.invoice_date_key(s.extracted ->> ''date'') = v_date%'
       and p.prosrc not ilike '%= any(p_totals)%'
       and p.prosrc not ilike '%= p_date%'
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)')
+  ), false)
+union all
+select
+  'invoice_without_spaces(text) e invoice_date_key(text): immutable, search_path=public, execute authenticated y service_role, sin public ni anon (20261026a, REP15-02)',
+  coalesce((
+    select count(*) = 2
+      and bool_and(p.provolatile = 'i' and not p.prosecdef
+        and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false)
+        and has_function_privilege('authenticated', p.oid, 'execute')
+        and has_function_privilege('service_role', p.oid, 'execute')
+        and not has_function_privilege('anon', p.oid, 'execute')
+        and not exists (
+          select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+        ))
+    from pg_proc p
+    where p.oid in (to_regprocedure('public.invoice_without_spaces(text)'), to_regprocedure('public.invoice_date_key(text)'))
+  ), false)
+union all
+select
+  'invoice_date_key: sin ningun blanco Unicode ni tab (NBSP, U+2003, U+202F, U+3000, U+FEFF, \t, \n, \r; extremos y en medio) y DD/MM/AAAA o D-M-AAAA -> AAAA-MM-DD; solo blancos -> vacio, null -> null, lo imposible tal cual (20261026a, REP15-02, B-p16-1; false = sin la funcion o solo espacios ASCII)',
+  case when to_regprocedure('public.invoice_date_key(text)') is null
+         or to_regprocedure('public.invoice_without_spaces(text)') is null then false
+       else coalesce((xpath('/row/ok/text()', query_to_xml($q$
+    select public.invoice_date_key('05/06/2025' || chr(160)) = '2025-06-05'
+      and public.invoice_date_key('05/06/2025' || chr(9)) = '2025-06-05'
+      and public.invoice_date_key(chr(10) || '05/06/2025' || chr(13)) = '2025-06-05'
+      and public.invoice_date_key(chr(8195) || '5-6-2025') = '2025-06-05'
+      and public.invoice_date_key('2025-06-05' || chr(12288)) = '2025-06-05'
+      and public.invoice_date_key(chr(65279) || '05/' || chr(160) || '06/ 20' || chr(8239) || '25') = '2025-06-05'
+      and public.invoice_date_key(chr(160) || chr(9) || chr(12288)) = ''
+      and public.invoice_date_key(null) is null
+      and public.invoice_date_key('31/02/2026') = '2026-02-31'
+      and public.invoice_without_spaces('N' || chr(160) || 'o 12' || chr(12288) || '34' || chr(9)) = 'No1234' as ok
+  $q$, false, true, '')))[1]::text = 'true', false) end
+union all
+select
+  'invoice_duplicate_candidates e invoice_match_previous_scans: p_date y fechas leida/confirmada por invoice_date_key; numero/fecha confirmados vacios = vacios sin blancos (invoice_without_spaces); sin btrim en fecha ni numero (20261026a, REP15-02, B-p16-1)',
+  coalesce((
+    select count(*) = 2
+      and bool_and(p.prosrc ilike '%v_date := nullif(public.invoice_date_key(p_date), '''');%'
+        and p.prosrc ilike '%or public.invoice_date_key(s.extracted ->> ''date'') = v_date%or public.invoice_date_key(s.confirmed -> ''extraction'' ->> ''date'') = v_date))%'
+        and p.prosrc ilike '%public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%'
+        and p.prosrc ilike '%public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''date'') <> ''''%'
+        and p.prosrc not ilike '%btrim(p_date)%'
+        and p.prosrc not ilike '%btrim(s.confirmed -> ''extraction'' ->> ''number'')%'
+        and p.prosrc not ilike '%btrim(s.confirmed -> ''extraction'' ->> ''date'')%'
+        and p.prosrc not ilike '%btrim((s.extracted ->> ''date''))%')
+    from pg_proc p
+    where p.oid in (to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])'),
+                    to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)'))
+  ), false)
+union all
+select
+  'invoice_duplicate_candidates: un RIF de relleno (p_tax_digits de solo ceros) no identifica proveedor; se descarta tras validar (20261026a, REP15-02, B-p16Q-2)',
+  coalesce((
+    select p.prosrc ilike '%errcode = ''PT400''%v_digits := array(select d from unnest(v_digits) d where d !~ ''^0+$'');%= any(v_digits)%'
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
+union all
+select
+  'invoice_number_key(text): immutable, search_path=public, execute authenticated y service_role, sin public ni anon; mayusculas y solo [A-Z0-9] (blanco Unicode, TAB o punto al final fuera), null -> null (20261026a, REP15-02b, B-qa1502-1)',
+  case when to_regprocedure('public.invoice_number_key(text)') is null then false
+       else coalesce((
+    select p.provolatile = 'i' and not p.prosecdef
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false)
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not exists (
+        select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      )
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_number_key(text)')
+  ), false)
+  and coalesce((xpath('/row/ok/text()', query_to_xml($q$
+    select public.invoice_number_key('QA-R15-0203' || chr(160)) = 'QAR150203'
+      and public.invoice_number_key('qa-r15-0204' || chr(12288)) = 'QAR150204'
+      and public.invoice_number_key('QA-R15-0205' || chr(9)) = 'QAR150205'
+      and public.invoice_number_key('QA-R15-0207.') = 'QAR150207'
+      and public.invoice_number_key(chr(160) || 'N° 00' || chr(8239) || '12') = 'N0012'
+      and public.invoice_number_key(null) is null as ok
+  $q$, false, true, '')))[1]::text = 'true', false) end
+union all
+select
+  'invoice_duplicate_candidates e invoice_match_previous_scans: por numero el patron se compara con invoice_number_key del numero efectivo y del leido, no con el texto crudo (20261026a, REP15-02b, B-qa1502-1; false = version anterior, ilike sobre el texto crudo)',
+  coalesce((
+    select count(*) = 2
+      and bool_and(p.prosrc ilike '%and (public.invoice_number_key(case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%'
+        and p.prosrc ilike '%else s.extracted ->> ''number'' end) like v_pattern%or public.invoice_number_key(s.extracted ->> ''number'') like v_pattern))%'
+        and p.prosrc not ilike '%ilike v_pattern%')
+    from pg_proc p
+    where p.oid in (to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])'),
+                    to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)'))
   ), false)
 order by 1;

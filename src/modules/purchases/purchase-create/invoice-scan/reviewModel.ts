@@ -33,6 +33,7 @@ import {
   PRICE_DEVIATION_LIMIT,
   USD_DOCUMENT_ISSUE,
 } from "@/modules/invoice-scan/server/match/money";
+import { invoiceDateKey } from "@/modules/invoice-scan/server/match/text";
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 /** Diferencia relativa tasa impresa vs del sistema por encima de la cual se avisa (D8: 2 %). */
@@ -824,6 +825,15 @@ function withStatuses(state: InvoiceReviewState): InvoiceReviewState {
 }
 
 /**
+ * REP15-02 (B-p16B-1): fecha leída con la que abre el campo. El `<input type=date>` solo muestra
+ * AAAA-MM-DD: una fecha válida en DD/MM/AAAA o DD-MM-AAAA (o con blancos Unicode) pasa a
+ * AAAA-MM-DD (`invoiceDateKey`). Una que no vale queda tal cual para que el motivo la señale.
+ */
+function initialHeaderDate(read: string): string {
+  return getInvoiceDateIssue(read) === undefined ? invoiceDateKey(read) : read;
+}
+
+/**
  * Estado inicial. Factura en dólares (6.21): todas las líneas entran dudosas con
  * aviso y sin costos en Bs. Tasa (6.7, 6.20): la del sistema; sin ella la impresa
  * con aviso; sin ninguna, se pide a mano (nunca se precarga en silencio).
@@ -908,7 +918,7 @@ export function createInvoiceReviewState(
         candidates: supplierCandidates,
       },
       ...(extraction.number ? { number: extraction.number } : {}),
-      ...(extraction.date ? { date: extraction.date } : {}),
+      ...(extraction.date ? { date: initialHeaderDate(extraction.date) } : {}),
       currency: extraction.currency,
     },
     lines,

@@ -3,6 +3,7 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
+import { getInvoiceDateIssue } from "@/modules/invoice-scan/contracts";
 import {
   NO_RATE_PRICE_ISSUE,
   PRICE_DEVIATION_LIMIT,
@@ -37,15 +38,19 @@ import {
 } from "../reviewModel";
 
 /**
- * REP3-03a (B6): criterio con el que `findDuplicateScan` marcó la factura, según lo
- * leído: con número, el mismo (o uno a un carácter, con la misma fecha y total); sin
- * número, proveedor y total, y la fecha si se leyó.
+ * REP3-03a (B6): criterio con el que `findDuplicateScan` marcó la factura: con número, el
+ * mismo (o uno a un carácter, con la misma fecha y total); sin número, proveedor y total, y la
+ * fecha si la hay. REP15-02 (B-p16Q-1): con los valores EFECTIVOS de la consulta, los de la
+ * cabecera (`state.header`: número tecleado, fecha de la cabecera), no los leídos.
  */
-export function duplicateCriterionLabel(extraction: InvoiceReviewState["extraction"]): string {
-  if (normalizeInvoiceNumber(extraction.number)) {
+export function duplicateCriterionLabel(effective: Pick<InvoiceReviewState["header"], "number" | "date">): string {
+  if (normalizeInvoiceNumber(effective.number)) {
     return "mismo proveedor y número igual o casi igual";
   }
-  return extraction.date?.trim() ? "mismo proveedor, fecha y total" : "mismo proveedor y total";
+  // REP15-02b (B-qa1502-2): la fecha cuenta solo si la consulta la manda (buildInvoiceDuplicateQuery).
+  return effective.date && getInvoiceDateIssue(effective.date) === undefined
+    ? "mismo proveedor, fecha y total"
+    : "mismo proveedor y total";
 }
 
 /** Por debajo de esta confianza global de la lectura se sugiere repetir la foto. */

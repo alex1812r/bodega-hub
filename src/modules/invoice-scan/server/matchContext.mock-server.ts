@@ -36,7 +36,7 @@ import { listActiveMockPackUnitsOfLink } from "@/modules/contacts/services/suppl
 import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
-import type { InvoiceExtraction } from "../contracts";
+import { withoutSpaces, type InvoiceExtraction } from "../contracts";
 
 import { listMockLearnedAliases } from "./confirmScan.mock-server";
 import {
@@ -277,11 +277,12 @@ function mockScanOfSupplier(
 /**
  * Paridad mock de `invoice_duplicate_candidates` e `invoice_match_previous_scans` (REP14-01, M-p15-1, D63): número EFECTIVO del
  * escaneo, el confirmado por el usuario (`confirmed.extraction.number`) si existe y no está vacío;
- * si no, el leído.
+ * si no, el leído. REP15-02: «vacío» = vacío sin blancos Unicode (`withoutSpaces`), como
+ * `invoice_without_spaces` de 20261026a; igual con la fecha.
  */
 function mockEffectiveNumber(scan: ReturnType<typeof listMockScansOfStore>[number]): string | null {
   const typed = (scan.confirmed as { extraction?: { number?: unknown } | null } | null)?.extraction?.number;
-  return typeof typed === "string" && typed.trim() !== "" ? typed : (scan.extracted?.number ?? null);
+  return typeof typed === "string" && withoutSpaces(typed) !== "" ? typed : (scan.extracted?.number ?? null);
 }
 
 /**
@@ -295,7 +296,7 @@ function mockConfirmedExtraction(scan: ReturnType<typeof listMockScansOfStore>[n
 
 function mockEffectiveDate(scan: ReturnType<typeof listMockScansOfStore>[number]): string | undefined {
   const typed = mockConfirmedExtraction(scan)?.date;
-  return typeof typed === "string" && typed.trim() !== "" ? typed : scan.extracted?.date;
+  return typeof typed === "string" && withoutSpaces(typed) !== "" ? typed : scan.extracted?.date;
 }
 
 function mockEffectiveTotal(scan: ReturnType<typeof listMockScansOfStore>[number]): number | undefined {
@@ -317,7 +318,7 @@ export function listMockPreviousScans(
   const number = normalizeInvoiceNumber(extraction.number);
   // Paridad con `loadPreviousScansByDateTotal`: mismo total (±0,01, al céntimo) y fecha si se leyó.
   const total = extraction.total;
-  const date = extraction.date?.trim();
+  const date = invoiceDateKey(extraction.date);
   const cents = typeof total === "number" && Number.isFinite(total) && total > 0 && (date || !number) ? Math.round(total * 100) : undefined;
   const supplierParams = supplier ? duplicateSupplierParams(supplier) : undefined;
   // REP14-01 (D63): como 20261026a y 20261019q, casa el número efectivo o el leído.
@@ -346,7 +347,7 @@ export function listMockPreviousScans(
                 (scanTotal) => typeof scanTotal === "number" && Math.abs(Math.round(scanTotal * 100) - cents) <= 1,
               ) &&
               // REP14-05b: fecha por clave ISO (DD/MM/AAAA = AAAA-MM-DD), como 20261026a y 20261019q.
-              (!date || [scan.extracted?.date, mockEffectiveDate(scan)].some((value) => invoiceDateKey(value) === invoiceDateKey(date))),
+              (!date || [scan.extracted?.date, mockEffectiveDate(scan)].some((value) => invoiceDateKey(value) === date)),
           )
           .slice(0, PREVIOUS_SCANS_LIMIT);
 

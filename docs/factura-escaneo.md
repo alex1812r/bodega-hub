@@ -646,11 +646,13 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 | `complete_invoice_scan`, `fail_invoice_scan` | 19g → 19i | 19i |
 | `claim_invoice_scan`, `release_invoice_scan_claim`, `confirm_invoice_scan`, `learn_invoice_aliases` | 19b | 19b |
 | `invoice_match_candidates` | 19d → 19q | 19q (reaplicar 19d obliga a reaplicar 19q) |
+| `invoice_match_previous_scans` | 19q → 26a | 26a (REP15-02; reaplicar 19q obliga a reaplicar `20261026a` después) |
 
 - Cadenas: **19a → 19g → 19i → 19k** y **19b → 19k**.
 - Reaplicar 19a obliga a reaplicar después 19g, 19i y 19k. 19a ya no devuelve escrituras (solo concede select a `authenticated` y borra las políticas de insert y update de la tabla y la de insert de Storage), pero se mantiene el orden de despliegue.
 - Reaplicar 19e o 19g (vuelven las firmas viejas concedidas a `authenticated`) obliga a reaplicar después 19i y 19k.
 - Reaplicar 19i obliga a reaplicar después 19k.
+- Reaplicar 19q obliga a reaplicar después 26a (`20261026a-invoice-duplicate-candidates.sql`): desde REP15-02, 26a redefine `invoice_match_previous_scans`, y 19q la devolvería a la versión anterior.
 - Reaplicar 19b obliga a reaplicar después 19k: las guardas de 19k leen las columnas del reclamo que crea 19b (sin ellas solo miran `purchase_id` y `confirmed`).
 - 19b crea `invoice_scans` como respaldo solo si no existe (sin políticas); con 19a aplicado antes no hace nada. 19k funciona con y sin 19b, pero en despliegue 19b va antes.
 

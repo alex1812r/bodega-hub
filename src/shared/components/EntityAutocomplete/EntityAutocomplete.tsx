@@ -92,8 +92,10 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
   required?: boolean;
   value: EntityAutocompleteValue | null;
   /**
-   * El nombre elegido se ve entero, envuelto en varias líneas, mientras el campo no tiene el foco (el
-   * campo crece con él); al enfocarlo se edita como siempre. Para columnas estrechas (REP14-06, D63).
+   * El nombre elegido se ve envuelto en hasta 2 renglones mientras el campo no tiene el foco; al enfocarlo se
+   * edita como siempre. Para columnas estrechas (REP14-06, D63). REP15-01 (D65): el campo reserva esos 2
+   * renglones desde el primer render (el nombre puede llegar tarde) y no crece con él; más largo se corta con
+   * «…» y se ve entero en el `title` (el lector de pantalla lee el valor del campo, completo).
    */
   wrapValueLabel?: boolean;
 };
@@ -1006,13 +1008,16 @@ export function EntityAutocomplete<K extends EntityKind>({
   ) : null;
 
   const showsClearButton = !disabled && (hasValue || text !== "");
-  // El nombre envuelto ocupa su sitio también al teclear encima y tras quitarlo (el último elegido, invisible): el
-  // campo no cambia de alto ni mueve lo de debajo hasta que se elige otro.
+  // El nombre envuelto ocupa su sitio también al teclear encima y tras quitarlo (el último elegido, invisible).
   const [wrappedLabel, setWrappedLabel] = useState(value?.label ?? "");
   if (wrapValueLabel && value?.label && value.label !== wrappedLabel) {
     setWrappedLabel(value.label);
   }
-  const wrapsValueLabel = wrapValueLabel && wrappedLabel !== "";
+  // REP15-01 (M-p16B-1): el alto de 2 renglones vale desde el primer render, con el nombre aún sin llegar.
+  const wrapsValueLabel = wrapValueLabel;
+  // REP15-01b (D65(a)): sin nombre que mostrar (no se pudo leer el elegido), el error llega tarde y se ve en esos 2
+  // renglones en vez de bajo el campo: no cambia el alto. Entero en el `title` y, para el lector, por `aria-describedby`.
+  const showsErrorInField = wrapsValueLabel && Boolean(error) && !isDirty && !value?.label;
 
   return (
     <div className="w-full min-w-0 space-y-2">
@@ -1052,25 +1057,38 @@ export function EntityAutocomplete<K extends EntityKind>({
           onKeyDown={handleKeyDown}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
-          placeholder={placeholder ?? config.defaultPlaceholder}
+          placeholder={showsErrorInField ? "" : (placeholder ?? config.defaultPlaceholder)}
           ref={inputRef}
           role="combobox"
+          title={showsErrorInField ? error : wrapsValueLabel && showsValueLabel && value.label ? value.label : undefined}
           type="text"
           value={displayValue}
         />
         {wrapsValueLabel ? (
           // El campo lleva el mismo texto (lo lee el lector de pantalla); este solo se ve. `overflow-wrap: anywhere`
           // (no `break-words`) y `min-w-0`: una palabra larga sin espacios se parte y no ensancha la celda (B-qa06-1).
+          // Alto fijo de 2 renglones (REP15-01): con o sin nombre, el campo mide lo mismo.
           <span
             aria-hidden
             className={cn(
-              "pointer-events-none col-start-1 row-start-1 block min-w-0 self-center border border-transparent py-2 pr-10 pl-10 text-sm [overflow-wrap:anywhere] text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
-              !showsValueLabel && "invisible",
+              "pointer-events-none col-start-1 row-start-1 flex h-[calc(2lh+1rem+2px)] min-w-0 items-center border border-transparent py-2 pr-10 pl-10 text-sm [overflow-wrap:anywhere] text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
+              !showsValueLabel && !showsErrorInField && "invisible",
             )}
             data-entity-value-label
           >
-            {wrappedLabel}
+            {showsErrorInField ? (
+              <span className={cn("line-clamp-2 min-w-0", formHelperErrorClassName)}>{error}</span>
+            ) : (
+              <span className="line-clamp-2 min-w-0">{wrappedLabel}</span>
+            )}
           </span>
+        ) : null}
+        {showsErrorInField ? (
+          // Para el lector (el campo lo cita en `aria-describedby`); dentro de la caja del campo y fuera del flujo: un
+          // hermano más del campo le sumaría el margen de `space-y-2`.
+          <p className="sr-only" id={descriptionId}>
+            {description}
+          </p>
         ) : null}
         {showsClearButton ? (
           <button
@@ -1085,7 +1103,7 @@ export function EntityAutocomplete<K extends EntityKind>({
         ) : null}
       </div>
 
-      {description ? (
+      {description && !showsErrorInField ? (
         <p
           className={cn(formHelperClassName, error && formHelperErrorClassName)}
           id={descriptionId}
