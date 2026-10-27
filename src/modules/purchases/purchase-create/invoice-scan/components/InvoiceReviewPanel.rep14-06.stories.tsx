@@ -18,12 +18,22 @@ import { invoiceScanQueryKeys } from "@/modules/invoice-scan/client/useInvoiceSc
 import { purchaseSuppliersQueryKeys } from "@/modules/purchases/hooks/usePurchaseSuppliers";
 import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 
-import { doubtfulLine, makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
+import {
+  doubtfulLine,
+  makeReviewResponse,
+  REVIEW_SCAN_ID,
+  REVIEW_SUPPLIER_ID,
+  REVIEW_TAX_RATES,
+  unmatchedLine,
+} from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
 
 /** El del lab (`c12-foot`, B-qa234-1) y uno de 45 caracteres. */
 const NAME_30 = "Distribuidora Caos Global C.A.";
 const NAME_45 = "Corporación Distribuidora Hermanos Pérez C.A.";
+/** REP14-06b (B-qa06-1): una sola palabra de 50 caracteres y el del lab (`q06-snb`, palabra de 45 + « C.A.»). */
+const WORD_50 = "DISTRIBUIDORAINTERNACIONALDEVIVERESYALIMENTOSSURCA";
+const NAME_SNB = "DISTRIBUIDORAINTERNACIONALDEVIVERESYALIMENTOS C.A.";
 
 /** Cabecera como la de f05 (dos líneas con costos de 4 cifras). */
 function headerResponse(name: string) {
@@ -165,6 +175,62 @@ function otherChecks(): Check[] {
   ];
 }
 
+/**
+ * REP14-06b (B-qa06-1): nada de la cabecera se sale de su caja (ni la ensancha sobre la imagen o fuera de la
+ * pantalla): el campo cabe en su columna, la × se ve dentro del campo y número y fecha no crecen con el nombre.
+ */
+function containmentChecks(): Check[] {
+  const header = document.querySelector<HTMLElement>('[data-layout-box="header"]');
+  const main = document.querySelector("main");
+  if (!header || !main) {
+    throw new Error("Sin cabecera o sin main");
+  }
+  const box = header.getBoundingClientRect();
+  const mainRight = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight);
+  const outside = [...header.querySelectorAll<HTMLElement>("*")].filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && (rect.right > box.right + 1 || rect.left < box.left - 1);
+  });
+  const describe = (element: HTMLElement) =>
+    `${element.tagName}.${String(element.className).slice(0, 40)} ${Math.round(element.getBoundingClientRect().right)}`;
+  const input = supplierField();
+  const field = input.getBoundingClientRect();
+  const column = input.closest("section")?.getBoundingClientRect();
+  const clear = screen.getByRole("button", { name: "Limpiar Proveedor" }).getBoundingClientRect();
+  const numberInput = screen.getByLabelText("Número de factura") as HTMLInputElement;
+  const number = numberInput.getBoundingClientRect();
+  const date = (screen.getByLabelText("Fecha") as HTMLInputElement).getBoundingClientRect();
+  const card = numberInput.closest(".rounded-xl")?.getBoundingClientRect();
+  return [
+    {
+      detail:
+        `cabecera ${Math.round(box.left)}–${Math.round(box.right)} (main hasta ${Math.round(mainRight)}), scroll ` +
+        `${header.scrollWidth}/${header.clientWidth}, ${outside.length} fuera${outside.length ? `: ${outside.slice(0, 3).map(describe).join(", ")}` : ""}`,
+      fits: outside.length === 0 && box.right <= mainRight + 1 && header.scrollWidth <= header.clientWidth,
+      label: "Cabecera",
+    },
+    {
+      detail: `campo ${Math.round(field.width)} px en columna ${Math.round(column?.width ?? -1)} px`,
+      fits: column !== undefined && field.left >= column.left - 1 && field.right <= column.right + 1,
+      label: "Campo en su columna",
+    },
+    {
+      detail: `× ${Math.round(clear.left)}–${Math.round(clear.right)} en campo ${Math.round(field.left)}–${Math.round(field.right)}, ventana ${window.innerWidth}`,
+      fits:
+        clear.width > 0 &&
+        clear.left >= field.left &&
+        clear.right <= field.right &&
+        clear.right <= Math.min(window.innerWidth, mainRight) + 1,
+      label: "×",
+    },
+    {
+      detail: `número ${Math.round(number.width)} px, fecha ${Math.round(date.width)} px, tarjeta ${Math.round(card?.left ?? -1)}–${Math.round(card?.right ?? -1)}`,
+      fits: card !== undefined && card.right <= box.right + 1 && number.right <= card.right && date.right <= card.right,
+      label: "Número y fecha",
+    },
+  ];
+}
+
 function supplierStory(width: number, height: number, name: string): Story {
   return {
     parameters: { supplierName: name },
@@ -174,7 +240,7 @@ function supplierStory(width: number, height: number, name: string): Story {
       if (!browser) {
         return;
       }
-      const checks = [supplierCheck(name), ...otherChecks()];
+      const checks = [supplierCheck(name), ...otherChecks(), ...containmentChecks()];
       await snapshot(browser, `proveedor${name.length}-${width}`);
       const report = checks.map((check) => `${check.label}: ${check.detail}${check.fits ? "" : " · CORTADO"}`).join(" | ");
       console.warn(`[REP14-06 proveedor ${name.length} car. ${width}×${height}] ${report}`);
@@ -290,6 +356,99 @@ function footerStory(width: number, height: number, reason: Reason): Story {
   };
 }
 
+/** Pie con tres motivos de partida: líneas por resolver, la diferencia sin aceptar y la tasa (en `args`). */
+const manyReasonsResponse = makeReviewResponse({
+  extraction: { date: "2026-10-17", supplier: { name: NAME_30, taxId: "J-50203040-1" }, total: 1800 },
+  lines: [
+    unmatchedLine(1, false, { read: { lineTotal: 1000, quantity: 1, unitPrice: 1000 } }),
+    doubtfulLine(2, 0.72, { match: { taxRateCode: "exento" }, read: { lineTotal: 750, quantity: 1, unitPrice: 750 } }),
+  ],
+});
+
+type ListState = { items: number; hidden: number; height: number; more: string | null; moreVisible: boolean };
+
+/**
+ * REP14-06b (O-qa06-1): cuántos motivos quedan bajo el borde de los 3 renglones reservados y si el indicio «y N
+ * más» se ve dentro de ese alto.
+ */
+function listState(): ListState {
+  const list = document.querySelector<HTMLElement>('[data-testid="invoice-review-blockers"]');
+  if (!list) {
+    throw new Error("Sin lista de motivos");
+  }
+  const box = list.getBoundingClientRect();
+  const items = [...list.querySelectorAll<HTMLElement>(':scope > li:not([data-testid="invoice-review-blockers-more"])')];
+  const hidden = items.filter((item) => item.getBoundingClientRect().bottom > box.bottom + 1).length;
+  const more = document.querySelector<HTMLElement>('[data-testid="invoice-review-blockers-more"]');
+  const moreBox = more?.getBoundingClientRect();
+  const moreVisible =
+    !!more &&
+    !!moreBox &&
+    moreBox.width > 0 &&
+    moreBox.height > 0 &&
+    getComputedStyle(more).visibility !== "hidden" &&
+    moreBox.top >= box.top - 1 &&
+    moreBox.bottom <= box.bottom + 1 &&
+    moreBox.right <= box.right + 1;
+  return { hidden, height: Math.round(box.height), items: items.length, more: more?.textContent ?? null, moreVisible };
+}
+
+function manyReasonsStory(width: number, height: number): Story {
+  return {
+    parameters: { supplierName: NAME_30 },
+    // Sin tasa del sistema: «Escribe la tasa…» es el tercer motivo de partida.
+    args: { context: { taxRates: REVIEW_TAX_RATES }, response: manyReasonsResponse },
+    play: async () => {
+      const browser = await prepare(width, height, NAME_30);
+      if (!browser) {
+        return;
+      }
+      await waitFor(() => expect(listState().items).toBeGreaterThanOrEqual(2));
+      await sleep(300);
+      console.warn(`[REP14-06b pie muchos] ${width} motivos de partida: ${[...document.querySelectorAll("[data-testid=invoice-review-blockers] > li:not([aria-hidden])")].map((li) => li.textContent).join(" / ")}`);
+      await expect(listState().items).toBe(3);
+      await sleep(1500);
+      const before = positions();
+      const start = listState();
+      const date = screen.getByLabelText("Fecha") as HTMLInputElement;
+      const steps: Array<{ label: string; act: () => void; items: number }> = [
+        { act: () => typeDate(date, "0026-10-17"), items: 4, label: "4 motivos" },
+        { act: () => screen.getByRole("button", { name: "Limpiar Proveedor" }).click(), items: 5, label: "5 motivos" },
+      ];
+      const failures: string[] = [];
+      // Con los tres de partida, si alguno no cabe (renglones envueltos a 768/1024) el indicio también se ve.
+      if (start.hidden > 0 ? !start.moreVisible || !start.more?.includes(`${start.hidden} más`) : start.more !== null) {
+        failures.push(`inicio: ${start.hidden} ocultos y el indicio es ${start.more ?? "ausente"}`);
+      }
+      const lines: string[] = [`inicio ${JSON.stringify(start)} Cargar ${before.cargar} casilla ${before.casilla}`];
+      for (const step of steps) {
+        step.act();
+        await waitFor(() => expect(listState().items).toBe(step.items));
+        await sleep(300);
+        const state = listState();
+        const now = positions();
+        lines.push(`${step.label} ${JSON.stringify(state)} Cargar ${now.cargar} casilla ${now.casilla}`);
+        if (state.hidden === 0) {
+          failures.push(`${step.label}: ningún motivo oculto (¿alto reservado perdido?)`);
+        }
+        if (!state.moreVisible || !state.more?.includes(`${state.hidden} más`)) {
+          failures.push(`${step.label}: sin indicio visible «y ${state.hidden} más» (${state.more ?? "ausente"})`);
+        }
+        if (state.height !== start.height) {
+          failures.push(`${step.label}: la lista pasa de ${start.height} a ${state.height} px`);
+        }
+        if (now.cargar !== before.cargar || now.casilla !== before.casilla) {
+          failures.push(`${step.label}: Cargar/casilla se mueven`);
+        }
+        await snapshot(browser, `pie-muchos-${step.items}-${width}`);
+      }
+      const report = `${width}×${height} ${lines.join(" | ")}`;
+      console.warn(`[REP14-06b pie muchos] ${report}`);
+      await expect(failures, report).toEqual([]);
+    },
+  };
+}
+
 const meta = {
   args: {
     canCreateProduct: true,
@@ -365,3 +524,15 @@ export const PieProveedor1280 = footerStory(1280, 900, "proveedor");
 export const PieFecha390 = footerStory(390, 844, "fecha");
 export const PieSinFecha390 = footerStory(390, 844, "sinFecha");
 export const PieProveedor390 = footerStory(390, 844, "proveedor");
+export const Palabra50a320 = supplierStory(320, 640, WORD_50);
+export const Palabra50a390 = supplierStory(390, 844, WORD_50);
+export const Palabra50a768 = supplierStory(768, 1024, WORD_50);
+export const Palabra50a1024x1366 = supplierStory(1024, 1366, WORD_50);
+export const Palabra50a1280 = supplierStory(1280, 900, WORD_50);
+export const Palabra50a1440 = supplierStory(1440, 900, WORD_50);
+export const ProveedorSnb1024x1366 = supplierStory(1024, 1366, NAME_SNB);
+export const ProveedorSnb390 = supplierStory(390, 844, NAME_SNB);
+export const PieMuchos768 = manyReasonsStory(768, 1024);
+export const PieMuchos1024 = manyReasonsStory(1024, 1366);
+export const PieMuchos1280 = manyReasonsStory(1280, 900);
+export const PieMuchos1440 = manyReasonsStory(1440, 900);

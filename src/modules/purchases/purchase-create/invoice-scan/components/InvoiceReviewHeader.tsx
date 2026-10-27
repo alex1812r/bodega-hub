@@ -187,7 +187,9 @@ export function InvoiceReviewHeader({
           lateral y la imagen al lado, a 1024 px la cabecera mide ~290 px: partida en dos, el proveedor y la fecha
           se cortaban. Dos columnas desde 42rem (cada una ≥ 328 px). */}
       <div className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-2">
+        {/* REP14-06b (B-qa06-1): un nombre sin espacios (elegido, leído o sugerido) se parte en vez de ensanchar
+            la columna y, con ella, número y fecha. */}
+        <div className="flex min-w-0 flex-col gap-2 [overflow-wrap:anywhere]">
           <PurchaseSupplierCard
             onSupplierChange={(contactId, name) => {
               // REP14-04 (B-p14-1): la × lo quita de verdad; sin proveedor Cargar pide elegirlo.
