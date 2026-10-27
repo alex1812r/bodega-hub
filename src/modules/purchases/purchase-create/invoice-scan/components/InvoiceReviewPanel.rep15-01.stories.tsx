@@ -474,6 +474,52 @@ function rateStory(width: number, height: number, printedRate: number | undefine
   };
 }
 
+/**
+ * REP15-01c (D65(a)): el usuario escribe la tasa antes de que llegue la del día (que difiere de la impresa). Al llegar
+ * aparecen las opciones con la de hoy y «La factura trae…»: el aviso ya tenía ese alto reservado. Se mide cada frame
+ * de la llegada, con la cabecera a la vista y sin desplazar (sin soltar ninguna retención): alto de cabecera y `top`
+ * de filas sin cambio, y ningún aviso de la cabecera retenido.
+ */
+function manualRateStory(width: number, height: number): Story {
+  return {
+    args: {
+      response: makeReviewResponse({ extraction, lines: [homonymLine, harinaLine] }),
+    },
+    play: async () => {
+      const browser = await prepare(width, height);
+      if (!browser) {
+        return;
+      }
+      gates.supplier.open();
+      await waitFor(() => expect(supplierField()).toHaveValue(LONG_NAME));
+      (await lastDuplicatesGate(1)).open([]);
+      await sleep(400);
+      // Acción del usuario (puede cambiar el alto): elegir «Escribir la tasa» y escribirla.
+      screen.getByRole("radio", { name: "Escribir la tasa" }).click();
+      const input = await screen.findByLabelText("Tasa Bs por REF");
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error("Sin campo de la tasa");
+      }
+      input.focus({ preventScroll: true });
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "950");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.blur();
+      await waitFor(() => expect(screen.getByText(/se usa la tasa escrita/)).toBeInTheDocument());
+      await sleep(400);
+      const frames = await sampleFrames(async () => {
+        window.dispatchEvent(new CustomEvent(RATE_EVENT, { detail: 1000 }));
+        await waitFor(() => expect(screen.getByText(/La factura trae tasa/)).toBeInTheDocument(), { timeout: 4000 });
+        await sleep(400);
+      });
+      const held = heldNotices("header");
+      const text = `${width}×${height} tasa escrita 950, impresa 895 → del día 1000: ${frames.join(" → ")}${held.length ? ` retenidos ${held.join(", ")}` : ""}`;
+      console.warn(`[REP15-01c tasa escrita] ${text}`);
+      await expect(screen.getByRole("radio", { name: /Tasa de hoy/ })).toBeInTheDocument();
+      await expect(frames.length === 1 && held.length === 0, text).toBe(true);
+    },
+  };
+}
+
 /** El nombre del proveedor no llega (la consulta falla): el error bajo el campo tiene su sitio reservado. */
 function supplierErrorStory(width: number, height: number): Story {
   return {
@@ -623,3 +669,7 @@ export const TasaDifiere1024x1366 = rateStory(1024, 1366, 895, 1000);
 export const TasaDifiere1280 = rateStory(1280, 900, 895, 1000);
 export const TasaSinImpresa390 = rateStory(390, 1100, undefined, 900);
 export const TasaSinImpresa1280 = rateStory(1280, 900, undefined, 900);
+export const TasaEscritaAntes390 = manualRateStory(390, 1100);
+export const TasaEscritaAntes768 = manualRateStory(768, 1024);
+export const TasaEscritaAntes1024x1366 = manualRateStory(1024, 1366);
+export const TasaEscritaAntes1280 = manualRateStory(1280, 900);

@@ -271,15 +271,22 @@ export function InvoiceReviewPanel({
   // REP15-01b (D65(a)): abierta sin tasa del día, el aviso de tasa reserva desde el primer render el alto que tiene al
   // abrir y el que tendrá cuando llegue sin que nadie actúe (con una del día que difiera de la impresa).
   const [rateAtOpen] = useState(() => (state.rate.system === undefined ? state.rate : null));
-  const rateReserve = useMemo(() => {
-    if (!rateAtOpen) {
-      return [];
-    }
-    const atOpen = { ...state, rate: rateAtOpen };
-    const likely = rateAtOpen.printed ?? 1000;
-    // A +30 %: aún verosímil frente a la impresa (±25 % de la del día) y con tantas cifras como la del día más alta.
-    return [atOpen, reviewReducer(atOpen, { type: "adoptSystemRate", systemRateVes: Math.round(likely * 130) / 100 })];
-  }, [rateAtOpen, state]);
+  // REP15-01c: también la última tasa elegida o escrita antes de que llegue la del día (al llegar se ofrece la de hoy
+  // junto a la del usuario); se conserva tras la llegada para que la reserva no cambie con ella.
+  const [rateBeforeSystem, setRateBeforeSystem] = useState(rateAtOpen);
+  if (rateAtOpen && state.rate.system === undefined && state.rate !== rateBeforeSystem) {
+    setRateBeforeSystem(state.rate);
+  }
+  const rateReserve = useMemo(
+    () =>
+      (rateAtOpen && rateBeforeSystem ? [rateAtOpen, rateBeforeSystem] : []).flatMap((rate) => {
+        const before = { ...state, rate };
+        const likely = rate.printed ?? 1000;
+        // A +30 %: aún verosímil frente a la impresa (±25 % de la del día) y con tantas cifras como la del día más alta.
+        return [before, reviewReducer(before, { type: "adoptSystemRate", systemRateVes: Math.round(likely * 130) / 100 })];
+      }),
+    [rateAtOpen, rateBeforeSystem, state],
+  );
   // D42: consulta el último costo de cada producto elegido en el buscador, una vez por (línea,
   // producto) en curso; la respuesta para un producto que ya no es el de la línea se ignora.
   const lastCostRequestsRef = useRef(new Set<string>());

@@ -8,6 +8,7 @@
  */
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import MockDate from "mockdate";
 import { useState, type ComponentProps } from "react";
 import { expect, fn, screen, waitFor } from "storybook/test";
 
@@ -246,6 +247,11 @@ const meta = {
       );
     },
   ],
+  // Las guardas del panel miden tiempo real: sin el reloj fijo de `preview.tsx` (con él, la guarda espacial D46-b
+  // no caduca nunca y descarta un toque deliberado a < 32 px del anterior, segundos después).
+  beforeEach() {
+    MockDate.reset();
+  },
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/REP14-04 proveedor y aviso de tasa",
