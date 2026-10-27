@@ -40,52 +40,20 @@ export type InvoiceReviewHeaderProps = {
   onAction: (action: InvoiceReviewAction) => void;
   onRescan: () => void;
   supplierFetcher?: EntityFetcher<"contact">;
-  /**
-   * REP12-01 (D52): duplicados consultados con el proveedor elegido; `undefined` mientras no hay
-   * respuesta (se usa el `duplicateOfScanId` del escaneo).
-   */
-  duplicates?: InvoiceDuplicateMatch[];
-  /** Casilla del aviso de duplicado marcada (Cargar la exige). */
-  duplicateAcknowledged?: boolean;
-  onDuplicateAcknowledge?: (acknowledged: boolean) => void;
-  /** Casilla del aviso de duplicado: el motivo del pie lleva el foco a ella. */
-  duplicateCheckboxRef?: RefObject<HTMLInputElement | null>;
 };
 
 /**
  * Cabecera de la revisión: proveedor (confirmado, o candidatos y el buscador de
- * proveedores de la compra), número, fecha, moneda, avisos de la lectura con
- * "Repetir foto" y el aviso de factura ya escaneada.
+ * proveedores de la compra), número, fecha, moneda y avisos de la lectura con
+ * "Repetir foto". REP15-01b: el aviso de factura ya escaneada va tras las líneas
+ * (`InvoiceReviewDuplicateNotice`).
  */
-export function InvoiceReviewHeader({
-  duplicateAcknowledged = false,
-  duplicateCheckboxRef,
-  duplicates,
-  onAction,
-  onDuplicateAcknowledge,
-  onRescan,
-  state,
-  supplierFetcher,
-}: InvoiceReviewHeaderProps) {
+export function InvoiceReviewHeader({ onAction, onRescan, state, supplierFetcher }: InvoiceReviewHeaderProps) {
   const { extraction, header } = state;
   const { supplier } = header;
   const lowConfidence = extraction.confidence < LOW_EXTRACTION_CONFIDENCE;
   const warnings = extraction.warnings;
   const showCandidates = !supplier.contactId && supplier.candidates.length > 0;
-  // Factura duplicada: si el escaneo anterior ya está en una compra, se enlaza. No bloquea, pero
-  // Cargar exige marcar la casilla (REP12-01, D52). Con la consulta del proveedor elegido ya
-  // respondida manda ella; si no, el aviso del escaneo.
-  const { purchaseId: scanDuplicatePurchaseId } = useInvoiceScanPurchase(
-    duplicates === undefined ? state.duplicateOfScanId : undefined,
-  );
-  const showDuplicate = duplicates === undefined ? Boolean(state.duplicateOfScanId) : duplicates.length > 0;
-  const duplicatePurchaseId =
-    duplicates === undefined ? scanDuplicatePurchaseId : (duplicates.find((match) => match.purchaseId)?.purchaseId ?? null);
-  const acknowledgeTextId = useId();
-  // La casilla la usan el hook (su sitio) y el panel (el motivo del pie le lleva el foco).
-  const ownCheckboxRef = useRef<HTMLInputElement>(null);
-  const acknowledgeRef = duplicateCheckboxRef ?? ownCheckboxRef;
-  const acknowledge = useFreshPressCheckbox(acknowledgeRef);
   // REP13-02 (M-p14B-1): la fecha se valida con la regla del servidor; el motivo va junto al campo.
   const dateMessage = getHeaderDateMessage(state);
   const dateMessageId = useId();
@@ -127,61 +95,6 @@ export function InvoiceReviewHeader({
           </Button>
         </div>
       ) : null}
-
-      {/* D60(c): llega tras la consulta; useLayoutHold devuelve las filas a su punto. */}
-      <div className="empty:hidden" data-layout-notice>
-        {showDuplicate ? (
-          <div
-            className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
-            // REP12-05 (D49): aparece tras la consulta, con el dedo aún cerca; lo que aparece o se mueve en
-            // él queda guardado 1 s (useLayoutHold), como el pie.
-            data-layout-shift-guard
-            role="status"
-          >
-            <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
-            <div className="flex min-w-0 flex-col gap-2">
-              {duplicatePurchaseId ? (
-                <span>
-                  Esta factura ({duplicateCriterionLabel(extraction)}) ya se registró en una compra. Revisa que no la cargues dos
-                  veces.{" "}
-                  <Link
-                    className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
-                    href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
-                  >
-                    Ver
-                  </Link>
-                </span>
-              ) : (
-                <span>
-                  Esta factura ({duplicateCriterionLabel(extraction)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
-                  veces.
-                </span>
-              )}
-              {onDuplicateAcknowledge ? (
-                // REP12-05 (M-qa-rep12-1): el texto no es su etiqueta; la casilla solo cambia con su propio
-                // control y una pulsación nueva sobre ella (como la de diferencia del pie, D54(a)(3)).
-                <div className="flex items-center gap-2 text-xs font-medium">
-                  <input
-                    aria-labelledby={acknowledgeTextId}
-                    checked={duplicateAcknowledged}
-                    className="size-6 shrink-0 rounded border-border"
-                    onChange={(event) => {
-                      if (acknowledge.accepts(event)) {
-                        onDuplicateAcknowledge(event.target.checked);
-                      }
-                    }}
-                    onPointerDown={acknowledge.onPointerDown}
-                    onPointerUp={acknowledge.onPointerUp}
-                    ref={acknowledgeRef}
-                    type="checkbox"
-                  />
-                  <span id={acknowledgeTextId}>No es la misma compra, o quiero cargarla igual</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-      </div>
 
       {/* REP14-02 (M-p15-2, D63): las columnas dependen del ancho de la cabecera, no del de la pantalla. Con el menú
           lateral y la imagen al lado, a 1024 px la cabecera mide ~290 px: partida en dos, el proveedor y la fecha
@@ -294,5 +207,105 @@ export function InvoiceReviewHeader({
         </div>
       </div>
     </section>
+  );
+}
+
+export type InvoiceReviewDuplicateNoticeProps = {
+  state: InvoiceReviewState;
+  /**
+   * REP12-01 (D52): duplicados consultados con el proveedor elegido; `undefined` mientras no hay
+   * respuesta (se usa el `duplicateOfScanId` del escaneo).
+   */
+  duplicates?: InvoiceDuplicateMatch[];
+  /** Casilla del aviso de duplicado marcada (Cargar la exige). */
+  duplicateAcknowledged?: boolean;
+  onDuplicateAcknowledge?: (acknowledged: boolean) => void;
+  /** Casilla del aviso de duplicado: el motivo del pie lleva el foco a ella. */
+  duplicateCheckboxRef?: RefObject<HTMLInputElement | null>;
+};
+
+/**
+ * Aviso de factura ya escaneada (o ya registrada en una compra, con «Ver») y la casilla que Cargar exige.
+ * REP15-01b (D65(a)): llega tras la consulta, o al teclear o borrar el número, y se va igual; va tras las líneas, donde
+ * aparecer o irse no mueve nada de encima ni las líneas. Lo que acorte la página al irse queda bajo useLayoutHold
+ * (D65(b), `data-layout-notice`).
+ */
+export function InvoiceReviewDuplicateNotice({
+  duplicateAcknowledged = false,
+  duplicateCheckboxRef,
+  duplicates,
+  onDuplicateAcknowledge,
+  state,
+}: InvoiceReviewDuplicateNoticeProps) {
+  const { header } = state;
+  // Factura duplicada: si el escaneo anterior ya está en una compra, se enlaza. No bloquea, pero
+  // Cargar exige marcar la casilla (REP12-01, D52). Con la consulta del proveedor elegido ya
+  // respondida manda ella; si no, el aviso del escaneo.
+  const { purchaseId: scanDuplicatePurchaseId } = useInvoiceScanPurchase(
+    duplicates === undefined ? state.duplicateOfScanId : undefined,
+  );
+  const showDuplicate = duplicates === undefined ? Boolean(state.duplicateOfScanId) : duplicates.length > 0;
+  const duplicatePurchaseId =
+    duplicates === undefined ? scanDuplicatePurchaseId : (duplicates.find((match) => match.purchaseId)?.purchaseId ?? null);
+  const acknowledgeTextId = useId();
+  // La casilla la usan el hook (su sitio) y el panel (el motivo del pie le lleva el foco).
+  const ownCheckboxRef = useRef<HTMLInputElement>(null);
+  const acknowledgeRef = duplicateCheckboxRef ?? ownCheckboxRef;
+  const acknowledge = useFreshPressCheckbox(acknowledgeRef);
+
+  return (
+    <div className="empty:hidden" data-layout-notice>
+      {showDuplicate ? (
+        <div
+          className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
+          // REP12-05 (D49): aparece tras la consulta, con el dedo aún cerca; lo que aparece o se mueve en
+          // él queda guardado 1 s (useLayoutHold), como el pie.
+          data-layout-shift-guard
+          role="status"
+        >
+          <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <div className="flex min-w-0 flex-col gap-2">
+            {duplicatePurchaseId ? (
+              <span>
+                Esta factura ({duplicateCriterionLabel(header)}) ya se registró en una compra. Revisa que no la cargues dos
+                veces.{" "}
+                <Link
+                  className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
+                  href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
+                >
+                  Ver
+                </Link>
+              </span>
+            ) : (
+              <span>
+                Esta factura ({duplicateCriterionLabel(header)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
+                veces.
+              </span>
+            )}
+            {onDuplicateAcknowledge ? (
+              // REP12-05 (M-qa-rep12-1): el texto no es su etiqueta; la casilla solo cambia con su propio
+              // control y una pulsación nueva sobre ella (como la de diferencia del pie, D54(a)(3)).
+              <div className="flex items-center gap-2 text-xs font-medium">
+                <input
+                  aria-labelledby={acknowledgeTextId}
+                  checked={duplicateAcknowledged}
+                  className="size-6 shrink-0 rounded border-border"
+                  onChange={(event) => {
+                    if (acknowledge.accepts(event)) {
+                      onDuplicateAcknowledge(event.target.checked);
+                    }
+                  }}
+                  onPointerDown={acknowledge.onPointerDown}
+                  onPointerUp={acknowledge.onPointerUp}
+                  ref={acknowledgeRef}
+                  type="checkbox"
+                />
+                <span id={acknowledgeTextId}>No es la misma compra, o quiero cargarla igual</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

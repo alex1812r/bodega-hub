@@ -1015,6 +1015,9 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
   // REP15-01 (M-p16B-1): el alto de 2 renglones vale desde el primer render, con el nombre aún sin llegar.
   const wrapsValueLabel = wrapValueLabel;
+  // REP15-01b (D65(a)): sin nombre que mostrar (no se pudo leer el elegido), el error llega tarde y se ve en esos 2
+  // renglones en vez de bajo el campo: no cambia el alto. Entero en el `title` y, para el lector, por `aria-describedby`.
+  const showsErrorInField = wrapsValueLabel && Boolean(error) && !isDirty && !value?.label;
 
   return (
     <div className="w-full min-w-0 space-y-2">
@@ -1054,10 +1057,10 @@ export function EntityAutocomplete<K extends EntityKind>({
           onKeyDown={handleKeyDown}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
-          placeholder={placeholder ?? config.defaultPlaceholder}
+          placeholder={showsErrorInField ? "" : (placeholder ?? config.defaultPlaceholder)}
           ref={inputRef}
           role="combobox"
-          title={wrapsValueLabel && showsValueLabel && value.label ? value.label : undefined}
+          title={showsErrorInField ? error : wrapsValueLabel && showsValueLabel && value.label ? value.label : undefined}
           type="text"
           value={displayValue}
         />
@@ -1069,12 +1072,23 @@ export function EntityAutocomplete<K extends EntityKind>({
             aria-hidden
             className={cn(
               "pointer-events-none col-start-1 row-start-1 flex h-[calc(2lh+1rem+2px)] min-w-0 items-center border border-transparent py-2 pr-10 pl-10 text-sm [overflow-wrap:anywhere] text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
-              !showsValueLabel && "invisible",
+              !showsValueLabel && !showsErrorInField && "invisible",
             )}
             data-entity-value-label
           >
-            <span className="line-clamp-2 min-w-0">{wrappedLabel}</span>
+            {showsErrorInField ? (
+              <span className={cn("line-clamp-2 min-w-0", formHelperErrorClassName)}>{error}</span>
+            ) : (
+              <span className="line-clamp-2 min-w-0">{wrappedLabel}</span>
+            )}
           </span>
+        ) : null}
+        {showsErrorInField ? (
+          // Para el lector (el campo lo cita en `aria-describedby`); dentro de la caja del campo y fuera del flujo: un
+          // hermano más del campo le sumaría el margen de `space-y-2`.
+          <p className="sr-only" id={descriptionId}>
+            {description}
+          </p>
         ) : null}
         {showsClearButton ? (
           <button
@@ -1089,7 +1103,7 @@ export function EntityAutocomplete<K extends EntityKind>({
         ) : null}
       </div>
 
-      {description ? (
+      {description && !showsErrorInField ? (
         <p
           className={cn(formHelperClassName, error && formHelperErrorClassName)}
           id={descriptionId}
