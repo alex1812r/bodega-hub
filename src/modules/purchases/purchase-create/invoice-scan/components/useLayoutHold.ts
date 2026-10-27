@@ -91,6 +91,8 @@ type LayoutHold<TOrder> = { order: TOrder; heights: ReadonlyMap<string, number> 
  * B-qa23-2: de cada aviso de una fila, el alto del bloque de la fila que lo contiene.
  */
 type NoticeLayout = {
+  /** REP15-01: ancho del panel; si cambia (giro, ventana), los avisos no se retienen ni guardan lo de debajo. */
+  width: number;
   heights: ReadonlyMap<Element, number>;
   anchorTop: number;
   rowBlocks: ReadonlyMap<Element, number>;
@@ -113,6 +115,25 @@ function rowBlock(notice: Element): Element | null {
     block = block.parentElement;
   }
   return row ? block : null;
+}
+
+/**
+ * D60(c): alto de cada aviso dinámico, alto del bloque de fila de los avisos de una fila y punto de pantalla
+ * de las filas (`anchor`).
+ */
+function measureNotices(root: Element, anchor: Element): NoticeLayout {
+  const notices = [...root.querySelectorAll(NOTICE_SELECTOR)];
+  return {
+    width: root.getBoundingClientRect().width,
+    heights: new Map(notices.map((notice) => [notice, notice.getBoundingClientRect().height] as const)),
+    anchorTop: anchor.getBoundingClientRect().top,
+    rowBlocks: new Map(
+      notices.flatMap((notice) => {
+        const block = rowBlock(notice);
+        return block ? [[notice, block.getBoundingClientRect().height] as const] : [];
+      }),
+    ),
+  };
 }
 
 /** Control pulsado y su caja, con su posición vertical antes de la acción. */
@@ -249,6 +270,47 @@ function scrollBack(element: Element, delta: number): OwnScroll | null {
 }
 
 /**
+ * Lo que aplica el layout pendiente (D49) y suelta los avisos retenidos (D65(b)): desplazar (salvo el
+ * desplazamiento propio de la compensación), la rueda, arrastrar el dedo, el teclado o sacar el ratón del
+ * panel o de la ventana. Devuelve cómo dejar de escuchar.
+ */
+function listenForRelease(root: Element, release: () => void, ownScrollRef: { current: OwnScroll | null }) {
+  const onScroll = (event: Event) => {
+    const own = ownScrollRef.current;
+    const scroller = event.target instanceof Element ? event.target : document.scrollingElement;
+    if (own && scroller === own.scroller && Math.abs(own.scroller.scrollTop - own.top) < 1) {
+      return;
+    }
+    release();
+  };
+  // Solo el ratón: un toque no deja puntero encima (y su `pointerleave` llega al levantar el dedo).
+  const onPointerMove = (event: PointerEvent) => {
+    if (event.pointerType === "mouse" && !contains(root.getBoundingClientRect(), event.clientX, event.clientY)) {
+      release();
+    }
+  };
+  const onPointerLeave = (event: PointerEvent) => {
+    if (event.pointerType === "mouse") {
+      release();
+    }
+  };
+  window.addEventListener("scroll", onScroll, true);
+  window.addEventListener("wheel", release, { passive: true });
+  window.addEventListener("touchmove", release, { passive: true });
+  window.addEventListener("keydown", release, true);
+  window.addEventListener("pointermove", onPointerMove, true);
+  document.documentElement.addEventListener("pointerleave", onPointerLeave);
+  return () => {
+    window.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("wheel", release);
+    window.removeEventListener("touchmove", release);
+    window.removeEventListener("keydown", release, true);
+    window.removeEventListener("pointermove", onPointerMove, true);
+    document.documentElement.removeEventListener("pointerleave", onPointerLeave);
+  };
+}
+
+/**
  * D46-a: «layout pendiente». `holdLayout` se llama en la captura del clic, antes de que la acción
  * cambie nada: fija el orden que se está pintando y el alto actual de cada `[data-layout-box]`
  * dentro de `rootRef` (solo crecen). Mientras dura, `order` devuelve ese orden, `boxStyle` su alto
@@ -283,12 +345,41 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const focusedKeyRef = useRef<string | undefined>(undefined);
   // D60(c): avisos dinámicos y filas en la última medición.
   const noticeLayoutRef = useRef<NoticeLayout | null>(null);
+  // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían),
+  // y cómo dejar de escuchar lo que los suelta.
+  const floorsRef = useRef(new Map<HTMLElement, { display: string; minHeight: string }>());
+  const stopFloorsRef = useRef<(() => void) | null>(null);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
     onFocusLostRef.current = onFocusLost;
   });
 
+  /**
+   * REP15-01 (D65(b)): suelta los avisos retenidos (lo mismo que aplica el layout pendiente: desplazar, el teclado
+   * o sacar el ratón). Lo que se mueve con ello queda guardado desde ESTE momento, y la nueva medición es la base
+   * (no se compensa: lo pidió el usuario).
+   */
+  const releaseFloors = useCallback(() => {
+    stopFloorsRef.current?.();
+    stopFloorsRef.current = null;
+    const floors = floorsRef.current;
+    if (floors.size === 0) {
+      return;
+    }
+    const before = controlPositions();
+    for (const [notice, style] of floors) {
+      notice.style.display = style.display;
+      notice.style.minHeight = style.minHeight;
+    }
+    floors.clear();
+    markMoved(movedAtRef.current, movedControls(before, controlPositions()));
+    const root = rootRef.current;
+    const anchor = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
+    noticeLayoutRef.current = root && anchor ? measureNotices(root, anchor) : null;
+  }, [rootRef]);
+
   const release = useCallback(() => {
+    releaseFloors();
     anchorRef.current = null;
     ownScrollRef.current = null;
     shiftPositionsRef.current = null;
@@ -300,7 +391,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       holdRef.current = null;
       setHold(null);
     }
-  }, [rootRef]);
+  }, [releaseFloors, rootRef]);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
@@ -404,23 +495,42 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
    * D60(c): si un aviso dinámico cambió de alto y movió las filas, vuelven a su punto de pantalla
    * (salvo que el control pulsado con el layout pendiente esté en el aviso o encima: manda su ancla).
    * Lo que no se pudo devolver (no hay desplazamiento) queda guardado desde ESTE momento.
+   * `floor` (REP15-01): retener los avisos que encogieron; solo antes de pintar y fuera de un
+   * ResizeObserver (cambiar ahí el alto de lo observado es un bucle del observador).
    */
-  const followNotices = useCallback(() => {
+  const followNotices = useCallback((floor: boolean) => {
     const root = rootRef.current;
     const anchor = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
     if (!root || !anchor) {
       noticeLayoutRef.current = null;
       return;
     }
-    const notices = [...root.querySelectorAll(NOTICE_SELECTOR)];
-    const heights = new Map(notices.map((notice) => [notice, notice.getBoundingClientRect().height] as const));
-    const rowBlocks = new Map(
-      notices.flatMap((notice) => {
-        const block = rowBlock(notice);
-        return block ? [[notice, block.getBoundingClientRect().height] as const] : [];
-      }),
-    );
     const previous = noticeLayoutRef.current;
+    // Con otro ancho (giro, ventana) todo se recoloca: ni se retiene ni se guarda nada por ello.
+    const sameWidth = previous && Math.abs(previous.width - root.getBoundingClientRect().width) < 1 ? previous : null;
+    // REP15-01 (D65(b)): lo que llega tarde (tasa, duplicados, último costo) y encoge o quita un aviso sin que nadie
+    // actúe no sube lo de debajo: el aviso conserva su alto hasta que el usuario desplace, use el teclado o saque el
+    // ratón (con el layout pendiente, también lo que creció tras fijar las cajas). Lo que se teclea es del usuario.
+    const focused = document.activeElement;
+    const typing = focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
+    if (floor && sameWidth && !typing) {
+      for (const notice of root.querySelectorAll<HTMLElement>(NOTICE_SELECTOR)) {
+        const was = sameWidth.heights.get(notice);
+        if (was !== undefined && was - notice.getBoundingClientRect().height >= 1) {
+          if (!floorsRef.current.has(notice)) {
+            floorsRef.current.set(notice, { display: notice.style.display, minHeight: notice.style.minHeight });
+          }
+          // `empty:hidden`: el aviso que se va también conserva su sitio (y el hueco del `gap`).
+          notice.style.display = "block";
+          notice.style.minHeight = `${was}px`;
+        }
+      }
+      if (floorsRef.current.size > 0 && !stopFloorsRef.current) {
+        stopFloorsRef.current = listenForRelease(root, releaseFloors, ownScrollRef);
+      }
+    }
+    const { width, heights, rowBlocks } = measureNotices(root, anchor);
+    const notices = [...heights.keys()];
     const resized = (notice: Element) =>
       previous !== null && Math.abs((previous.heights.get(notice) ?? 0) - (heights.get(notice) ?? 0)) >= 1;
     const changed = notices.find((notice) => !rowBlocks.has(notice) && resized(notice));
@@ -443,7 +553,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     // B-qa23-2: el aviso de una fila que aparece al teclear y cambia el alto de su bloque mueve lo que le
     // sigue (el resto de la fila y las de abajo): queda guardado desde ESTE momento.
     for (const [notice, blockHeight] of rowBlocks) {
-      const blockBefore = previous?.rowBlocks.get(notice);
+      const blockBefore = sameWidth?.rowBlocks.get(notice);
       if (blockBefore !== undefined && resized(notice) && Math.abs(blockBefore - blockHeight) >= 1) {
         const moved = [...root.querySelectorAll(CONTROL_SELECTOR)].filter(
           (control) => follows(notice, control) && !control.closest(STICKY_FOOTER_SELECTOR),
@@ -451,28 +561,37 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         markMoved(movedAtRef.current, moved);
       }
     }
-    noticeLayoutRef.current = { heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
-  }, [rootRef]);
+    noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
+  }, [releaseFloors, rootRef]);
 
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
-  useLayoutEffect(() => followNotices());
+  useLayoutEffect(() => followNotices(true));
 
   // Lo que cambia sin render del panel (el aviso de duplicado al saber si ya está en una compra), y
-  // el desplazamiento del usuario, que solo renueva la medición.
+  // el desplazamiento del usuario, que solo renueva la medición. REP15-01: un cambio del DOM sin render
+  // del panel (la cabecera) se mide en su microtarea, antes de pintar, y ahí sí se retienen los avisos.
   useEffect(() => {
     const root = rootRef.current;
-    window.addEventListener("scroll", followNotices, { capture: true, passive: true });
+    const measure = () => followNotices(false);
+    window.addEventListener("scroll", measure, { capture: true, passive: true });
     // jsdom no implementa ResizeObserver.
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followNotices);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const mutations = new MutationObserver(() => followNotices(true));
+    if (root) {
+      mutations.observe(root, { attributes: true, characterData: true, childList: true, subtree: true });
+    }
     if (root && observer) {
       observer.observe(root);
       root.querySelectorAll(NOTICE_SELECTOR).forEach((notice) => observer.observe(notice));
     }
     return () => {
-      window.removeEventListener("scroll", followNotices, { capture: true });
+      window.removeEventListener("scroll", measure, { capture: true });
       observer?.disconnect();
+      mutations.disconnect();
     };
   }, [followNotices, rootRef]);
+
+  useEffect(() => () => stopFloorsRef.current?.(), []);
 
   // B-p12B-2 (D49): la guarda anclada a la compactación vale también FUERA del panel (el formulario,
   // la cabecera): el recorte del desplazamiento al acortarse la página baja lo que está encima.
