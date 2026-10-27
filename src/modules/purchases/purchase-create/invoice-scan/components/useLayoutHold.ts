@@ -543,7 +543,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
           ownScrollRef.current = own;
         }
       }
-      if (Math.abs(anchor.getBoundingClientRect().top - previous.anchorTop) >= 1) {
+      // REP15-01c: con otro ancho (giro, ventana) lo que no se pudo devolver no queda guardado (D49 es de la compactación).
+      if (sameWidth && Math.abs(anchor.getBoundingClientRect().top - previous.anchorTop) >= 1) {
         const moved = [...root.querySelectorAll(CONTROL_SELECTOR)].filter(
           (control) => follows(changed, control) && !control.closest(STICKY_FOOTER_SELECTOR),
         );
