@@ -1040,7 +1040,7 @@ export function EntityAutocomplete<K extends EntityKind>({
             "pl-10",
             showsClearButton && "pr-10",
             error && formControlErrorClassName,
-            wrapsValueLabel && "peer col-start-1 row-start-1 h-auto min-h-10 self-stretch",
+            wrapsValueLabel && "peer col-start-1 row-start-1 h-auto min-h-10 min-w-0 self-stretch",
             wrapsValueLabel && showsValueLabel && "text-transparent focus:text-foreground",
           )}
           disabled={disabled}
@@ -1059,11 +1059,12 @@ export function EntityAutocomplete<K extends EntityKind>({
           value={displayValue}
         />
         {wrapsValueLabel ? (
-          // El campo lleva el mismo texto (lo lee el lector de pantalla); este solo se ve.
+          // El campo lleva el mismo texto (lo lee el lector de pantalla); este solo se ve. `overflow-wrap: anywhere`
+          // (no `break-words`) y `min-w-0`: una palabra larga sin espacios se parte y no ensancha la celda (B-qa06-1).
           <span
             aria-hidden
             className={cn(
-              "pointer-events-none col-start-1 row-start-1 block self-center border border-transparent py-2 pr-10 pl-10 text-sm break-words text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
+              "pointer-events-none col-start-1 row-start-1 block min-w-0 self-center border border-transparent py-2 pr-10 pl-10 text-sm [overflow-wrap:anywhere] text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
               !showsValueLabel && "invisible",
             )}
             data-entity-value-label
