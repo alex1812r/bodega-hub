@@ -1,6 +1,6 @@
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
-import type { InvoiceExtraction, InvoiceMatch } from "../contracts";
+import { withoutSpaces, type InvoiceExtraction, type InvoiceMatch } from "../contracts";
 
 import { loadMatchContext, type MatchContextSupabaseClient } from "./loadMatchContext";
 import { matchInvoice } from "./match";
@@ -62,11 +62,15 @@ function withoutBlank<T extends object>(value: T, keys: readonly (keyof T)[]): T
  * dirección, el código de barras o el código del proveedor. En el borde del
  * servidor (SCN-13a), antes de guardar `extracted` y de emparejar, esos textos
  * opcionales vacíos o solo con espacios quedan ausentes: la RPC recibe `null` y
- * nadie compara contra un RIF vacío. Los textos con contenido no se tocan.
+ * nadie compara contra un RIF vacío. Los textos con contenido no se tocan, salvo la
+ * fecha: REP15-02 (B-p16-1) le quita todo espacio Unicode y tabulador (`withoutSpaces`),
+ * y sin nada más queda ausente.
  * Idempotente; devuelve la misma referencia si no había nada que quitar.
  */
 export function normalizeExtractionForMatch(extraction: InvoiceExtraction): InvoiceExtraction {
-  const top = withoutBlank(extraction, ["number"]);
+  const date = extraction.date === undefined ? undefined : withoutSpaces(extraction.date);
+  const dated = date === undefined || date === extraction.date ? extraction : { ...extraction, date };
+  const top = withoutBlank(dated, ["number", "date"]);
   const supplier = withoutBlank(extraction.supplier, ["taxId", "phone", "address"]);
   const lines = extraction.lines.map((line) => withoutBlank(line, ["barcode", "supplierSku"]));
   const linesChanged = lines.some((line, index) => line !== extraction.lines[index]);
