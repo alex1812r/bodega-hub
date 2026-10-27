@@ -3156,7 +3156,7 @@ select
   'invoice_duplicate_candidates: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261026a, REP14-01, D63; false = version anterior: solo leido, o solo efectivo)',
   coalesce((
     select p.prosrc ilike '%case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%then s.confirmed -> ''extraction'' ->> ''number'' else s.extracted ->> ''number'' end as effective_number%'
-      and p.prosrc ilike '%else s.extracted ->> ''number'' end) ilike v_pattern%or (s.extracted ->> ''number'') ilike v_pattern))%'
+      and p.prosrc ilike '%else s.extracted ->> ''number'' end) like v_pattern%or public.invoice_number_key(s.extracted ->> ''number'') like v_pattern))%'
       and p.prosrc ilike '%''number'', f.effective_number%'
       and p.prosrc ilike '%''read_number'', f.extracted ->> ''number''%'
     from pg_proc p
@@ -3167,7 +3167,7 @@ select
   'invoice_match_previous_scans: por numero casa el LEIDO o el EFECTIVO (confirmado si no vacio, si no el leido); devuelve ''number'' efectivo y ''read_number'' leido (20261019q redefinida en 20261026a, REP14-01, D63; false = version anterior, solo leido)',
   coalesce((
     select p.prosrc ilike '%case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%then s.confirmed -> ''extraction'' ->> ''number'' else s.extracted ->> ''number'' end as effective_number%'
-      and p.prosrc ilike '%else s.extracted ->> ''number'' end) ilike v_pattern%or (s.extracted ->> ''number'') ilike v_pattern))%'
+      and p.prosrc ilike '%else s.extracted ->> ''number'' end) like v_pattern%or public.invoice_number_key(s.extracted ->> ''number'') like v_pattern))%'
       and p.prosrc ilike '%''number'', f.effective_number%'
       and p.prosrc ilike '%''read_number'', f.extracted ->> ''number''%'
     from pg_proc p
@@ -3287,5 +3287,42 @@ select
     select p.prosrc ilike '%errcode = ''PT400''%v_digits := array(select d from unnest(v_digits) d where d !~ ''^0+$'');%= any(v_digits)%'
     from pg_proc p
     where p.oid = to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+  ), false)
+union all
+select
+  'invoice_number_key(text): immutable, search_path=public, execute authenticated y service_role, sin public ni anon; mayusculas y solo [A-Z0-9] (blanco Unicode, TAB o punto al final fuera), null -> null (20261026a, REP15-02b, B-qa1502-1)',
+  case when to_regprocedure('public.invoice_number_key(text)') is null then false
+       else coalesce((
+    select p.provolatile = 'i' and not p.prosecdef
+      and coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=public%', false)
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not exists (
+        select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      )
+    from pg_proc p
+    where p.oid = to_regprocedure('public.invoice_number_key(text)')
+  ), false)
+  and coalesce((xpath('/row/ok/text()', query_to_xml($q$
+    select public.invoice_number_key('QA-R15-0203' || chr(160)) = 'QAR150203'
+      and public.invoice_number_key('qa-r15-0204' || chr(12288)) = 'QAR150204'
+      and public.invoice_number_key('QA-R15-0205' || chr(9)) = 'QAR150205'
+      and public.invoice_number_key('QA-R15-0207.') = 'QAR150207'
+      and public.invoice_number_key(chr(160) || 'N° 00' || chr(8239) || '12') = 'N0012'
+      and public.invoice_number_key(null) is null as ok
+  $q$, false, true, '')))[1]::text = 'true', false) end
+union all
+select
+  'invoice_duplicate_candidates e invoice_match_previous_scans: por numero el patron se compara con invoice_number_key del numero efectivo y del leido, no con el texto crudo (20261026a, REP15-02b, B-qa1502-1; false = version anterior, ilike sobre el texto crudo)',
+  coalesce((
+    select count(*) = 2
+      and bool_and(p.prosrc ilike '%and (public.invoice_number_key(case when public.invoice_without_spaces(s.confirmed -> ''extraction'' ->> ''number'') <> ''''%'
+        and p.prosrc ilike '%else s.extracted ->> ''number'' end) like v_pattern%or public.invoice_number_key(s.extracted ->> ''number'') like v_pattern))%'
+        and p.prosrc not ilike '%ilike v_pattern%')
+    from pg_proc p
+    where p.oid in (to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])'),
+                    to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)'))
   ), false)
 order by 1;

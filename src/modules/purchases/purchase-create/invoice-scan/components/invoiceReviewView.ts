@@ -3,6 +3,7 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
+import { getInvoiceDateIssue } from "@/modules/invoice-scan/contracts";
 import {
   NO_RATE_PRICE_ISSUE,
   PRICE_DEVIATION_LIMIT,
@@ -46,7 +47,10 @@ export function duplicateCriterionLabel(effective: Pick<InvoiceReviewState["head
   if (normalizeInvoiceNumber(effective.number)) {
     return "mismo proveedor y número igual o casi igual";
   }
-  return effective.date?.trim() ? "mismo proveedor, fecha y total" : "mismo proveedor y total";
+  // REP15-02b (B-qa1502-2): la fecha cuenta solo si la consulta la manda (buildInvoiceDuplicateQuery).
+  return effective.date && getInvoiceDateIssue(effective.date) === undefined
+    ? "mismo proveedor, fecha y total"
+    : "mismo proveedor y total";
 }
 
 /** Por debajo de esta confianza global de la lectura se sugiere repetir la foto. */
