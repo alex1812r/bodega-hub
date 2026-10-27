@@ -8,6 +8,13 @@
  * 768, 1024×1366 y 1280. Además, a 1024×1366 y 390×1100 (táctil), el toque dirigido al 2.º homónimo justo
  * cuando llega el nombre largo del proveedor elige ese homónimo y no el 1.º.
  *
+ * REP15-01b (D65(a)): la cabecera mide lo mismo desde el primer render. Las llegadas se miden en cada frame, con la
+ * página arriba, sin desplazar y sin layout retenido; ningún aviso de la cabecera puede estar retenido por
+ * useLayoutHold (se suelta al desplazar). Llegadas: nombre, compra del duplicado, duplicados que se van y que
+ * aparecen o se van al teclear o borrar el número (N9), tasa del día, último costo y su motivo; y, en otra historia,
+ * el error al leer el proveedor. Al final, tras desplazar, la cabecera mide lo que en el primer render. El aviso de
+ * duplicado va tras las líneas: aparecer o irse no mueve la cabecera ni las filas.
+ *
  * Correr: `npx vitest --project storybook run src/modules/purchases/purchase-create/invoice-scan/components/InvoiceReviewPanel.rep15-01.stories.tsx`
  * Fuera de Vitest (Storybook en el navegador) no hay viewport real y la medición se omite.
  */
@@ -32,7 +39,6 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 /** El del lab (`fixtures-p16b-sup.sql`, M-p16B-1). */
 const LONG_NAME = "Distribuidora Internacional de Alimentos y Víveres Los Andes del Sur, C.A. (CAOS16B)";
@@ -100,11 +106,20 @@ function gate<T>(): Gate<T> {
 /** Lo que llega tarde, retenido hasta que la historia lo suelta. */
 function newGates() {
   return {
-    duplicates: gate<InvoiceDuplicateMatch[]>(),
+    // REP15-01b: cada consulta de duplicados (la inicial y las de teclear el número) espera su puerta.
+    duplicates: [] as Gate<InvoiceDuplicateMatch[]>[],
     lastCost: gate<number | null>(),
     purchase: gate<void>(),
     supplier: gate<void>(),
+    // El nombre del proveedor no llega: la consulta falla (error bajo el campo).
+    supplierFails: false,
   };
+}
+
+/** Puerta de la última consulta de duplicados (espera a que la haga el panel). */
+async function lastDuplicatesGate(count: number) {
+  await waitFor(() => expect(gates.duplicates.length).toBeGreaterThanOrEqual(count), { timeout: 4000 });
+  return gates.duplicates[gates.duplicates.length - 1];
 }
 
 let gates = newGates();
@@ -210,6 +225,16 @@ async function prepare(width: number, height: number) {
 
 type Layout = { header: number; datos: number; rows: string[] };
 
+/** REP15-01b: el aviso de duplicado va tras las líneas (aparecer o irse no mueve la cabecera ni las filas). */
+function duplicateSlot() {
+  const lines = document.querySelector('section[aria-label="Líneas de la factura"]');
+  const slot = lines?.nextElementSibling;
+  if (!(slot instanceof HTMLElement) || !slot.hasAttribute("data-layout-notice")) {
+    throw new Error("Sin el sitio del aviso de duplicado tras las líneas");
+  }
+  return slot;
+}
+
 /** Alto de la cabecera (con los avisos) y de «Datos de la factura», y `top` de cada fila (px de la ventana). */
 function measure(): Layout {
   const header = document.querySelector('[data-layout-box="header"]');
@@ -229,6 +254,67 @@ function measure(): Layout {
 
 const show = (layout: Layout) => `cabecera ${layout.header} datos ${layout.datos} filas ${layout.rows.join("/")}`;
 
+/**
+ * REP15-01b (D65(a)): avisos que useLayoutHold retiene a su alto anterior (`min-height` en línea), en la cabecera
+ * (`scope` "header") o tras ella ("below": filas y aviso de duplicado). La cabecera no puede deber su alto a esa
+ * retención (se suelta al desplazar): con el sitio reservado no hace falta ninguna. Debajo es el residuo de D65(b) (se
+ * informa: no mueve la cabecera ni lo que hay encima).
+ */
+function heldNotices(scope: "header" | "below"): string[] {
+  const header = document.querySelector('[data-layout-box="header"]');
+  return [...document.querySelectorAll<HTMLElement>('[data-testid="invoice-review-panel"] [data-layout-notice]')]
+    .filter((notice) => (scope === "header") === Boolean(header?.contains(notice)))
+    .filter((notice) => notice.style.minHeight !== "")
+    .map((notice) => `${notice.textContent?.trim().slice(0, 40) || "(vacío)"}→${notice.style.minHeight}`);
+}
+
+/** Muestrea alto de cabecera y filas en cada frame mientras corre `during` (lo que asoma entre medias cuenta). */
+async function sampleFrames(during: () => Promise<void>): Promise<string[]> {
+  const seen = new Set<string>();
+  let running = true;
+  const tick = () => {
+    if (!running) {
+      return;
+    }
+    seen.add(show(measure()));
+    requestAnimationFrame(tick);
+  };
+  tick();
+  try {
+    await during();
+  } finally {
+    running = false;
+  }
+  seen.add(show(measure()));
+  return [...seen];
+}
+
+/** Campo «Número de factura» (no controlado: se escribe como el usuario, con su evento `input`). */
+function numberField() {
+  return screen.getByRole("textbox", { name: "Número de factura" }) as HTMLInputElement;
+}
+
+/** Escribe en el campo sin desplazar (el campo está a la vista, con la página arriba). */
+function typeNumber(value: string) {
+  const field = numberField();
+  field.focus({ preventScroll: true });
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+const DUPLICATE_WITH_PURCHASE: InvoiceDuplicateMatch = {
+  date: "2026-10-14",
+  number: "00-0161609",
+  purchaseId: "7c2a3b4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  scanId: "5a0e1b2c-3d4e-4f5a-9b6c-7d8e9fa0b1c2",
+};
+
+/**
+ * Cada llegada con la página arriba, la cabecera a la vista, sin desplazar y sin layout retenido (ni hold ni avisos
+ * retenidos): alto de cabecera y `top` de filas idénticos en cada frame. Al final, tras desplazar (lo que soltaría
+ * cualquier retención), la cabecera mide lo mismo que en el primer render.
+ */
 function measureStory(width: number, height: number): Story {
   return {
     play: async () => {
@@ -236,17 +322,22 @@ function measureStory(width: number, height: number): Story {
       if (!browser) {
         return;
       }
+      const first = measure();
       const report: string[] = [];
       const failures: string[] = [];
-      const step = async (label: string, arrive: () => void, arrived: () => void | Promise<void>) => {
-        const before = measure();
-        arrive();
-        await waitFor(arrived, { timeout: 4000 });
-        await sleep(400);
-        const after = measure();
-        report.push(`${label}: ${show(before)} → ${show(after)}`);
-        if (JSON.stringify(after) !== JSON.stringify(before)) {
-          failures.push(`${label}: ${show(before)} → ${show(after)}`);
+      const step = async (label: string, arrive: () => void | Promise<void>, arrived: () => void | Promise<void>) => {
+        const frames = await sampleFrames(async () => {
+          await arrive();
+          await waitFor(arrived, { timeout: 4000 });
+          await sleep(400);
+        });
+        const held = heldNotices("header");
+        const rowHeld = heldNotices("below");
+        report.push(
+          `${label}: ${frames.join(" → ")}${held.length ? ` retenidos ${held.join(", ")}` : ""}${rowHeld.length ? ` (debajo, D65(b): ${rowHeld.join(", ")})` : ""}`,
+        );
+        if (frames.length > 1 || held.length > 0) {
+          failures.push(`${label}: ${frames.join(" → ")}${held.length ? ` retenidos ${held.join(", ")}` : ""}`);
         }
       };
 
@@ -255,6 +346,8 @@ function measureStory(width: number, height: number): Story {
         () => gates.supplier.open(),
         () => expect(supplierField()).toHaveValue(LONG_NAME),
       );
+      // El aviso de duplicado (del escaneo) está tras las líneas, no en la cabecera.
+      await expect(duplicateSlot()).toHaveTextContent(/Esta factura \(/);
       // Cortado a 2 renglones, el nombre entero sigue en el `title` (y en el valor del campo, que lee el lector).
       await expect(supplierField()).toHaveAttribute("title", LONG_NAME);
       await step(
@@ -263,36 +356,141 @@ function measureStory(width: number, height: number): Story {
         () => expect(screen.getByRole("link", { name: "Ver" })).toBeInTheDocument(),
       );
       await step(
-        "duplicados",
-        // La consulta con los datos de la cabecera halla otro escaneo, aún sin compra.
-        () => gates.duplicates.open([{ date: "2026-10-14", number: "00-0161601", purchaseId: null, scanId: DUPLICATE_SCAN_ID }]),
-        () => expect(screen.queryByRole("link", { name: "Ver" })).not.toBeInTheDocument(),
+        "duplicados: desaparece",
+        // La consulta con los datos de la cabecera no halla nada: el aviso del escaneo se va.
+        async () => (await lastDuplicatesGate(1)).open([]),
+        () => expect(screen.queryByText(/Esta factura \(/)).not.toBeInTheDocument(),
       );
       await step(
         "tasa del día",
-        () => window.dispatchEvent(new CustomEvent(RATE_EVENT, { detail: 900 })),
+        () => {
+          window.dispatchEvent(new CustomEvent(RATE_EVENT, { detail: 900 }));
+        },
         () => expect(screen.queryByRole("radiogroup", { name: "Tasa para convertir los costos" })).not.toBeInTheDocument(),
       );
+      // N9 (caos p16 B): al teclear el número aparece el duplicado (con compra); al borrarlo, se va.
+      await step(
+        "duplicados: aparece al teclear",
+        async () => {
+          const count = gates.duplicates.length;
+          typeNumber("00-0161609");
+          (await lastDuplicatesGate(count + 1)).open([DUPLICATE_WITH_PURCHASE]);
+        },
+        () => expect(screen.getByRole("link", { name: "Ver" })).toBeInTheDocument(),
+      );
+      await step(
+        // Sin número (y sin total leído) no hay consulta: vuelve el aviso del escaneo, con el criterio sin número.
+        "duplicados: borrar el número",
+        () => typeNumber(""),
+        () => expect(screen.getByText(/Esta factura \(/)).toBeInTheDocument(),
+      );
+      // B-p16Q-1: el criterio del aviso es el de los valores efectivos (sin número tecleado), no el de los leídos.
+      if (!screen.queryByText(/Esta factura \(mismo proveedor, fecha y total\)/)) {
+        failures.push(`criterio sin número: ${screen.getByText(/Esta factura \(/).textContent ?? ""}`);
+      }
+      await step(
+        "duplicados: se va al volver a teclearlo",
+        async () => {
+          const count = gates.duplicates.length;
+          typeNumber("00-0161601");
+          (await lastDuplicatesGate(count + 1)).open([]);
+        },
+        () => expect(screen.queryByText(/Esta factura \(/)).not.toBeInTheDocument(),
+      );
+      numberField().blur();
 
-      // Último costo: llega tras elegir un producto en el buscador de L1 (clic real: layout retenido).
-      // La guarda D49 de lo que se haya movido antes no se traga este clic.
-      row(1).scrollIntoView({ block: "center" });
-      await sleep(POINTER_GUARD_MS + 200);
-      await browser.userEvent.click(within(row(1)).getByRole("button", { name: /Buscar producto/ }));
+      // Último costo y su motivo: llegan tras elegir un producto en el buscador de L1. Clic de DOM (sin desplazar
+      // ni retener el layout: la medición no se apoya en useLayoutHold).
+      within(row(1)).getByRole("button", { name: /Buscar producto/ }).click();
       await screen.findAllByRole("option", { name: /Arroz Mary 1kg/ });
-      await sleep(POINTER_GUARD_MS + 200);
-      await browser.userEvent.click(screen.getAllByRole("option", { name: /Arroz Mary 1kg/ })[0]);
+      screen.getAllByRole("option", { name: /Arroz Mary 1kg/ })[0].click();
       await waitFor(() => expect(within(row(1)).getByRole("button", { name: /Cambiar producto/ })).toBeInTheDocument());
       await sleep(400);
       await step(
-        "último costo",
-        () => gates.lastCost.open(1),
+        "último costo y motivo",
+        // Muy por encima del costo de la línea: llega el desvío y su motivo.
+        () => gates.lastCost.open(50),
         () => expect(within(row(1)).queryByText(/consultando el costo previo/i)).not.toBeInTheDocument(),
       );
 
+      // Desplazar suelta toda retención: la cabecera sigue con el alto del primer render.
+      const main = document.querySelector("main");
+      if (main) {
+        main.scrollTop = 40;
+        await sleep(300);
+        main.scrollTop = 0;
+        await sleep(400);
+      }
+      const last = measure();
+      report.push(`primer render → tras soltar: ${first.header}/${first.datos} → ${last.header}/${last.datos}`);
+      if (last.header !== first.header || last.datos !== first.datos) {
+        failures.push(`alto fijo: cabecera ${first.header} → ${last.header}, datos ${first.datos} → ${last.datos}`);
+      }
+
       const text = `${width}×${height} · ${report.join(" | ")}`;
-      console.warn(`[REP15-01 llegadas] ${text}`);
+      console.warn(`[REP15-01b llegadas] ${text}`);
       await expect(failures, text).toEqual([]);
+    },
+  };
+}
+
+/**
+ * La tasa del día llega tarde con otra impresa: `printedRate` (o ninguna) y `systemRate` que difiere (aviso para elegir)
+ * o no (el aviso se va). El aviso de tasa tiene reservado desde el primer render el alto de antes y de después.
+ */
+function rateStory(width: number, height: number, printedRate: number | undefined, systemRate: number): Story {
+  return {
+    args: {
+      response: makeReviewResponse({ extraction: { ...extraction, printedRate }, lines: [homonymLine, harinaLine] }),
+    },
+    play: async () => {
+      const browser = await prepare(width, height);
+      if (!browser) {
+        return;
+      }
+      gates.supplier.open();
+      await waitFor(() => expect(supplierField()).toHaveValue(LONG_NAME));
+      (await lastDuplicatesGate(1)).open([]);
+      await sleep(400);
+      const first = measure();
+      const frames = await sampleFrames(async () => {
+        window.dispatchEvent(new CustomEvent(RATE_EVENT, { detail: systemRate }));
+        await waitFor(() => expect(screen.getByText(/hoy es|Llegó la tasa del día/)).toBeInTheDocument(), { timeout: 4000 });
+        await sleep(400);
+      });
+      const held = heldNotices("header");
+      const main = document.querySelector("main");
+      if (main) {
+        main.scrollTop = 40;
+        await sleep(300);
+        main.scrollTop = 0;
+        await sleep(400);
+      }
+      const last = measure();
+      const text = `${width}×${height} impresa ${printedRate ?? "-"} → del día ${systemRate}: ${frames.join(" → ")}${held.length ? ` retenidos ${held.join(", ")}` : ""}; tras soltar ${first.header} → ${last.header}`;
+      console.warn(`[REP15-01b tasa] ${text}`);
+      await expect(frames.length === 1 && held.length === 0 && last.header === first.header, text).toBe(true);
+    },
+  };
+}
+
+/** El nombre del proveedor no llega (la consulta falla): el error bajo el campo tiene su sitio reservado. */
+function supplierErrorStory(width: number, height: number): Story {
+  return {
+    play: async () => {
+      gates.supplierFails = true;
+      const browser = await prepare(width, height);
+      if (!browser) {
+        return;
+      }
+      const frames = await sampleFrames(async () => {
+        gates.supplier.open();
+        await waitFor(() => expect(supplierField()).toHaveAttribute("aria-invalid", "true"), { timeout: 4000 });
+        await sleep(400);
+      });
+      const text = `${width}×${height} · error del proveedor: ${frames.join(" → ")}`;
+      console.warn(`[REP15-01b error proveedor] ${text}`);
+      await expect(frames.length, text).toBe(1);
     },
   };
 }
@@ -336,7 +534,11 @@ const meta = {
   args: {
     canCreateProduct: true,
     context: { taxRates: REVIEW_TAX_RATES },
-    duplicateFetcher: () => gates.duplicates.promise,
+    duplicateFetcher: () => {
+      const next = gate<InvoiceDuplicateMatch[]>();
+      gates.duplicates.push(next);
+      return next.promise;
+    },
     lastUnitCostFetcher: () => gates.lastCost.promise,
     onDiscard: fn(),
     onLoad: fn(),
@@ -381,6 +583,9 @@ const meta = {
             return HttpResponse.json({ data: [] });
           }
           await gates.supplier.promise;
+          if (gates.supplierFails) {
+            return HttpResponse.json({ error: { code: "UNKNOWN_ERROR", message: "No se pudo leer el proveedor de la factura: la conexión con el servidor se cortó antes de responder." } }, { status: 500 });
+          }
           return HttpResponse.json({
             data: { id: REVIEW_SUPPLIER_ID, isActive: true, name: LONG_NAME, taxId: "J-16160001-1" },
           });
@@ -408,3 +613,13 @@ export const Llegadas1280 = measureStory(1280, 900);
 export const Homonimo1024x1366d0 = homonymStory(1024, 1366, 0);
 export const Homonimo1024x1366d150 = homonymStory(1024, 1366, 150);
 export const Homonimo390x1100d0 = homonymStory(390, 1100, 0);
+export const ErrorProveedor390 = supplierErrorStory(390, 1100);
+export const ErrorProveedor768 = supplierErrorStory(768, 1024);
+export const ErrorProveedor1024x1366 = supplierErrorStory(1024, 1366);
+export const ErrorProveedor1280 = supplierErrorStory(1280, 900);
+export const TasaDifiere390 = rateStory(390, 1100, 895, 1000);
+export const TasaDifiere768 = rateStory(768, 1024, 895, 1000);
+export const TasaDifiere1024x1366 = rateStory(1024, 1366, 895, 1000);
+export const TasaDifiere1280 = rateStory(1280, 900, 895, 1000);
+export const TasaSinImpresa390 = rateStory(390, 1100, undefined, 900);
+export const TasaSinImpresa1280 = rateStory(1280, 900, undefined, 900);
