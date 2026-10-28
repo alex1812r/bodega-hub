@@ -109,6 +109,17 @@ type NoticeLayout = {
 /** Estilo en línea de un aviso antes de retenerlo (REP15-01: lo que encoge; D67(a): lo que crece). */
 type HeldNoticeStyle = { display: string; minHeight: string; maxHeight: string; overflow: string };
 
+/** Devuelve a cada aviso retenido el estilo en línea que tenía y los olvida. */
+function restoreNotices(floors: Map<HTMLElement, HeldNoticeStyle>) {
+  for (const [notice, style] of floors) {
+    notice.style.display = style.display;
+    notice.style.minHeight = style.minHeight;
+    notice.style.maxHeight = style.maxHeight;
+    notice.style.overflow = style.overflow;
+  }
+  floors.clear();
+}
+
 /** D67(a): `notice` va antes del último control de las filas: si crece, baja controles de alguna fila. */
 function movesRowControls(root: Element, notice: Element): boolean {
   const rows = root.querySelectorAll(ROW_BOX_SELECTOR);
@@ -383,11 +394,59 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   });
 
   /**
+   * REP16-03 (B-p17B-3): con otro ancho (giro, ventana, menú) todo se recoloca y lo retenido (alto de las cajas con el
+   * layout pendiente, avisos retenidos, orden de filas retenido) dejaría huecos hasta desplazar: se suelta todo. Sin
+   * guardar nada como movido ni compensar (N7): tras girar el usuario apunta sobre lo nuevo, y lo guardado antes del giro
+   * ya no protege ningún punto. Devuelve si hace falta un render sin lo retenido (layout pendiente u orden).
+   */
+  const releaseForWidth = useCallback(() => {
+    stopFloorsRef.current?.();
+    stopFloorsRef.current = null;
+    restoreNotices(floorsRef.current);
+    anchorRef.current = null;
+    ownScrollRef.current = null;
+    shiftPositionsRef.current = null;
+    typingAnchorRef.current = null;
+    movedAtRef.current.clear();
+    const rerender = holdRef.current !== null || retainedOrderRef.current !== null;
+    if (retainedOrderRef.current !== null) {
+      retainedOrderRef.current = null;
+      setRetainedOrder(null);
+    }
+    if (holdRef.current) {
+      const focused = document.activeElement instanceof Element ? document.activeElement : null;
+      focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
+      holdRef.current = null;
+      setHold(null);
+    }
+    return rerender;
+  }, []);
+
+  /**
+   * REP16-03: lo que suelta lo retenido (el `pointerleave` y el `scroll` del giro) llega antes que el ResizeObserver: si
+   * el ancho cambió desde la última medición, se suelta como un cambio de ancho (sin aplicar D49) y la próxima medición es
+   * la base. Devuelve si fue así.
+   */
+  const releaseIfResized = useCallback(() => {
+    const root = rootRef.current;
+    const measured = noticeLayoutRef.current;
+    if (!root || !measured || Math.abs(measured.width - root.getBoundingClientRect().width) < 1) {
+      return false;
+    }
+    releaseForWidth();
+    noticeLayoutRef.current = null;
+    return true;
+  }, [releaseForWidth, rootRef]);
+
+  /**
    * REP15-01 (D65(b)): suelta los avisos retenidos (lo mismo que aplica el layout pendiente: desplazar, el teclado
    * o sacar el ratón). Lo que se mueve con ello queda guardado desde ESTE momento, y la nueva medición es la base
    * (no se compensa: lo pidió el usuario).
    */
   const releaseFloors = useCallback(() => {
+    if (releaseIfResized()) {
+      return;
+    }
     stopFloorsRef.current?.();
     stopFloorsRef.current = null;
     if (retainedOrderRef.current !== null) {
@@ -401,20 +460,17 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       return;
     }
     const before = controlPositions();
-    for (const [notice, style] of floors) {
-      notice.style.display = style.display;
-      notice.style.minHeight = style.minHeight;
-      notice.style.maxHeight = style.maxHeight;
-      notice.style.overflow = style.overflow;
-    }
-    floors.clear();
+    restoreNotices(floors);
     markMoved(movedAtRef.current, movedControls(before, controlPositions()));
     const root = rootRef.current;
     const anchor = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
     noticeLayoutRef.current = root && anchor ? measureNotices(root, anchor) : null;
-  }, [rootRef]);
+  }, [releaseIfResized, rootRef]);
 
   const release = useCallback(() => {
+    if (releaseIfResized()) {
+      return;
+    }
     releaseFloors();
     anchorRef.current = null;
     ownScrollRef.current = null;
@@ -427,7 +483,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       holdRef.current = null;
       setHold(null);
     }
-  }, [releaseFloors, rootRef]);
+  }, [releaseFloors, releaseIfResized, rootRef]);
 
   /**
    * D67(a): el orden de filas del modelo cambió sin acción del usuario (una llegada asíncrona pasa una fila de lista):
@@ -618,6 +674,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     const previous = noticeLayoutRef.current;
     // Con otro ancho (giro, ventana) todo se recoloca: ni se retiene ni se guarda nada por ello.
     const sameWidth = previous && Math.abs(previous.width - root.getBoundingClientRect().width) < 1 ? previous : null;
+    // REP16-03: la base es el render ya sin lo retenido (si no, al soltarse las cajas parecería una llegada).
+    if (previous && !sameWidth && releaseForWidth()) {
+      noticeLayoutRef.current = null;
+      return;
+    }
     // REP15-01 (D65(b)): lo que llega tarde (tasa, duplicados, último costo) y encoge o quita un aviso sin que nadie
     // actúe no sube lo de debajo: el aviso conserva su alto hasta que el usuario desplace, use el teclado o saque el
     // ratón (con el layout pendiente, también lo que creció tras fijar las cajas). Lo que se teclea es del usuario
@@ -692,7 +753,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       }
     }
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
-  }, [releaseFloors, rootRef]);
+  }, [releaseFloors, releaseForWidth, rootRef]);
 
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));
