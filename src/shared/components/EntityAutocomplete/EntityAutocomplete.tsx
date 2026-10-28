@@ -1017,7 +1017,10 @@ export function EntityAutocomplete<K extends EntityKind>({
   const wrapsValueLabel = wrapValueLabel;
   // REP15-01b (D65(a)): sin nombre que mostrar (no se pudo leer el elegido), el error llega tarde y se ve en esos 2
   // renglones en vez de bajo el campo: no cambia el alto. Entero en el `title` y, para el lector, por `aria-describedby`.
-  const showsErrorInField = wrapsValueLabel && Boolean(error) && !isDirty && !value?.label;
+  // REP16-03 (B-p17B-1): también con texto tecleado; entonces se ve lo tecleado y el error queda en el borde, el `title`
+  // y `aria-describedby` (el texto del error solo se pinta con el campo vacío, para no taparlo).
+  const showsErrorInField = wrapsValueLabel && Boolean(error) && !value?.label;
+  const showsErrorText = showsErrorInField && displayValue === "";
 
   return (
     <div className="w-full min-w-0 space-y-2">
@@ -1072,11 +1075,11 @@ export function EntityAutocomplete<K extends EntityKind>({
             aria-hidden
             className={cn(
               "pointer-events-none col-start-1 row-start-1 flex h-[calc(2lh+1rem+2px)] min-w-0 items-center border border-transparent py-2 pr-10 pl-10 text-sm [overflow-wrap:anywhere] text-foreground peer-focus:invisible peer-disabled:text-muted-foreground",
-              !showsValueLabel && !showsErrorInField && "invisible",
+              !showsValueLabel && !showsErrorText && "invisible",
             )}
             data-entity-value-label
           >
-            {showsErrorInField ? (
+            {showsErrorText ? (
               <span className={cn("line-clamp-2 min-w-0", formHelperErrorClassName)}>{error}</span>
             ) : (
               <span className="line-clamp-2 min-w-0">{wrappedLabel}</span>
