@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { INVOICE_DUPLICATES_DEBOUNCE_MS } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import type { InvoiceDuplicateMatch, InvoiceDuplicateQuery } from "@/modules/invoice-scan/contracts";
 
 import type { InvoiceReviewContext } from "../reviewModel";
@@ -13,6 +14,8 @@ import { InvoiceReviewPanel, type InvoiceReviewPanelProps } from "./InvoiceRevie
  * la cabecera (número tecleado), no los leídos. D65(a): el aviso va tras las líneas (aparecer o irse no mueve la
  * cabecera ni las filas) y el de tasa, mientras la del día no llega, reserva el alto de cuando llegue con cajas cuyo
  * texto no es del documento.
+ *
+ * REP17-04 (M-p18Q-1, D69(a)): reloj falso; la espera de la consulta de duplicados se adelanta a mano.
  */
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
@@ -45,6 +48,20 @@ const MATCH: InvoiceDuplicateMatch = {
   scanId: "00000000-0000-4000-8000-0000000000d1",
 };
 
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
+
 function renderPanel(overrides: Partial<InvoiceReviewPanelProps> = {}) {
   const props: InvoiceReviewPanelProps = {
     context: CONTEXT,
@@ -59,14 +76,15 @@ function renderPanel(overrides: Partial<InvoiceReviewPanelProps> = {}) {
 
 describe("REP15-01b · aviso de duplicado y sitios reservados", () => {
   it("B-p16Q-1: con el número tecleado (sin número leído) el aviso dice «mismo proveedor y número igual o casi igual»", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     const duplicateFetcher = jest.fn(async (query: InvoiceDuplicateQuery) => (query.number ? [MATCH] : []));
     renderPanel({ duplicateFetcher });
 
     await user.type(screen.getByRole("textbox", { name: "Número de factura" }), "00362952");
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
 
     expect(
-      await screen.findByText(/Esta factura \(mismo proveedor y número igual o casi igual\) ya se escaneó antes/),
+      screen.getByText(/Esta factura \(mismo proveedor y número igual o casi igual\) ya se escaneó antes/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/mismo proveedor, fecha y total/)).not.toBeInTheDocument();
   });
@@ -75,7 +93,8 @@ describe("REP15-01b · aviso de duplicado y sitios reservados", () => {
     const duplicateFetcher = jest.fn(async () => [MATCH]);
     renderPanel({ duplicateFetcher });
 
-    const notice = await screen.findByText(/ya se escaneó antes en la tienda/);
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    const notice = screen.getByText(/ya se escaneó antes en la tienda/);
     const lines = screen.getByRole("region", { name: "Líneas de la factura" });
     expect(screen.getByRole("region", { name: "Datos de la factura" })).not.toContainElement(notice);
     expect(lines.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

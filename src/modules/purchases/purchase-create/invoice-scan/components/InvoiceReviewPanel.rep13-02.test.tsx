@@ -1,5 +1,7 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+
+import { INVOICE_DUPLICATES_DEBOUNCE_MS } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_TAX_RATES } from "../reviewFixtures";
@@ -9,6 +11,9 @@ import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
  * REP13-02 (M-p14B-1, D60(b)): tecleando «17 10 26» en Fecha el campo queda en 0026-10-17. La
  * revisión lo valida con la misma regla que el servidor (`getInvoiceDateIssue`): avisa junto al
  * campo y Cargar no se habilita hasta corregirla o dejarla vacía.
+ *
+ * REP17-04 (M-p18Q-1, D69(a)): reloj falso; cambiar la fecha repite la consulta de duplicados y su
+ * espera se adelanta a mano en vez de confiar en el segundo real de waitFor.
  */
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
@@ -26,6 +31,20 @@ jest.mock("../../../../invoice-scan/client/useInvoiceScanPurchase", () => ({
 
 const CONTEXT: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES };
 const RANGE_MESSAGE = "La fecha de la factura debe ser de un año entre 2000 y 2100. Corrígela o déjala vacía.";
+
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
 
 function renderPanel() {
   render(
@@ -50,7 +69,8 @@ function loadButton() {
 }
 
 async function duplicatesChecked() {
-  await waitFor(() => expect(screen.queryByText("Comprobando duplicados…")).not.toBeInTheDocument());
+  await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+  expect(screen.queryByText("Comprobando duplicados…")).not.toBeInTheDocument();
 }
 
 describe("InvoiceReviewPanel · fecha con año fuera de rango (REP13-02, M-p14B-1)", () => {
@@ -71,7 +91,8 @@ describe("InvoiceReviewPanel · fecha con año fuera de rango (REP13-02, M-p14B-
 
     expect(date).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByText(RANGE_MESSAGE)).not.toBeInTheDocument();
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await duplicatesChecked();
+    expect(loadButton()).toBeEnabled();
   });
 
   it("vaciarla vale: la fecha es opcional (REP14-03, D64: borrada la leída, se confirma registrar sin ella)", async () => {
@@ -83,6 +104,7 @@ describe("InvoiceReviewPanel · fecha con año fuera de rango (REP13-02, M-p14B-
 
     expect(date).not.toHaveAttribute("aria-invalid");
     fireEvent.click(screen.getByRole("checkbox", { name: /Registrar sin fecha/ }));
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await duplicatesChecked();
+    expect(loadButton()).toBeEnabled();
   });
 });
