@@ -151,6 +151,14 @@ function radios() {
   );
 }
 
+/**
+ * Cada opción de la tasa, por su nombre, y si está elegida. REP17-02: el orden lo fija el diseño (D70(a): «Tasa de hoy»
+ * aparece debajo del campo de la tasa escrita, nunca encima); lo que se comprueba es qué opción hay y cuál está elegida.
+ */
+function radioStates() {
+  return Object.fromEntries(radios().map((radio) => [radio.slice(0, radio.lastIndexOf("=")), radio.slice(radio.lastIndexOf("=") + 1)]));
+}
+
 /** El panel con la tasa del día que llega tarde (como `useExchangeRate` en la página). */
 function LateRatePanel(props: ComponentProps<typeof InvoiceReviewPanel>) {
   const [context, setContext] = useState<InvoiceReviewContext>(NO_RATE);
@@ -192,17 +200,21 @@ function rateStory(width: number, height: number, pointer: Pointer): Story {
       await snapshot(browser, `tasa-${pointer}-${width}-3-llega`);
       await expect(notice(), arrived).not.toMatch(/No hay tasa del día|se usa la tasa impresa/);
       await expect(notice(), arrived).toMatch(/Ya hay tasa del día \(Bs\. 900,00\); se usa la tasa escrita \(Bs\. 950,00\)/);
-      await expect(radios(), arrived).toEqual([
-        "Tasa de hoy (900,00)=false",
-        "Tasa de la factura (856,30)=false",
-        "Escribir la tasa=true",
-      ]);
+      await expect(radioStates(), arrived).toEqual({
+        "Escribir la tasa": "true",
+        "Tasa de hoy (900,00)": "false",
+        "Tasa de la factura (856,30)": "false",
+      });
 
       await activate(browser, screen.getByRole("radio", { name: "Tasa de hoy (900,00)" }), pointer);
       const today = log(`tasa ${pointer} ${width}: elegida la de hoy «${notice()}» ${JSON.stringify(radios())}`);
       await snapshot(browser, `tasa-${pointer}-${width}-4-hoy`);
       await expect(notice(), today).toMatch(/La factura trae tasa Bs\. 856,30; hoy es Bs\. 900,00\./);
-      await expect(radios()[0], today).toBe("Tasa de hoy (900,00)=true");
+      await expect(radioStates(), today).toEqual({
+        "Escribir la tasa": "false",
+        "Tasa de hoy (900,00)": "true",
+        "Tasa de la factura (856,30)": "false",
+      });
     },
   };
 }

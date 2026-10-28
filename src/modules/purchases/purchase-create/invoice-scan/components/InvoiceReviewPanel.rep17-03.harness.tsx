@@ -167,6 +167,13 @@ async function shortDragRelease(): Promise<string[]> {
     // Página arriba, como en B-p18B-2; si L2 no se ve (844×390), lo justo para verla.
     const target = buttonIn(row(2), /Descartar línea/);
     target.scrollIntoView({ block: "nearest" });
+    // REP17-02: `nearest` lo deja en el borde de abajo, tapado por el pie fijo salvo una franja; lo justo para verlo
+    // entero encima del pie (si no, al arrastrar el contenido pasa bajo el pie y el último punto de contacto cae en él).
+    const footer = panel().querySelector('[data-layout-box="footer"]');
+    const covered = footer ? target.getBoundingClientRect().bottom - footer.getBoundingClientRect().top : 0;
+    if (covered > 0) {
+      scroller().scrollTop += Math.ceil(covered) + 8;
+    }
     await settle("L2 a la vista");
     const box = target.getBoundingClientRect();
     const x = box.left + box.width / 2;
