@@ -1385,7 +1385,11 @@ const casillasResponse = makeReviewResponse({
  */
 function casillasTactiles(width: number): Story {
   return {
-    args: { response: casillasResponse },
+    args: {
+      // REP17-07: la consulta confirma el duplicado del escaneo (antes la casilla dependía de que fallara la de la red).
+      duplicateFetcher: async () => [{ date: "2026-10-14", number: "000123", purchaseId: null, scanId: "scan-previo" }],
+      response: casillasResponse,
+    },
     play: async () => {
       const browser = await prepare(width);
       if (!browser) {
