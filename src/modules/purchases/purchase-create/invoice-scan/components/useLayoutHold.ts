@@ -42,6 +42,12 @@ const LAYOUT_BOX_SELECTOR = "[data-layout-box]";
 const SHIFT_GUARD_SELECTOR = "[data-layout-shift-guard]";
 
 /**
+ * REP17-01 (D70(a)): zonas (la cabecera, el aviso tras las filas) en que un control que aparece o se mueve sin acción del
+ * usuario (una llegada asíncrona) queda guardado desde ESE momento (D49), aunque nada se retenga.
+ */
+const ARRIVAL_GUARD_SELECTOR = "[data-layout-arrival-guard]";
+
+/**
  * D60(c): avisos dinámicos (duplicado, tasa, IVA) que aparecen, cambian o se van sin que se toquen
  * (`[data-layout-notice]`, siempre montados), y la caja que no deben mover bajo el puntero
  * (`[data-layout-notice-anchor]`, las filas). El pie fijo no se mueve con lo de arriba.
@@ -192,6 +198,19 @@ function shiftGuardedPositions(root: Element): Map<Element, Position> {
     for (const control of zone.querySelectorAll(CONTROL_SELECTOR)) {
       const { top, left } = control.getBoundingClientRect();
       positions.set(control, { top, left });
+    }
+  }
+  return positions;
+}
+
+/** Posición de los controles de las zonas `[data-layout-arrival-guard]` respecto a `root` (desplazar no la cambia). */
+function arrivalGuardedPositions(root: Element): Map<Element, Position> {
+  const origin = root.getBoundingClientRect();
+  const positions = new Map<Element, Position>();
+  for (const zone of root.querySelectorAll(ARRIVAL_GUARD_SELECTOR)) {
+    for (const control of zone.querySelectorAll(CONTROL_SELECTOR)) {
+      const { top, left } = control.getBoundingClientRect();
+      positions.set(control, { top: top - origin.top, left: left - origin.left });
     }
   }
   return positions;
@@ -377,6 +396,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const focusedKeyRef = useRef<string | undefined>(undefined);
   // D60(c): avisos dinámicos y filas en la última medición.
   const noticeLayoutRef = useRef<NoticeLayout | null>(null);
+  // REP17-01: controles de las zonas `[data-layout-arrival-guard]` en la última medición.
+  const arrivalPositionsRef = useRef<Map<Element, Position> | null>(null);
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían),
   // y cómo dejar de escuchar lo que los suelta.
   // D67(a): también los que crecieron solos, recortados a su alto anterior.
@@ -752,6 +773,13 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         markMoved(movedAtRef.current, moved);
       }
     }
+    // REP17-01 (D70(a)): lo que aparece o se mueve en la cabecera o en el aviso tras las filas sin acción del usuario
+    // (con el mismo ancho) queda guardado desde ahora: un toque que llega justo después no lo acciona.
+    const arrivals = arrivalGuardedPositions(root);
+    if (sameWidth && arrivalPositionsRef.current && !userTurnRef.current) {
+      markMoved(movedAtRef.current, movedControls(arrivalPositionsRef.current, arrivals));
+    }
+    arrivalPositionsRef.current = arrivals;
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
   }, [releaseFloors, releaseForWidth, rootRef]);
 

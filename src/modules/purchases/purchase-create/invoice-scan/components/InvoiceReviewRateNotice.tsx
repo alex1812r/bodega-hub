@@ -38,7 +38,7 @@ const successClassName =
 const choiceClassName =
   "h-9 cursor-pointer rounded-full border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 /** Texto de una caja de reserva: lo pinta CSS (`::before`), así no es texto del documento (ni lo leen ni lo hallan). */
-const reserveTextClassName = "before:content-[attr(data-reserve)]";
+export const reserveTextClassName = "before:content-[attr(data-reserve)]";
 
 export function ChoiceButton({
   checked,
@@ -90,7 +90,9 @@ function rateNoticeView(state: InvoiceReviewState, systemRateArrivedLate: boolea
   if (rate.system !== undefined) {
     // Con la tasa escrita antes de que llegara la del día, se respeta y se ofrece la de hoy.
     const printedDiffers = rate.warning !== undefined && rate.printed !== undefined;
-    if (!manualInput && !printedDiffers) {
+    // REP17-01 (D70(a)): elegida otra con una tasa ya escrita, se puede volver a ella.
+    const typed = rate.manual !== undefined;
+    if (!manualInput && !printedDiffers && !typed) {
       // REP15-01b: la del día llegó tarde y no hay nada que elegir; el sitio reservado lo dice.
       const arrived = systemRateArrivedLate
         ? [{ text: `Llegó la tasa del día (${formatVesBs(rate.system)}): los costos se convierten con ella.` }]
@@ -105,7 +107,9 @@ function rateNoticeView(state: InvoiceReviewState, systemRateArrivedLate: boolea
       ...(rate.printed !== undefined
         ? [{ checked: rate.choice === "printed", choice: "printed" as const, label: `Tasa de la factura (${formatRate(rate.printed)})` }]
         : []),
-      ...(manualInput ? [{ checked: true, choice: "manual" as const, label: "Escribir la tasa", manualRate: rate.manual }] : []),
+      ...(manualInput || typed
+        ? [{ checked: manualInput, choice: "manual" as const, label: "Escribir la tasa", manualRate: rate.manual }]
+        : []),
     ];
     return {
       chips,
@@ -134,40 +138,109 @@ function rateNoticeView(state: InvoiceReviewState, systemRateArrivedLate: boolea
 }
 
 /**
- * REP15-01b: la caja de `view` sin texto ni controles en el documento (el texto lo pinta CSS), del mismo alto que
- * la de verdad. Va invisible en la misma celda que el aviso: la celda mide lo que la más alta.
+ * REP17-01 (D70(a)): zonas del aviso, de arriba abajo. Abierta sin tasa del día, lo que su llegada ofrece («Tasa de
+ * hoy» y, sin impresa, «Escribir la tasa») va en `arrival`, DEBAJO del campo de la tasa escrita: nunca encima.
  */
-function RateNoticeReserve({ view }: { view: RateNoticeView }) {
+const SLOT_ORDER = ["paragraphs", "chips", "manual", "arrival"] as const;
+type RateSlot = (typeof SLOT_ORDER)[number];
+
+/** Lo de `view` repartido en sus zonas. */
+type RateNoticeParts = { view: RateNoticeView; chips: RateChip[]; arrival: RateChip[] };
+
+/**
+ * `split` (abierta sin tasa del día): las opciones que trae la llegada van a `arrival`; las de antes (impresa y escribir
+ * la tasa, con impresa) siguen en `chips`, donde ya estaban.
+ */
+function partsOf(view: RateNoticeView, split: boolean): RateNoticeParts {
+  const chips = view.chips ?? [];
+  const printedOffered = chips.some((chip) => chip.choice === "printed");
+  const arrives = (chip: RateChip) => split && (chip.choice === "system" || (chip.choice === "manual" && !printedOffered));
+  return { arrival: chips.filter(arrives), chips: chips.filter((chip) => !arrives(chip)), view };
+}
+
+function hasSlot(parts: RateNoticeParts, slot: RateSlot): boolean {
+  switch (slot) {
+    case "paragraphs":
+      return parts.view.paragraphs.length > 0;
+    case "chips":
+      return parts.chips.length > 0;
+    case "manual":
+      return parts.view.manualInput;
+    case "arrival":
+      return parts.arrival.length > 0;
+  }
+}
+
+/**
+ * Caja del aviso: comparte las filas (`subgrid`) con las demás cajas de la celda (reservas y la de verdad), así cada
+ * zona mide lo que la más alta de todas y lo que cambia en una no mueve las de debajo.
+ */
+const boxClassName =
+  "col-start-1 grid grid-rows-subgrid gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
+const chipsClassName = "flex flex-wrap gap-2";
+const GROUP_LABEL = "Tasa para convertir los costos";
+
+/**
+ * Filas que ocupa una caja (desde la primera: todas las cajas se apilan en la misma celda) o, dentro de ella, el grupo de
+ * opciones (a continuación del texto).
+ */
+function spanRows(count: number, fromFirst = false) {
+  return { gridRow: `${fromFirst ? "1" : "auto"} / span ${count}` };
+}
+
+/**
+ * REP15-01b: la caja de `parts` sin texto ni controles en el documento (el texto lo pinta CSS), con sus zonas en las
+ * filas de `slots`. Va invisible en la misma celda que el aviso.
+ */
+function RateNoticeReserve({ parts, slots }: { parts: RateNoticeParts; slots: readonly RateSlot[] }) {
+  const reserveChips = (chips: RateChip[]) => (
+    <div className={chipsClassName}>
+      {chips.map((chip) => (
+        <span className={cn(choiceClassName, "inline-block", reserveTextClassName)} data-reserve={chip.label} key={chip.label} />
+      ))}
+    </div>
+  );
+  const zone = (slot: RateSlot) => {
+    if (!hasSlot(parts, slot)) {
+      return <div key={slot} />;
+    }
+    switch (slot) {
+      case "paragraphs":
+        return (
+          <div className="flex flex-col gap-3" key={slot}>
+            {parts.view.paragraphs.map((paragraph) => (
+              <p className="flex items-start gap-2" key={paragraph.text}>
+                <span className="mt-0.5 size-4 shrink-0" />
+                <span className={reserveTextClassName} data-reserve={paragraph.text} />
+              </p>
+            ))}
+          </div>
+        );
+      case "manual":
+        return (
+          <div className="max-w-56" key={slot}>
+            <div className="space-y-2">
+              <span className={cn(formLabelClassName, reserveTextClassName)} data-reserve="Tasa Bs por REF" />
+              <div>
+                <span className={cn(formControlClassName, "block")} />
+              </div>
+            </div>
+          </div>
+        );
+      case "chips":
+      case "arrival":
+        return <div key={slot}>{reserveChips(parts[slot])}</div>;
+    }
+  };
   return (
     <div
       aria-hidden
-      className={cn(noticeClassName, view.danger && dangerClassName, "invisible pointer-events-none col-start-1 row-start-1")}
+      className={cn(boxClassName, parts.view.danger && dangerClassName, "invisible pointer-events-none")}
       data-layout-reserve
       inert
+      style={spanRows(slots.length, true)}
     >
-      {view.paragraphs.map((paragraph) => (
-        <p className="flex items-start gap-2" key={paragraph.text}>
-          <span className="mt-0.5 size-4 shrink-0" />
-          <span className={reserveTextClassName} data-reserve={paragraph.text} />
-        </p>
-      ))}
-      {view.chips ? (
-        <div className="flex flex-wrap gap-2">
-          {view.chips.map((chip) => (
-            <span className={cn(choiceClassName, "inline-block", reserveTextClassName)} data-reserve={chip.label} key={chip.label} />
-          ))}
-        </div>
-      ) : null}
-      {view.manualInput ? (
-        <div className="max-w-56">
-          <div className="space-y-2">
-            <span className={cn(formLabelClassName, reserveTextClassName)} data-reserve="Tasa Bs por REF" />
-            <div>
-              <span className={cn(formControlClassName, "block")} />
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {slots.map(zone)}
     </div>
   );
 }
@@ -179,6 +252,8 @@ function RateNoticeReserve({ view }: { view: RateNoticeView }) {
  * que exige aceptar explícitamente. SCN-UI-Q1: una impresa inverosímil no se ofrece
  * (`rate.ignoredWarning`) y una sin referencia con qué comprobarla se avisa en rojo.
  * REP15-01b (D65(a)): con `reserve`, el aviso ocupa desde el primer render el alto del más alto de esos estados.
+ * REP17-01 (D70(a)): y cada zona (texto, opciones, campo y lo que trae la llegada), el de la más alta: al llegar la del
+ * día no se mueve ningún control del aviso; «Tasa de hoy» aparece debajo del campo, en su sitio ya reservado.
  */
 export function InvoiceReviewRateNotice({
   onAction,
@@ -211,63 +286,99 @@ export function InvoiceReviewRateNotice({
 
   const choose = (choice: InvoiceRateChoice, manualRate?: number) =>
     onAction({ type: "setRateChoice", choice, ...(manualRate !== undefined ? { manualRate } : {}) });
+  // Con reservas la revisión se abrió sin tasa del día: lo que trae su llegada va debajo del campo.
+  const split = reserve.length > 0;
   const view = rateNoticeView(state, systemRateArrivedLate);
-  // Una caja por contenido distinto (dos iguales miden lo mismo).
-  const reserved = new Map<string, RateNoticeView>();
+  const parts = view ? partsOf(view, split) : null;
+  // Una caja por contenido distinto (dos iguales miden lo mismo). En una reserva con tasa del día, esta llegó tarde.
+  const reserved = new Map<string, RateNoticeParts>();
   for (const reserveState of reserve) {
-    const reserveView = reserveState.usd.anomaly ? null : rateNoticeView(reserveState, false);
+    const reserveView = reserveState.usd.anomaly ? null : rateNoticeView(reserveState, reserveState.rate.system !== undefined);
     if (reserveView) {
-      reserved.set(JSON.stringify(reserveView), reserveView);
+      reserved.set(JSON.stringify(reserveView), partsOf(reserveView, split));
     }
   }
+  const slots = SLOT_ORDER.filter((slot) =>
+    [...reserved.values(), ...(parts ? [parts] : [])].some((item) => hasSlot(item, slot)),
+  );
+  // Filas de las opciones y del campo: todo lo que va tras el texto.
+  const choiceSlots = slots.filter((slot) => slot !== "paragraphs");
+
+  const chipButtons = (chips: RateChip[]) =>
+    chips.map((chip) => (
+      <ChoiceButton checked={chip.checked} key={chip.choice} onClick={() => choose(chip.choice, chip.manualRate)}>
+        {chip.label}
+      </ChoiceButton>
+    ));
+  const chipRow = (chips: RateChip[], key: RateSlot) => (
+    <div className={chipsClassName} data-guarded-activation key={key}>
+      {chipButtons(chips)}
+    </div>
+  );
+  const choiceZone = (current: RateNoticeParts, slot: RateSlot) => {
+    if (slot !== "manual") {
+      return slot === "paragraphs" ? null : chipRow(current[slot], slot);
+    }
+    return current.view.manualInput ? (
+      <div className="max-w-56 text-foreground" key={slot}>
+        <NumberInput
+          decimals={2}
+          label="Tasa Bs por REF"
+          min={0}
+          onValueChange={(value) => choose("manual", value ?? undefined)}
+          required
+          value={rate.manual ?? null}
+        />
+      </div>
+    ) : (
+      <div key={slot} />
+    );
+  };
+  const choices = (current: RateNoticeParts) => {
+    if (!current.view.chips) {
+      return choiceSlots.map((slot) => (slot === "manual" ? choiceZone(current, slot) : <div key={slot} />));
+    }
+    if (split) {
+      // Una sola elección: el grupo abarca las opciones de encima, el campo y las de debajo.
+      return (
+        <div aria-label={GROUP_LABEL} className="grid grid-rows-subgrid gap-3" role="radiogroup" style={spanRows(choiceSlots.length)}>
+          {choiceSlots.map((slot) => choiceZone(current, slot))}
+        </div>
+      );
+    }
+    return choiceSlots.map((slot) =>
+      slot === "chips" ? (
+        <div aria-label={GROUP_LABEL} className={chipsClassName} data-guarded-activation key={slot} role="radiogroup">
+          {chipButtons(current.chips)}
+        </div>
+      ) : (
+        choiceZone(current, slot)
+      ),
+    );
+  };
 
   return (
     <>
-      {[...reserved].map(([key, reserveView]) => (
-        <RateNoticeReserve key={key} view={reserveView} />
+      {[...reserved].map(([key, reserveParts]) => (
+        <RateNoticeReserve key={key} parts={reserveParts} slots={slots} />
       ))}
-      {view ? (
-        <div className={cn(noticeClassName, view.danger && dangerClassName, "col-start-1 row-start-1")} role={view.role}>
-          {view.paragraphs.map((paragraph) => (
-            <p
-              className="flex items-start gap-2"
-              data-testid={paragraph.ignored ? "invoice-review-rate-ignored" : undefined}
-              key={paragraph.text}
-            >
-              <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-              {paragraph.text}
-            </p>
-          ))}
-          {view.chips ? (
-            <div
-              aria-label="Tasa para convertir los costos"
-              className="flex flex-wrap gap-2"
-              data-guarded-activation
-              role="radiogroup"
-            >
-              {view.chips.map((chip) => (
-                <ChoiceButton
-                  checked={chip.checked}
-                  key={chip.choice}
-                  onClick={() => choose(chip.choice, chip.manualRate)}
+      {parts ? (
+        <div className={cn(boxClassName, parts.view.danger && dangerClassName)} role={parts.view.role} style={spanRows(slots.length, true)}>
+          {slots.includes("paragraphs") ? (
+            <div className="flex flex-col gap-3">
+              {parts.view.paragraphs.map((paragraph) => (
+                <p
+                  className="flex items-start gap-2"
+                  data-testid={paragraph.ignored ? "invoice-review-rate-ignored" : undefined}
+                  key={paragraph.text}
                 >
-                  {chip.label}
-                </ChoiceButton>
+                  <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  {paragraph.text}
+                </p>
               ))}
             </div>
           ) : null}
-          {view.manualInput ? (
-            <div className="max-w-56 text-foreground">
-              <NumberInput
-                decimals={2}
-                label="Tasa Bs por REF"
-                min={0}
-                onValueChange={(value) => choose("manual", value ?? undefined)}
-                required
-                value={rate.manual ?? null}
-              />
-            </div>
-          ) : null}
+          {choices(parts)}
         </div>
       ) : null}
     </>
