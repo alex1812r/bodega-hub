@@ -62,6 +62,8 @@ export type InvoiceReviewFooterProps = {
  * la diferencia no cambia el alto del pie ni pone la casilla donde estaba «Cargar». La casilla solo
  * cambia con su propio control (el texto no es su etiqueta) y, con el puntero, con una pulsación que
  * empezó y terminó en ella después de su último cambio de sitio.
+ * REP16-03 (B-p17B-2): con menos de 500 px de alto (teléfono en horizontal) el pie fijo tapaba más de la mitad de la
+ * revisión; ahí deja de ser fijo y va al final, con «Cargar» y los motivos a mano al desplazar o con Tab.
  */
 /** REP13-06b: nombre breve de cada motivo de bloqueo en el pie compacto (móvil). */
 const REASON_LABELS: Record<Exclude<InvoiceReviewBlockerReason, "lines">, string> = {
@@ -208,7 +210,7 @@ export function InvoiceReviewFooter({
     <footer
       aria-label="Resumen de la revisión"
       ref={footerRef}
-      className="sticky bottom-0 z-10 grid grid-cols-[minmax(0,1fr)_auto_auto] content-start items-center gap-x-2 gap-y-1 border-t border-border bg-surface-container-lowest px-4 py-2 text-sm shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:gap-x-3 sm:py-3 dark:border-slate-800"
+      className="z-10 grid grid-cols-[minmax(0,1fr)_auto_auto] content-start items-center gap-x-2 gap-y-1 border-t border-border bg-surface-container-lowest px-4 py-2 text-sm shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:gap-x-3 sm:py-3 dark:border-slate-800 [@media(min-height:500px)]:sticky [@media(min-height:500px)]:bottom-0"
       // D36: contenedor neutro que recibe el foco al no quedar pendientes (Tab sigue a Cargar);
       // Espacio sobre él no desplaza la página (como en las filas, B6-1).
       onKeyDown={(event) => {
@@ -360,11 +362,9 @@ export function InvoiceReviewFooter({
               {`y ${hiddenBlockers.above} más ↑`}
             </li>
           ) : null}
-          {summary.blockers.map((blocker) => (
-            <li key={blocker}>{blocker}</li>
-          ))}
+          {/* REP16-01b (D67(a)): el motivo con control («Marca el aviso…») va primero: los motivos que llegan o se van
+              (tasa, proveedor, último costo, fallo de duplicados) no lo mueven dentro de la lista. */}
           {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
-          {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
           {duplicateReason === "unacknowledged" ? (
             <li>
               <button
@@ -377,6 +377,10 @@ export function InvoiceReviewFooter({
               </button>
             </li>
           ) : null}
+          {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
+          {summary.blockers.map((blocker) => (
+            <li key={blocker}>{blocker}</li>
+          ))}
           {hiddenBlockers.below > 0 ? (
             // REP14-06b (O-qa06-1): pegado al borde de abajo de los 3 renglones mientras queden motivos debajo (sin
             // cambiar el alto).

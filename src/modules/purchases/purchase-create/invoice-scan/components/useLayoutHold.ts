@@ -17,6 +17,14 @@ export const POINTER_GUARD_RADIUS_PX = 32;
 /** D49: tras aplicar el layout pendiente, ventana en que no actúa un control cuya caja se movió. */
 export const COMPACTION_GUARD_MS = 1000;
 
+/**
+ * D67(a): tras una acción del usuario, lo que cambia es suyo mientras el panel siga cambiando por ella (los efectos que
+ * siguen a la acción pintan en tareas posteriores): el turno acaba en el primer frame sin cambios en el panel, y como
+ * mucho a los USER_TURN_MS. Pasado, un cambio es una llegada asíncrona (REP16-01b: con solo la ventana fija, lo que
+ * llegaba en ella, p. ej. la tasa 100 ms después de un clic, crecía sin retenerse).
+ */
+const USER_TURN_MS = 250;
+
 /** Controles que una activación con el puntero puede accionar. */
 const CONTROL_SELECTOR =
   "button, a[href], input, select, textarea, label, [role='button'], [role='checkbox'], [role='radio'], [role='option'], [role='switch'], [role='tab']";
@@ -97,6 +105,28 @@ type NoticeLayout = {
   anchorTop: number;
   rowBlocks: ReadonlyMap<Element, number>;
 };
+
+/** Estilo en línea de un aviso antes de retenerlo (REP15-01: lo que encoge; D67(a): lo que crece). */
+type HeldNoticeStyle = { display: string; minHeight: string; maxHeight: string; overflow: string };
+
+/** Devuelve a cada aviso retenido el estilo en línea que tenía y los olvida. */
+function restoreNotices(floors: Map<HTMLElement, HeldNoticeStyle>) {
+  for (const [notice, style] of floors) {
+    notice.style.display = style.display;
+    notice.style.minHeight = style.minHeight;
+    notice.style.maxHeight = style.maxHeight;
+    notice.style.overflow = style.overflow;
+  }
+  floors.clear();
+}
+
+/** D67(a): `notice` va antes del último control de las filas: si crece, baja controles de alguna fila. */
+function movesRowControls(root: Element, notice: Element): boolean {
+  const rows = root.querySelectorAll(ROW_BOX_SELECTOR);
+  const controls = rows.item(rows.length - 1)?.querySelectorAll(CONTROL_SELECTOR);
+  const last = controls?.item(controls.length - 1);
+  return last !== null && last !== undefined && follows(notice, last);
+}
 
 /** `element` va después de `notice` en el documento, fuera de él: lo que crece `notice` lo desplaza. */
 function follows(notice: Element, element: Element) {
@@ -325,6 +355,8 @@ function listenForRelease(root: Element, release: () => void, ownScrollRef: { cu
  * layout pendiente: lo que aparece o se mueve en ellas queda guardado igual, desde ese render.
  * `onFocusLost`: al aplicarse el layout, la caja que tenía el foco se volvió a montar (cambió de
  * lista) y el foco cayó en BODY; recibe su clave.
+ * D67(a): sin layout pendiente, lo que una llegada asíncrona cambie (un aviso que crece o encoge, el orden de las filas
+ * con `retainOrder`) se retiene igual hasta desplazar, usar el teclado o sacar el ratón del panel.
  */
 export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, onFocusLost: (key: string) => void) {
   const [hold, setHold] = useState<LayoutHold<TOrder> | null>(null);
@@ -347,12 +379,64 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const noticeLayoutRef = useRef<NoticeLayout | null>(null);
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían),
   // y cómo dejar de escuchar lo que los suelta.
-  const floorsRef = useRef(new Map<HTMLElement, { display: string; minHeight: string }>());
+  // D67(a): también los que crecieron solos, recortados a su alto anterior.
+  const floorsRef = useRef(new Map<HTMLElement, HeldNoticeStyle>());
   const stopFloorsRef = useRef<(() => void) | null>(null);
+  // D67(a): orden de filas retenido porque una llegada asíncrona cambió el del modelo (una fila que cambia de lista);
+  // se suelta con los avisos retenidos.
+  const [retainedOrder, setRetainedOrder] = useState<TOrder | null>(null);
+  const retainedOrderRef = useRef<TOrder | null>(null);
+  // D67(a): turno de una acción del usuario (clic, tecla, escribir): lo que cambie en él es suyo, no una llegada.
+  const userTurnRef = useRef(false);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
     onFocusLostRef.current = onFocusLost;
   });
+
+  /**
+   * REP16-03 (B-p17B-3): con otro ancho (giro, ventana, menú) todo se recoloca y lo retenido (alto de las cajas con el
+   * layout pendiente, avisos retenidos, orden de filas retenido) dejaría huecos hasta desplazar: se suelta todo. Sin
+   * guardar nada como movido ni compensar (N7): tras girar el usuario apunta sobre lo nuevo, y lo guardado antes del giro
+   * ya no protege ningún punto. Devuelve si hace falta un render sin lo retenido (layout pendiente u orden).
+   */
+  const releaseForWidth = useCallback(() => {
+    stopFloorsRef.current?.();
+    stopFloorsRef.current = null;
+    restoreNotices(floorsRef.current);
+    anchorRef.current = null;
+    ownScrollRef.current = null;
+    shiftPositionsRef.current = null;
+    typingAnchorRef.current = null;
+    movedAtRef.current.clear();
+    const rerender = holdRef.current !== null || retainedOrderRef.current !== null;
+    if (retainedOrderRef.current !== null) {
+      retainedOrderRef.current = null;
+      setRetainedOrder(null);
+    }
+    if (holdRef.current) {
+      const focused = document.activeElement instanceof Element ? document.activeElement : null;
+      focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
+      holdRef.current = null;
+      setHold(null);
+    }
+    return rerender;
+  }, []);
+
+  /**
+   * REP16-03: lo que suelta lo retenido (el `pointerleave` y el `scroll` del giro) llega antes que el ResizeObserver: si
+   * el ancho cambió desde la última medición, se suelta como un cambio de ancho (sin aplicar D49) y la próxima medición es
+   * la base. Devuelve si fue así.
+   */
+  const releaseIfResized = useCallback(() => {
+    const root = rootRef.current;
+    const measured = noticeLayoutRef.current;
+    if (!root || !measured || Math.abs(measured.width - root.getBoundingClientRect().width) < 1) {
+      return false;
+    }
+    releaseForWidth();
+    noticeLayoutRef.current = null;
+    return true;
+  }, [releaseForWidth, rootRef]);
 
   /**
    * REP15-01 (D65(b)): suelta los avisos retenidos (lo mismo que aplica el layout pendiente: desplazar, el teclado
@@ -360,25 +444,33 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
    * (no se compensa: lo pidió el usuario).
    */
   const releaseFloors = useCallback(() => {
+    if (releaseIfResized()) {
+      return;
+    }
     stopFloorsRef.current?.();
     stopFloorsRef.current = null;
+    if (retainedOrderRef.current !== null) {
+      // D67(a): las filas toman su lista y orden en el próximo render; lo que se mueva con ello queda guardado (D49).
+      retainedOrderRef.current = null;
+      positionsBeforeRef.current ??= controlPositions();
+      setRetainedOrder(null);
+    }
     const floors = floorsRef.current;
     if (floors.size === 0) {
       return;
     }
     const before = controlPositions();
-    for (const [notice, style] of floors) {
-      notice.style.display = style.display;
-      notice.style.minHeight = style.minHeight;
-    }
-    floors.clear();
+    restoreNotices(floors);
     markMoved(movedAtRef.current, movedControls(before, controlPositions()));
     const root = rootRef.current;
     const anchor = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
     noticeLayoutRef.current = root && anchor ? measureNotices(root, anchor) : null;
-  }, [rootRef]);
+  }, [releaseIfResized, rootRef]);
 
   const release = useCallback(() => {
+    if (releaseIfResized()) {
+      return;
+    }
     releaseFloors();
     anchorRef.current = null;
     ownScrollRef.current = null;
@@ -391,7 +483,80 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       holdRef.current = null;
       setHold(null);
     }
-  }, [releaseFloors, rootRef]);
+  }, [releaseFloors, releaseIfResized, rootRef]);
+
+  /**
+   * D67(a): el orden de filas del modelo cambió sin acción del usuario (una llegada asíncrona pasa una fila de lista):
+   * se conserva `order`, el pintado, hasta que el usuario desplace, use el teclado o saque el ratón (con el layout
+   * pendiente el orden ya está fijado). Solo desde efectos.
+   */
+  const retainOrder = useCallback(
+    (order: TOrder) => {
+      const root = rootRef.current;
+      if (!root || holdRef.current || userTurnRef.current || retainedOrderRef.current !== null) {
+        return;
+      }
+      retainedOrderRef.current = order;
+      setRetainedOrder(order);
+      stopFloorsRef.current ??= listenForRelease(root, releaseFloors, ownScrollRef);
+    },
+    [releaseFloors, rootRef],
+  );
+
+  // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la
+  // acción): lo que cambie en él es suyo.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let frame: number | undefined;
+    // Hubo cambios en el panel desde el último frame del turno.
+    let changed = false;
+    const end = () => {
+      userTurnRef.current = false;
+      clearTimeout(timer);
+      if (frame !== undefined) {
+        cancelAnimationFrame(frame);
+        frame = undefined;
+      }
+    };
+    const watch = () => {
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (changed) {
+          changed = false;
+          watch();
+        } else {
+          end();
+        }
+      });
+    };
+    const mark = () => {
+      userTurnRef.current = true;
+      changed = true;
+      clearTimeout(timer);
+      timer = setTimeout(end, USER_TURN_MS);
+      if (frame === undefined) {
+        watch();
+      }
+    };
+    const root = rootRef.current;
+    const mutations = new MutationObserver(() => {
+      changed = true;
+    });
+    if (root) {
+      mutations.observe(root, { attributes: true, characterData: true, childList: true, subtree: true });
+    }
+    const events = ["pointerdown", "mousedown", "touchstart", "click", "keydown", "input", "change"] as const;
+    for (const type of events) {
+      window.addEventListener(type, mark, { capture: true, passive: true });
+    }
+    return () => {
+      end();
+      mutations.disconnect();
+      for (const type of events) {
+        window.removeEventListener(type, mark, { capture: true });
+      }
+    };
+  }, [rootRef]);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
@@ -464,12 +629,13 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   });
 
   const holding = hold !== null;
+  const ordering = retainedOrder !== null;
 
   // D49: recién aplicado el layout (antes de pintar), lo que cambió de sitio o apareció respecto a
   // justo antes queda marcado; la guarda cuenta desde ESTE momento, no desde la activación.
   useLayoutEffect(() => {
     const before = positionsBeforeRef.current;
-    if (holding || !before) {
+    if (holding || ordering || !before) {
       return;
     }
     positionsBeforeRef.current = null;
@@ -489,7 +655,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       anchorNextRow(rootRef.current, rowsBefore);
     }
     markMoved(movedAtRef.current, movedControls(before, controlPositions()));
-  }, [holding, rootRef]);
+  }, [holding, ordering, rootRef]);
 
   /**
    * D60(c): si un aviso dinámico cambió de alto y movió las filas, vuelven a su punto de pantalla
@@ -508,21 +674,45 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     const previous = noticeLayoutRef.current;
     // Con otro ancho (giro, ventana) todo se recoloca: ni se retiene ni se guarda nada por ello.
     const sameWidth = previous && Math.abs(previous.width - root.getBoundingClientRect().width) < 1 ? previous : null;
+    // REP16-03: la base es el render ya sin lo retenido (si no, al soltarse las cajas parecería una llegada).
+    if (previous && !sameWidth && releaseForWidth()) {
+      noticeLayoutRef.current = null;
+      return;
+    }
     // REP15-01 (D65(b)): lo que llega tarde (tasa, duplicados, último costo) y encoge o quita un aviso sin que nadie
     // actúe no sube lo de debajo: el aviso conserva su alto hasta que el usuario desplace, use el teclado o saque el
-    // ratón (con el layout pendiente, también lo que creció tras fijar las cajas). Lo que se teclea es del usuario.
+    // ratón (con el layout pendiente, también lo que creció tras fijar las cajas). Lo que se teclea es del usuario
+    // (REP16-01b: en su turno; un campo enfocado sin teclear, como el buscador abierto, no frena lo que llega).
     const focused = document.activeElement;
-    const typing = focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
+    const typing =
+      userTurnRef.current && focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
     if (floor && sameWidth && !typing) {
+      const keepStyle = (notice: HTMLElement) => {
+        if (!floorsRef.current.has(notice)) {
+          const { display, maxHeight, minHeight, overflow } = notice.style;
+          floorsRef.current.set(notice, { display, maxHeight, minHeight, overflow });
+        }
+      };
       for (const notice of root.querySelectorAll<HTMLElement>(NOTICE_SELECTOR)) {
         const was = sameWidth.heights.get(notice);
-        if (was !== undefined && was - notice.getBoundingClientRect().height >= 1) {
-          if (!floorsRef.current.has(notice)) {
-            floorsRef.current.set(notice, { display: notice.style.display, minHeight: notice.style.minHeight });
-          }
+        const height = notice.getBoundingClientRect().height;
+        if (was !== undefined && was - height >= 1) {
+          keepStyle(notice);
           // `empty:hidden`: el aviso que se va también conserva su sitio (y el hueco del `gap`).
           notice.style.display = "block";
           notice.style.minHeight = `${was}px`;
+        } else if (was !== undefined && height - was >= 1 && !userTurnRef.current && movesRowControls(root, notice)) {
+          // D67(a) (M-p17B-1): lo que crece solo (sin acción del usuario en este turno) y bajaría controles de las filas
+          // se recorta a su alto anterior (el que no se veía, oculto: tampoco abre el hueco del `gap`) hasta que el
+          // usuario desplace, use el teclado o saque el ratón. Lo que asome de él queda guardado desde ahora (D49).
+          keepStyle(notice);
+          if (was < 1) {
+            notice.style.display = "none";
+          } else {
+            notice.style.maxHeight = `${was}px`;
+            notice.style.overflow = "hidden";
+          }
+          markMoved(movedAtRef.current, [...notice.querySelectorAll(CONTROL_SELECTOR)]);
         }
       }
       if (floorsRef.current.size > 0 && !stopFloorsRef.current) {
@@ -563,7 +753,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       }
     }
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
-  }, [releaseFloors, rootRef]);
+  }, [releaseFloors, releaseForWidth, rootRef]);
 
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));
@@ -688,10 +878,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   );
 
   return {
-    /** Orden fijado mientras el layout está pendiente. */
-    order: hold?.order,
+    /** Orden fijado mientras el layout está pendiente (D67(a): o retenido tras una llegada asíncrona). */
+    order: hold?.order ?? retainedOrder ?? undefined,
     boxStyle,
     holdLayout,
+    retainOrder,
     /** Para manejadores: el layout está pendiente ahora (el foco no debe desplazar). */
     isHolding: useCallback(() => holdRef.current !== null, []),
     /** D49/D54(a), para manejadores: `control` se movió (layout aplicado o pie) hace menos de 1 s. */
