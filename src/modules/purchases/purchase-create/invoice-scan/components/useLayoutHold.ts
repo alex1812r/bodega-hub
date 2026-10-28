@@ -115,13 +115,22 @@ type NoticeLayout = {
 /** Estilo en línea de un aviso antes de retenerlo (REP15-01: lo que encoge; D67(a): lo que crece). */
 type HeldNoticeStyle = { display: string; minHeight: string; maxHeight: string; overflow: string };
 
+function noticeStyle(notice: HTMLElement): HeldNoticeStyle {
+  const { display, maxHeight, minHeight, overflow } = notice.style;
+  return { display, maxHeight, minHeight, overflow };
+}
+
+function applyNoticeStyle(notice: HTMLElement, style: HeldNoticeStyle) {
+  notice.style.display = style.display;
+  notice.style.minHeight = style.minHeight;
+  notice.style.maxHeight = style.maxHeight;
+  notice.style.overflow = style.overflow;
+}
+
 /** Devuelve a cada aviso retenido el estilo en línea que tenía y los olvida. */
 function restoreNotices(floors: Map<HTMLElement, HeldNoticeStyle>) {
   for (const [notice, style] of floors) {
-    notice.style.display = style.display;
-    notice.style.minHeight = style.minHeight;
-    notice.style.maxHeight = style.maxHeight;
-    notice.style.overflow = style.overflow;
+    applyNoticeStyle(notice, style);
   }
   floors.clear();
 }
@@ -318,20 +327,96 @@ function scrollBack(element: Element, delta: number): OwnScroll | null {
   return { scroller, top: scroller.scrollTop };
 }
 
+type Point = { x: number; y: number };
+
+/** D70(c): lo que no debe moverse al soltar lo retenido (lo que está bajo el último punto de contacto) y su `top`. */
+type ContactAnchor = { element: Element; top: number };
+
+/**
+ * D70(c): control del panel bajo `point` o, si ahí no hay ninguno, el más cercano a él. `null` si el punto no está sobre
+ * el panel (nada de él queda bajo el dedo o el ratón).
+ */
+function contactAnchor(root: Element, point: Point | null): ContactAnchor | null {
+  // jsdom no implementa elementFromPoint.
+  const under =
+    point && typeof document.elementFromPoint === "function" ? document.elementFromPoint(point.x, point.y) : null;
+  if (!point || !under || !root.contains(under)) {
+    return null;
+  }
+  let element = under.closest(CONTROL_SELECTOR);
+  if (!element || !root.contains(element)) {
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const control of root.querySelectorAll(CONTROL_SELECTOR)) {
+      const box = control.getBoundingClientRect();
+      const distance = Math.hypot(
+        Math.max(box.left - point.x, 0, point.x - box.right),
+        Math.max(box.top - point.y, 0, point.y - box.bottom),
+      );
+      if ((box.width > 0 || box.height > 0) && distance < nearest) {
+        nearest = distance;
+        element = control;
+      }
+    }
+  }
+  return element ? { element, top: element.getBoundingClientRect().top } : null;
+}
+
+/**
+ * D70(c): prueba, sin pintar, a soltar lo retenido (avisos y altos de las cajas del layout pendiente) y devolver `anchor` a
+ * su sitio desplazando su contenedor; lo deshace todo (también el desplazamiento) y devuelve si `anchor` quedaría en su sitio.
+ * No queda (p. ej. con la página arriba y el hueco encima): no hay desplazamiento que compense lo que se soltaría.
+ */
+function releaseKeepsAnchor(
+  anchor: ContactAnchor,
+  floors: ReadonlyMap<HTMLElement, HeldNoticeStyle>,
+  boxes: readonly HTMLElement[],
+): boolean {
+  const scrollTops = new Map<Element, number>();
+  for (const scroller of [scrollParent(anchor.element), document.scrollingElement ?? document.documentElement]) {
+    scrollTops.set(scroller, scroller.scrollTop);
+  }
+  const held = new Map([...floors.keys()].map((notice) => [notice, noticeStyle(notice)] as const));
+  const minHeights = boxes.map((box) => box.style.minHeight);
+  floors.forEach((style, notice) => applyNoticeStyle(notice, style));
+  boxes.forEach((box) => {
+    box.style.minHeight = "";
+  });
+  const offset = () => anchor.element.getBoundingClientRect().top - anchor.top;
+  let keeps = Math.abs(offset()) < 1;
+  if (!keeps) {
+    scrollParent(anchor.element).scrollBy({ top: offset(), behavior: "instant" });
+    keeps = Math.abs(offset()) < 1;
+  }
+  held.forEach((style, notice) => applyNoticeStyle(notice, style));
+  boxes.forEach((box, index) => {
+    box.style.minHeight = minHeights[index] ?? "";
+  });
+  scrollTops.forEach((top, scroller) => {
+    scroller.scrollTop = top;
+  });
+  return keeps;
+}
+
 /**
  * Lo que aplica el layout pendiente (D49) y suelta los avisos retenidos (D65(b)): desplazar (salvo el
  * desplazamiento propio de la compensación), la rueda, arrastrar el dedo, el teclado o sacar el ratón del
  * panel o de la ventana. Devuelve cómo dejar de escuchar.
  */
-function listenForRelease(root: Element, release: () => void, ownScrollRef: { current: OwnScroll | null }) {
+function listenForRelease(
+  root: Element,
+  release: () => void,
+  releaseOnScroll: () => void,
+  ownScrollRef: { current: OwnScroll | null },
+) {
   const onScroll = (event: Event) => {
     const own = ownScrollRef.current;
     const scroller = event.target instanceof Element ? event.target : document.scrollingElement;
     if (own && scroller === own.scroller && Math.abs(own.scroller.scrollTop - own.top) < 1) {
       return;
     }
-    release();
+    releaseOnScroll();
   };
+  const onKeyDown = () => release();
   // Solo el ratón: un toque no deja puntero encima (y su `pointerleave` llega al levantar el dedo).
   const onPointerMove = (event: PointerEvent) => {
     if (event.pointerType === "mouse" && !contains(root.getBoundingClientRect(), event.clientX, event.clientY)) {
@@ -344,16 +429,16 @@ function listenForRelease(root: Element, release: () => void, ownScrollRef: { cu
     }
   };
   window.addEventListener("scroll", onScroll, true);
-  window.addEventListener("wheel", release, { passive: true });
-  window.addEventListener("touchmove", release, { passive: true });
-  window.addEventListener("keydown", release, true);
+  window.addEventListener("wheel", releaseOnScroll, { passive: true });
+  window.addEventListener("touchmove", releaseOnScroll, { passive: true });
+  window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("pointermove", onPointerMove, true);
   document.documentElement.addEventListener("pointerleave", onPointerLeave);
   return () => {
     window.removeEventListener("scroll", onScroll, true);
-    window.removeEventListener("wheel", release);
-    window.removeEventListener("touchmove", release);
-    window.removeEventListener("keydown", release, true);
+    window.removeEventListener("wheel", releaseOnScroll);
+    window.removeEventListener("touchmove", releaseOnScroll);
+    window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("pointermove", onPointerMove, true);
     document.documentElement.removeEventListener("pointerleave", onPointerLeave);
   };
@@ -409,10 +494,52 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const retainedOrderRef = useRef<TOrder | null>(null);
   // D67(a): turno de una acción del usuario (clic, tecla, escribir): lo que cambie en él es suyo, no una llegada.
   const userTurnRef = useRef(false);
+  // D70(c): último punto de contacto (el dedo apoyado o el ratón), y lo que estaba bajo él al soltar lo retenido con un render pendiente
+  // (layout pendiente u orden retenido): tras ese render vuelve a su sitio.
+  const contactRef = useRef<Point | null>(null);
+  const releaseAnchorRef = useRef<ContactAnchor | null>(null);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
     onFocusLostRef.current = onFocusLost;
   });
+
+  // D70(c): el último punto de contacto (se registra al montar: antes que lo que suelta lo retenido con el mismo evento).
+  // Un toque que se levanta sin arrastrar ya no tiene nada debajo (desplazar con el dedo es otro contacto): lo que suelta
+  // luego lo retenido (la barra, el teclado) ancla como siempre (B-qa02-1: la fila que sigue a la compactada). Un arrastre
+  // sí lo conserva: el desplazamiento por inercia que le sigue es suyo.
+  useEffect(() => {
+    let dragged = false;
+    const onPointer = (event: PointerEvent) => {
+      contactRef.current = { x: event.clientX, y: event.clientY };
+    };
+    const onTouch = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (event.type === "touchstart") {
+        dragged = false;
+      } else if (event.type === "touchmove") {
+        dragged = true;
+      }
+      if (touch) {
+        contactRef.current = { x: touch.clientX, y: touch.clientY };
+      } else if (!dragged) {
+        contactRef.current = null;
+      }
+    };
+    const options = { capture: true, passive: true };
+    const touches = ["touchstart", "touchmove", "touchend", "touchcancel"] as const;
+    window.addEventListener("pointerdown", onPointer, options);
+    window.addEventListener("pointermove", onPointer, options);
+    for (const type of touches) {
+      window.addEventListener(type, onTouch, options);
+    }
+    return () => {
+      window.removeEventListener("pointerdown", onPointer, options);
+      window.removeEventListener("pointermove", onPointer, options);
+      for (const type of touches) {
+        window.removeEventListener(type, onTouch, options);
+      }
+    };
+  }, []);
 
   /**
    * REP16-03 (B-p17B-3): con otro ancho (giro, ventana, menú) todo se recoloca y lo retenido (alto de las cajas con el
@@ -428,6 +555,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     ownScrollRef.current = null;
     shiftPositionsRef.current = null;
     typingAnchorRef.current = null;
+    releaseAnchorRef.current = null;
     movedAtRef.current.clear();
     const rerender = holdRef.current !== null || retainedOrderRef.current !== null;
     if (retainedOrderRef.current !== null) {
@@ -462,49 +590,88 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   /**
    * REP15-01 (D65(b)): suelta los avisos retenidos (lo mismo que aplica el layout pendiente: desplazar, el teclado
    * o sacar el ratón). Lo que se mueve con ello queda guardado desde ESTE momento, y la nueva medición es la base
-   * (no se compensa: lo pidió el usuario).
+   * (no se compensa: lo pidió el usuario). D70(c): al desplazar, `anchor` (lo que está bajo el último punto de contacto)
+   * vuelve a su sitio.
    */
-  const releaseFloors = useCallback(() => {
-    if (releaseIfResized()) {
-      return;
-    }
-    stopFloorsRef.current?.();
-    stopFloorsRef.current = null;
-    if (retainedOrderRef.current !== null) {
-      // D67(a): las filas toman su lista y orden en el próximo render; lo que se mueva con ello queda guardado (D49).
-      retainedOrderRef.current = null;
-      positionsBeforeRef.current ??= controlPositions();
-      setRetainedOrder(null);
-    }
-    const floors = floorsRef.current;
-    if (floors.size === 0) {
-      return;
-    }
-    const before = controlPositions();
-    restoreNotices(floors);
-    markMoved(movedAtRef.current, movedControls(before, controlPositions()));
-    const root = rootRef.current;
-    const anchor = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
-    noticeLayoutRef.current = root && anchor ? measureNotices(root, anchor) : null;
-  }, [releaseIfResized, rootRef]);
+  const releaseFloors = useCallback(
+    (anchor: ContactAnchor | null = null) => {
+      if (releaseIfResized()) {
+        return;
+      }
+      stopFloorsRef.current?.();
+      stopFloorsRef.current = null;
+      if (retainedOrderRef.current !== null) {
+        // D67(a): las filas toman su lista y orden en el próximo render; lo que se mueva con ello queda guardado (D49).
+        retainedOrderRef.current = null;
+        positionsBeforeRef.current ??= controlPositions();
+        releaseAnchorRef.current = anchor;
+        setRetainedOrder(null);
+      }
+      const floors = floorsRef.current;
+      if (floors.size === 0) {
+        return;
+      }
+      const before = controlPositions();
+      restoreNotices(floors);
+      if (anchor?.element.isConnected) {
+        const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+        if (Math.abs(delta) >= 1) {
+          ownScrollRef.current = scrollBack(anchor.element, delta);
+        }
+      }
+      markMoved(movedAtRef.current, movedControls(before, controlPositions()));
+      const root = rootRef.current;
+      const notices = root?.querySelector(NOTICE_ANCHOR_SELECTOR);
+      noticeLayoutRef.current = root && notices ? measureNotices(root, notices) : null;
+    },
+    [releaseIfResized, rootRef],
+  );
 
-  const release = useCallback(() => {
-    if (releaseIfResized()) {
+  const release = useCallback(
+    (anchor: ContactAnchor | null = null) => {
+      if (releaseIfResized()) {
+        return;
+      }
+      anchorRef.current = null;
+      ownScrollRef.current = null;
+      shiftPositionsRef.current = null;
+      releaseFloors(anchor);
+      if (holdRef.current) {
+        const focused = document.activeElement instanceof Element ? document.activeElement : null;
+        focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
+        positionsBeforeRef.current = controlPositions();
+        rowBoxesBeforeRef.current = rootRef.current ? rowBoxes(rootRef.current) : null;
+        releaseAnchorRef.current = anchor;
+        holdRef.current = null;
+        setHold(null);
+      }
+    },
+    [releaseFloors, releaseIfResized, rootRef],
+  );
+
+  /**
+   * D70(c) (B-p18B-2): desplazar (rueda, arrastre o barra) suelta lo retenido sin mover lo que está bajo el último punto
+   * de contacto: se ancla el desplazamiento a ello. Si ningún desplazamiento lo compensa (la página arriba y el hueco
+   * encima), se sigue reteniendo hasta un desplazamiento que sí (que ya haya movido el contenido más que lo soltado).
+   */
+  const releaseOnScroll = useCallback(() => {
+    const root = rootRef.current;
+    if (!root || releaseIfResized()) {
       return;
     }
-    releaseFloors();
-    anchorRef.current = null;
-    ownScrollRef.current = null;
-    shiftPositionsRef.current = null;
-    if (holdRef.current) {
-      const focused = document.activeElement instanceof Element ? document.activeElement : null;
-      focusedKeyRef.current = focused?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR)?.dataset.layoutBox;
-      positionsBeforeRef.current = controlPositions();
-      rowBoxesBeforeRef.current = rootRef.current ? rowBoxes(rootRef.current) : null;
-      holdRef.current = null;
-      setHold(null);
+    const anchor = contactAnchor(root, contactRef.current);
+    const heights = holdRef.current?.heights;
+    const boxes = heights
+      ? [...root.querySelectorAll<HTMLElement>(LAYOUT_BOX_SELECTOR)].filter((box) => heights.has(box.dataset.layoutBox ?? ""))
+      : [];
+    if (anchor && !releaseKeepsAnchor(anchor, floorsRef.current, boxes)) {
+      // El `scroll` de la prueba (ya deshecha) no es del usuario.
+      const scroller = scrollParent(anchor.element);
+      ownScrollRef.current = { scroller, top: scroller.scrollTop };
+      return;
     }
-  }, [releaseFloors, releaseIfResized, rootRef]);
+    release(anchor);
+  }, [release, releaseIfResized, rootRef]);
 
   /**
    * D67(a): el orden de filas del modelo cambió sin acción del usuario (una llegada asíncrona pasa una fila de lista):
@@ -519,9 +686,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       }
       retainedOrderRef.current = order;
       setRetainedOrder(order);
-      stopFloorsRef.current ??= listenForRelease(root, releaseFloors, ownScrollRef);
+      stopFloorsRef.current ??= listenForRelease(root, () => releaseFloors(), releaseOnScroll, ownScrollRef);
     },
-    [releaseFloors, rootRef],
+    [releaseFloors, releaseOnScroll, rootRef],
   );
 
   // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la
@@ -666,10 +833,18 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     typingAnchorRef.current = null;
     const rowsBefore = rowBoxesBeforeRef.current;
     rowBoxesBeforeRef.current = null;
+    // D70(c): si lo soltó un desplazamiento, lo que estaba bajo el último punto de contacto vuelve a su sitio.
+    const contact = releaseAnchorRef.current;
+    releaseAnchorRef.current = null;
     if (typing && typing.element.isConnected && document.activeElement === typing.element) {
       const delta = typing.element.getBoundingClientRect().top - typing.top;
       if (Math.abs(delta) >= 1) {
         ownScrollRef.current = scrollBack(typing.element, delta);
+      }
+    } else if (contact?.element.isConnected) {
+      const delta = contact.element.getBoundingClientRect().top - contact.top;
+      if (Math.abs(delta) >= 1) {
+        ownScrollRef.current = scrollBack(contact.element, delta);
       }
     } else if (rowsBefore && rootRef.current) {
       // B-qa02-1: sin campo en que se escribe, la fila siguiente a la compactada no se va de la vista.
@@ -710,8 +885,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     if (floor && sameWidth && !typing) {
       const keepStyle = (notice: HTMLElement) => {
         if (!floorsRef.current.has(notice)) {
-          const { display, maxHeight, minHeight, overflow } = notice.style;
-          floorsRef.current.set(notice, { display, maxHeight, minHeight, overflow });
+          floorsRef.current.set(notice, noticeStyle(notice));
         }
       };
       for (const notice of root.querySelectorAll<HTMLElement>(NOTICE_SELECTOR)) {
@@ -719,8 +893,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         const height = notice.getBoundingClientRect().height;
         if (was !== undefined && was - height >= 1) {
           keepStyle(notice);
-          // `empty:hidden`: el aviso que se va también conserva su sitio (y el hueco del `gap`).
-          notice.style.display = "block";
+          // `empty:hidden`: el aviso que se va también conserva su sitio (y el hueco del `gap`); el que solo encoge conserva
+          // su `display` (la rejilla que apila las reservas del aviso de tasa o de duplicado).
+          if (getComputedStyle(notice).display === "none") {
+            notice.style.display = "block";
+          }
           notice.style.minHeight = `${was}px`;
         } else if (was !== undefined && height - was >= 1 && !userTurnRef.current && movesRowControls(root, notice)) {
           // D67(a) (M-p17B-1): lo que crece solo (sin acción del usuario en este turno) y bajaría controles de las filas
@@ -737,7 +914,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         }
       }
       if (floorsRef.current.size > 0 && !stopFloorsRef.current) {
-        stopFloorsRef.current = listenForRelease(root, releaseFloors, ownScrollRef);
+        stopFloorsRef.current = listenForRelease(root, () => releaseFloors(), releaseOnScroll, ownScrollRef);
       }
     }
     const { width, heights, rowBlocks } = measureNotices(root, anchor);
@@ -781,7 +958,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     arrivalPositionsRef.current = arrivals;
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
-  }, [releaseFloors, releaseForWidth, rootRef]);
+  }, [releaseFloors, releaseForWidth, releaseOnScroll, rootRef]);
 
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));
@@ -857,7 +1034,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       if (own && scroller === own.scroller && Math.abs(own.scroller.scrollTop - own.top) < 1) {
         return;
       }
-      release();
+      releaseOnScroll();
     };
     // Solo el ratón: un toque no deja puntero encima (y su `pointerleave` llega al levantar el dedo).
     const onPointerMove = (event: PointerEvent) => {
@@ -882,20 +1059,20 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     // Desplazar (rueda, arrastre o barra), usar el teclado o sacar el ratón del panel (o de la
     // ventana) aplica el layout pendiente.
     window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("wheel", release, { passive: true });
-    window.addEventListener("touchmove", release, { passive: true });
+    window.addEventListener("wheel", releaseOnScroll, { passive: true });
+    window.addEventListener("touchmove", releaseOnScroll, { passive: true });
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("pointermove", onPointerMove, true);
     document.documentElement.addEventListener("pointerleave", onPointerLeave);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("wheel", release);
-      window.removeEventListener("touchmove", release);
+      window.removeEventListener("wheel", releaseOnScroll);
+      window.removeEventListener("touchmove", releaseOnScroll);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointermove", onPointerMove, true);
       document.documentElement.removeEventListener("pointerleave", onPointerLeave);
     };
-  }, [holding, release, rootRef]);
+  }, [holding, release, releaseOnScroll, rootRef]);
 
   const boxStyle = useCallback(
     (key: string): CSSProperties | undefined => {
