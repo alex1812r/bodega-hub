@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 
 import type { InvoiceDuplicateMatch, InvoiceDuplicateQuery } from "../contracts";
 
@@ -10,9 +10,26 @@ jest.mock("../../../shared/api/apiFetch", () => ({
 }));
 
 import { buildInvoiceDuplicateQuery, fetchInvoiceDuplicates, INVOICE_DUPLICATES_PATH } from "./fetchInvoiceDuplicates";
-import { useInvoiceDuplicates } from "./useInvoiceDuplicates";
+import { INVOICE_DUPLICATES_DEBOUNCE_MS, useInvoiceDuplicates } from "./useInvoiceDuplicates";
 
-/** REP12-01 (D52): consulta de duplicados de la revisión con el proveedor elegido. */
+/**
+ * REP12-01 (D52): consulta de duplicados de la revisión con el proveedor elegido.
+ * REP17-04 (M-p18Q-1, D69(a)): reloj falso; la espera de la consulta se adelanta a mano.
+ */
+
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
 
 const SCAN = "00000000-0000-4000-8000-00000000d002";
 const MATCH: InvoiceDuplicateMatch = { scanId: "scan-previo", purchaseId: "purchase-1", number: "1", date: null };
@@ -60,9 +77,7 @@ describe("useInvoiceDuplicates", () => {
     const fetcher = jest.fn(async () => [MATCH]);
     const { result } = renderHook(() => useInvoiceDuplicates(null, fetcher));
 
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 400));
-    });
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.current.matches).toBeUndefined();
   });
@@ -77,11 +92,13 @@ describe("useInvoiceDuplicates", () => {
       initialProps: { query: { supplierId: "a", number: "1" } as InvoiceDuplicateQuery },
     });
 
-    await waitFor(() => expect(result.current.matches).toEqual([]));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(result.current.matches).toEqual([]);
     rerender({ query: { supplierId: "b", number: "1" } });
     // Hasta la respuesta de la consulta nueva no se usa la anterior.
     expect(result.current.matches).toBeUndefined();
-    await waitFor(() => expect(result.current.matches).toEqual([MATCH]));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(result.current.matches).toEqual([MATCH]);
     expect(signals[0].aborted).toBe(true);
   });
 
@@ -91,7 +108,8 @@ describe("useInvoiceDuplicates", () => {
     });
     const { result } = renderHook(() => useInvoiceDuplicates({ supplierId: "a", number: "1" }, fetcher));
 
-    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(fetcher).toHaveBeenCalled();
     expect(result.current.matches).toBeUndefined();
   });
 });
@@ -109,7 +127,8 @@ describe("useInvoiceDuplicates · consulta vigente sin respuesta (REP12-01 inten
 
     // En la espera de 300 ms.
     expect(result.current.pending).toBe(true);
-    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(fetcher).toHaveBeenCalled();
     // En vuelo.
     expect(result.current.pending).toBe(true);
     await act(async () => resolve([]));
@@ -124,7 +143,8 @@ describe("useInvoiceDuplicates · consulta vigente sin respuesta (REP12-01 inten
     const { result } = renderHook(() => useInvoiceDuplicates({ supplierId: "a", number: "1" }, fetcher));
 
     expect(result.current.pending).toBe(true);
-    await waitFor(() => expect(result.current.pending).toBe(false));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(result.current.pending).toBe(false);
     expect(result.current.matches).toBeUndefined();
   });
 
@@ -160,10 +180,12 @@ describe("useInvoiceDuplicates · consulta fallida (REP12-05, B-qa-rep12-2)", ()
     });
 
     expect(result.current.failed).toBe(false);
-    await waitFor(() => expect(result.current.failed).toBe(true));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(result.current.failed).toBe(true);
     rerender({ query: { supplierId: "b", number: "1" } });
     expect(result.current.failed).toBe(false);
-    await waitFor(() => expect(result.current.matches).toEqual([]));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(result.current.matches).toEqual([]);
     expect(result.current.failed).toBe(false);
   });
 });

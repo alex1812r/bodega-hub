@@ -1,5 +1,7 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+
+import { INVOICE_DUPLICATES_DEBOUNCE_MS } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_TAX_RATES } from "../reviewFixtures";
@@ -10,6 +12,9 @@ import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
  * medias (dd/10/2026), con `validity.badInput`. La revisión lo trataba como «vacía = válida»: sin
  * aviso, Cargar habilitado y la compra se registraba sin la fecha leída. Ahora la entrada inválida
  * avisa junto al campo y bloquea Cargar; borrar la fecha leída pide confirmar registrar sin fecha.
+ *
+ * REP17-04 (M-p18Q-1, D69(a)): reloj falso; tras cambiar la fecha, la espera de la consulta de
+ * duplicados se adelanta a mano en vez de confiar en el segundo real de waitFor.
  */
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
@@ -28,6 +33,20 @@ jest.mock("../../../../invoice-scan/client/useInvoiceScanPurchase", () => ({
 const CONTEXT: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES };
 const BAD_INPUT_MESSAGE = /La fecha escrita no existe o está incompleta/;
 const NO_DATE_CHECKBOX = /Registrar sin fecha/;
+
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
 
 function renderPanel(date: string | null = "2026-10-17") {
   const onLoad = jest.fn();
@@ -83,7 +102,8 @@ describe("InvoiceReviewPanel · fecha imposible o incompleta (REP14-03, M-p15B-1
     clearDate(date);
     fireEvent.change(date, { target: { value: "2026-02-28" } });
     expect(date).not.toHaveAttribute("aria-invalid");
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(loadButton()).toBeEnabled();
   });
 
   it("badInput sin evento input (de 31/02 a dd/02): se detecta al soltar la tecla o salir", async () => {
@@ -116,7 +136,8 @@ describe("InvoiceReviewPanel · fecha imposible o incompleta (REP14-03, M-p15B-1
     expect(confirm).toHaveAccessibleName(/17\/10\/2026/);
 
     fireEvent.click(confirm);
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(loadButton()).toBeEnabled();
     fireEvent.click(loadButton());
     expect(onLoad).toHaveBeenCalledTimes(1);
     expect(onLoad.mock.calls[0][0].body.invoiceScanExtraction.date).toBeUndefined();
@@ -138,6 +159,7 @@ describe("InvoiceReviewPanel · fecha imposible o incompleta (REP14-03, M-p15B-1
     fireEvent.change(date, { target: { value: "2026-10-17" } });
     clearDate(date);
     expect(screen.queryByRole("checkbox", { name: NO_DATE_CHECKBOX })).not.toBeInTheDocument();
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(loadButton()).toBeEnabled();
   });
 });

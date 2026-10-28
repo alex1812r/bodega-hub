@@ -1,9 +1,10 @@
 import "@testing-library/jest-dom";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { INVOICE_DUPLICATES_DEBOUNCE_MS } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import type { InvoiceDuplicateMatch, InvoiceDuplicateQuery } from "@/modules/invoice-scan/contracts";
-import type { ContactEntityOption } from "@/shared/components/EntityAutocomplete";
+import { type ContactEntityOption, ENTITY_AUTOCOMPLETE_DEBOUNCE_MS } from "@/shared/components/EntityAutocomplete";
 
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
@@ -13,6 +14,9 @@ import { InvoiceReviewPanel, type InvoiceReviewPanelProps } from "./InvoiceRevie
  * REP12-01 (M-p12-1, D52): al elegir el proveedor a mano en la revisión se consulta el
  * duplicado con ese proveedor (`POST /api/purchases/invoice-scan/duplicates`) y se avisa con
  * «Ver». No bloquea, pero Cargar exige reconocerlo con una casilla, como la diferencia.
+ *
+ * REP17-04 (M-p18Q-1, D69(a)): reloj falso. Las esperas del autocompletado y de la consulta de
+ * duplicados se adelantan a mano; ningún paso depende de que el worker responda en 1 s reales.
  */
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
@@ -60,6 +64,24 @@ function f19Response() {
   });
 }
 
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
+
+function setupUser() {
+  return userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
+}
+
 function renderPanel(overrides: Partial<InvoiceReviewPanelProps> = {}) {
   const props: InvoiceReviewPanelProps = {
     context: CONTEXT,
@@ -80,12 +102,13 @@ function loadButton() {
 
 async function chooseFarmatodo(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("combobox", { name: /proveedor/i }), "Farma");
-  await user.click(await screen.findByRole("option", { name: /farmatodo/i }));
+  await advance(ENTITY_AUTOCOMPLETE_DEBOUNCE_MS);
+  await user.click(screen.getByRole("option", { name: /farmatodo/i }));
 }
 
 describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12-01, M-p12-1)", () => {
   it("f19: al elegir Farmatodo consulta con ese proveedor, avisa con «Ver» y Cargar pide reconocerlo", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const matches: InvoiceDuplicateMatch[] = [
       { scanId: "scan-previo", purchaseId: PURCHASE_ID, number: "00362952", date: "2026-09-03" },
     ];
@@ -100,7 +123,8 @@ describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12
 
     await chooseFarmatodo(user);
 
-    await waitFor(() => expect(screen.getByText(/ya se registró en una compra/)).toBeInTheDocument());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(screen.getByText(/ya se registró en una compra/)).toBeInTheDocument();
     expect(duplicateFetcher).toHaveBeenLastCalledWith(
       expect.objectContaining({
         scanId: REVIEW_SCAN_ID,
@@ -121,7 +145,7 @@ describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12
   });
 
   it("el aviso del escaneo (proveedor leído) también exige reconocerlo antes de Cargar", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPanel({
       duplicateFetcher: jest.fn(async () => [{ scanId: "scan-anterior", purchaseId: null, number: "000123", date: null }]),
       response: makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }),
@@ -140,13 +164,14 @@ describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12
       response: makeReviewResponse({ lines: [{}], matched: { supplier: { contactId: REVIEW_SUPPLIER_ID } } }),
     });
 
-    await waitFor(() => expect(duplicateFetcher).toHaveBeenCalled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(duplicateFetcher).toHaveBeenCalled();
     expect(screen.queryByText(/Esta factura \(/)).not.toBeInTheDocument();
     expect(loadButton()).toBeEnabled();
   });
 
   it("cancela la consulta obsoleta al cambiar de proveedor", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const signals: AbortSignal[] = [];
     const duplicateFetcher = jest.fn(
       (_query: InvoiceDuplicateQuery, signal: AbortSignal) =>
@@ -159,9 +184,11 @@ describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12
       response: makeReviewResponse({ lines: [{}], matched: { supplier: { contactId: REVIEW_SUPPLIER_ID } } }),
     });
 
-    await waitFor(() => expect(duplicateFetcher).toHaveBeenCalledTimes(1));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(duplicateFetcher).toHaveBeenCalledTimes(1);
     await chooseFarmatodo(user);
-    await waitFor(() => expect(duplicateFetcher).toHaveBeenCalledTimes(2));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(duplicateFetcher).toHaveBeenCalledTimes(2);
     expect(signals[0].aborted).toBe(true);
     expect(signals[1].aborted).toBe(false);
   });
@@ -169,7 +196,7 @@ describe("InvoiceReviewPanel · duplicado con el proveedor elegido a mano (REP12
 
 describe("InvoiceReviewPanel · Cargar espera la consulta del proveedor elegido (REP12-01 intento 2)", () => {
   it("tras cambiar el proveedor, mientras la consulta espera o está en vuelo, Cargar no carga", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     let resolveFarmatodo: (matches: InvoiceDuplicateMatch[]) => void = () => undefined;
     const duplicateFetcher = jest.fn((query: InvoiceDuplicateQuery) =>
       query.supplierId === FARMATODO
@@ -191,7 +218,8 @@ describe("InvoiceReviewPanel · Cargar espera la consulta del proveedor elegido 
     // Espera de 300 ms y luego en vuelo: Cargar no carga y el pie dice por qué.
     expect(loadButton()).toBeDisabled();
     expect(screen.getByText(/Comprobando duplicados/)).toBeInTheDocument();
-    await waitFor(() => expect(duplicateFetcher).toHaveBeenLastCalledWith(expect.objectContaining({ supplierId: FARMATODO }), expect.any(AbortSignal)));
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(duplicateFetcher).toHaveBeenLastCalledWith(expect.objectContaining({ supplierId: FARMATODO }), expect.any(AbortSignal));
     expect(loadButton()).toBeDisabled();
     await user.click(loadButton());
     expect(props.onLoad).not.toHaveBeenCalled();
@@ -202,7 +230,7 @@ describe("InvoiceReviewPanel · Cargar espera la consulta del proveedor elegido 
   });
 
   it("si la consulta falla, no bloquea para siempre: vuelve al aviso del escaneo", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     const duplicateFetcher = jest.fn(async (query: InvoiceDuplicateQuery) => {
       if (query.supplierId === FARMATODO) {
         throw new Error("red");
@@ -217,14 +245,15 @@ describe("InvoiceReviewPanel · Cargar espera la consulta del proveedor elegido 
     await chooseFarmatodo(user);
 
     expect(loadButton()).toBeDisabled();
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    expect(loadButton()).toBeEnabled();
     expect(screen.queryByText(/Comprobando duplicados/)).not.toBeInTheDocument();
   });
 });
 
 describe("InvoiceReviewPanel · el pie explica el aviso de duplicado sin reconocer (REP12-01 intento 2)", () => {
   it("el detalle del pie pide marcar el aviso y lleva el foco a su casilla", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPanel({
       duplicateFetcher: jest.fn(async () => [{ scanId: "scan-anterior", purchaseId: null, number: "000123", date: null }]),
       response: makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }),
@@ -243,7 +272,7 @@ describe("InvoiceReviewPanel · el pie explica el aviso de duplicado sin reconoc
 
 describe("InvoiceReviewPanel · el pie compacto menciona el aviso de duplicado (REP13-05, B-qa23-1)", () => {
   it("con el detalle plegado (móvil), el pie pide marcar el aviso y lleva a su casilla", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPanel({
       duplicateFetcher: jest.fn(async () => [{ scanId: "scan-anterior", purchaseId: null, number: "000123", date: null }]),
       response: makeReviewResponse({ lines: [{}], matched: { duplicateOfScanId: "scan-anterior" } }),

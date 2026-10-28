@@ -11,7 +11,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { InvoiceDuplicateMatch, InvoiceDuplicateQuery } from "@/modules/invoice-scan/contracts";
-import type { ContactEntityOption } from "@/shared/components/EntityAutocomplete";
+import { type ContactEntityOption, ENTITY_AUTOCOMPLETE_DEBOUNCE_MS } from "@/shared/components/EntityAutocomplete";
 
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_TAX_RATES } from "../reviewFixtures";
@@ -126,11 +126,15 @@ function tap(element: Element, point: { clientX: number; clientY: number }) {
   fireEvent.click(element, { ...point, detail: 1 });
 }
 
-/** Escribe «Farma» y toca «Farmatodo»; a los 300 ms responde la consulta de duplicados (aviso a la vista). */
+/**
+ * Escribe «Farma» y toca «Farmatodo»; a los 300 ms responde la consulta de duplicados (aviso a la vista).
+ * REP17-04 (D69(a)): la espera del autocompletado se adelanta a mano, no con el plazo de findBy.
+ */
 async function chooseFarmatodoByTouch() {
   const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
   await user.type(screen.getByRole("combobox", { name: /proveedor/i }), "Farma");
-  const option = await screen.findByRole("option", { name: /farmatodo/i });
+  await advance(ENTITY_AUTOCOMPLETE_DEBOUNCE_MS);
+  const option = screen.getByRole("option", { name: /farmatodo/i });
   tap(option, OPTION);
   await advance(300);
 }
@@ -189,7 +193,8 @@ describe("REP12-05 · M-qa-rep12-1: el toque tras elegir el proveedor no reconoc
     });
     const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     await user.type(screen.getByRole("combobox", { name: /proveedor/i }), "Farma");
-    tap(await screen.findByRole("option", { name: /farmatodo/i }), OPTION);
+    await advance(ENTITY_AUTOCOMPLETE_DEBOUNCE_MS);
+    tap(screen.getByRole("option", { name: /farmatodo/i }), OPTION);
     await advance(2000);
     // El dedo baja; la respuesta llega y el aviso aparece bajo él; el dedo sube. Pasada la guarda de
     // 1 s, ese clic sigue sin contar: la pulsación empezó antes de que existiera la casilla.
