@@ -53,6 +53,11 @@ export type InvoiceReviewLineRowProps = {
   /** D36: Enter sobre la fila con aviso no elige: resalta los avisos (la opción la elige el usuario). */
   noticeHighlighted?: boolean;
   canCreateProduct: boolean;
+  /**
+   * D67(a): la tasa del día aún no llegó y, al llegar, será la de la revisión: el costo en REF (y su desvío frente al
+   * último costo) puede aparecer sin que nadie actúe.
+   */
+  ratePending?: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
   /** D46-a: clave de caja de la fila (`data-layout-box`) y su alto mínimo con el layout pendiente. */
@@ -90,6 +95,7 @@ export function InvoiceReviewLineRow({
   onPickProduct,
   onRowKeyDown,
   productFetcher,
+  ratePending = false,
   rowRef,
   searchOpen,
   state,
@@ -109,6 +115,11 @@ export function InvoiceReviewLineRow({
   const costUnconfirmed =
     costReview.kind === "loading" || (costReview.kind === "acknowledge" && !costReview.acknowledged);
   const showOptions = showPack || costReview.kind !== "clear";
+  // D67(a) (M-p17B-1): sin tasa aún, el costo con último costo conocido no se compara; al llegar la tasa puede
+  // desviarse y mostrar las opciones, el aviso de desvío y su motivo. Su sitio queda reservado (invisible) desde el
+  // primer render, como mientras se consulta el último costo (REP15-01).
+  const costMayDeviate = ratePending && lastCost?.status === "known" && costReview.kind === "clear";
+  const reserveOptions = costMayDeviate && !showOptions;
   // D33-a (C6-M1): con aviso (o costo por reconocer) y sin elección, ninguna opción viene marcada.
   // D43: elegida la opción, queda marcada aunque falte reconocer su costo (botón aparte).
   const checkedMode =
@@ -333,12 +344,21 @@ export function InvoiceReviewLineRow({
           {/* REP15-01 (D65): el último costo llega tarde y puede quitar las opciones (o la línea «Sin costo previo»);
               useLayoutHold retiene el alto de este bloque hasta que el usuario desplace o use el teclado. */}
           <div className="empty:hidden" data-layout-notice>
-            {showOptions ? (
-              <div className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
+            {showOptions || reserveOptions ? (
+              <div
+                aria-hidden={reserveOptions || undefined}
+                className={cn(
+                  "flex flex-col gap-2 rounded-lg border border-outline-variant p-3",
+                  reserveOptions ? "invisible" : null,
+                )}
+                data-testid={reserveOptions ? "invoice-review-options-reserve" : undefined}
+              >
                 <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
                   {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
                     // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.
-                    const outcome = getEntryModeOutcome(state, line, mode);
+                    const current = getEntryModeOutcome(state, line, mode);
+                    // D67(a): lo reservado mide lo que mediría desviado (con «(último …)»).
+                    const outcome = reserveOptions && current ? { ...current, deviates: true } : current;
                     const deviates = outcome?.deviates === true;
                     const unverified = outcome?.lastCost === "error";
                     const optionId = `${optionsId}-${mode}`;
@@ -396,9 +416,9 @@ export function InvoiceReviewLineRow({
                             <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
                             {ENTRY_MODE_DEVIATION_TEXT}
                           </span>
-                        ) : outcome?.lastCost === "loading" ? (
-                          // REP15-01 (D65): mientras se consulta el último costo, el sitio del aviso de desvío queda
-                          // reservado (invisible): si llega desviado, la opción no crece y no baja lo de debajo.
+                        ) : outcome?.lastCost === "loading" || costMayDeviate ? (
+                          // REP15-01 (D65): mientras se consulta el último costo (D67(a): o falta la tasa), el sitio del
+                          // aviso de desvío queda reservado (invisible): si llega desviado, la opción no crece.
                           <span aria-hidden className="invisible flex items-start gap-1 font-normal">
                             <AlertTriangle aria-hidden className="mt-0.5 size-3 shrink-0" />
                             {ENTRY_MODE_DEVIATION_TEXT}
@@ -427,6 +447,15 @@ export function InvoiceReviewLineRow({
                   >
                     <Check aria-hidden className="size-3 shrink-0" />
                     {costAck.done}
+                  </p>
+                ) : costMayDeviate && line.choiceMade ? (
+                  // D67(a): elegida la opción, al llegar la tasa desviada aparece «Sí, el costo es…»: su sitio, reservado.
+                  <p
+                    aria-hidden
+                    className="invisible flex min-h-8 max-w-full items-center gap-1 self-start rounded-lg border px-3 py-1.5 text-xs font-medium break-words"
+                  >
+                    <AlertTriangle className="size-3 shrink-0" />
+                    {costAcknowledgementTexts(state, line).ask}
                   </p>
                 ) : null}
                 {line.entryMode === "pack" ? (
@@ -472,7 +501,7 @@ export function InvoiceReviewLineRow({
 
           {/* REP15-01 (D65(b)): lo que el último costo cambie aquí queda bajo useLayoutHold. */}
           <div className="empty:hidden" data-layout-notice>
-            {hasNotices ? (
+            {hasNotices || costMayDeviate ? (
               <ul
                 className={cn(
                   "flex flex-col gap-1 text-xs",
@@ -496,9 +525,9 @@ export function InvoiceReviewLineRow({
                     {need}
                   </li>
                 ))}
-                {costReview.kind === "loading" ? (
+                {costReview.kind === "loading" || costMayDeviate ? (
                   // REP15-01 (D65): el motivo del costo desviado (hasta 3 renglones más a 320 px) llega con el último
-                  // costo; su sitio queda reservado mientras se consulta y la fila no crece al llegar.
+                  // costo (D67(a): o con la tasa); su sitio queda reservado mientras falta y la fila no crece al llegar.
                   <li aria-hidden className="min-h-[3lh]" />
                 ) : null}
               </ul>

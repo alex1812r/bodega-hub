@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FileImage } from "lucide-react";
-import { type FocusEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FocusEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
 import { fetchLastUnitCostRef } from "@/modules/invoice-scan/client/fetchLastUnitCost";
@@ -186,6 +186,15 @@ function keepInConfirmed(sections: InvoiceReviewSections, index: number | null):
   };
 }
 
+function rowOrderOf(sections: InvoiceReviewSections): RowOrder {
+  return { review: sections.review.map((line) => line.index), confirmed: sections.confirmed.map((line) => line.index) };
+}
+
+function sameRowOrder(left: RowOrder, right: RowOrder) {
+  const same = (a: number[], b: number[]) => a.length === b.length && a.every((index, at) => index === b[at]);
+  return same(left.review, right.review) && same(left.confirmed, right.confirmed);
+}
+
 /** D46-a: con el layout pendiente, cada fila sigue en la lista y el puesto en que se pintaba. */
 function keepRowOrder(
   sections: InvoiceReviewSections,
@@ -287,6 +296,9 @@ export function InvoiceReviewPanel({
       }),
     [rateAtOpen, rateBeforeSystem, state],
   );
+  // D67(a) (M-p17B-1): la tasa del día que llegue pasará a ser la de los costos (sin elección del usuario ni factura en
+  // dólares): las filas reservan lo que su llegada pueda mostrar.
+  const ratePending = state.rate.system === undefined && !state.rate.explicit && !state.usd.anomaly;
   // D42: consulta el último costo de cada producto elegido en el buscador, una vez por (línea,
   // producto) en curso; la respuesta para un producto que ya no es el de la línea se ignora.
   const lastCostRequestsRef = useRef(new Set<string>());
@@ -399,7 +411,21 @@ export function InvoiceReviewPanel({
   }
   const taxRates = useMemo(() => buildReviewTaxRates(state.taxRates), [state.taxRates]);
   const modelSections = getReviewSections(state);
-  const sections = keepRowOrder(keepInConfirmed(modelSections, heldConfirmedIndex), layoutHold.order, state.lines);
+  const naturalSections = keepInConfirmed(modelSections, heldConfirmedIndex);
+  const sections = keepRowOrder(naturalSections, layoutHold.order, state.lines);
+  // D67(a): si una llegada asíncrona (tasa, último costo) cambia la lista u orden de las filas (una confirmada que pasa
+  // a desviarse), se conserva el pintado hasta que el usuario actúe (useLayoutHold decide si fue una llegada).
+  const naturalOrder = rowOrderOf(naturalSections);
+  const shownOrder = rowOrderOf(sections);
+  const rowOrderRef = useRef<{ natural: RowOrder; shown: RowOrder } | null>(null);
+  const { retainOrder } = layoutHold;
+  useLayoutEffect(() => {
+    const previous = rowOrderRef.current;
+    rowOrderRef.current = { natural: naturalOrder, shown: shownOrder };
+    if (previous && !sameRowOrder(previous.natural, naturalOrder)) {
+      retainOrder(previous.shown);
+    }
+  });
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
   // modelo), pero el botón lo dice para que se abra a revisarla.
   const confirmedMismatches = sections.confirmed.filter((line) =>
@@ -824,6 +850,7 @@ export function InvoiceReviewPanel({
         onPickProduct={handlePickProduct}
         onRowKeyDown={handleRowKeyDown}
         productFetcher={productFetcher}
+        ratePending={ratePending}
         rowRef={(element) => {
           if (element) {
             rowRefs.current.set(line.index, element);
