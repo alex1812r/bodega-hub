@@ -400,12 +400,13 @@ function releaseKeepsAnchor(
 /**
  * Lo que aplica el layout pendiente (D49) y suelta los avisos retenidos (D65(b)): desplazar (salvo el
  * desplazamiento propio de la compensación), la rueda, arrastrar el dedo, el teclado o sacar el ratón del
- * panel o de la ventana. Devuelve cómo dejar de escuchar.
+ * panel o de la ventana. D70(c): al desplazar y con el teclado, `onScroll` y `onKey` no mueven lo que está bajo el último
+ * punto de contacto. Devuelve cómo dejar de escuchar.
  */
 function listenForRelease(
   root: Element,
   release: () => void,
-  releaseOnScroll: () => void,
+  { onKey, onScroll: releaseOnScroll }: { onKey: () => void; onScroll: () => void },
   ownScrollRef: { current: OwnScroll | null },
 ) {
   const onScroll = (event: Event) => {
@@ -416,7 +417,7 @@ function listenForRelease(
     }
     releaseOnScroll();
   };
-  const onKeyDown = () => release();
+  const onKeyDown = () => onKey();
   // Solo el ratón: un toque no deja puntero encima (y su `pointerleave` llega al levantar el dedo).
   const onPointerMove = (event: PointerEvent) => {
     if (event.pointerType === "mouse" && !contains(root.getBoundingClientRect(), event.clientX, event.clientY)) {
@@ -650,16 +651,15 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   );
 
   /**
-   * D70(c) (B-p18B-2): desplazar (rueda, arrastre o barra) suelta lo retenido sin mover lo que está bajo el último punto
-   * de contacto: se ancla el desplazamiento a ello. Si ningún desplazamiento lo compensa (la página arriba y el hueco
-   * encima), se sigue reteniendo hasta un desplazamiento que sí (que ya haya movido el contenido más que lo soltado).
+   * D70(c) (B-p18B-2): suelta lo retenido sin mover `anchor`: se ancla el desplazamiento a él. Si ningún desplazamiento
+   * lo compensa (la página arriba y el hueco encima), se sigue reteniendo hasta uno que sí (que ya haya movido el
+   * contenido más que lo soltado).
    */
-  const releaseOnScroll = useCallback(() => {
+  const releaseKeeping = useCallback((anchor: ContactAnchor | null) => {
     const root = rootRef.current;
     if (!root || releaseIfResized()) {
       return;
     }
-    const anchor = contactAnchor(root, contactRef.current);
     const heights = holdRef.current?.heights;
     const boxes = heights
       ? [...root.querySelectorAll<HTMLElement>(LAYOUT_BOX_SELECTOR)].filter((box) => heights.has(box.dataset.layoutBox ?? ""))
@@ -672,6 +672,30 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     release(anchor);
   }, [release, releaseIfResized, rootRef]);
+
+  /** D70(c): desplazar (rueda, arrastre o barra) no mueve lo que está bajo el último punto de contacto. */
+  const releaseOnScroll = useCallback(() => {
+    const root = rootRef.current;
+    releaseKeeping(root ? contactAnchor(root, contactRef.current) : null);
+  }, [releaseKeeping, rootRef]);
+
+  /**
+   * D70(c): el teclado suelta lo retenido sin mover el campo en que se escribe ni lo que está bajo el ratón. Con el layout
+   * pendiente manda lo suyo (B-qa02-3, B-qa02-1) y aquí solo se sueltan los avisos.
+   */
+  const releaseFloorsOnKey = useCallback(() => {
+    const root = rootRef.current;
+    if (holdRef.current || !root) {
+      releaseFloors();
+      return;
+    }
+    const focused = document.activeElement;
+    const typing =
+      focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused)
+        ? { element: focused, top: focused.getBoundingClientRect().top }
+        : null;
+    releaseKeeping(typing ?? contactAnchor(root, contactRef.current));
+  }, [releaseFloors, releaseKeeping, rootRef]);
 
   /**
    * D67(a): el orden de filas del modelo cambió sin acción del usuario (una llegada asíncrona pasa una fila de lista):
@@ -686,9 +710,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       }
       retainedOrderRef.current = order;
       setRetainedOrder(order);
-      stopFloorsRef.current ??= listenForRelease(root, () => releaseFloors(), releaseOnScroll, ownScrollRef);
+      stopFloorsRef.current ??= listenForRelease(root, () => releaseFloors(), { onKey: releaseFloorsOnKey, onScroll: releaseOnScroll }, ownScrollRef);
     },
-    [releaseFloors, releaseOnScroll, rootRef],
+    [releaseFloors, releaseFloorsOnKey, releaseOnScroll, rootRef],
   );
 
   // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la
@@ -914,7 +938,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         }
       }
       if (floorsRef.current.size > 0 && !stopFloorsRef.current) {
-        stopFloorsRef.current = listenForRelease(root, () => releaseFloors(), releaseOnScroll, ownScrollRef);
+        stopFloorsRef.current = listenForRelease(root, () => releaseFloors(), { onKey: releaseFloorsOnKey, onScroll: releaseOnScroll }, ownScrollRef);
       }
     }
     const { width, heights, rowBlocks } = measureNotices(root, anchor);
@@ -958,7 +982,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     arrivalPositionsRef.current = arrivals;
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
-  }, [releaseFloors, releaseForWidth, releaseOnScroll, rootRef]);
+  }, [releaseFloors, releaseFloorsOnKey, releaseForWidth, releaseOnScroll, rootRef]);
 
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));

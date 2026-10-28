@@ -192,6 +192,25 @@ describe("REP17-02 · D70(c) · soltar lo retenido no mueve lo que está bajo el
     expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(true);
   });
 
+  it.each([
+    { scrollTop: 0, released: false, title: "sin desplazamiento que lo compense, una tecla no lo suelta" },
+    { scrollTop: 300, released: true, title: "con él, una tecla lo suelta anclado al control" },
+  ])("ratón sobre el control de las filas: $title", ({ scrollTop, released }) => {
+    const { rerender } = render(<Harness tick={0} />);
+    const scroller = wireScroller();
+    geometry.scrollTop = scrollTop;
+    fireEvent.scroll(scroller);
+    shrinkAlone(rerender);
+    const before = rowControl().getBoundingClientRect().top;
+    // jsdom no implementa PointerEvent: un MouseEvent «pointermove» lleva el punto.
+    fireEvent(rowControl(), new MouseEvent("pointermove", { bubbles: true, clientX: 100, clientY: before + 10 }));
+
+    fireEvent.keyDown(window, { key: "Shift" });
+
+    expect(notice().style.minHeight).toBe(released ? "" : "200px");
+    expect(rowControl().getBoundingClientRect().top).toBe(before);
+  });
+
   it("el aviso retenido que solo encoge conserva su rejilla (la que apila sus reservas)", () => {
     const { rerender } = render(<Harness tick={0} />);
     wireScroller();
