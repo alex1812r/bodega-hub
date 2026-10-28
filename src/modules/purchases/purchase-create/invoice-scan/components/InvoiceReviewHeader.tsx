@@ -21,6 +21,7 @@ import {
   formatScore,
   LOW_EXTRACTION_CONFIDENCE,
 } from "./invoiceReviewView";
+import { reserveTextClassName } from "./InvoiceReviewRateNotice";
 import { useFreshPressCheckbox } from "./useFreshPressCheckbox";
 
 const CURRENCY_LABELS: Record<InvoiceReviewState["header"]["currency"], string> = {
@@ -222,19 +223,59 @@ export type InvoiceReviewDuplicateNoticeProps = {
   onDuplicateAcknowledge?: (acknowledged: boolean) => void;
   /** Casilla del aviso de duplicado: el motivo del pie lleva el foco a ella. */
   duplicateCheckboxRef?: RefObject<HTMLInputElement | null>;
+  /** REP17-01 (D70(d)): hay consulta de duplicados: su respuesta puede traer el aviso y su sitio queda reservado. */
+  reserveSpace?: boolean;
 };
+
+const duplicateNoticeClassName =
+  "col-start-1 row-start-1 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
+const ACKNOWLEDGE_TEXT = "No es la misma compra, o quiero cargarla igual";
+
+/** Textos del aviso: ya registrada en una compra (con «Ver») o ya escaneada. */
+function duplicateTexts(header: InvoiceReviewState["header"]) {
+  const criterion = duplicateCriterionLabel(header);
+  return {
+    purchase: `Esta factura (${criterion}) ya se registró en una compra. Revisa que no la cargues dos veces.`,
+    scan: `Esta factura (${criterion}) ya se escaneó antes en la tienda. Revisa que no la cargues dos veces.`,
+  };
+}
+
+/**
+ * REP17-01 (D70(d)): caja invisible de un texto del aviso (lo pinta CSS: no es texto del documento) en la misma celda que
+ * el aviso: la celda mide lo que el más alto.
+ */
+function DuplicateNoticeReserve({ acknowledge, text }: { acknowledge: boolean; text: string }) {
+  return (
+    <div aria-hidden className={cn(duplicateNoticeClassName, "invisible pointer-events-none")} data-layout-reserve inert>
+      <span className="mt-0.5 size-4 shrink-0" />
+      <div className="flex min-w-0 flex-col gap-2">
+        <span className={reserveTextClassName} data-reserve={text} />
+        {acknowledge ? (
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <span className="size-6 shrink-0" />
+            <span className={reserveTextClassName} data-reserve={ACKNOWLEDGE_TEXT} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Aviso de factura ya escaneada (o ya registrada en una compra, con «Ver») y la casilla que Cargar exige.
  * REP15-01b (D65(a)): llega tras la consulta, o al teclear o borrar el número, y se va igual; va tras las líneas, donde
  * aparecer o irse no mueve nada de encima ni las líneas. Lo que acorte la página al irse queda bajo useLayoutHold
  * (D65(b), `data-layout-notice`).
+ * REP17-01 (D70(d), B-p18B-1): mientras haya consulta (`reserveSpace`) o con el aviso a la vista, ocupa el alto
+ * del más alto de sus textos: aparecer o cambiar de texto no baja el pie; lo que aparece en él sin acción del usuario no
+ * actúa durante 1 s (D49).
  */
 export function InvoiceReviewDuplicateNotice({
   duplicateAcknowledged = false,
   duplicateCheckboxRef,
   duplicates,
   onDuplicateAcknowledge,
+  reserveSpace = false,
   state,
 }: InvoiceReviewDuplicateNoticeProps) {
   const { header } = state;
@@ -252,12 +293,19 @@ export function InvoiceReviewDuplicateNotice({
   const ownCheckboxRef = useRef<HTMLInputElement>(null);
   const acknowledgeRef = duplicateCheckboxRef ?? ownCheckboxRef;
   const acknowledge = useFreshPressCheckbox(acknowledgeRef);
+  const texts = duplicateTexts(header);
 
   return (
-    <div className="empty:hidden" data-layout-notice>
+    <div className="grid empty:hidden" data-layout-arrival-guard data-layout-notice>
+      {showDuplicate || reserveSpace ? (
+        <>
+          <DuplicateNoticeReserve acknowledge={onDuplicateAcknowledge !== undefined} text={`${texts.purchase} Ver`} />
+          <DuplicateNoticeReserve acknowledge={onDuplicateAcknowledge !== undefined} text={texts.scan} />
+        </>
+      ) : null}
       {showDuplicate ? (
         <div
-          className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
+          className={duplicateNoticeClassName}
           // REP12-05 (D49): aparece tras la consulta, con el dedo aún cerca; lo que aparece o se mueve en
           // él queda guardado 1 s (useLayoutHold), como el pie.
           data-layout-shift-guard
@@ -267,8 +315,7 @@ export function InvoiceReviewDuplicateNotice({
           <div className="flex min-w-0 flex-col gap-2">
             {duplicatePurchaseId ? (
               <span>
-                Esta factura ({duplicateCriterionLabel(header)}) ya se registró en una compra. Revisa que no la cargues dos
-                veces.{" "}
+                {texts.purchase}{" "}
                 <Link
                   className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
                   href={`/purchases/${encodeURIComponent(duplicatePurchaseId)}`}
@@ -277,10 +324,7 @@ export function InvoiceReviewDuplicateNotice({
                 </Link>
               </span>
             ) : (
-              <span>
-                Esta factura ({duplicateCriterionLabel(header)}) ya se escaneó antes en la tienda. Revisa que no la cargues dos
-                veces.
-              </span>
+              <span>{texts.scan}</span>
             )}
             {onDuplicateAcknowledge ? (
               // REP12-05 (M-qa-rep12-1): el texto no es su etiqueta; la casilla solo cambia con su propio
@@ -300,7 +344,7 @@ export function InvoiceReviewDuplicateNotice({
                   ref={acknowledgeRef}
                   type="checkbox"
                 />
-                <span id={acknowledgeTextId}>No es la misma compra, o quiero cargarla igual</span>
+                <span id={acknowledgeTextId}>{ACKNOWLEDGE_TEXT}</span>
               </div>
             ) : null}
           </div>
