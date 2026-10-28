@@ -18,6 +18,7 @@ import { type ComponentProps, useEffect, useState } from "react";
 import { expect, fn, screen, waitFor, within } from "storybook/test";
 
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
+import type { InvoiceDuplicatesFetcher } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import { invoiceScanQueryKeys } from "@/modules/invoice-scan/client/useInvoiceScanImages";
 import { purchaseSuppliersQueryKeys } from "@/modules/purchases/hooks/usePurchaseSuppliers";
 import type { EntityFetcher, ProductEntityOption } from "@/shared/components/EntityAutocomplete";
@@ -136,6 +137,8 @@ const products: ProductEntityOption[] = [
 
 const productFetcher: EntityFetcher<"product"> = async () => products;
 const noSuppliers: EntityFetcher<"contact"> = async () => [];
+// REP17-07 (M-r17Q-1): sin él, la consulta iba al servidor de Vitest y fallaba cuando le tocaba (según la carga).
+const noDuplicates: InvoiceDuplicatesFetcher = async () => [];
 
 /** Clics y viewport reales de Vitest browser (Playwright); `null` fuera de Vitest. */
 async function loadBrowser() {
@@ -269,8 +272,29 @@ function centerOf(element: Element): Point {
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
 
+/**
+ * REP17-07 (M-r17Q-1): el control a la vista y sin nada encima (el pie fijo tapa el borde de abajo de la ventana).
+ * Playwright solo desplaza si el control queda fuera de la ventana: tapado por el pie, reintenta el clic hasta agotar
+ * el tiempo de la historia. Si ni centrado se alcanza, el usuario tampoco podría: es del panel, no del test.
+ */
+function revealForClick(element: HTMLElement) {
+  const atCenter = () => {
+    const point = centerOf(element);
+    return document.elementFromPoint(point.x, point.y);
+  };
+  const reachable = () => element.contains(atCenter());
+  if (reachable()) {
+    return;
+  }
+  element.scrollIntoView({ block: "center" });
+  if (!reachable()) {
+    throw new Error(`${describeControl(element)} queda bajo ${describeControl(atCenter())} incluso centrado en la ventana`);
+  }
+}
+
 /** Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda. */
 async function setupClick(browser: Browser, element: HTMLElement) {
+  revealForClick(element);
   await browser.userEvent.click(element);
   await sleep(POINTER_GUARD_MS + 100);
   await browser.userEvent.keyboard("{Shift}");
@@ -460,6 +484,7 @@ const meta = {
   args: {
     canCreateProduct: true,
     context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES },
+    duplicateFetcher: noDuplicates,
     lastUnitCostFetcher: async () => null,
     onDiscard: fn(),
     onLoad: fn(),
