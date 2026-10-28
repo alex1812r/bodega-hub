@@ -76,6 +76,8 @@ export const USD_ANOMALY_NOTICE =
 export type InvoiceReviewContext = {
   /** Tasa Bs/REF vigente de la tienda; ausente si no hay tasa del día (6.7). */
   systemRateVes?: number;
+  /** REP17-05 (D69(b)): la consulta de la tasa del día falló (no llegará sola: hay que escribirla). */
+  systemRateFailed?: boolean;
   /** Última tasa conocida (aunque no sea del día): sin tasa del día acota la impresa. */
   lastKnownRateVes?: number;
   /** Catálogo de alícuotas activas: código → porcentaje (`{ general: 16, exento: 0 }`). */

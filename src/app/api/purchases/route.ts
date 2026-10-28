@@ -154,27 +154,43 @@ export async function POST(request: Request) {
       invoiceScanId && input.clientRequestId
         ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
         : null;
+    const service = getPurchasesService();
+    // REP17-05 (D70(f), B-p18A-1): la clave que ya creó su compra es un replay: `create_purchase` la devuelve (u otra
+    // huella da 409) sin crear nada, ANTES del pre-check del escaneo, que pudo purgarse desde entonces.
+    const replayed =
+      scanClaim && (await service.hasPurchaseWithClientRequestId(scanClaim.clientRequestId, auth.storeId))
+        ? await service.createPurchase(input, auth.storeId)
+        : null;
     const scan = scanClaim
-      ? await scanService.precheckInvoiceScan(
-          { ...scanClaim, extraction: correctedExtraction, lines: invoiceScanLines },
-          auth.storeId,
-        )
+      ? await scanService
+          .precheckInvoiceScan({ ...scanClaim, extraction: correctedExtraction, lines: invoiceScanLines }, auth.storeId)
+          .catch((error: unknown) => {
+            // Replay con el escaneo purgado: la compra ya existe y el escaneo no se confirma en esta llamada.
+            if (replayed && error instanceof ApiError && error.message === invoiceScanServer.INVOICE_SCAN_NOT_FOUND_MESSAGE) {
+              return null;
+            }
+
+            throw error;
+          })
       : null;
 
-    const service = getPurchasesService();
     let purchase: Awaited<ReturnType<typeof service.createPurchase>>;
 
-    try {
-      purchase = await service.createPurchase(input, auth.storeId);
-    } catch (error) {
-      // Rechazo definitivo (4xx): la compra no existe y se suelta el reclamo para
-      // reintentar con otra clave. Resultado incierto (5xx, red): el reclamo se
-      // queda; el mismo intento lo recupera y, si no vuelve, caduca.
-      if (scanClaim && error instanceof ApiError && error.status < 500) {
-        await scanService.releaseInvoiceScanClaim(scanClaim, auth.storeId);
-      }
+    if (replayed) {
+      purchase = replayed;
+    } else {
+      try {
+        purchase = await service.createPurchase(input, auth.storeId);
+      } catch (error) {
+        // Rechazo definitivo (4xx): la compra no existe y se suelta el reclamo para
+        // reintentar con otra clave. Resultado incierto (5xx, red): el reclamo se
+        // queda; el mismo intento lo recupera y, si no vuelve, caduca.
+        if (scanClaim && error instanceof ApiError && error.status < 500) {
+          await scanService.releaseInvoiceScanClaim(scanClaim, auth.storeId);
+        }
 
-      throw error;
+        throw error;
+      }
     }
 
     // No lanza salvo una excepción: la compra ya existe y el resultado viaja en
@@ -193,7 +209,9 @@ export async function POST(request: Request) {
           },
           auth.storeId,
         )
-      : null;
+      : scanClaim
+        ? { confirmed: false, learned: null }
+        : null;
     const created = invoiceScan ? { ...purchase, invoiceScan } : purchase;
 
     if (!initialPayment) {

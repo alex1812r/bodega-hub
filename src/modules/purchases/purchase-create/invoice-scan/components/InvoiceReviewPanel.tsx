@@ -850,6 +850,7 @@ export function InvoiceReviewPanel({
         onPickProduct={handlePickProduct}
         onRowKeyDown={handleRowKeyDown}
         productFetcher={productFetcher}
+        rateFailed={context.systemRateFailed}
         ratePending={ratePending}
         rowRef={(element) => {
           if (element) {

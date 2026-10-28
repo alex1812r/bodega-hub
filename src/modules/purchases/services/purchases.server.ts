@@ -518,6 +518,24 @@ export async function getPurchaseById(
   };
 }
 
+/**
+ * REP17-05 (D70(f)): la clave ya creó su compra en la tienda (`purchases.client_request_id`, única por tienda);
+ * repetirla es un replay de `create_purchase`.
+ */
+export async function hasPurchaseWithClientRequestId(clientRequestId: string, storeId: string) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("purchases")
+    .select("id")
+    .eq("store_id", storeId)
+    .eq("client_request_id", clientRequestId)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+
+  return data !== null;
+}
+
 export async function createPurchase(input: PurchaseInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
 
