@@ -11,6 +11,8 @@
  * Propiedad: tras el primer render (o tras la última acción del usuario, que sí puede mover), el `top` en la ventana de
  * CADA control interactivo de las filas, del aviso tras las líneas y del pie no cambia en NINGÚN frame de ninguna
  * llegada. La página está arriba y nadie desplaza, teclea ni mueve el puntero (nada suelta lo retenido).
+ * REP17-03 (D70(b)): con el alcance «panel» se mide TODO el panel (también la cabecera y el visor); lo usan las
+ * historias `InvoiceReviewPanel.rep17-03.*`, que además montan sus escenarios con las piezas exportadas aquí.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
@@ -172,7 +174,7 @@ const SETTLE_TIMEOUT_MS = 4000;
  * Espera a que `ready()` se cumpla y el DOM (incluidas las capas flotantes) no cambie durante QUIET_FRAMES frames;
  * `onFrame` corre en cada frame (el muestreo de posiciones).
  */
-async function settle(what: string, ready: () => boolean = () => true, onFrame: () => void = noop) {
+export async function settle(what: string, ready: () => boolean = () => true, onFrame: () => void = noop) {
   let mutated = true;
   const observer = new MutationObserver((records) => {
     if (records.some((record) => !(record.target instanceof Element && record.target.closest(".tsqd-parent-container")))) {
@@ -211,11 +213,11 @@ async function until(what: string, condition: () => boolean) {
   }
 }
 
-function panelRoot() {
+export function panelRoot() {
   return document.querySelector<HTMLElement>('[data-testid="invoice-review-panel"]');
 }
 
-function scroller() {
+export function scroller() {
   const main = panelRoot()?.closest("main");
   if (!main) {
     throw new Error("Sin <main>");
@@ -223,7 +225,7 @@ function scroller() {
   return main;
 }
 
-function row(index: number) {
+export function row(index: number) {
   const element = panelRoot()?.querySelector<HTMLElement>(`li[data-line-index="${index}"]`);
   if (!element) {
     throw new Error(`Sin fila ${index}`);
@@ -231,7 +233,7 @@ function row(index: number) {
   return element;
 }
 
-function buttonIn(container: HTMLElement, name: RegExp) {
+export function buttonIn(container: HTMLElement, name: RegExp) {
   const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => name.test(item.textContent ?? ""));
   if (!button) {
     throw new Error(`Sin botón ${name}`);
@@ -245,7 +247,9 @@ const CONTROL_SELECTOR =
 type Tracked = { element: Element; zone: string; name: string; top: number };
 
 function nameOf(element: Element) {
-  const text = element.getAttribute("aria-label") || element.textContent?.replace(/\s+/g, " ").trim() || element.getAttribute("placeholder") || "";
+  // REP17-03: los campos de la cabecera se nombran por su etiqueta («Tasa Bs por REF»).
+  const label = element instanceof HTMLInputElement ? element.labels?.[0]?.textContent?.trim() : undefined;
+  const text = element.getAttribute("aria-label") || label || element.textContent?.replace(/\s+/g, " ").trim() || element.getAttribute("placeholder") || "";
   return `${element.tagName.toLowerCase()}«${text.slice(0, 32)}»`;
 }
 
@@ -254,12 +258,30 @@ function zoneOf(element: Element) {
   if (line instanceof HTMLElement) {
     return `L${line.dataset.lineIndex}`;
   }
+  if (element.closest('[data-layout-box="header"]')) {
+    return "cabecera";
+  }
+  if (element.closest('aside[aria-label="Factura escaneada"]')) {
+    return "visor";
+  }
   return element.closest('[data-layout-box="footer"]') ? "pie" : "aviso";
 }
 
-/** Zonas medidas: las filas (y el grupo de confirmadas), el aviso tras las líneas y el pie. */
-function zones(): Element[] {
+/**
+ * Qué se mide: «filas» (D67(b), REP16-02) las filas, el aviso tras las líneas y el pie; «panel» (D70(b), REP17-03)
+ * todo el panel, cabecera y visor incluidos.
+ */
+export type Scope = "filas" | "panel";
+
+/** Zonas medidas en el alcance: las filas (y el grupo de confirmadas), el aviso tras las líneas y el pie, o el panel. */
+function zones(scope: Scope): Element[] {
   const root = panelRoot();
+  if (scope === "panel") {
+    if (!root) {
+      throw new Error("Sin panel");
+    }
+    return [root];
+  }
   const lines = root?.querySelector('section[aria-label="Líneas de la factura"]');
   const footer = root?.querySelector('[data-layout-box="footer"]');
   if (!lines || !footer) {
@@ -273,8 +295,8 @@ function isVisible(box: DOMRect) {
   return box.width > 0 || box.height > 0;
 }
 
-function snapshot(): Tracked[] {
-  return zones().flatMap((zone) =>
+function snapshot(scope: Scope): Tracked[] {
+  return zones(scope).flatMap((zone) =>
     [...(zone.matches(CONTROL_SELECTOR) ? [zone] : []), ...zone.querySelectorAll(CONTROL_SELECTOR)].flatMap((element) => {
       const box = element.getBoundingClientRect();
       return isVisible(box) ? [{ element, name: nameOf(element), top: box.top, zone: zoneOf(element) }] : [];
@@ -329,16 +351,21 @@ function answered(key: readonly unknown[], outcome: "ok" | "fail") {
   return query.getObserversCount() === 0 || query.state.status === (outcome === "fail" ? "error" : "success");
 }
 
-/** Suelta una fuente (cuando el panel ya la pidió) y devuelve cuándo su efecto está confirmado. */
-async function release(arrival: Arrival): Promise<() => boolean> {
+/** El panel adoptó la tasa del día: la cabecera lo dice (con impresa distinta, «hoy es …»). */
+const rateAdopted = () => /Llegó la tasa del día|hoy es/.test(panelRoot()?.textContent ?? "");
+
+/**
+ * Suelta una fuente (cuando el panel ya la pidió) y devuelve cuándo su efecto está confirmado (`adopted`: cuándo lo
+ * está el de la tasa, si el escenario lo ve de otra forma).
+ */
+async function release(arrival: Arrival, adopted: () => boolean = rateAdopted): Promise<() => boolean> {
   const state = current();
   const { outcome, source } = arrival;
   if (source === "rate") {
     // Otro objeto: `useSyncExternalStore` solo repinta si cambia la instantánea.
     runtime = { ...state, systemRateVes: state.fixture.systemRateVes };
     emit();
-    // El panel la adoptó: la cabecera lo dice (con impresa distinta, «hoy es …»).
-    return () => /Llegó la tasa del día|hoy es/.test(panelRoot()?.textContent ?? "");
+    return adopted;
   }
   await until(`petición de ${source}`, () => state.asked[source] > 0);
   switch (source) {
@@ -428,33 +455,15 @@ function describeMoves(moves: Moves) {
     .join("; ");
 }
 
-/** Corre un caso y devuelve los controles que se movieron (vacío = cumple). */
-export async function runCase(fixture: Fixture, reviewCase: ReviewCase): Promise<string[]> {
+/** Monta `fixture` con todas sus fuentes retenidas, corre `body` con el panel ya quieto y lo desmonta. */
+export async function withCase<T>(fixture: Fixture, body: () => Promise<T>): Promise<T> {
   runtime = newRuntime(fixture);
   const caseSeq = runtime.seq;
   emit();
   try {
     await until("panel montado", () => document.querySelector(`[data-rep16-02-case="${caseSeq}"] [data-testid="invoice-review-panel"]`) !== null);
     await settle("primer render");
-    await prepareRows(fixture, reviewCase.search);
-    const failures: string[] = [];
-    for (const step of reviewCase.steps) {
-      if (step.kind === "pick") {
-        // Acción del usuario: puede mover; la referencia pasa a ser lo que queda tras ella.
-        pick();
-        await settle("elegir producto");
-        continue;
-      }
-      // Referencia: lo que hay justo antes de esta llegada (también lo que trajo una anterior).
-      const tracked = snapshot();
-      const moves: Moves = new Map();
-      const confirmed = await release(step.arrival);
-      await settle(`${step.arrival.source}:${step.arrival.outcome}`, confirmed, () => sampleInto(tracked, moves));
-      if (moves.size > 0) {
-        failures.push(`tras ${step.arrival.source}:${step.arrival.outcome} se movieron ${moves.size} controles: ${describeMoves(moves)}`);
-      }
-    }
-    return failures.map((failure) => `${fixture.id} · ${reviewCase.id} · ${failure}`);
+    return await body();
   } finally {
     const finished = current();
     runtime = null;
@@ -467,6 +476,45 @@ export async function runCase(fixture: Fixture, reviewCase: ReviewCase): Promise
     finished.lastCost.resolve(null);
     finished.queryClient.clear();
   }
+}
+
+/**
+ * Suelta una llegada con la referencia justo antes (también lo que trajo una anterior) y devuelve qué controles del
+ * alcance se movieron en algún frame hasta quedar quieto (`null`: ninguno).
+ */
+export async function measureArrival(arrival: Arrival, scope: Scope, adopted?: () => boolean): Promise<string | null> {
+  const tracked = snapshot(scope);
+  const moves: Moves = new Map();
+  const confirmed = await release(arrival, adopted);
+  await settle(`${arrival.source}:${arrival.outcome}`, confirmed, () => sampleInto(tracked, moves));
+  return moves.size > 0 ? `tras ${arrival.source}:${arrival.outcome} se movieron ${moves.size} controles: ${describeMoves(moves)}` : null;
+}
+
+/** Suelta una llegada sin medirla (lo que prepara un escenario) y espera a que el panel quede quieto. */
+export async function arrive(arrival: Arrival) {
+  const confirmed = await release(arrival);
+  await settle(`${arrival.source}:${arrival.outcome}`, confirmed);
+}
+
+/** Corre un caso y devuelve los controles que se movieron (vacío = cumple). */
+export async function runCase(fixture: Fixture, reviewCase: ReviewCase, scope: Scope = "filas"): Promise<string[]> {
+  return withCase(fixture, async () => {
+    await prepareRows(fixture, reviewCase.search);
+    const failures: string[] = [];
+    for (const step of reviewCase.steps) {
+      if (step.kind === "pick") {
+        // Acción del usuario: puede mover; la referencia pasa a ser lo que queda tras ella.
+        pick();
+        await settle("elegir producto");
+        continue;
+      }
+      const moved = await measureArrival(step.arrival, scope);
+      if (moved) {
+        failures.push(moved);
+      }
+    }
+    return failures.map((failure) => `${fixture.id} · ${reviewCase.id} · ${failure}`);
+  });
 }
 
 async function loadBrowser() {
@@ -483,39 +531,57 @@ const FIXTURE_OF: Record<keyof typeof CASES, FixtureId> = {
   tasa3: "tasa3",
 };
 
-/** Viewports de D67(b). */
+/** Viewports de D67(b) y, de D70(b), el teléfono en horizontal (alto < 500 px: el pie no es fijo). */
 export const VIEWPORTS = {
   w390: [390, 844],
   w768: [768, 1024],
   w1024x1366: [1024, 1366],
   w1280: [1280, 900],
+  w844x390: [844, 390],
 } as const;
 
-/** `play` de una historia: el tramo `chunk` de la lista `list` a ese ancho; falla con los controles movidos. */
-export function propertyPlay(list: keyof typeof CASES, viewport: keyof typeof VIEWPORTS, chunk: number) {
+/**
+ * Pone la ventana de la historia en `viewport` y oculta las herramientas de React Query; `null` fuera de Vitest
+ * (Storybook en el navegador: no hay viewport real y la medición se omite).
+ */
+export async function openViewport(viewport: keyof typeof VIEWPORTS) {
+  const browser = await loadBrowser();
+  if (!browser) {
+    return null;
+  }
+  const [width, height] = VIEWPORTS[viewport];
+  await browser.page.viewport(width, height);
+  const hideDevtools = document.createElement("style");
+  hideDevtools.textContent = ".tsqd-parent-container { display: none !important; }";
+  document.head.append(hideDevtools);
+  return { browser, label: `${width}×${height}` };
+}
+
+const TAG: Record<Scope, string> = { filas: "REP16-02", panel: "REP17-03 panel" };
+
+/**
+ * `play` de una historia: el tramo `chunk` de la lista `list` a ese ancho, midiendo `scope`; falla con los controles
+ * movidos.
+ */
+export function propertyPlay(list: keyof typeof CASES, viewport: keyof typeof VIEWPORTS, chunk: number, scope: Scope = "filas") {
   return async () => {
-    const browser = await loadBrowser();
-    if (!browser) {
+    const opened = await openViewport(viewport);
+    if (!opened) {
       return;
     }
-    const [width, height] = VIEWPORTS[viewport];
-    await browser.page.viewport(width, height);
-    const hideDevtools = document.createElement("style");
-    hideDevtools.textContent = ".tsqd-parent-container { display: none !important; }";
-    document.head.append(hideDevtools);
     const cases = chunkOf(list, chunk);
     await expect(cases.length, `tramo ${chunk} de ${list} vacío`).toBeGreaterThan(0);
     const failures: string[] = [];
     let red = 0;
     for (const reviewCase of cases) {
-      const moved = await runCase(FIXTURES[FIXTURE_OF[list]], reviewCase);
+      const moved = await runCase(FIXTURES[FIXTURE_OF[list]], reviewCase, scope);
       red += moved.length > 0 ? 1 : 0;
-      failures.push(...moved.map((failure) => `${width}×${height} ${failure}`));
+      failures.push(...moved.map((failure) => `${opened.label} ${failure}`));
     }
     // Una línea por llegada que movió algo (se puede contar y comparar entre corridas).
-    failures.forEach((failure) => console.warn(`[REP16-02 rojo] ${failure}`));
-    const text = `${width}×${height} ${list}#${chunk}: ${cases.length} casos, ${red} con controles movidos`;
-    console.warn(`[REP16-02] ${text}`);
+    failures.forEach((failure) => console.warn(`[${TAG[scope]} rojo] ${failure}`));
+    const text = `${opened.label} ${list}#${chunk}: ${cases.length} casos, ${red} con controles movidos`;
+    console.warn(`[${TAG[scope]}] ${text}`);
     await expect(failures, text).toEqual([]);
   };
 }
