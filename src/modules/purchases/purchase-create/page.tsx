@@ -306,12 +306,12 @@ export function PurchaseCreatePage() {
   const reviewContext = useMemo(
     () => ({
       // La tasa del sistema, no el respaldo de 510: sin tasa del día la revisión lo dice.
-      ...(currentRateVes !== undefined ? { systemRateVes: currentRateVes } : {}),
+      ...(currentRateVes !== undefined ? { systemRateVes: currentRateVes } : { systemRateFailed: exchangeRate.isError }),
       taxRates: Object.fromEntries(
         taxRates.rates.filter((rate) => rate.isActive).map((rate) => [rate.code, rate.pct]),
       ),
     }),
-    [currentRateVes, taxRates.rates],
+    [currentRateVes, exchangeRate.isError, taxRates.rates],
   );
 
   // `/purchases/create?scan=1` (vacío de la lista): abre el escaneo una vez, cuando se

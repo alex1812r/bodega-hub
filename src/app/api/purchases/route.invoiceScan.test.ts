@@ -545,7 +545,7 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(secondResponse.status).toBe(201);
       expect(second.data.id).toBe(first.data.id);
       expect(second.data.invoiceScan).toEqual({ confirmed: true, learned: null });
-      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase"]);
+      expect(fake.rpcNames()).toEqual(["create_purchase", "claim_invoice_scan"]);
     });
 
     it("8 intentos concurrentes con claves distintas: una sola compra; el resto 400 sin create_purchase (SCN-06-F1)", async () => {
@@ -673,12 +673,12 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
 
       expect(second.data.id).toBe(first.data.id);
       expect(second.data.invoiceScan).toEqual({ confirmed: true, learned: 2 });
-      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase", "learn_invoice_aliases"]);
+      expect(fake.rpcNames()).toEqual(["create_purchase", "claim_invoice_scan", "learn_invoice_aliases"]);
 
       fake.rpc.mockClear();
       const third = await (await post(body)).json();
       expect(third.data.invoiceScan).toEqual({ confirmed: true, learned: null });
-      expect(fake.rpcNames()).toEqual(["claim_invoice_scan", "create_purchase"]);
+      expect(fake.rpcNames()).toEqual(["create_purchase", "claim_invoice_scan"]);
     });
 
     it("rawText cuyo alias normalizado pasa de 200 caracteres: se omite del aprendizaje y el resto se aprende", async () => {
@@ -717,8 +717,8 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(response.status).toBe(400);
       expect((await response.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
       expect(fake.rpcNames()).toEqual([
-        "claim_invoice_scan",
         "create_purchase",
+        "claim_invoice_scan",
         "confirm_invoice_scan",
         "release_invoice_scan_claim",
       ]);
@@ -741,8 +741,8 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
       expect(response.status).toBe(400);
       expect((await response.json()).error.message).toBe(INVOICE_SCAN_KEY_REUSED_MESSAGE);
       expect(fake.rpcNames()).toEqual([
-        "claim_invoice_scan",
         "create_purchase",
+        "claim_invoice_scan",
         "confirm_invoice_scan",
         "release_invoice_scan_claim",
       ]);
@@ -1081,7 +1081,8 @@ describe("/api/purchases · invoiceScanId (SCN-06)", () => {
     it("escaneo de otra tienda: 400", async () => {
       registerMockInvoiceScan({ extracted, id: SCAN_ID, storeId: OTHER_STORE_ID });
 
-      const response = await post({ ...purchase, clientRequestId: PURCHASE_KEY, invoiceScanId: SCAN_ID });
+      // REP17-05: clave sin compra previa (la de un test anterior ya creó su compra: sería un replay, D70(f)).
+      const response = await post({ ...purchase, clientRequestId: crypto.randomUUID(), invoiceScanId: SCAN_ID });
 
       expect(response.status).toBe(400);
       expect(getMockInvoiceScan(SCAN_ID)?.status).toBe("extracted");
