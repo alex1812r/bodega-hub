@@ -335,16 +335,23 @@ export function InvoiceReviewRateNotice({
     );
   };
   const choices = (current: RateNoticeParts) => {
-    if (!current.view.chips) {
-      return choiceSlots.map((slot) => (slot === "manual" ? choiceZone(current, slot) : <div key={slot} />));
-    }
-    if (split) {
-      // Una sola elección: el grupo abarca las opciones de encima, el campo y las de debajo.
+    const offered = current.view.chips !== null;
+    if (split && choiceSlots.length > 0) {
+      // Una sola elección: el grupo abarca las opciones de encima, el campo y las de debajo. Siempre el mismo elemento
+      // (con opciones o sin ellas): al llegar la tasa del día el campo no se vuelve a montar ni pierde el foco.
       return (
-        <div aria-label={GROUP_LABEL} className="grid grid-rows-subgrid gap-3" role="radiogroup" style={spanRows(choiceSlots.length)}>
+        <div
+          aria-label={offered ? GROUP_LABEL : undefined}
+          className="grid grid-rows-subgrid gap-3"
+          role={offered ? "radiogroup" : undefined}
+          style={spanRows(choiceSlots.length)}
+        >
           {choiceSlots.map((slot) => choiceZone(current, slot))}
         </div>
       );
+    }
+    if (!offered) {
+      return choiceSlots.map((slot) => (slot === "manual" ? choiceZone(current, slot) : <div key={slot} />));
     }
     return choiceSlots.map((slot) =>
       slot === "chips" ? (

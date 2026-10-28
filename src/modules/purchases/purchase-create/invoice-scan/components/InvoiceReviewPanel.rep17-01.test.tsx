@@ -120,6 +120,21 @@ describe("REP17-01 · M-p18B-1 · tasa escrita a mano y luego llega la del día"
     expect(screen.getByText(/se usa la tasa escrita \(Bs\. 950,00\)/)).toBeInTheDocument();
   });
 
+  it("el campo no se vuelve a montar al llegar la del día: quien lo tiene enfocado para corregirla no pierde el foco", async () => {
+    const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
+    const base = props(noPrinted());
+    const view = render(<InvoiceReviewPanel {...base} />);
+    await user.type(screen.getByLabelText(RATE_LABEL), "950");
+    const field = screen.getByLabelText(RATE_LABEL);
+    await advance(INVOICE_DUPLICATES_DEBOUNCE_MS + COMPACTION_GUARD_MS);
+
+    view.rerender(<InvoiceReviewPanel {...base} context={{ systemRateVes: 900, taxRates: REVIEW_TAX_RATES }} />);
+
+    expect(radio(/Tasa de hoy/)).toBeInTheDocument();
+    expect(screen.getByLabelText(RATE_LABEL)).toBe(field);
+    expect(field).toHaveFocus();
+  });
+
   it("es reversible: elegida «Tasa de hoy», se vuelve a la tasa escrita con su valor", async () => {
     const { base, user } = await typedRateThenSystem(noPrinted());
     await advance(COMPACTION_GUARD_MS);
