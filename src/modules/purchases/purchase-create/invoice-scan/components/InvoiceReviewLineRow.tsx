@@ -77,6 +77,24 @@ function finiteOrNull(value: number): number | null {
 }
 
 /**
+ * REP16-01b (D67(a)): motivos que `line` añadiría si la tasa del día que falta desviara su costo (una tasa que lo deja
+ * en diez veces su último costo). Su texto solo difiere del real en las cifras: reservado, mide lo que ocupará.
+ */
+function deviationNeedsAhead(
+  state: InvoiceReviewState,
+  line: InvoiceReviewLine,
+  lastCostRef: number,
+  needs: readonly string[],
+): string[] {
+  const system = line.unitPrice / (lastCostRef * 10);
+  if (!Number.isFinite(system) || system <= 0) {
+    return [];
+  }
+  const ahead = lineNeedMessages({ ...state, rate: { ...state.rate, choice: "system", system } }, line);
+  return ahead.filter((need) => !needs.includes(need));
+}
+
+/**
  * Una línea de la factura en la revisión: estado por color, producto con el
  * texto leído debajo, candidatos con su motivo, buscador, cantidad, costo,
  * alícuota y empaque. Las pendientes reciben foco (recorrido con teclado).
@@ -137,6 +155,11 @@ export function InvoiceReviewLineRow({
   const currencyLabel = state.usd.anomaly ? "USD" : "Bs";
   const issues = getDisplayedLineIssues(state, line);
   const needs = line.discarded ? [] : lineNeedMessages(state, line);
+  // REP16-01b (D67(a)): con la tasa pendiente, el motivo del costo desviado se reserva con su texto (invisible).
+  const needsAhead =
+    costMayDeviate && lastCost?.status === "known" && !line.discarded
+      ? deviationNeedsAhead(state, line, lastCost.ref, needs)
+      : [];
   const amount = getLineAmount(line);
   const noticesId = useId();
   const optionsId = useId();
@@ -525,11 +548,19 @@ export function InvoiceReviewLineRow({
                     {need}
                   </li>
                 ))}
-                {costReview.kind === "loading" || costMayDeviate ? (
+                {costReview.kind === "loading" || (costMayDeviate && needsAhead.length === 0) ? (
                   // REP15-01 (D65): el motivo del costo desviado (hasta 3 renglones más a 320 px) llega con el último
                   // costo (D67(a): o con la tasa); su sitio queda reservado mientras falta y la fila no crece al llegar.
                   <li aria-hidden className="min-h-[3lh]" />
                 ) : null}
+                {needsAhead.map((need) => (
+                  // REP16-01b (D67(a)): con la tasa pendiente, el sitio es el del texto que tendrá (lo que difiera en
+                  // sus cifras lo retiene useLayoutHold).
+                  <li aria-hidden className="invisible flex items-start gap-1.5" key={`ahead-${need}`}>
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    {need}
+                  </li>
+                ))}
               </ul>
             ) : null}
           </div>
