@@ -18,8 +18,10 @@ export const POINTER_GUARD_RADIUS_PX = 32;
 export const COMPACTION_GUARD_MS = 1000;
 
 /**
- * D67(a): tras una acción del usuario, ventana en que lo que cambia es suyo (los efectos que siguen a la acción pintan en
- * tareas posteriores); pasada, un cambio es una llegada asíncrona.
+ * D67(a): tras una acción del usuario, lo que cambia es suyo mientras el panel siga cambiando por ella (los efectos que
+ * siguen a la acción pintan en tareas posteriores): el turno acaba en el primer frame sin cambios en el panel, y como
+ * mucho a los USER_TURN_MS. Pasado, un cambio es una llegada asíncrona (REP16-01b: con solo la ventana fija, lo que
+ * llegaba en ella, p. ej. la tasa 100 ms después de un clic, crecía sin retenerse).
  */
 const USER_TURN_MS = 250;
 
@@ -449,24 +451,56 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // acción): lo que cambie en él es suyo.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let frame: number | undefined;
+    // Hubo cambios en el panel desde el último frame del turno.
+    let changed = false;
+    const end = () => {
+      userTurnRef.current = false;
+      clearTimeout(timer);
+      if (frame !== undefined) {
+        cancelAnimationFrame(frame);
+        frame = undefined;
+      }
+    };
+    const watch = () => {
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (changed) {
+          changed = false;
+          watch();
+        } else {
+          end();
+        }
+      });
+    };
     const mark = () => {
       userTurnRef.current = true;
+      changed = true;
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        userTurnRef.current = false;
-      }, USER_TURN_MS);
+      timer = setTimeout(end, USER_TURN_MS);
+      if (frame === undefined) {
+        watch();
+      }
     };
+    const root = rootRef.current;
+    const mutations = new MutationObserver(() => {
+      changed = true;
+    });
+    if (root) {
+      mutations.observe(root, { attributes: true, characterData: true, childList: true, subtree: true });
+    }
     const events = ["pointerdown", "mousedown", "touchstart", "click", "keydown", "input", "change"] as const;
     for (const type of events) {
       window.addEventListener(type, mark, { capture: true, passive: true });
     }
     return () => {
-      clearTimeout(timer);
+      end();
+      mutations.disconnect();
       for (const type of events) {
         window.removeEventListener(type, mark, { capture: true });
       }
     };
-  }, []);
+  }, [rootRef]);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
@@ -586,9 +620,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     const sameWidth = previous && Math.abs(previous.width - root.getBoundingClientRect().width) < 1 ? previous : null;
     // REP15-01 (D65(b)): lo que llega tarde (tasa, duplicados, último costo) y encoge o quita un aviso sin que nadie
     // actúe no sube lo de debajo: el aviso conserva su alto hasta que el usuario desplace, use el teclado o saque el
-    // ratón (con el layout pendiente, también lo que creció tras fijar las cajas). Lo que se teclea es del usuario.
+    // ratón (con el layout pendiente, también lo que creció tras fijar las cajas). Lo que se teclea es del usuario
+    // (REP16-01b: en su turno; un campo enfocado sin teclear, como el buscador abierto, no frena lo que llega).
     const focused = document.activeElement;
-    const typing = focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
+    const typing =
+      userTurnRef.current && focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
     if (floor && sameWidth && !typing) {
       const keepStyle = (notice: HTMLElement) => {
         if (!floorsRef.current.has(notice)) {

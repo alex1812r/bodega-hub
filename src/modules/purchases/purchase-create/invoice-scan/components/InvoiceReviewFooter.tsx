@@ -360,11 +360,9 @@ export function InvoiceReviewFooter({
               {`y ${hiddenBlockers.above} más ↑`}
             </li>
           ) : null}
-          {summary.blockers.map((blocker) => (
-            <li key={blocker}>{blocker}</li>
-          ))}
+          {/* REP16-01b (D67(a)): el motivo con control («Marca el aviso…») va primero: los motivos que llegan o se van
+              (tasa, proveedor, último costo, fallo de duplicados) no lo mueven dentro de la lista. */}
           {duplicateReason === "pending" ? <li>Comprobando duplicados…</li> : null}
-          {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
           {duplicateReason === "unacknowledged" ? (
             <li>
               <button
@@ -377,6 +375,10 @@ export function InvoiceReviewFooter({
               </button>
             </li>
           ) : null}
+          {duplicateCheckFailed ? <li>No se pudo comprobar si la factura ya se cargó.</li> : null}
+          {summary.blockers.map((blocker) => (
+            <li key={blocker}>{blocker}</li>
+          ))}
           {hiddenBlockers.below > 0 ? (
             // REP14-06b (O-qa06-1): pegado al borde de abajo de los 3 renglones mientras queden motivos debajo (sin
             // cambiar el alto).
