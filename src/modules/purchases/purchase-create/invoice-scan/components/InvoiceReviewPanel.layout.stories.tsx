@@ -221,10 +221,42 @@ function observableState() {
  * las filas sin que la revisión las moviera.
  */
 async function clickAt(browser: Browser, point: Point) {
-  const { x, y } = await moveMouseTo(browser, point);
+  await clickGesture(browser, point).done;
+}
+
+function clickGesture(browser: Browser, point: Point) {
+  const { x, y } = pagePoint(point);
+  return sendGesture(browser, "pointerup", (session) => [
+    session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
+    session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }),
+    session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }),
+  ]);
+}
+
+/**
+ * REP17-09 (M-r17Q2-1): un gesto real por CDP, con sus órdenes seguidas (el canal las entrega en orden, como
+ * `mouse.click` de Puppeteer). Con la carpeta entera, mientras otros archivos cerraban y abrían, cada acuse tardaba
+ * 0,3–1,1 s aunque la entrada llegaba a la página en < 0,25 s. `landed`: el último evento del gesto llegó a la
+ * ventana (o ya no llegará: hay acuse); `done`: los acuses, que hay que esperar.
+ */
+type Gesture = { landed: Promise<void>; done: Promise<void> };
+type CdpSession = ReturnType<Browser["cdp"]>;
+
+/** La 1.ª orden CDP del archivo abre su sesión en el servidor: dos órdenes en frío podían abrir dos y adelantarse. */
+let cdpOpened: Promise<unknown> | null = null;
+
+function sendGesture(
+  browser: Browser,
+  lastEvent: "pointerup" | "keyup",
+  send: (session: CdpSession) => Promise<unknown>[],
+): Gesture {
+  const arrived = new Promise<void>((resolve) => {
+    window.addEventListener(lastEvent, () => resolve(), { capture: true, once: true });
+  });
   const session = browser.cdp();
-  await session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-  await session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  cdpOpened ??= session.send("Runtime.evaluate", { expression: "0" });
+  const done = cdpOpened.then(() => Promise.all(send(session))).then(() => undefined);
+  return { landed: Promise.race([arrived, done]), done };
 }
 
 /** Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`). */
@@ -253,19 +285,26 @@ function pagePoint(point: Point): Point {
 
 /** Toque real (CDP `Input.dispatchTouchEvent`): pointerdown/up con `pointerType` touch y su clic. */
 async function tapAt(browser: Browser, point: Point) {
-  const session = browser.cdp();
-  const touch = pagePoint(point);
-  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  try {
-    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
-    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  } finally {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-  }
+  await tapGesture(browser, point).done;
 }
 
-const activateAt = (browser: Browser, point: Point, pointer: Pointer) =>
-  pointer === "touch" ? tapAt(browser, point) : clickAt(browser, point);
+/** La emulación táctil se apaga en el mismo gesto aunque falle el toque (cada orden se procesa por separado). */
+function tapGesture(browser: Browser, point: Point) {
+  const touch = pagePoint(point);
+  return sendGesture(browser, "pointerup", (session) => [
+    session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }),
+    session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] }),
+    session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }),
+    session.send("Emulation.setTouchEmulationEnabled", { enabled: false }),
+  ]);
+}
+
+const activateAt = async (browser: Browser, point: Point, pointer: Pointer) => {
+  await activationGesture(browser, point, pointer).done;
+};
+
+const activationGesture = (browser: Browser, point: Point, pointer: Pointer) =>
+  pointer === "touch" ? tapGesture(browser, point) : clickGesture(browser, point);
 
 function centerOf(element: Element): Point {
   const box = element.getBoundingClientRect();
@@ -295,26 +334,28 @@ function revealForClick(element: HTMLElement) {
  * Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda.
  * REP17-09 (M-r17Q2-1): clic y tecla por CDP, el clic en el centro que `revealForClick` acaba de comprobar libre,
  * como el clic objetivo. Mientras la carpeta cerraba y abría archivos, `userEvent.click` (Playwright) tardaba
- * 10–13 s y `userEvent.keyboard` hasta 2,5 s, con el control alcanzable, rAF y timers al día y el CDP en < 0,7 s.
+ * 10–13 s y `userEvent.keyboard` hasta 2,5 s. La guarda corre desde que el clic llega a la página.
  */
 async function setupClick(browser: Browser, element: HTMLElement) {
   revealForClick(element);
-  await clickAt(browser, centerOf(element));
-  await sleep(POINTER_GUARD_MS + 100);
-  await pressShift(browser);
+  const click = clickGesture(browser, centerOf(element));
+  await Promise.all([click.done, click.landed.then(() => sleep(POINTER_GUARD_MS + 100))]);
+  await shiftGesture(browser).done;
 }
 
 /** Shift real (CDP `Input.dispatchKeyEvent`): una tecla que no escribe ni mueve el foco. */
-async function pressShift(browser: Browser) {
-  const session = browser.cdp();
+function shiftGesture(browser: Browser) {
   const key = { code: "ShiftLeft", key: "Shift", location: 1, windowsVirtualKeyCode: 16 };
-  await session.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key, modifiers: 8 });
-  await session.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+  return sendGesture(browser, "keyup", (session) => [
+    session.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key, modifiers: 8 }),
+    session.send("Input.dispatchKeyEvent", { type: "keyUp", ...key }),
+  ]);
 }
 
 /**
  * La medición de D46-c sobre `target`: tras el clic real no queda OTRO control de decisión en el
  * punto, y el 2.º clic en ese punto a 600 ms no cambia ninguna otra línea ni deja el foco en BODY.
+ * REP17-09: los tiempos cuentan desde que el clic llega a la página, no desde su acuse por CDP.
  */
 async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElement, timing: Timing) {
   target.scrollIntoView({ block: "center" });
@@ -328,7 +369,8 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   const others = () => Object.fromEntries(Object.entries(statuses()).filter(([index]) => index !== line));
 
   const before = observableState();
-  await activateAt(browser, point, timing.pointer);
+  const first = activationGesture(browser, point, timing.pointer);
+  await first.landed;
   const start = performance.now();
   for (const at of timing.probes) {
     await sleep(at - (performance.now() - start));
@@ -348,12 +390,13 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   const secondTarget = document.elementFromPoint(point.x, point.y);
   if (timing.secondAt > POINTER_GUARD_MS && secondTarget?.closest('[role="dialog"]')) {
     // Un diálogo a la vista desde hace segundos no es layout de la revisión: tocarlo es del usuario.
+    await first.done;
     return;
   }
   const secondInPanel = panel().contains(secondTarget);
 
-  await activateAt(browser, point, timing.pointer);
-  await sleep(300);
+  const second = activationGesture(browser, point, timing.pointer);
+  await Promise.all([first.done, second.done, second.landed.then(() => sleep(300))]);
   // Las líneas que siguen en pantalla (plegar confirmadas las quita) no cambiaron.
   const afterSecond = others();
   const shown = Object.keys(afterFirst).filter((index) => index in afterSecond);
