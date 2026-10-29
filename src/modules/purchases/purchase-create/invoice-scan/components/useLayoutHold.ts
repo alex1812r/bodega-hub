@@ -25,6 +25,12 @@ export const COMPACTION_GUARD_MS = 1000;
  */
 const USER_TURN_MS = 250;
 
+/**
+ * REP17-08 (D70(c), B-r17Q2-1): sin eventos del ratón durante este tiempo, estaba quieto: un trazo continuo (al salir del
+ * panel o de la ventana) da eventos mucho más seguidos, y una fijación sobre un control dura más.
+ */
+const MOUSE_REST_MS = 200;
+
 /** Controles que una activación con el puntero puede accionar. */
 const CONTROL_SELECTOR =
   "button, a[href], input, select, textarea, label, [role='button'], [role='checkbox'], [role='radio'], [role='option'], [role='switch'], [role='tab']";
@@ -329,24 +335,50 @@ function scrollBack(element: Element, delta: number): OwnScroll | null {
 
 type Point = { x: number; y: number };
 
+/** Último evento del ratón: su punto y cuándo (`Date.now()`). */
+type TimedPoint = Point & { at: number };
+
+/**
+ * REP17-08: donde estuvo quieto el ratón por última vez: `last` si no se ha movido desde hace MOUSE_REST_MS; si no,
+ * `rest` (de donde salió el trazo en curso).
+ */
+function restingPoint(last: TimedPoint | null, rest: Point | null, now: number): Point | null {
+  return last && now - last.at >= MOUSE_REST_MS ? { x: last.x, y: last.y } : rest;
+}
+
+/** REP17-08: `element` o algo que lo contiene dentro de `root` está pegado (`sticky`, `fixed`): desplazar no lo mueve. */
+function pinned(root: Element, element: Element): boolean {
+  for (let node: Element | null = element; node && root.contains(node); node = node.parentElement) {
+    const { position } = getComputedStyle(node);
+    if (position === "sticky" || position === "fixed") {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** D70(c): lo que no debe moverse al soltar lo retenido (lo que está bajo el último punto de contacto) y su `top`. */
 type ContactAnchor = { element: Element; top: number };
 
 /**
  * D70(c): control del panel bajo `point` o, si ahí no hay ninguno, el más cercano a él. `null` si el punto no está sobre
- * el panel (nada de él queda bajo el dedo o el ratón).
+ * el panel (nada de él queda bajo el dedo o el ratón). REP17-08: con `unpinned`, tampoco si está sobre algo pegado (el
+ * visor, el pie fijo), que ningún desplazamiento devuelve a su sitio, ni cuenta un control pegado como el más cercano.
  */
-function contactAnchor(root: Element, point: Point | null): ContactAnchor | null {
+function contactAnchor(root: Element, point: Point | null, unpinned = false): ContactAnchor | null {
   // jsdom no implementa elementFromPoint.
   const under =
     point && typeof document.elementFromPoint === "function" ? document.elementFromPoint(point.x, point.y) : null;
-  if (!point || !under || !root.contains(under)) {
+  if (!point || !under || !root.contains(under) || (unpinned && pinned(root, under))) {
     return null;
   }
   let element = under.closest(CONTROL_SELECTOR);
   if (!element || !root.contains(element)) {
     let nearest = Number.POSITIVE_INFINITY;
     for (const control of root.querySelectorAll(CONTROL_SELECTOR)) {
+      if (unpinned && pinned(root, control)) {
+        continue;
+      }
       const box = control.getBoundingClientRect();
       const distance = Math.hypot(
         Math.max(box.left - point.x, 0, point.x - box.right),
@@ -497,6 +529,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // D70(c): último punto de contacto (el dedo apoyado o el ratón), y lo que estaba bajo él al soltar lo retenido con un render pendiente
   // (layout pendiente u orden retenido): tras ese render vuelve a su sitio.
   const contactRef = useRef<Point | null>(null);
+  // REP17-08: último evento del ratón (dentro o fuera del panel) y donde estuvo quieto antes del trazo en curso.
+  const lastMouseRef = useRef<TimedPoint | null>(null);
+  const mouseRestRef = useRef<Point | null>(null);
   const releaseAnchorRef = useRef<ContactAnchor | null>(null);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
@@ -508,14 +543,23 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // luego lo retenido (la barra, el teclado) ancla como siempre (B-qa02-1: la fila que sigue a la compactada). Un arrastre
   // sí lo conserva: el desplazamiento por inercia que le sigue es suyo. REP17-06 (B-r17Q-2): del ratón cuenta su última
   // posición dentro del panel (fuera, nada del panel está bajo él): al volver a ese punto debe estar el mismo control.
+  // REP17-08: del ratón se guarda además donde estuvo quieto (o pulsó) antes de cada trazo: lo que ancla su salida.
   useEffect(() => {
     let dragged = false;
     const onPointer = (event: PointerEvent) => {
-      const root = rootRef.current;
-      if (event.pointerType === "mouse" && root && !contains(root.getBoundingClientRect(), event.clientX, event.clientY)) {
-        return;
+      const point = { x: event.clientX, y: event.clientY };
+      if (event.pointerType === "mouse") {
+        const now = Date.now();
+        const last = lastMouseRef.current;
+        mouseRestRef.current =
+          event.type === "pointerdown" || !last ? point : restingPoint(last, mouseRestRef.current, now);
+        lastMouseRef.current = { ...point, at: now };
+        const root = rootRef.current;
+        if (root && !contains(root.getBoundingClientRect(), point.x, point.y)) {
+          return;
+        }
       }
-      contactRef.current = { x: event.clientX, y: event.clientY };
+      contactRef.current = point;
     };
     const onTouch = (event: TouchEvent) => {
       const touch = event.touches[0];
@@ -685,17 +729,23 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
 
   /**
    * REP17-06 (D70(c), B-r17Q-2): sacar el ratón del panel o de la ventana suelta los avisos y el orden retenidos como al
-   * desplazar: sin mover lo que estaba bajo su última posición en el panel (al volver ahí está el mismo control), y si
-   * ningún desplazamiento lo compensa, sigue reteniendo. Con el layout pendiente manda lo suyo (D49, B-qa02-1) y aquí solo
-   * se sueltan los avisos.
+   * desplazar: sin mover lo que tenía debajo (al volver ahí está el mismo control), y si ningún desplazamiento lo
+   * compensa, sigue reteniendo. REP17-08 (B-r17Q2-1): lo que tenía debajo es el control sobre el que estuvo quieto antes
+   * de salir, no el punto por donde cruzó el borde (por arriba, encima de lo retenido) ni algo pegado (el visor, a la
+   * derecha con ≥ 1366 px); sin tal control (quieto fuera del panel o sobre algo pegado) sigue reteniendo hasta desplazar
+   * o usar el teclado. Con el layout pendiente manda lo suyo (D49, B-qa02-1) y aquí solo se sueltan los avisos.
    */
   const releaseFloorsOnLeave = useCallback(() => {
-    if (holdRef.current) {
+    const root = rootRef.current;
+    if (holdRef.current || !root) {
       releaseFloors();
       return;
     }
-    releaseOnScroll();
-  }, [releaseFloors, releaseOnScroll]);
+    const anchor = contactAnchor(root, restingPoint(lastMouseRef.current, mouseRestRef.current, Date.now()), true);
+    if (anchor) {
+      releaseKeeping(anchor);
+    }
+  }, [releaseFloors, releaseKeeping, rootRef]);
 
   /**
    * D70(c): el teclado suelta lo retenido sin mover el campo en que se escribe ni lo que está bajo el ratón. Con el layout
