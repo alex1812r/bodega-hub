@@ -11,8 +11,19 @@ import type { CDPSession } from "vitest/browser";
 type CdpBrowser = { cdp: () => CDPSession };
 type Point = { x: number; y: number };
 
-/** La 1.ª orden CDP del archivo abre su sesión en el servidor: dos órdenes en frío podían abrir dos y adelantarse. */
+/**
+ * La 1.ª orden CDP del archivo abre su sesión en el servidor: dos órdenes en frío podían abrir dos y adelantarse. Una
+ * sola apertura por archivo para todos sus gestos: con dos, la 2.ª costaba otro acuse completo (2,2 s en la ventana,
+ * `rep17/10-diag-2-marcas.txt`).
+ */
 let cdpOpened: Promise<unknown> | null = null;
+
+export async function openCdpSession(browser: CdpBrowser) {
+  const session = browser.cdp();
+  cdpOpened ??= session.send("Runtime.evaluate", { expression: "0" });
+  await cdpOpened;
+  return session;
+}
 
 /** Acuses CDP de los gestos ya llegados a la página, pendientes hasta el final de la historia. */
 const pendingAcks: Promise<void>[] = [];
@@ -48,9 +59,9 @@ async function sendGesture(
     };
     window.addEventListener(lastEvent, onEvent, { capture: true });
   });
-  const session = browser.cdp();
-  cdpOpened ??= session.send("Runtime.evaluate", { expression: "0" });
-  const done = cdpOpened.then(() => Promise.all(send(session))).then(() => undefined);
+  const done = openCdpSession(browser)
+    .then((session) => Promise.all(send(session)))
+    .then(() => undefined);
   deferCdpAck(done);
   await Promise.race([arrived, done]);
   window.removeEventListener(lastEvent, onEvent, { capture: true });

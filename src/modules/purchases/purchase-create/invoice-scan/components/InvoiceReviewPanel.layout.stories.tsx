@@ -25,7 +25,7 @@ import type { EntityFetcher, ProductEntityOption } from "@/shared/components/Ent
 
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { deferCdpAck, fillField, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
+import { deferCdpAck, fillField, openCdpSession, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
@@ -245,9 +245,6 @@ function clickGesture(browser: Browser, point: Point) {
 type Gesture = { landed: Promise<void> };
 type CdpSession = ReturnType<Browser["cdp"]>;
 
-/** La 1.ª orden CDP del archivo abre su sesión en el servidor: dos órdenes en frío podían abrir dos y adelantarse. */
-let cdpOpened: Promise<unknown> | null = null;
-
 function sendGesture(
   browser: Browser,
   lastEvent: "pointerup" | "keyup",
@@ -256,9 +253,9 @@ function sendGesture(
   const arrived = new Promise<void>((resolve) => {
     window.addEventListener(lastEvent, () => resolve(), { capture: true, once: true });
   });
-  const session = browser.cdp();
-  cdpOpened ??= session.send("Runtime.evaluate", { expression: "0" });
-  const done = cdpOpened.then(() => Promise.all(send(session))).then(() => undefined);
+  const done = openCdpSession(browser)
+    .then((session) => Promise.all(send(session)))
+    .then(() => undefined);
   deferCdpAck(done);
   return { landed: Promise.race([arrived, done]) };
 }
