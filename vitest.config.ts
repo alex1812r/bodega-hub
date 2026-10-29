@@ -23,6 +23,9 @@ export default defineConfig({
         ],
         test: {
           name: 'storybook',
+          // REP17-07 (M-r17Q-1, D69(a)): tope explícito y acotado. Con la carpeta entera en paralelo, cada orden al
+          // navegador (clic, tecla) llegó a tardar 3–5 s durante ~10 s y una historia de ~5 s agotaba los 15 s por defecto.
+          testTimeout: 30_000,
           browser: {
             enabled: true,
             headless: true,
