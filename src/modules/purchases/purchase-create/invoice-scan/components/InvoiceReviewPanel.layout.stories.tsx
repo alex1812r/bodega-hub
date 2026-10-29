@@ -274,8 +274,7 @@ function centerOf(element: Element): Point {
 
 /**
  * REP17-07 (M-r17Q-1): el control a la vista y sin nada encima (el pie fijo tapa el borde de abajo de la ventana).
- * Playwright solo desplaza si el control queda fuera de la ventana: tapado por el pie, reintenta el clic hasta agotar
- * el tiempo de la historia. Si ni centrado se alcanza, el usuario tampoco podría: es del panel, no del test.
+ * Si ni centrado se alcanza, el usuario tampoco podría: es del panel, no del test.
  */
 function revealForClick(element: HTMLElement) {
   const atCenter = () => {
@@ -292,10 +291,15 @@ function revealForClick(element: HTMLElement) {
   }
 }
 
-/** Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda. */
+/**
+ * Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda.
+ * REP17-09 (M-r17Q2-1): clic por CDP en el centro que `revealForClick` acaba de comprobar libre, como el clic objetivo.
+ * `userEvent.click` (Playwright) se quedaba 10–13 s esperando mientras la carpeta cerraba y abría archivos, con el
+ * control alcanzable y rAF y timers al día.
+ */
 async function setupClick(browser: Browser, element: HTMLElement) {
   revealForClick(element);
-  await browser.userEvent.click(element);
+  await clickAt(browser, centerOf(element));
   await sleep(POINTER_GUARD_MS + 100);
   await browser.userEvent.keyboard("{Shift}");
 }
