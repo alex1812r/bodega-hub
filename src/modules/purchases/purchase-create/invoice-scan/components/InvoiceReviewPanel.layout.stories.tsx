@@ -293,15 +293,23 @@ function revealForClick(element: HTMLElement) {
 
 /**
  * Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda.
- * REP17-09 (M-r17Q2-1): clic por CDP en el centro que `revealForClick` acaba de comprobar libre, como el clic objetivo.
- * `userEvent.click` (Playwright) se quedaba 10–13 s esperando mientras la carpeta cerraba y abría archivos, con el
- * control alcanzable y rAF y timers al día.
+ * REP17-09 (M-r17Q2-1): clic y tecla por CDP, el clic en el centro que `revealForClick` acaba de comprobar libre,
+ * como el clic objetivo. Mientras la carpeta cerraba y abría archivos, `userEvent.click` (Playwright) tardaba
+ * 10–13 s y `userEvent.keyboard` hasta 2,5 s, con el control alcanzable, rAF y timers al día y el CDP en < 0,7 s.
  */
 async function setupClick(browser: Browser, element: HTMLElement) {
   revealForClick(element);
   await clickAt(browser, centerOf(element));
   await sleep(POINTER_GUARD_MS + 100);
-  await browser.userEvent.keyboard("{Shift}");
+  await pressShift(browser);
+}
+
+/** Shift real (CDP `Input.dispatchKeyEvent`): una tecla que no escribe ni mueve el foco. */
+async function pressShift(browser: Browser) {
+  const session = browser.cdp();
+  const key = { code: "ShiftLeft", key: "Shift", location: 1, windowsVirtualKeyCode: 16 };
+  await session.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key, modifiers: 8 });
+  await session.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
 }
 
 /**
