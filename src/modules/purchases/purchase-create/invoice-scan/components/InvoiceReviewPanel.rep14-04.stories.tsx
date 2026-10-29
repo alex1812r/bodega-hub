@@ -19,7 +19,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { pressKeys } from "./InvoiceReviewPanel.cdpInput";
+import { pressKeys, settleCdpAcks } from "./InvoiceReviewPanel.cdpInput";
 
 const SUPPLIER_NAME = "Mercaseu 2030, C.A.";
 const LINE = { match: { taxRateCode: "exento" }, read: { lineTotal: 1750, quantity: 1, unitPrice: 1750 } };
@@ -264,6 +264,7 @@ const meta = {
   beforeEach() {
     MockDate.reset();
   },
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/REP14-04 proveedor y aviso de tasa",

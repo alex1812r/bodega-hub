@@ -17,7 +17,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { clickElement, pressKeys } from "./InvoiceReviewPanel.cdpInput";
+import { clickElement, pressKeys, settleCdpAcks } from "./InvoiceReviewPanel.cdpInput";
 
 const SUPPLIER_NAME = "Chevere Depot";
 
@@ -214,6 +214,7 @@ const meta = {
       );
     },
   ],
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/REP14-03 fecha imposible o borrada",

@@ -25,7 +25,7 @@ import type { EntityFetcher, ProductEntityOption } from "@/shared/components/Ent
 
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { fillField, pressKeys, typeText } from "./InvoiceReviewPanel.cdpInput";
+import { deferCdpAck, fillField, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
@@ -222,7 +222,7 @@ function observableState() {
  * las filas sin que la revisión las moviera.
  */
 async function clickAt(browser: Browser, point: Point) {
-  await clickGesture(browser, point).done;
+  await clickGesture(browser, point).landed;
 }
 
 function clickGesture(browser: Browser, point: Point) {
@@ -238,9 +238,11 @@ function clickGesture(browser: Browser, point: Point) {
  * REP17-09 (M-r17Q2-1): un gesto real por CDP, con sus órdenes seguidas (el canal las entrega en orden, como
  * `mouse.click` de Puppeteer). Con la carpeta entera, mientras otros archivos cerraban y abrían, cada acuse tardaba
  * 0,3–1,1 s aunque la entrada llegaba a la página en < 0,25 s. `landed`: el último evento del gesto llegó a la
- * ventana (o ya no llegará: hay acuse); `done`: los acuses, que hay que esperar.
+ * ventana (o ya no llegará: hay acuse).
+ * REP17-10 (M-r17Q3-1): los acuses de las preparaciones llegaron a tardar 1,6–2,3 s cada uno; ya no se esperan en serie:
+ * el `afterEach` del meta espera todos los de la historia (`settleCdpAcks`).
  */
-type Gesture = { landed: Promise<void>; done: Promise<void> };
+type Gesture = { landed: Promise<void> };
 type CdpSession = ReturnType<Browser["cdp"]>;
 
 /** La 1.ª orden CDP del archivo abre su sesión en el servidor: dos órdenes en frío podían abrir dos y adelantarse. */
@@ -257,7 +259,8 @@ function sendGesture(
   const session = browser.cdp();
   cdpOpened ??= session.send("Runtime.evaluate", { expression: "0" });
   const done = cdpOpened.then(() => Promise.all(send(session))).then(() => undefined);
-  return { landed: Promise.race([arrived, done]), done };
+  deferCdpAck(done);
+  return { landed: Promise.race([arrived, done]) };
 }
 
 /** Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`). */
@@ -286,7 +289,7 @@ function pagePoint(point: Point): Point {
 
 /** Toque real (CDP `Input.dispatchTouchEvent`): pointerdown/up con `pointerType` touch y su clic. */
 async function tapAt(browser: Browser, point: Point) {
-  await tapGesture(browser, point).done;
+  await tapGesture(browser, point).landed;
 }
 
 /** La emulación táctil se apaga en el mismo gesto aunque falle el toque (cada orden se procesa por separado). */
@@ -301,7 +304,7 @@ function tapGesture(browser: Browser, point: Point) {
 }
 
 const activateAt = async (browser: Browser, point: Point, pointer: Pointer) => {
-  await activationGesture(browser, point, pointer).done;
+  await activationGesture(browser, point, pointer).landed;
 };
 
 const activationGesture = (browser: Browser, point: Point, pointer: Pointer) =>
@@ -336,18 +339,19 @@ function revealForClick(element: HTMLElement) {
  * REP17-09 (M-r17Q2-1): clic y tecla por CDP, el clic en el centro que `revealForClick` acaba de comprobar libre,
  * como el clic objetivo. Mientras la carpeta cerraba y abría archivos, `userEvent.click` (Playwright) tardaba
  * 10–13 s y `userEvent.keyboard` hasta 2,5 s. La guarda corre desde que el clic llega a la página.
+ * REP17-10: la tecla, desde que llega; sus acuses se esperan al final de la historia.
  */
 async function setupClick(browser: Browser, element: HTMLElement) {
   revealForClick(element);
-  const click = clickGesture(browser, centerOf(element));
-  await Promise.all([click.done, click.landed.then(() => sleep(POINTER_GUARD_MS + 100))]);
-  await shiftGesture(browser).done;
+  await clickGesture(browser, centerOf(element)).landed;
+  await sleep(POINTER_GUARD_MS + 100);
+  await shiftGesture(browser).landed;
 }
 
 /** Clic real (CDP) en el centro de un campo, que `revealForClick` comprueba libre. REP17-10: antes `userEvent.click`. */
 async function clickField(browser: Browser, field: HTMLElement) {
   revealForClick(field);
-  await clickGesture(browser, centerOf(field)).done;
+  await clickGesture(browser, centerOf(field)).landed;
 }
 
 /** Shift real (CDP `Input.dispatchKeyEvent`): una tecla que no escribe ni mueve el foco. */
@@ -397,13 +401,12 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   const secondTarget = document.elementFromPoint(point.x, point.y);
   if (timing.secondAt > POINTER_GUARD_MS && secondTarget?.closest('[role="dialog"]')) {
     // Un diálogo a la vista desde hace segundos no es layout de la revisión: tocarlo es del usuario.
-    await first.done;
     return;
   }
   const secondInPanel = panel().contains(secondTarget);
 
-  const second = activationGesture(browser, point, timing.pointer);
-  await Promise.all([first.done, second.done, second.landed.then(() => sleep(300))]);
+  await activationGesture(browser, point, timing.pointer).landed;
+  await sleep(300);
   // Las líneas que siguen en pantalla (plegar confirmadas las quita) no cambiaron.
   const afterSecond = others();
   const shown = Object.keys(afterFirst).filter((index) => index in afterSecond);
@@ -580,6 +583,7 @@ const meta = {
   beforeEach() {
     MockDate.reset();
   },
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/Layout bajo el puntero",
@@ -1251,7 +1255,7 @@ async function compact(browser: Browser, how: Compaction) {
   } else if (how === "desplazar") {
     window.scrollBy({ top: 40, behavior: "instant" });
   } else {
-    await shiftGesture(browser).done;
+    await shiftGesture(browser).landed;
   }
   await sleep(300);
 }

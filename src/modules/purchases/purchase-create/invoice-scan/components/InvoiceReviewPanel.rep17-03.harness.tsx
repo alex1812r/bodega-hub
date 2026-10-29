@@ -13,7 +13,7 @@
  */
 import { expect, within } from "storybook/test";
 
-import { clickElement, pressKeys } from "./InvoiceReviewPanel.cdpInput";
+import { clickElement, pressKeys, settleCdpAcks } from "./InvoiceReviewPanel.cdpInput";
 import { type Fixture, FIXTURES } from "./InvoiceReviewPanel.rep16-02.fixtures";
 import {
   arrive,
@@ -243,6 +243,7 @@ export function scenarioPlay(scenario: Scenario, viewport: keyof typeof VIEWPORT
       return;
     }
     const results = await SCENARIOS[scenario](opened.browser);
+    await settleCdpAcks();
     const failures = results.flat().map((failure) => `${opened.label} ${failure}`);
     failures.forEach((failure) => console.warn(`[REP17-03 rojo] ${failure}`));
     const text = `${opened.label} ${scenario}: ${results.length} casos, ${results.filter((result) => result.length > 0).length} en rojo`;
