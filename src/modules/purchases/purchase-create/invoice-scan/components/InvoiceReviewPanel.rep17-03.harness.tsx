@@ -13,6 +13,7 @@
  */
 import { expect, within } from "storybook/test";
 
+import { clickElement, pressKeys } from "./InvoiceReviewPanel.cdpInput";
 import { type Fixture, FIXTURES } from "./InvoiceReviewPanel.rep16-02.fixtures";
 import {
   arrive,
@@ -69,9 +70,8 @@ async function typedRateThenSystem(browser: Browser, fixtureId: "tasa3" | "estad
     if (!input) {
       throw new Error(`${fixtureId}: sin tasa del día ni impresa no se pide escribir la tasa («${RATE_LABEL}»)`);
     }
-    await browser.userEvent.click(input);
-    await browser.userEvent.keyboard(String(TYPED_RATE));
-    await browser.userEvent.keyboard("{Tab}");
+    await clickElement(browser, input);
+    await pressKeys(browser, `${TYPED_RATE}{Tab}`);
     await settle("escribir la tasa", () => /se usa la tasa escrita \(Bs\. 950,00\)/.test(panel().textContent ?? ""));
     // El usuario vuelve al campo para corregirla (sin desplazar: el campo está a la vista tras escribir).
     rateInput()?.focus({ preventScroll: true });

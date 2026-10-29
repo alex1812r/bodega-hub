@@ -25,6 +25,7 @@ import type { EntityFetcher, ProductEntityOption } from "@/shared/components/Ent
 
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { fillField, pressKeys, typeText } from "./InvoiceReviewPanel.cdpInput";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
@@ -343,6 +344,12 @@ async function setupClick(browser: Browser, element: HTMLElement) {
   await shiftGesture(browser).done;
 }
 
+/** Clic real (CDP) en el centro de un campo, que `revealForClick` comprueba libre. REP17-10: antes `userEvent.click`. */
+async function clickField(browser: Browser, field: HTMLElement) {
+  revealForClick(field);
+  await clickGesture(browser, centerOf(field)).done;
+}
+
 /** Shift real (CDP `Input.dispatchKeyEvent`): una tecla que no escribe ni mueve el foco. */
 function shiftGesture(browser: Browser) {
   const key = { code: "ShiftLeft", key: "Shift", location: 1, windowsVirtualKeyCode: 16 };
@@ -449,7 +456,7 @@ const CASES = {
     setup: async (browser) => {
       await setupClick(browser, button(row(3), /^Mayonesa Mavesa 445g/));
       await setupClick(browser, button(row(3), /^Por bulto/));
-      await browser.userEvent.fill(within(row(3)).getByLabelText(/^Unidades por/), "12");
+      await fillField(browser, within(row(3)).getByLabelText(/^Unidades por/), "12");
       await sleep(300);
     },
     target: () => button(row(3), /^Cargar como 6 unidades/),
@@ -815,7 +822,7 @@ function mp112(width: number): Story {
       await sleep(3000);
       const search = button(row(1), /Buscar producto/);
       const aim = centerOf(search);
-      await browser.userEvent.hover(search);
+      await moveMouseTo(browser, aim);
       await sleep(1400);
       await expect(describeControl(document.elementFromPoint(aim.x, aim.y)?.closest("button") ?? null)).toBe(
         describeControl(search),
@@ -900,7 +907,7 @@ async function openSearchAtBottom(browser: Browser, opener: RegExp) {
   await setupClick(browser, button(row(0), opener));
   const input = within(row(0)).getByLabelText("Producto de la línea 1");
   input.scrollIntoView({ block: "end" });
-  await browser.userEvent.fill(input, "Galleta");
+  await fillField(browser, input, "Galleta");
   await screen.findAllByRole("option", { name: /CAOSG Galleta Maria/ });
   await sleep(POINTER_GUARD_MS + 200);
 }
@@ -922,7 +929,7 @@ function chipBajoOpcion(width: number, pointer: Pointer, at: number): Story {
       // Ventana baja: el campo puede quedar al pie y la lista se abre hacia arriba.
       await browser.page.viewport(width, 560);
       await openSearchAtBottom(browser, /Buscar producto/);
-      await browser.userEvent.keyboard("{ArrowDown}{Enter}");
+      await pressKeys(browser, "{ArrowDown}{Enter}");
       await sleep(300);
       await openSearchAtBottom(browser, /Cambiar producto/);
 
@@ -988,7 +995,7 @@ function ordenTabBuscador(width: number): Story {
         visited.push(`${describeControl(focused)}@${Math.round(top)}`);
         await expect(top, `Tab sube: ${visited.join(" → ")}`).toBeGreaterThanOrEqual(previousTop - 1);
         previousTop = top;
-        await browser.userEvent.keyboard("{Tab}");
+        await pressKeys(browser, "{Tab}");
         await sleep(50);
       }
       await expect(visited.some((item) => item.startsWith("INPUT")), `pasa por el buscador: ${visited.join(" → ")}`).toBe(true);
@@ -1100,7 +1107,7 @@ function teclearTrasDescartar(width: number, pointer: Pointer): Story {
       await sleep(300);
       await expect(document.activeElement, "la Cantidad de L1 tiene el foco").toBe(quantity);
       const before = quantity.getBoundingClientRect().top;
-      await browser.userEvent.keyboard("1");
+      await pressKeys(browser, "1");
       await sleep(300);
       await expect(row(0).getBoundingClientRect().height, "el teclado aplica el layout").toBeLessThan(heldHeight);
       await expect(document.activeElement, "el foco sigue en la Cantidad").toBe(quantity);
@@ -1244,7 +1251,7 @@ async function compact(browser: Browser, how: Compaction) {
   } else if (how === "desplazar") {
     window.scrollBy({ top: 40, behavior: "instant" });
   } else {
-    await browser.userEvent.keyboard("{Shift}");
+    await shiftGesture(browser).done;
   }
   await sleep(300);
 }
@@ -1386,8 +1393,8 @@ function f19dAviso(width: number, pointer: Pointer, at: number): Story {
       }
       const field = screen.getByRole("combobox", { name: /proveedor/i });
       field.scrollIntoView({ block: "center" });
-      await browser.userEvent.click(field);
-      await browser.userEvent.type(field, "Farma");
+      await clickField(browser, field);
+      await typeText(browser, "Farma");
       const option = await screen.findByRole("option", { name: /farmatodo/i });
       await sleep(POINTER_GUARD_MS + 200);
       const aim = centerOf(field);
@@ -1484,9 +1491,9 @@ export const Rep1206FalloDuplicadosPiePlegado390: Story = {
     }
     const field = screen.getByRole("combobox", { name: /proveedor/i });
     field.scrollIntoView({ block: "center" });
-    await browser.userEvent.click(field);
-    await browser.userEvent.type(field, "Farma");
-    await browser.userEvent.click(await screen.findByRole("option", { name: /farmatodo/i }));
+    await clickField(browser, field);
+    await typeText(browser, "Farma");
+    await clickAt(browser, centerOf(await screen.findByRole("option", { name: /farmatodo/i })));
     const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
     await expect(within(footer).getByRole("button", { name: "Ver detalle del total" }), "pie plegado").toBeVisible();
     await waitFor(
@@ -1582,8 +1589,8 @@ function avisoDuplicadoFilas(width: number, height: number, pointer: Pointer, af
         return;
       }
       const field = screen.getByRole("combobox", { name: /proveedor/i });
-      await browser.userEvent.click(field);
-      await browser.userEvent.type(field, "Farma");
+      await clickField(browser, field);
+      await typeText(browser, "Farma");
       const option = await screen.findByRole("option", { name: /farmatodo/i });
       await sleep(POINTER_GUARD_MS + 200);
       await activateAt(browser, centerOf(option), pointer);
@@ -1691,7 +1698,7 @@ function avisoIvaAlTeclear(width: number): Story {
       const before = rowTops();
       await expect(screen.queryByTestId("invoice-review-tax-notice"), "sin aviso de IVA antes").toBeNull();
 
-      await browser.userEvent.fill(cost, "594");
+      await fillField(browser, cost, "594");
       await whenShown(() => screen.queryByTestId("invoice-review-tax-notice"), 2000);
       await expectRowsKept(browser, `[B-p14B-2] ${width}`, before, points);
     },
@@ -1786,7 +1793,7 @@ function toqueTrasTeclearCosto(width: number, height: number, pointer: Pointer):
       const topBefore = discard.getBoundingClientRect().top;
       await expect(decisionAt(aim), "«Descartar línea» en su punto antes de teclear").toBe(discard);
 
-      await browser.userEvent.fill(cost, "594");
+      await fillField(browser, cost, "594");
       const start = performance.now();
       await whenShown(() => screen.queryByTestId("line-mismatch-1"), 2000);
       const moved = Math.round(discard.getBoundingClientRect().top - topBefore);

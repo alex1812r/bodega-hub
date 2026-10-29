@@ -17,6 +17,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { clickElement, pressKeys } from "./InvoiceReviewPanel.cdpInput";
 
 const SUPPLIER_NAME = "Chevere Depot";
 
@@ -84,13 +85,11 @@ function segmentOrder(): ("day" | "month" | "year")[] {
     .filter((type): type is "day" | "month" | "year" => type === "day" || type === "month" || type === "year");
 }
 
-/** Teclea día, mes y año en el campo con el teclado real (entra con Tab desde el número de factura). */
+/** Teclea día, mes y año en el campo con el teclado real (CDP; entra con Tab desde el número de factura). */
 async function typeDate(browser: Browser, day: string, month: string, year: string) {
   const parts = { day, month, year };
   screen.getByLabelText("Número de factura").focus();
-  await browser.userEvent.keyboard("{Tab}");
-  await browser.userEvent.keyboard(segmentOrder().map((segment) => parts[segment]).join(""));
-  await browser.userEvent.keyboard("{Tab}");
+  await pressKeys(browser, `{Tab}${segmentOrder().map((segment) => parts[segment]).join("")}{Tab}`);
 }
 
 async function snapshot(browser: Browser, name: string) {
@@ -140,7 +139,7 @@ function backspaceStory(width: number, height: number): Story {
         return;
       }
       screen.getByLabelText("Número de factura").focus();
-      await browser.userEvent.keyboard("{Tab}{Backspace}{Tab}");
+      await pressKeys(browser, "{Tab}{Backspace}{Tab}");
       await sleep(300);
       const report = state(`borrado ${width}×${height}`);
       await snapshot(browser, `borra-${width}`);
@@ -159,7 +158,7 @@ function clearStory(width: number, height: number): Story {
         return;
       }
       screen.getByLabelText("Número de factura").focus();
-      await browser.userEvent.keyboard("{Tab}{Backspace}{Tab}{Backspace}{Tab}{Backspace}");
+      await pressKeys(browser, "{Tab}{Backspace}{Tab}{Backspace}{Tab}{Backspace}");
       await sleep(300);
       const report = state(`vaciada ${width}×${height}`);
       await expect(dateInput().value, report).toBe("");
@@ -167,7 +166,7 @@ function clearStory(width: number, height: number): Story {
       await expect(loadButton(), report).toBeDisabled();
       const confirm = screen.getByRole("checkbox", { name: /Registrar sin fecha \(se leyó 17\/10\/2026\)/ });
       await snapshot(browser, `vaciada-${width}`);
-      await browser.userEvent.click(confirm);
+      await clickElement(browser, confirm);
       await waitFor(() => expect(loadButton()).toBeEnabled());
       state(`vaciada y confirmada ${width}×${height}`);
     },
