@@ -19,7 +19,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { pressKeys, settleCdpAcks } from "./InvoiceReviewPanel.cdpInput";
+import { clickAt, pressKeys, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 const SUPPLIER_NAME = "Mercaseu 2030, C.A.";
 const LINE = { match: { taxRateCode: "exento" }, read: { lineTotal: 1750, quantity: 1, unitPrice: 1750 } };
@@ -33,7 +33,6 @@ const NO_RATE: InvoiceReviewContext = { taxRates: REVIEW_TAX_RATES };
 
 const noSuppliers: EntityFetcher<"contact"> = async () => [];
 
-type Point = { x: number; y: number };
 type Pointer = "mouse" | "touch";
 
 async function loadBrowser() {
@@ -47,39 +46,17 @@ type Browser = NonNullable<Awaited<ReturnType<typeof loadBrowser>>>;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
-function pagePoint(point: Point): Point {
-  let { x, y } = point;
-  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
-    const box = frame.getBoundingClientRect();
-    const width = frame.clientWidth + 2 * frame.clientLeft;
-    const scale = width ? box.width / width : 1;
-    x = box.left + (frame.clientLeft + x) * scale;
-    y = box.top + (frame.clientTop + y) * scale;
-  }
-  return { x, y };
-}
-
-/** Ratón o toque reales por CDP en el centro del elemento (como `InvoiceReviewPanel.layout.stories`). */
+/**
+ * Ratón o toque reales por CDP en el centro del elemento (como `InvoiceReviewPanel.layout.stories`).
+ * REP17-11 (D69(a)): el paso siguiente arranca cuando el gesto llega a la página; sus fallos de CDP, en el `afterEach`. Con
+ * `npm run test:storybook` completo, los cuatro acuses en serie de cada toque agotaban los 15 s de «Tasa Toque 390».
+ */
 async function activate(browser: Browser, element: Element, pointer: Pointer) {
   element.scrollIntoView({ block: "center" });
   await sleep(600);
   const box = element.getBoundingClientRect();
-  const target = pagePoint({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
-  const session = browser.cdp();
-  if (pointer === "touch") {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-    try {
-      await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [target] });
-      await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    } finally {
-      await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-    }
-  } else {
-    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...target });
-    await session.send("Input.dispatchMouseEvent", { type: "mousePressed", ...target, button: "left", clickCount: 1 });
-    await session.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...target, button: "left", clickCount: 1 });
-  }
+  const center = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  await (pointer === "touch" ? tapAt(browser, center) : clickAt(browser, center));
   await sleep(300);
 }
 

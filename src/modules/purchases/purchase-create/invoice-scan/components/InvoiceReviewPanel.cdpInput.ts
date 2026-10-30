@@ -5,6 +5,11 @@
  * entrada llegaba a la página al momento. Aquí las órdenes de un gesto van seguidas por la sesión CDP de la página (el
  * canal las entrega en orden), el paso siguiente arranca cuando el último evento del gesto llega a la ventana y los
  * acuses se esperan al final de la historia (`settleCdpAcks`): un fallo de CDP sigue haciendo fallar la historia.
+ * REP17-11 (D69(a)): también el toque (`tapAt`), el clic en un punto (`clickAt`) y la tecla Espacio. Con
+ * `npm run test:storybook` completo (todo el repo), mientras abren y cierran decenas de archivos, el acuse de una orden
+ * ya llegada a la página tardaba hasta 15 s en volver (`rep17/11-diag-completo-1.txt`: llegada < 0,2 s, acuse 8–16 s):
+ * esperarlo en el `afterEach` agotaba los 15 s de la historia. Ahora el `afterEach` comprueba los fallos de CDP ya
+ * conocidos sin esperar los acuses de gestos llegados; los que lleguen después se comprueban en el siguiente.
  */
 import type { CDPSession } from "vitest/browser";
 
@@ -25,17 +30,37 @@ export async function openCdpSession(browser: CdpBrowser) {
   return session;
 }
 
-/** Acuses CDP de los gestos ya llegados a la página, pendientes hasta el final de la historia. */
-const pendingAcks: Promise<void>[] = [];
-
-/** Deja el acuse de un gesto para `settleCdpAcks`. */
-export function deferCdpAck(done: Promise<void>) {
-  pendingAcks.push(done);
+/**
+ * REP17-11: la apertura cuesta dos idas y vueltas por el canal saturado (5 s en la 1.ª historia de un archivo,
+ * `rep17/11-diag-completo-1.txt`); arranca al cargar el archivo, en paralelo con su 1.ª historia, y el 1.er gesto la
+ * espera (si falla, falla ese gesto).
+ */
+if ("__vitest_browser__" in globalThis) {
+  cdpOpened = import("vitest/browser").then((browser) => browser.cdp().send("Runtime.evaluate", { expression: "0" }));
 }
 
-/** Espera los acuses de todos los gestos de la historia (`afterEach` o final del `play`). */
+/** Fallos de CDP de gestos ya llegados a la página, pendientes de que los vea un `settleCdpAcks`. */
+const cdpFailures: unknown[] = [];
+
+/**
+ * Sigue el acuse de un gesto: si falla, el siguiente `settleCdpAcks` del archivo hace fallar la historia. Un gesto que no
+ * llega a la página ya espera su acuse (`sendGesture`): su fallo hace fallar la historia en ese mismo paso.
+ */
+export function deferCdpAck(done: Promise<void>) {
+  done.then(undefined, (error: unknown) => {
+    cdpFailures.push(error);
+  });
+}
+
+/**
+ * Comprueba los fallos de CDP conocidos (`afterEach` o final del `play`). No espera los acuses en vuelo de gestos que ya
+ * llegaron a la página: los fallos que traigan los ve el siguiente `settleCdpAcks` del archivo.
+ */
 export async function settleCdpAcks() {
-  await Promise.all(pendingAcks.splice(0));
+  const failures = cdpFailures.splice(0);
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `falló CDP en ${failures.length} gesto(s)`);
+  }
 }
 
 /**
@@ -81,6 +106,30 @@ function pagePoint(point: Point): Point {
   return { x, y };
 }
 
+/** Clic real con el ratón en `point` del documento de la story: lo recibe lo que esté ahí. */
+export async function clickAt(browser: CdpBrowser, point: Point) {
+  const { x, y } = pagePoint(point);
+  await sendGesture(browser, "pointerup", 1, (session) => [
+    session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
+    session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }),
+    session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }),
+  ]);
+}
+
+/**
+ * Toque real (CDP `Input.dispatchTouchEvent`) en `point` del documento de la story: pointerdown/up con `pointerType`
+ * touch y su clic. La emulación táctil se apaga en el mismo gesto aunque falle el toque (cada orden va por separado).
+ */
+export async function tapAt(browser: CdpBrowser, point: Point) {
+  const touch = pagePoint(point);
+  await sendGesture(browser, "pointerup", 1, (session) => [
+    session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }),
+    session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] }),
+    session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }),
+    session.send("Emulation.setTouchEmulationEnabled", { enabled: false }),
+  ]);
+}
+
 function centerOf(element: HTMLElement): Point {
   const box = element.getBoundingClientRect();
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
@@ -102,12 +151,7 @@ export async function clickElement(browser: CdpBrowser, element: HTMLElement) {
   if (!hit || !element.contains(hit)) {
     throw new Error(`el centro de «${element.getAttribute("aria-label") ?? element.tagName}» queda bajo ${hit?.tagName ?? "nada"} incluso centrado`);
   }
-  const { x, y } = pagePoint(centerOf(element));
-  await sendGesture(browser, "pointerup", 1, (session) => [
-    session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
-    session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }),
-    session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }),
-  ]);
+  await clickAt(browser, centerOf(element));
 }
 
 type KeyDefinition = { code: string; key: string; keyCode: number; text?: string };
@@ -116,10 +160,11 @@ const NAMED_KEYS: Record<string, KeyDefinition> = {
   ArrowDown: { code: "ArrowDown", key: "ArrowDown", keyCode: 40 },
   Backspace: { code: "Backspace", key: "Backspace", keyCode: 8 },
   Enter: { code: "Enter", key: "Enter", keyCode: 13, text: "\r" },
+  Space: { code: "Space", key: " ", keyCode: 32, text: " " },
   Tab: { code: "Tab", key: "Tab", keyCode: 9 },
 };
 
-/** `{Tab}`, `{Backspace}`, `{ArrowDown}`, `{Enter}` y dígitos, con la sintaxis de `userEvent.keyboard`. */
+/** `{Tab}`, `{Backspace}`, `{ArrowDown}`, `{Enter}`, `{Space}` y dígitos, con la sintaxis de `userEvent.keyboard`. */
 function parseKeys(keys: string): KeyDefinition[] {
   return [...keys.matchAll(/\{(\w+)\}|(\d)|(.)/g)].map(([token, named, digit]) => {
     if (digit) {

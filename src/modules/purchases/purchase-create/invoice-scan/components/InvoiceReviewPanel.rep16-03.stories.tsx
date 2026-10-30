@@ -36,6 +36,7 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 const LONG_NAME = "Distribuidora Internacional de Alimentos y Víveres Los Andes del Sur, C.A. (CAOS16B)";
 const SUPPLIER_ERROR = "caos: no se pudo leer el proveedor";
@@ -105,7 +106,6 @@ async function loadBrowser() {
   return import("vitest/browser").catch(() => null);
 }
 
-type Browser = NonNullable<Awaited<ReturnType<typeof loadBrowser>>>;
 type Point = { x: number; y: number };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -136,33 +136,6 @@ function footer() {
 
 function supplierField() {
   return screen.getByRole("combobox", { name: /proveedor/i }) as HTMLInputElement;
-}
-
-/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
-function pagePoint(point: Point): Point {
-  let x = point.x;
-  let y = point.y;
-  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
-    const box = frame.getBoundingClientRect();
-    const width = frame.clientWidth + 2 * frame.clientLeft;
-    const scale = width ? box.width / width : 1;
-    x = box.left + (frame.clientLeft + x) * scale;
-    y = box.top + (frame.clientTop + y) * scale;
-  }
-  return { x, y };
-}
-
-/** Toque real (CDP `Input.dispatchTouchEvent`), como `tapAt` de REP15-01. */
-async function tapAt(browser: Browser, point: Point) {
-  const session = browser.cdp();
-  const touch = pagePoint(point);
-  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  try {
-    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
-    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  } finally {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-  }
 }
 
 function centerOf(element: Element): Point {
@@ -465,6 +438,7 @@ const meta = {
     MockDate.reset();
     gates = newGates();
   },
+  afterEach: settleCdpAcks,
   component: InvoiceReviewPanel,
   decorators: [
     (Story) => {
