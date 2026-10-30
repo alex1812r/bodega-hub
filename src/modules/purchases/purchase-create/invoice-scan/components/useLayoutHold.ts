@@ -510,6 +510,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // D70(c): último punto de contacto (el dedo apoyado o el ratón), y lo que estaba bajo él al soltar lo retenido con un render pendiente
   // (layout pendiente u orden retenido): tras ese render vuelve a su sitio.
   const contactRef = useRef<Point | null>(null);
+  // REP17-15: en un arrastre con el dedo (y su inercia), el control que D70(c) eligió al apoyarlo (`element` nulo si no se
+  // apoyó sobre el panel); `null` si el último contacto no es un arrastre con el dedo.
+  const touchAnchorRef = useRef<{ element: Element | null } | null>(null);
   const releaseAnchorRef = useRef<ContactAnchor | null>(null);
   const onFocusLostRef = useRef(onFocusLost);
   useEffect(() => {
@@ -521,7 +524,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // luego lo retenido (la barra, el teclado) ancla como siempre (B-qa02-1: la fila que sigue a la compactada). Un arrastre
   // sí lo conserva: el desplazamiento por inercia que le sigue es suyo. REP17-06 (B-r17Q-2): del ratón cuenta su última
   // posición dentro del panel (fuera, nada del panel está bajo él): la rueda o una tecla con el ratón fuera no mueven lo
-  // que tenía debajo al salir.
+  // que tenía debajo al salir. REP17-15: lo que está bajo el dedo que arrastra se elige al apoyarlo, cuando el dedo y el
+  // contenido coinciden; luego el contenido sigue al dedo, pero su desplazamiento llega en un frame que no depende de la
+  // revisión (antes o después del `touchmove`): elegir con el punto del `touchmove` cambiaba de control según el frame.
   useEffect(() => {
     let dragged = false;
     const onPointer = (event: PointerEvent) => {
@@ -530,6 +535,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         return;
       }
       contactRef.current = { x: event.clientX, y: event.clientY };
+      touchAnchorRef.current = null;
     };
     const onTouch = (event: TouchEvent) => {
       const touch = event.touches[0];
@@ -542,6 +548,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         contactRef.current = { x: touch.clientX, y: touch.clientY };
       } else if (!dragged) {
         contactRef.current = null;
+        touchAnchorRef.current = null;
+      }
+      const root = rootRef.current;
+      if (event.type === "touchstart" && root) {
+        touchAnchorRef.current = { element: contactAnchor(root, contactRef.current)?.element ?? null };
       }
     };
     const options = { capture: true, passive: true };
@@ -698,7 +709,15 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
    */
   const releaseOnScroll = useCallback(() => {
     const root = rootRef.current;
-    flushSync(() => releaseKeeping(root ? contactAnchor(root, contactRef.current) : null));
+    const touch = touchAnchorRef.current;
+    let anchor: ContactAnchor | null = null;
+    if (touch?.element?.isConnected) {
+      // REP17-15: el control que el dedo arrastra, donde esté ahora (con o sin el desplazamiento del arrastre aplicado).
+      anchor = { element: touch.element, top: touch.element.getBoundingClientRect().top };
+    } else if (root && !touch) {
+      anchor = contactAnchor(root, contactRef.current);
+    }
+    flushSync(() => releaseKeeping(anchor));
   }, [releaseKeeping, rootRef]);
 
   /**
