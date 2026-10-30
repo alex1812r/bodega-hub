@@ -7,9 +7,10 @@
  *   costos siguen convertidos con ella («Tasa de hoy» no queda elegida sola).
  * - «duplicado tardío» (B-p18B-1): el aviso de posible duplicado llega después del primer render, con la página arriba o
  *   al final (pie fijo en su sitio natural; con alto < 500 px, pie no fijo). Ningún control del panel se mueve.
- * - «liberación tras arrastre corto» (B-p18B-2): la tasa del día llega sin desviar L1 y su reserva queda retenida como
+ * - «no se suelta tras arrastre corto» (B-p18B-2): la tasa del día llega sin desviar L1 y su reserva queda retenida como
  *   hueco con el dedo en «Descartar línea» de L2; el dedo arrastra 24 px. Lo que está bajo el último punto de contacto
- *   sigue ahí: el control se movió lo que movió el dedo, no lo que se liberó.
+ *   sigue ahí: el control se movió lo que movió el dedo. REP17-18 (D72(a)): el arrastre ya no suelta nada; ningún control
+ *   del panel cambia de posición en el documento y lo retenido sigue retenido.
  */
 import { expect, within } from "storybook/test";
 
@@ -27,6 +28,7 @@ import {
   type VIEWPORTS,
   withCase,
 } from "./InvoiceReviewPanel.rep16-02.harness";
+import { heldNow, isHolding, releasedBetween, trackPanel } from "./InvoiceReviewPanel.rep17-18.harness";
 
 type Browser = NonNullable<Awaited<ReturnType<typeof openViewport>>>["browser"];
 
@@ -162,7 +164,7 @@ function describeElement(element: Element | null) {
 }
 
 /** Escenario 3: retención activa (hueco de la reserva de L1) y un arrastre corto con el dedo en «Descartar» de L2. */
-async function shortDragRelease(): Promise<string[]> {
+async function shortDragKeeps(): Promise<string[]> {
   return withCase(TASA3_ALIGNED, async () => {
     // Página arriba, como en B-p18B-2; si L2 no se ve (844×390), lo justo para verla.
     const target = buttonIn(row(2), /Descartar línea/);
@@ -195,6 +197,11 @@ async function shortDragRelease(): Promise<string[]> {
     if (main.scrollHeight - main.clientHeight - main.scrollTop < DRAG_PX) {
       throw new Error(`sin sitio para desplazar ${DRAG_PX} px`);
     }
+    const held = heldNow();
+    if (!isHolding(held)) {
+      throw new Error("tras llegar la tasa del día sin desviar L1 no queda nada retenido");
+    }
+    const tracker = trackPanel();
     const before = target.getBoundingClientRect().top;
     let fingerY = y;
     for (let step = 1; step <= DRAG_STEPS; step += 1) {
@@ -206,9 +213,10 @@ async function shortDragRelease(): Promise<string[]> {
       }
       main.scrollTop += DRAG_PX / DRAG_STEPS;
       await frame();
+      tracker.sample();
     }
     touchEvent("touchend", target, x, fingerY);
-    await settle("arrastre corto");
+    await settle("arrastre corto", () => true, tracker.sample);
     const expected = before - DRAG_PX;
     const after = target.isConnected ? target.getBoundingClientRect().top : Number.NaN;
     const under = document.elementFromPoint(x, fingerY);
@@ -217,11 +225,12 @@ async function shortDragRelease(): Promise<string[]> {
         `tras un arrastre de ${DRAG_PX} px «Descartar línea» de L2 pasó de y=${Math.round(before)} a y=${Math.round(after)} (el dedo lo dejaba en y=${Math.round(expected)}); bajo el último punto de contacto queda ${describeElement(under)}`,
       );
     }
-    return failures.map((failure) => `liberación tras arrastre corto · tasa3 a 9000 · ${failure}`);
+    failures.push(...[tracker.report(), releasedBetween(held, heldNow())].filter((failure) => failure !== null));
+    return failures.map((failure) => `no se suelta tras arrastre corto · tasa3 a 9000 · ${failure}`);
   });
 }
 
-export type Scenario = "tasaEscrita" | "duplicadoTardio" | "sueltaArrastre";
+export type Scenario = "tasaEscrita" | "duplicadoTardio" | "noSueltaArrastre";
 
 const SCENARIOS: Record<Scenario, (browser: Browser) => Promise<string[][]>> = {
   duplicadoTardio: async () => {
@@ -231,7 +240,7 @@ const SCENARIOS: Record<Scenario, (browser: Browser) => Promise<string[][]>> = {
     }
     return results;
   },
-  sueltaArrastre: async () => [await shortDragRelease()],
+  noSueltaArrastre: async () => [await shortDragKeeps()],
   tasaEscrita: async (browser) => [await typedRateThenSystem(browser, "tasa3"), await typedRateThenSystem(browser, "estados")],
 };
 
