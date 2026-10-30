@@ -11,6 +11,7 @@ import { useLayoutHold } from "./useLayoutHold";
  *   (lado de L2) L2 subía lo soltado. Solo el ratón (o un toque sin arrastre) borra esa elección.
  * - B-r17Q5-2 (D71(a), «solo libera el desplazamiento real»): arrastrar el dedo o girar la rueda donde no desplaza nada (la
  *   barra superior fija, fuera del panel) soltaba lo retenido sin ancla. Ahora sigue retenido hasta un desplazamiento real.
+ * REP17-17 (D72(a)): tampoco el desplazamiento real suelta nada: en todos los casos sigue retenido.
  */
 
 /** Geometría simulada (px): alto visible del contenedor y su desplazamiento. */
@@ -214,7 +215,7 @@ function dragOnHeader() {
 
 type Drag = "touchmove y luego su desplazamiento" | "holgura: el contenido sube la mitad que el dedo";
 
-describe("REP17-16 · solo el ratón borra el control que arrastra el dedo; solo el desplazamiento real suelta", () => {
+describe("REP17-16 · REP17-17 · ni el dedo, ni la rueda, ni el desplazamiento real sueltan lo retenido", () => {
   let rect: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
 
@@ -268,13 +269,13 @@ describe("REP17-16 · solo el ratón borra el control que arrastra el dedo; solo
       });
       fireEvent.touchEnd(l1(), { touches: [] });
 
-      expect(held()).toBe("no");
-      expect(l1Height()).toBe(L1_DISCARDED);
+      expect(held()).toBe("yes");
+      expect(l1Height()).toBe(L1_PENDING);
       expect(l2().getBoundingClientRect().top - (before - landed)).toBe(0);
     },
   );
 
-  it("B-r17Q5-2 · layout pendiente: dedo y rueda sobre la barra fija (sin desplazamiento) no sueltan; el desplazamiento real sí", () => {
+  it("B-r17Q5-2 · layout pendiente: dedo y rueda sobre la barra fija (sin desplazamiento) no sueltan; el desplazamiento real tampoco", () => {
     render(<Harness />);
     wireScroller();
     tapDiscard();
@@ -297,11 +298,12 @@ describe("REP17-16 · solo el ratón borra el control que arrastra el dedo; solo
     act(() => {
       fireEvent.scroll(scroller());
     });
-    expect(held()).toBe("no");
-    expect(l1Height()).toBe(L1_DISCARDED);
+    expect(held()).toBe("yes");
+    expect(l1Height()).toBe(L1_PENDING);
+    expect(l2().getBoundingClientRect().top).toBe(before - WHEEL_PX);
   });
 
-  it("B-r17Q5-2 · orden retenido tras una llegada: dedo y rueda sobre la barra fija no lo sueltan; el desplazamiento real sí", () => {
+  it("B-r17Q5-2 · orden retenido tras una llegada: dedo y rueda sobre la barra fija no lo sueltan; el desplazamiento real tampoco", () => {
     const { rerender } = render(<Harness />);
     wireScroller();
     rerender(<Harness arrival />);
@@ -317,6 +319,6 @@ describe("REP17-16 · solo el ratón borra el control que arrastra el dedo; solo
     act(() => {
       fireEvent.scroll(scroller());
     });
-    expect(held()).toBe("no");
+    expect(held()).toBe("yes");
   });
 });

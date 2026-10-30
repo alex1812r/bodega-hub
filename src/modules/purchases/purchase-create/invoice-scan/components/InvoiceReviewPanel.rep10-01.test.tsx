@@ -2,7 +2,7 @@
  * REP10-01 · D46 (C10B-M1, C10B-M2): ninguna acción con el puntero deja otro control de decisión
  * bajo el dedo.
  * (a) Tras la acción, las filas conservan su caja y su orden (y el foco no desplaza) hasta que el
- *     usuario desplace, use el teclado o (D49, REP11-02) saque el ratón del panel; nunca por tiempo.
+ *     usuario pulse «Compactar lista» (REP17-17, D72: ni desplazar, ni el teclado, ni sacar el ratón, ni el tiempo).
  * (b) Guarda espacial: durante 1 s, otra activación con puntero a < 32 px del punto anterior sobre
  *     un control distinto se ignora. El teclado nunca la sufre.
  */
@@ -97,9 +97,11 @@ beforeEach(() => {
   jest.useFakeTimers({ now: 1_000_000 });
   scrollIntoView = jest.fn();
   Element.prototype.scrollIntoView = scrollIntoView;
-  // jsdom no maqueta: cada fila mide ROW_HEIGHT para ver si conserva su caja.
+  // jsdom no maqueta: cada fila mide ROW_HEIGHT (la descartada, 80 px salvo su alto retenido) para ver si conserva su caja.
   rect = jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-    const height = this.matches("li[data-line-index]") ? ROW_HEIGHT : 0;
+    const natural = this instanceof HTMLElement && this.dataset.status === "discarded" ? 80 : ROW_HEIGHT;
+    const floor = this instanceof HTMLElement ? Number.parseFloat(this.style.minHeight) || 0 : 0;
+    const height = this.matches("li[data-line-index]") ? Math.max(natural, floor) : 0;
     return { bottom: height, height, left: 0, right: 390, top: 0, width: 390, x: 0, y: 0, toJSON: () => ({}) };
   });
 });
@@ -183,12 +185,14 @@ describe("REP10-01 · C10B-M1: tras «Descartar línea» nada sube bajo el dedo"
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it("la fila colapsa al desplazar la página", () => {
+  it("REP17-17 (D72): desplazar la página no colapsa la fila; «Compactar lista» sí", () => {
     renderDiscardRepro();
     tap(discardButton(0));
 
     fireEvent.scroll(window);
+    expect(row(0)).toHaveStyle({ minHeight: `${ROW_HEIGHT}px` });
 
+    fireEvent.click(screen.getByRole("button", { name: "Compactar lista" }));
     expect(row(0)).not.toHaveStyle({ minHeight: `${ROW_HEIGHT}px` });
   });
 
@@ -212,20 +216,25 @@ describe("REP10-01 · C10B-M1 repro 3: la confirmada que sale de su grupo no se 
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
-  it("al usar el teclado toma su lista (por revisar)", () => {
+  it("REP17-17 (D72): el teclado no la cambia de lista; «Compactar lista» sí (por revisar)", () => {
     renderConfirmedUnitRepro();
 
     fireEvent.keyDown(row(0), { key: "Shift" });
+    expect(confirmedList()).toContainElement(row(0));
 
+    fireEvent.click(screen.getByRole("button", { name: "Compactar lista" }));
     expect(reviewList()).toContainElement(row(0));
   });
 
-  it("D49: al desplazar toma su lista y el foco sigue en su fila (nunca en BODY)", () => {
+  it("D49: desplazar no la cambia de lista; al compactar toma su lista y el foco sigue en su fila (nunca en BODY)", () => {
     renderConfirmedUnitRepro();
     advance(0);
     expect(row(0)).toHaveFocus();
 
     fireEvent.scroll(window);
+    expect(confirmedList()).toContainElement(row(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "Compactar lista" }));
 
     expect(reviewList()).toContainElement(row(0));
     expect(row(0)).toHaveFocus();

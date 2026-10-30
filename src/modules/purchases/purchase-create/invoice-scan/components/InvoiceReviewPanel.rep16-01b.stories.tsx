@@ -25,6 +25,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 
 import { REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { compactList } from "./InvoiceReviewPanel.cdpInput";
 import { CASES, type FixtureId } from "./InvoiceReviewPanel.rep16-02.cases";
 import { FIXTURES } from "./InvoiceReviewPanel.rep16-02.fixtures";
 import { CaseHost, harnessHandlers, runCase, VIEWPORTS } from "./InvoiceReviewPanel.rep16-02.harness";
@@ -171,8 +172,8 @@ function clippedNotices() {
 
 /**
  * (5) La tasa del día llega con cifras más largas que las de lo reservado (`rate`): el motivo de alguna fila crece y se
- * recorta. Mientras, su fila sigue pendiente (reconocer el costo) y «Cargar» bloqueado (el pie lo dice); la rueda suelta
- * el aviso entero y visible.
+ * recorta. Mientras, su fila sigue pendiente (reconocer el costo) y «Cargar» bloqueado (el pie lo dice); REP17-17 (D72):
+ * la rueda ya no lo suelta, «Compactar lista» sí, entero y visible.
  */
 function clipRiskStory(viewport: keyof typeof VIEWPORTS, rate: number): Story {
   return {
@@ -198,6 +199,12 @@ function clipRiskStory(viewport: keyof typeof VIEWPORTS, rate: number): Story {
       await expect(load?.disabled).toBe(true);
       await expect(document.querySelector('[data-testid="invoice-review-blockers"]')?.textContent ?? "").toMatch(/por resolver/);
       window.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 }));
+      await sleep(200);
+      await expect(clippedNotices().length, "la rueda no suelta el recorte (D72)").toBe(clipped.length);
+      const browser = await loadBrowser();
+      if (browser) {
+        await compactList(browser);
+      }
       await waitFor(() => expect(clippedNotices()).toEqual([]));
       for (const notice of clipped) {
         await expect(notice.scrollHeight - notice.clientHeight).toBeLessThan(1);

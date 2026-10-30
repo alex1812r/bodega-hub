@@ -219,3 +219,19 @@ export async function fillField(browser: CdpBrowser, field: HTMLElement, text: s
     throw new Error(`«${field.getAttribute("aria-label") ?? field.name}» dice «${field.value}» tras escribir «${text}»`);
   }
 }
+
+/**
+ * REP17-17 (D72(b)): «Compactar lista» con el teclado real (foco sin desplazar y Enter por CDP), sin mover el puntero.
+ * Devuelve el botón pulsado, o `null` si no se ofrecía (nada retenido).
+ */
+export async function compactList(browser: CdpBrowser): Promise<HTMLElement | null> {
+  const button = [...document.querySelectorAll<HTMLElement>("[data-testid='invoice-review-compact-slot'] button")].find(
+    (candidate) => candidate.textContent?.trim() === "Compactar lista",
+  );
+  if (!button) {
+    return null;
+  }
+  button.focus({ preventScroll: true });
+  await pressKeys(browser, "{Enter}");
+  return button;
+}

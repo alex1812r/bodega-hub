@@ -9,7 +9,7 @@ import { useLayoutHold } from "./useLayoutHold";
  * ni el layout pendiente); igual que en táctil (D49), solo lo sueltan desplazar (anclado, D70(c)), el teclado y el cambio
  * de ancho. Un aviso que encoge solo (la reserva que la tasa del día no usa) queda retenido con la página desplazada hasta
  * las filas; el ratón se queda quieto sobre el hueco retenido y sale por arriba (o por la derecha): nada se mueve, y al
- * volver al mismo punto está lo mismo. Después, la rueda o una tecla lo sueltan sin mover el control bajo el ratón.
+ * volver al mismo punto está lo mismo. REP17-17 (D72(a)): después, la rueda o una tecla tampoco lo sueltan.
  */
 
 /** Geometría simulada (px): alto natural del aviso, contenido desplazable de alto `client` y su desplazamiento. */
@@ -150,7 +150,7 @@ function restOnGapAndLeave(exit: Exit) {
   }
 }
 
-describe("REP17-12 · D71(a) · con el ratón, salir del panel no suelta lo retenido", () => {
+describe("REP17-12 · D71(a), REP17-17 · con el ratón, salir del panel no suelta lo retenido, ni la rueda ni una tecla al volver", () => {
   let rect: jest.SpyInstance;
   let now: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
@@ -205,7 +205,7 @@ describe("REP17-12 · D71(a) · con el ratón, salir del panel no suelta lo rete
     },
   );
 
-  it("tras salir, la rueda con el ratón de vuelta sobre el control lo suelta anclado: el control no se mueve", () => {
+  it("tras salir, la rueda con el ratón de vuelta sobre el control tampoco lo suelta: el control no se mueve", () => {
     retainNotice();
     const before = rowControl().getBoundingClientRect().top;
     restOnGapAndLeave("arriba");
@@ -213,13 +213,13 @@ describe("REP17-12 · D71(a) · con el ratón, salir del panel no suelta lo rete
     mouse("pointermove", 100, before + 10, PAUSE_MS);
     fireEvent.wheel(rowControl(), { deltaY: 40 });
 
-    expect(notice().style.minHeight).toBe("");
+    expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before);
     expect(movedByCompaction(rowControl())).toBe(false);
-    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(true);
+    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(false);
   });
 
-  it("tras salir, una tecla con el ratón de vuelta sobre el control lo suelta anclado: el control no se mueve", () => {
+  it("tras salir, una tecla con el ratón de vuelta sobre el control tampoco lo suelta: el control no se mueve", () => {
     retainNotice();
     const before = rowControl().getBoundingClientRect().top;
     restOnGapAndLeave("derecha");
@@ -227,11 +227,11 @@ describe("REP17-12 · D71(a) · con el ratón, salir del panel no suelta lo rete
     mouse("pointermove", 100, before + 10, PAUSE_MS);
     fireEvent.keyDown(document.body, { key: "ArrowDown" });
 
-    expect(notice().style.minHeight).toBe("");
+    expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before);
   });
 
-  it.each<Exit>(["arriba", "derecha"])("con el layout pendiente (clic con el ratón), salir por %s no lo aplica; una tecla sí", (exit) => {
+  it.each<Exit>(["arriba", "derecha"])("con el layout pendiente (clic con el ratón), salir por %s no lo aplica; una tecla tampoco", (exit) => {
     render(<Harness tick={0} />);
     wireScroller();
     const { top } = rowControl().getBoundingClientRect();
@@ -242,6 +242,6 @@ describe("REP17-12 · D71(a) · con el ratón, salir del panel no suelta lo rete
 
     expect(screen.getByTestId("root")).toHaveAttribute("data-held", "yes");
     fireEvent.keyDown(document.body, { key: "ArrowDown" });
-    expect(screen.getByTestId("root")).toHaveAttribute("data-held", "no");
+    expect(screen.getByTestId("root")).toHaveAttribute("data-held", "yes");
   });
 });

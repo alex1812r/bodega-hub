@@ -9,8 +9,8 @@ import { useLayoutHold } from "./useLayoutHold";
  * con el ratón, el ratón sale del panel y gira la rueda fuera de él. El desplazamiento de la rueda llega a la página en un
  * frame que no depende de la revisión: antes que el evento `wheel` (lo habitual), después (máquina cargada: el `wheel` se
  * despacha antes de que el desplazamiento llegue al hilo principal) o repartido en varios frames, uno de ellos entre la
- * liberación y su render. En todos, L2 (y lo que está bajo la última posición del ratón dentro del panel) se mueve
- * exactamente lo desplazado: ni la liberación lo mueve (D70(c), B-qa02-1) ni la compensación deshace el desplazamiento.
+ * liberación y su render. REP17-17 (D72(a)): la rueda ya no suelta nada; en todos los repartos sigue retenido y L2 se mueve
+ * exactamente lo desplazado (la compensación del control pulsado no deshace el desplazamiento).
  */
 
 /** Geometría simulada (px): alto visible del contenedor y su desplazamiento. */
@@ -162,7 +162,7 @@ function landScroll(px: number) {
 
 type Order = "rueda y luego su desplazamiento" | "desplazamiento y luego la rueda" | "desplazamiento en dos frames";
 
-describe("REP17-14 · la rueda suelta el layout pendiente anclado en cualquier reparto de frames", () => {
+describe("REP17-14 · REP17-17 · la rueda no suelta el layout retenido en ningún reparto de frames", () => {
   let rect: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
 
@@ -231,8 +231,8 @@ describe("REP17-14 · la rueda suelta el layout pendiente anclado en cualquier r
         });
       }
 
-      expect(screen.getByTestId("root")).toHaveAttribute("data-held", "no");
-      expect(l1Height()).toBe(L1_DISCARDED);
+      expect(screen.getByTestId("root")).toHaveAttribute("data-held", "yes");
+      expect(l1Height()).toBe(L1_PENDING);
       expect(l2().getBoundingClientRect().top - (before - WHEEL_PX)).toBe(0);
     },
   );
