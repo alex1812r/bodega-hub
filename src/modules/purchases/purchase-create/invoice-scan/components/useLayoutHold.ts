@@ -399,32 +399,20 @@ function releaseKeepsAnchor(
 }
 
 /**
- * REP17-14: la rueda va a desplazar algo (desde su destino hacia arriba, o la página). Su desplazamiento llega a la página
- * en un frame que no depende de la revisión: antes que el `wheel` o, con la máquina cargada, después; soltar en el
- * `wheel` elegía lo que no se mueve (D70(c)) unas veces con el desplazamiento aplicado y otras sin él (L2 subía 194 px,
- * `rep17/14-diag-3.txt`). Si va a desplazar, suelta su `scroll`, con el desplazamiento ya aplicado. Una rueda sintética
- * (`isTrusted` falso), con Ctrl (zoom) o sin componente vertical no desplaza la página en vertical: suelta ella.
+ * REP17-14: el desplazamiento de la rueda llega a la página en un frame que no depende de la revisión (antes que el
+ * `wheel` o, con la máquina cargada, después; soltar en el `wheel` elegía lo que no se mueve, D70(c), unas veces con él
+ * aplicado y otras sin él): lo suelta su `scroll`, con el desplazamiento ya aplicado. REP17-16 (B-r17Q5-2, D71(a)): la
+ * rueda real que no desplaza nada (sobre la barra fija; con Ctrl, el zoom, que suelta por su cambio de ancho) no suelta.
+ * Solo la rueda sintética (`isTrusted` falso), que nunca desplaza, suelta ella.
  */
-function wheelScrolls(event: WheelEvent): boolean {
-  if (!event.isTrusted || event.ctrlKey || event.deltaY === 0) {
-    return false;
-  }
-  const canScroll = (element: Element) =>
-    event.deltaY > 0 ? element.scrollTop + element.clientHeight < element.scrollHeight - 1 : element.scrollTop > 0;
-  for (let node = event.target instanceof Element ? event.target : null; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node);
-    if ((overflowY === "auto" || overflowY === "scroll") && canScroll(node)) {
-      return true;
-    }
-  }
-  const page = document.scrollingElement;
-  return page !== null && getComputedStyle(page).overflowY !== "hidden" && canScroll(page);
+function syntheticWheel(event: WheelEvent): boolean {
+  return !event.isTrusted;
 }
 
 /**
  * Lo que suelta los avisos y el orden retenidos (D65(b), D67(a)): desplazar (salvo el desplazamiento propio de la
- * compensación), la rueda, arrastrar el dedo o el teclado. D71(a): sacar el ratón del panel o de la ventana no, igual
- * que levantar el dedo. D70(c): `onScroll` y `onKey` no mueven lo que está bajo el último punto de contacto. Devuelve
+ * compensación; con la rueda o el dedo, su `scroll`: REP17-16, sin desplazamiento real no se suelta) o el teclado.
+ * D71(a): sacar el ratón del panel o de la ventana no, igual que levantar el dedo. D70(c): `onScroll` y `onKey` no mueven lo que está bajo el último punto de contacto. Devuelve
  * cómo dejar de escuchar.
  */
 function listenForRelease(
@@ -440,19 +428,17 @@ function listenForRelease(
     releaseOnScroll();
   };
   const onWheel = (event: WheelEvent) => {
-    if (!wheelScrolls(event)) {
+    if (syntheticWheel(event)) {
       releaseOnScroll();
     }
   };
   const onKeyDown = () => onKey();
   window.addEventListener("scroll", onScroll, true);
   window.addEventListener("wheel", onWheel, { passive: true });
-  window.addEventListener("touchmove", releaseOnScroll, { passive: true });
   window.addEventListener("keydown", onKeyDown, true);
   return () => {
     window.removeEventListener("scroll", onScroll, true);
     window.removeEventListener("wheel", onWheel);
-    window.removeEventListener("touchmove", releaseOnScroll);
     window.removeEventListener("keydown", onKeyDown, true);
   };
 }
@@ -535,7 +521,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         return;
       }
       contactRef.current = { x: event.clientX, y: event.clientY };
-      touchAnchorRef.current = null;
+      // REP17-16 (M-r17Q5-1): Chromium manda `pointermove` táctiles antes del primer `touchmove`; no borran lo que el dedo
+      // eligió al apoyarse (lo borran el ratón o el lápiz, y el toque que se levanta sin arrastrar).
+      if (event.pointerType !== "touch") {
+        touchAnchorRef.current = null;
+      }
     };
     const onTouch = (event: TouchEvent) => {
       const touch = event.touches[0];
@@ -1110,19 +1100,18 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       release();
     };
     const onWheel = (event: WheelEvent) => {
-      if (!wheelScrolls(event)) {
+      if (syntheticWheel(event)) {
         releaseOnScroll();
       }
     };
-    // Desplazar (rueda, arrastre o barra) o usar el teclado aplica el layout pendiente (D71(a): sacar el ratón no).
+    // Desplazar (el `scroll` de la rueda, el arrastre o la barra) o usar el teclado aplica el layout pendiente (D71(a):
+    // sacar el ratón no; REP17-16: arrastrar el dedo o girar la rueda sin desplazar nada tampoco).
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("wheel", onWheel, { passive: true });
-    window.addEventListener("touchmove", releaseOnScroll, { passive: true });
     window.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("wheel", onWheel);
-      window.removeEventListener("touchmove", releaseOnScroll);
       window.removeEventListener("keydown", onKeyDown, true);
     };
   }, [holding, release, releaseOnScroll, rootRef]);
