@@ -27,6 +27,7 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { pressKeys, settleCdpAcks } from "./InvoiceReviewPanel.cdpInput";
 
 /** El del lab (`c12-foot`, B-qa234-1) y uno de 45 caracteres. */
 const NAME_30 = "Distribuidora Caos Global C.A.";
@@ -249,12 +250,9 @@ function supplierStory(width: number, height: number, name: string): Story {
   };
 }
 
-/** Espacio real (CDP) sobre el elemento enfocado. */
+/** Espacio real (CDP) sobre el elemento enfocado. REP17-11: sigue al llegar a la página; su fallo de CDP, en el `afterEach`. */
 async function keySpace(browser: Browser) {
-  const session = browser.cdp();
-  const key = { code: "Space", key: " ", windowsVirtualKeyCode: 32 };
-  await session.send("Input.dispatchKeyEvent", { type: "keyDown", ...key, text: " " });
-  await session.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+  await pressKeys(browser, "{Space}");
   await sleep(300);
 }
 
@@ -495,6 +493,7 @@ const meta = {
   beforeEach() {
     MockDate.reset();
   },
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/REP14-06 proveedor entero y pie estable",

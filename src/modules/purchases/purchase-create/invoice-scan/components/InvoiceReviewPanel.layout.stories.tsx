@@ -240,14 +240,14 @@ function clickGesture(browser: Browser, point: Point) {
  * 0,3–1,1 s aunque la entrada llegaba a la página en < 0,25 s. `landed`: el último evento del gesto llegó a la
  * ventana (o ya no llegará: hay acuse).
  * REP17-10 (M-r17Q3-1): los acuses de las preparaciones llegaron a tardar 1,6–2,3 s cada uno; ya no se esperan en serie:
- * el `afterEach` del meta espera todos los de la historia (`settleCdpAcks`).
+ * el `afterEach` del meta espera todos los de la historia (`settleCdpAcks`). REP17-11: ya no los espera; comprueba sus fallos.
  */
 type Gesture = { landed: Promise<void> };
 type CdpSession = ReturnType<Browser["cdp"]>;
 
 function sendGesture(
   browser: Browser,
-  lastEvent: "pointerup" | "keyup",
+  lastEvent: "pointerup" | "pointermove" | "keyup",
   send: (session: CdpSession) => Promise<unknown>[],
 ): Gesture {
   const arrived = new Promise<void>((resolve) => {
@@ -260,11 +260,13 @@ function sendGesture(
   return { landed: Promise.race([arrived, done]) };
 }
 
-/** Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`). */
-async function moveMouseTo(browser: Browser, point: Point): Promise<Point> {
-  const target = pagePoint(point);
-  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", ...target });
-  return target;
+/**
+ * Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`).
+ * REP17-11 (D69(a)): sigue cuando el movimiento llega a la página; su fallo de CDP lo ve `settleCdpAcks`.
+ */
+async function moveMouseTo(browser: Browser, point: Point) {
+  const { x, y } = pagePoint(point);
+  await sendGesture(browser, "pointermove", (session) => [session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })]).landed;
 }
 
 type Pointer = "mouse" | "touch";
@@ -1238,17 +1240,11 @@ export const C12BM1Pie1280Raton700Pegado = c12bm1Pie(1280, "mouse", 700, 560);
 
 type Compaction = "salir" | "desplazar" | "teclado";
 
-/** Mueve el ratón real (CDP) a un punto de la pantalla, sin que Playwright desplace la página. */
-async function mouseMoveTo(browser: Browser, point: Point) {
-  const target = pagePoint(point);
-  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
-}
-
 /** Aplica el layout pendiente como el usuario: sacando el ratón del panel, desplazando o con el teclado. */
 async function compact(browser: Browser, how: Compaction) {
   if (how === "salir") {
     // Margen izquierdo del decorador (p-4): fuera del panel, sobre nada accionable.
-    await mouseMoveTo(browser, { x: 4, y: Math.round(window.innerHeight / 2) });
+    await moveMouseTo(browser, { x: 4, y: Math.round(window.innerHeight / 2) });
   } else if (how === "desplazar") {
     window.scrollBy({ top: 40, behavior: "instant" });
   } else {
@@ -1336,7 +1332,7 @@ function campoFueraDelPanel(width: number, pointer: Pointer): Story {
       // Entre la fecha y el panel (fuera del panel, nada accionable).
       const point = { x: centerOf(date).x, y: panel().getBoundingClientRect().top - 3 };
       if (pointer === "mouse") {
-        await mouseMoveTo(browser, point);
+        await moveMouseTo(browser, point);
       } else {
         window.scrollBy({ top: -10, behavior: "instant" });
       }
