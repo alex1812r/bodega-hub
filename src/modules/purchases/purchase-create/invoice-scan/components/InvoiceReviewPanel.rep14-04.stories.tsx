@@ -19,6 +19,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { pressKeys, settleCdpAcks } from "./InvoiceReviewPanel.cdpInput";
 
 const SUPPLIER_NAME = "Mercaseu 2030, C.A.";
 const LINE = { match: { taxRateCode: "exento" }, read: { lineTotal: 1750, quantity: 1, unitPrice: 1750 } };
@@ -186,8 +187,7 @@ function rateStory(width: number, height: number, pointer: Pointer): Story {
       await activate(browser, screen.getByRole("radio", { name: "Escribir la tasa" }), pointer);
       const input = screen.getByLabelText("Tasa Bs por REF");
       await activate(browser, input, pointer);
-      await browser.userEvent.keyboard("950");
-      await browser.userEvent.keyboard("{Tab}");
+      await pressKeys(browser, "950{Tab}");
       await sleep(300);
       const typed = log(`tasa ${pointer} ${width}: escrita «${notice()}» ${JSON.stringify(radios())}`);
       await snapshot(browser, `tasa-${pointer}-${width}-2-escrita`);
@@ -264,6 +264,7 @@ const meta = {
   beforeEach() {
     MockDate.reset();
   },
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/REP14-04 proveedor y aviso de tasa",
