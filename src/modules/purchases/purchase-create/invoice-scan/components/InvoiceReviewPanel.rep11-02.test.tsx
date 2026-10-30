@@ -1,6 +1,6 @@
 /**
  * REP11-02 · D48(b) + D49 (M-p11-2, C11B-M1, B-p11-1): el layout pendiente nunca se aplica por
- * tiempo. Con ratón, solo al salir el puntero del PANEL completo; con táctil, nunca solo; siempre al
+ * tiempo. Con ratón o táctil, nunca solo (D71(a): sacar el ratón del panel o de la ventana tampoco); siempre al
  * desplazar o usar el teclado. Durante 1 s tras aplicarlo se ignoran las activaciones de puntero
  * sobre controles cuya caja se movió. La fila descartada/resuelta retenida muestra un resumen.
  */
@@ -176,23 +176,29 @@ describe("REP11-02 · D49: el layout pendiente no se aplica por tiempo", () => {
     expect(held(0)).toBe(true);
   });
 
-  it("con el ratón, se aplica al salir el puntero del panel completo", () => {
+  it("D71(a): con el ratón, salir el puntero del panel completo no la aplica; el teclado sí", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "mouse");
     moveMouse(INSIDE_PANEL);
     expect(held(0)).toBe(true);
 
     moveMouse(OUTSIDE_PANEL);
+    advance(3000);
 
+    expect(held(0)).toBe(true);
+    fireEvent.keyDown(document.body, { key: "Shift" });
     expect(held(0)).toBe(false);
   });
 
-  it("con el ratón, se aplica al salir de la ventana", () => {
+  it("D71(a): con el ratón, salir de la ventana no la aplica; desplazar sí", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "mouse");
 
     fireEvent.pointerLeave(document.documentElement, { pointerId: 1, pointerType: "mouse" });
+    advance(3000);
 
+    expect(held(0)).toBe(true);
+    fireEvent.scroll(window);
     expect(held(0)).toBe(false);
   });
 
@@ -235,12 +241,15 @@ describe("REP11-02 · D49: guarda anclada al momento de aplicar el layout", () =
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
-  it("con el ratón que vuelve al panel tras salir, el clic sobre lo movido antes de 1 s no actúa", () => {
+  it("con el ratón fuera del panel, el teclado la aplica y al volver, el clic sobre lo movido antes de 1 s no actúa", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "mouse");
     advance(1200);
     moveMouse(OUTSIDE_PANEL);
     advance(400);
+    expect(held(0)).toBe(true);
+    fireEvent.keyDown(document.body, { key: "Shift" });
+    expect(held(0)).toBe(false);
     moveMouse({ clientX: 120, clientY: 600 });
 
     press(harinaChip(1), "mouse", { clientX: 120, clientY: 600 });

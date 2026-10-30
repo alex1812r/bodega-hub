@@ -5,9 +5,10 @@ import { useEffect, useRef } from "react";
 import { useLayoutHold } from "./useLayoutHold";
 
 /**
- * REP17-06 · D70(c) (B-r17Q-2): con el ratón, sacarlo del panel suelta lo retenido sin mover lo que estaba bajo su
- * última posición dentro del panel: al volver al mismo punto está el mismo control. Un aviso que encoge solo (la reserva
- * que la tasa del día no usa) queda retenido; el ratón, sobre un control de las filas, sale del panel:
+ * REP17-06 · D70(c) (B-r17Q-2), D71(a): con el ratón, sacarlo del panel no suelta nada (al volver al mismo punto está el
+ * mismo control); lo suelta la rueda, sin mover lo que estaba bajo su última posición dentro del panel. Un aviso que
+ * encoge solo (la reserva que la tasa del día no usa) queda retenido; el ratón, sobre un control de las filas, sale del
+ * panel (sigue retenido) y gira la rueda fuera de él:
  * - con desplazamiento que compense lo soltado, se suelta anclado al control, y lo que movió la liberación (lo de encima)
  *   queda guardado desde ese instante (D49);
  * - sin él (página arriba, hueco encima), sigue retenido: el control no se mueve.
@@ -124,7 +125,7 @@ function mouseOutOfPanel(exit: Exit) {
   }
 }
 
-describe("REP17-06 · D70(c) · sacar el ratón del panel no mueve lo que estaba bajo él", () => {
+describe("REP17-06 · D70(c), D71(a) · sacar el ratón del panel no mueve lo que estaba bajo él", () => {
   let rect: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
 
@@ -152,7 +153,7 @@ describe("REP17-06 · D70(c) · sacar el ratón del panel no mueve lo que estaba
   });
 
   it.each<Exit>(["pointermove", "pointerleave"])(
-    "con desplazamiento que lo compense (%s), se suelta anclado al control y lo de encima queda guardado (D49)",
+    "salir (%s) no suelta nada; la rueda, con desplazamiento que lo compense, suelta anclado al control y lo de encima queda guardado (D49)",
     (exit) => {
       const { rerender } = render(<Harness tick={0} />);
       const scroller = wireScroller();
@@ -165,6 +166,11 @@ describe("REP17-06 · D70(c) · sacar el ratón del panel no mueve lo que estaba
 
       mouseOutOfPanel(exit);
 
+      expect(notice().style.minHeight).toBe("200px");
+      expect(rowControl().getBoundingClientRect().top).toBe(before);
+
+      fireEvent.wheel(document.body, { deltaY: 40 });
+
       expect(notice().style.minHeight).toBe("");
       expect(rowControl().getBoundingClientRect().top).toBe(before);
       expect(document.elementFromPoint(100, before + 10)).toBe(rowControl());
@@ -173,7 +179,7 @@ describe("REP17-06 · D70(c) · sacar el ratón del panel no mueve lo que estaba
     },
   );
 
-  it("sin desplazamiento que lo compense (página arriba, hueco encima), sigue retenido y el control no se mueve", () => {
+  it("salir y girar la rueda sin desplazamiento que lo compense (página arriba, hueco encima): sigue retenido y el control no se mueve", () => {
     const { rerender } = render(<Harness tick={0} />);
     wireScroller();
     geometry.notice = 28;
@@ -181,6 +187,7 @@ describe("REP17-06 · D70(c) · sacar el ratón del panel no mueve lo que estaba
     const before = rowControl().getBoundingClientRect().top;
 
     mouseOutOfPanel("pointermove");
+    fireEvent.wheel(document.body, { deltaY: 40 });
 
     expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before);
