@@ -155,11 +155,26 @@ export async function POST(request: Request) {
         ? { clientRequestId: input.clientRequestId, scanId: invoiceScanId }
         : null;
     const service = getPurchasesService();
+    const createPurchaseReleasingClaim = async () => {
+      try {
+        return await service.createPurchase(input, auth.storeId);
+      } catch (error) {
+        // Rechazo definitivo (4xx): la compra no existe y se suelta el reclamo para
+        // reintentar con otra clave. Resultado incierto (5xx, red): el reclamo se
+        // queda; el mismo intento lo recupera y, si no vuelve, caduca.
+        if (scanClaim && error instanceof ApiError && error.status < 500) {
+          await scanService.releaseInvoiceScanClaim(scanClaim, auth.storeId);
+        }
+
+        throw error;
+      }
+    };
     // REP17-05 (D70(f), B-p18A-1): la clave que ya creó su compra es un replay: `create_purchase` la devuelve (u otra
     // huella da 409) sin crear nada, ANTES del pre-check del escaneo, que pudo purgarse desde entonces.
+    // REP18-04 (B-p19-1): ese 409 también suelta el reclamo, como cualquier rechazo 4xx de la compra.
     const replayed =
       scanClaim && (await service.hasPurchaseWithClientRequestId(scanClaim.clientRequestId, auth.storeId))
-        ? await service.createPurchase(input, auth.storeId)
+        ? await createPurchaseReleasingClaim()
         : null;
     const scan = scanClaim
       ? await scanService
@@ -174,24 +189,7 @@ export async function POST(request: Request) {
           })
       : null;
 
-    let purchase: Awaited<ReturnType<typeof service.createPurchase>>;
-
-    if (replayed) {
-      purchase = replayed;
-    } else {
-      try {
-        purchase = await service.createPurchase(input, auth.storeId);
-      } catch (error) {
-        // Rechazo definitivo (4xx): la compra no existe y se suelta el reclamo para
-        // reintentar con otra clave. Resultado incierto (5xx, red): el reclamo se
-        // queda; el mismo intento lo recupera y, si no vuelve, caduca.
-        if (scanClaim && error instanceof ApiError && error.status < 500) {
-          await scanService.releaseInvoiceScanClaim(scanClaim, auth.storeId);
-        }
-
-        throw error;
-      }
-    }
+    const purchase = replayed ?? (await createPurchaseReleasingClaim());
 
     // No lanza salvo una excepción: la compra ya existe y el resultado viaja en
     // `invoiceScan`. Si la compra devuelta es de OTRO intento (clave reutilizada con
