@@ -3,7 +3,7 @@
  * `top` de ningún control interactivo de la cabecera, las filas, el contenido tras las filas (aviso de duplicado) ni el
  * pie: los casos de REP16-02 medidos en todo el panel (`Panel*`) y los escenarios de la pasada 18
  * (`InvoiceReviewPanel.rep17-03.harness.tsx`): tasa escrita y luego la del día (M-p18B-1), duplicado tardío
- * (B-p18B-1) y liberación tras un arrastre corto (B-p18B-2). Un archivo por ancho para que Vitest los corra en paralelo.
+ * (B-p18B-1) y, con D72, nada se suelta tras un arrastre corto (B-p18B-2). Un archivo por ancho para que Vitest los corra en paralelo.
  *
  * Correr: `npx vitest --project storybook run src/modules/purchases/purchase-create/invoice-scan/components/InvoiceReviewPanel.rep17-03`
  * Fuera de Vitest (Storybook en el navegador) no hay viewport real y la medición se omite.
@@ -25,7 +25,7 @@ type Story = StoryObj<typeof meta>;
 
 export const TasaEscritaLuegoLaDelDia: Story = { play: scenarioPlay("tasaEscrita", "w1280") };
 export const DuplicadoTardio: Story = { play: scenarioPlay("duplicadoTardio", "w1280") };
-export const SueltaTrasArrastreCorto: Story = { play: scenarioPlay("sueltaArrastre", "w1280") };
+export const NoSeSueltaTrasArrastreCorto: Story = { play: scenarioPlay("noSueltaArrastre", "w1280") };
 export const PanelTasa3_0: Story = { play: propertyPlay("tasa3", "w1280", 0, "panel") };
 export const PanelTasa3_1: Story = { play: propertyPlay("tasa3", "w1280", 1, "panel") };
 export const PanelEstados_0: Story = { play: propertyPlay("estados", "w1280", 0, "panel") };
