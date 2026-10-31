@@ -188,6 +188,72 @@ describe("REP18-01 · D75(a) · lo que aparece por una llegada no actúa con el 
   });
 });
 
+/** Selector con que `useLayoutHold` comprueba si cada control es accionable: cuenta los controles medidos. */
+const ACTIONABLE_PROBE = "[inert], [aria-hidden='true']";
+
+/** Cuántos controles mide la guarda de llegadas mientras corre `body`. */
+async function measuredDuring(body: () => Promise<void> | void) {
+  const closest = jest.spyOn(Element.prototype, "closest");
+  try {
+    await body();
+    return closest.mock.calls.filter(([selector]) => selector === ACTIONABLE_PROBE).length;
+  } finally {
+    closest.mockRestore();
+  }
+}
+
+describe("REP18-01b · la guarda de llegadas solo mide lo que puede traer un control, fuera del turno del usuario", () => {
+  it("al teclear no mide en cada tecla; al acabar el turno mide la base y la tasa que llega después se guarda", async () => {
+    const base = props(FIXTURES.tasa3.response);
+    const view = render(<InvoiceReviewPanel {...base} />);
+    await advance(QUIET_MS);
+    const field = screen.getByLabelText<HTMLInputElement>("Número de factura");
+
+    const typing = await measuredDuring(() => {
+      // Cada tecla escrita (el evento `change` de React) abre o alarga el turno del usuario.
+      for (const digit of "4567") {
+        fireEvent.change(field, { target: { value: `${field.value}${digit}` } });
+      }
+    });
+    expect(typing).toBe(0);
+    expect(await measuredDuring(() => advance(QUIET_MS))).toBeGreaterThan(0);
+
+    // La llegada se mide en su microtarea (en el navegador, antes del siguiente evento).
+    await act(async () => {
+      view.rerender(<InvoiceReviewPanel {...base} context={{ systemRateVes: 900, taxRates: REVIEW_TAX_RATES }} />);
+    });
+    touch(perUnit(1));
+    expect(perUnit(1)).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("no mide por cambios fuera del panel y de sus listas flotantes, ni por atributos que no traen un control", async () => {
+    render(
+      <div>
+        <button type="button">Fuera del panel</button>
+        <InvoiceReviewPanel {...props(FIXTURES.tasa3.response)} />
+      </div>,
+    );
+    await advance(QUIET_MS);
+    const outside = screen.getByRole("button", { name: "Fuera del panel" });
+
+    const unrelated = await measuredDuring(() =>
+      act(async () => {
+        outside.setAttribute("disabled", "");
+        outside.className = "otra";
+        row(1).setAttribute("data-rep18-01b", "1");
+        row(1).setAttribute("aria-busy", "true");
+      }),
+    );
+    expect(unrelated).toBe(0);
+    const inPanel = await measuredDuring(() =>
+      act(async () => {
+        row(1).classList.add("rep18-01b");
+      }),
+    );
+    expect(inPanel).toBeGreaterThan(0);
+  });
+});
+
 describe("REP18-01 · D75(b) · el aviso de la tasa pendiente no está donde aparecerán las opciones", () => {
   it("«Esperando la tasa del día…» va fuera de la reserva de opciones, en la franja de avisos de la fila", async () => {
     render(<InvoiceReviewPanel {...props(FIXTURES.tasa3.response)} />);
