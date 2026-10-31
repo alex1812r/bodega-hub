@@ -59,7 +59,11 @@ type Runtime = {
   duplicates: Deferred<InvoiceDuplicateMatch[]>;
   candidates: Deferred<ProductEntityOption[]>;
   lastCost: Deferred<number | null>;
+  /** REP18-02: veces que el panel llamó a cada callback de la página (un toque con efecto puede llamarlos). */
+  calls: Record<PageCallback, number>;
 };
+
+type PageCallback = "discard" | "load" | "rescan";
 
 let runtime: Runtime | null = null;
 let seq = 0;
@@ -98,6 +102,17 @@ const productFetcher: EntityFetcher<"product"> = () => {
 
 const noSuppliers: EntityFetcher<"contact"> = async () => [];
 const noop = () => undefined;
+const counter = (callback: PageCallback) => () => {
+  current().calls[callback] += 1;
+};
+const onDiscard = counter("discard");
+const onLoad = counter("load");
+const onRescan = counter("rescan");
+
+/** REP18-02: llamadas a los callbacks de la página en el caso montado. */
+export function pageCalls(): Readonly<Record<PageCallback, number>> {
+  return { ...current().calls };
+}
 
 /** Monta el caso del `runtime` (otro `seq`: otro árbol, con su QueryClient). */
 export function CaseHost() {
@@ -119,9 +134,9 @@ export function CaseHost() {
                 context={context}
                 duplicateFetcher={duplicateFetcher}
                 lastUnitCostFetcher={lastUnitCostFetcher}
-                onDiscard={noop}
-                onLoad={noop}
-                onRescan={noop}
+                onDiscard={onDiscard}
+                onLoad={onLoad}
+                onRescan={onRescan}
                 productFetcher={productFetcher}
                 response={fixture.response}
                 supplierFetcher={noSuppliers}
@@ -329,6 +344,7 @@ function newRuntime(fixture: Fixture): Runtime {
   queryClient.setQueryData(invoiceScanQueryKeys.images(fixture.response.scanId), []);
   return {
     asked: { candidates: 0, duplicates: 0, lastCost: 0, purchase: 0, supplier: 0 },
+    calls: { discard: 0, load: 0, rescan: 0 },
     candidates: deferred(),
     duplicates: deferred(),
     fixture,
@@ -358,7 +374,7 @@ const rateAdopted = () => /Llegó la tasa del día|hoy es/.test(panelRoot()?.tex
  * Suelta una fuente (cuando el panel ya la pidió) y devuelve cuándo su efecto está confirmado (`adopted`: cuándo lo
  * está el de la tasa, si el escenario lo ve de otra forma).
  */
-async function release(arrival: Arrival, adopted: () => boolean = rateAdopted): Promise<() => boolean> {
+export async function release(arrival: Arrival, adopted: () => boolean = rateAdopted): Promise<() => boolean> {
   const state = current();
   const { outcome, source } = arrival;
   if (source === "rate") {
