@@ -164,6 +164,15 @@ export function InvoiceReviewLineRow({
       ? deviationNeedsAhead(state, line, lastCost.ref, needs)
       : [];
   const amount = getLineAmount(line);
+  // REP17-05 (D69(b), B-p18Q-1): la reserva de las opciones dice qué espera. D75(b) (M-p19B-1): no sobre la reserva (donde
+  // aparecerán las opciones al llegar la tasa) sino en la franja reservada de los avisos de la fila, que al llegar queda
+  // como texto (el motivo del desvío) o vacía: donde estaba el texto nunca aparece un control. Fuera del flujo: no cambia
+  // ningún alto.
+  const rateWait = reserveOptions ? (
+    <span className="visible absolute inset-x-0 top-0 text-on-surface-variant" data-testid="invoice-review-rate-wait">
+      {rateFailed ? "Sin tasa del día: escríbela arriba" : "Esperando la tasa del día…"}
+    </span>
+  ) : null;
   const noticesId = useId();
   const optionsId = useId();
   const hasNotices = issues.length > 0 || needs.length > 0;
@@ -374,17 +383,11 @@ export function InvoiceReviewLineRow({
               <div
                 aria-hidden={reserveOptions || undefined}
                 className={cn(
-                  "relative flex flex-col gap-2 rounded-lg border border-outline-variant p-3",
+                  "flex flex-col gap-2 rounded-lg border border-outline-variant p-3",
                   reserveOptions ? "invisible" : null,
                 )}
                 data-testid={reserveOptions ? "invoice-review-options-reserve" : undefined}
               >
-                {reserveOptions ? (
-                  // REP17-05 (D69(b), B-p18Q-1): la reserva dice qué espera; fuera del flujo, no cambia su alto.
-                  <p className="visible absolute inset-0 flex items-center justify-center px-3 text-center text-xs text-on-surface-variant">
-                    {rateFailed ? "Sin tasa del día: escríbela arriba" : "Esperando la tasa del día…"}
-                  </p>
-                ) : null}
                 <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
                   {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
                     // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.
@@ -560,14 +563,17 @@ export function InvoiceReviewLineRow({
                 {costReview.kind === "loading" || (costMayDeviate && needsAhead.length === 0) ? (
                   // REP15-01 (D65): el motivo del costo desviado (hasta 3 renglones más a 320 px) llega con el último
                   // costo (D67(a): o con la tasa); su sitio queda reservado mientras falta y la fila no crece al llegar.
-                  <li aria-hidden className="min-h-[3lh]" />
+                  <li aria-hidden className="relative min-h-[3lh]">
+                    {rateWait}
+                  </li>
                 ) : null}
-                {needsAhead.map((need) => (
+                {needsAhead.map((need, position) => (
                   // REP16-01b (D67(a)): con la tasa pendiente, el sitio es el del texto que tendrá (lo que difiera en
                   // sus cifras lo retiene useLayoutHold).
-                  <li aria-hidden className="invisible flex items-start gap-1.5" key={`ahead-${need}`}>
+                  <li aria-hidden className="invisible relative flex items-start gap-1.5" key={`ahead-${need}`}>
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                     {need}
+                    {position === 0 ? rateWait : null}
                   </li>
                 ))}
               </ul>

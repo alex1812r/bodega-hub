@@ -16,6 +16,7 @@ import type { ProductEntityOption } from "@/shared/components/EntityAutocomplete
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, productUuid, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { COMPACTION_GUARD_MS } from "./useLayoutHold";
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
   fetchPurchaseSupplierOptions: jest.fn(async () => []),
@@ -183,6 +184,8 @@ async function pickGalleta(kind: PointerKind) {
   fireEvent.click(searchButton(0), { detail: 0 });
   await flush(1000);
   const option = await screen.findByRole("option", { name: /CAOSG Galleta Maria/ });
+  // REP18-01 (D75(a)): la lista llegó sola (respuesta del buscador): se elige pasada su guarda.
+  await flush(COMPACTION_GUARD_MS);
   press(option, kind, OPTION_POINT);
   expect(screen.queryByRole("option")).not.toBeInTheDocument();
   expect(harinaChip(0)).toHaveAttribute("aria-pressed", "false");

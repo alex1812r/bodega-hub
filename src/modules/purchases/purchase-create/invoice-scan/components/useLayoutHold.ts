@@ -209,6 +209,9 @@ const PANEL_MUTATIONS: MutationObserverInit = {
   subtree: true,
 };
 
+/** REP18-01 (D75(a)): lo que puede hacer aparecer o habilitar un control (el texto no). */
+const ARRIVAL_MUTATIONS: MutationObserverInit = { attributes: true, attributeOldValue: true, childList: true, subtree: true };
+
 /** D67(a): `notice` va antes del último control de las filas: si crece, baja controles de alguna fila. */
 function movesRowControls(root: Element, notice: Element): boolean {
   const rows = root.querySelectorAll(ROW_BOX_SELECTOR);
@@ -307,6 +310,32 @@ function arrivalGuardedPositions(root: Element): Map<Element, Position> {
   return positions;
 }
 
+/**
+ * REP18-01 (D75(a)): el control se puede accionar: habilitado, no inerte, no oculto a la accesibilidad (la reserva de las
+ * opciones, `aria-hidden`) y pintado (no `visibility: hidden` ni sin caja).
+ */
+function isActionable(control: Element): boolean {
+  if (
+    control.matches(":disabled") ||
+    control.getAttribute("aria-disabled") === "true" ||
+    control.closest("[inert], [aria-hidden='true']") !== null
+  ) {
+    return false;
+  }
+  // jsdom no implementa `checkVisibility`.
+  return "checkVisibility" in control
+    ? control.checkVisibility({ visibilityProperty: true })
+    : getComputedStyle(control).visibility !== "hidden";
+}
+
+/**
+ * REP18-01 (D75(a)): controles accionables del documento (el panel y sus listas flotantes, en portales). Solo se
+ * consultan desde el panel (sus clics, también los de sus portales, pasan por él): lo de fuera no se frena por esto.
+ */
+function actionableControls(): Set<Element> {
+  return new Set([...document.querySelectorAll(CONTROL_SELECTOR)].filter(isActionable));
+}
+
 /** Controles de `now` que no estaban en `before` o cambiaron de sitio (≥ 1 px). */
 function movedControls(before: ReadonlyMap<Element, Position>, now: ReadonlyMap<Element, Position>): Element[] {
   return [...now].flatMap(([control, position]) => {
@@ -315,9 +344,11 @@ function movedControls(before: ReadonlyMap<Element, Position>, now: ReadonlyMap<
   });
 }
 
-/** Marca `controls` como movidos ahora; olvida los que ya salieron de la guarda. Solo desde efectos. */
-function markMoved(movedAt: Map<Element, number>, controls: readonly Element[]) {
-  const now = Date.now();
+/**
+ * Marca `controls` como movidos ahora (`now`, del reloj con que se consulten); olvida los que ya salieron de la guarda.
+ * Solo desde efectos.
+ */
+function markMoved(movedAt: Map<Element, number>, controls: readonly Element[], now: number = Date.now()) {
   for (const [control, at] of movedAt) {
     if (now - at >= COMPACTION_GUARD_MS) {
       movedAt.delete(control);
@@ -379,6 +410,8 @@ function scrollBack(element: Element, delta: number) {
  * `movedByCompaction` dice si un control se movió (o apareció) con ello (D49).
  * D54(a): las zonas `[data-layout-shift-guard]` (el pie) se miden además tras cada render con el
  * layout retenido: lo que aparece o se mueve en ellas queda guardado igual, desde ese render.
+ * REP18-01 (D75(a)): en todo el panel y sus listas flotantes, lo que aparece o se habilita por una llegada asíncrona
+ * queda guardado igual, desde que aparece (`noteArrivals`).
  * `onFocusLost`: al soltarse el layout, la caja que tenía el foco se volvió a montar (cambió de
  * lista) y el foco cayó en BODY; recibe su clave.
  */
@@ -399,6 +432,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const noticeLayoutRef = useRef<NoticeLayout | null>(null);
   // REP17-01: controles de las zonas `[data-layout-arrival-guard]` en la última medición.
   const arrivalPositionsRef = useRef<Map<Element, Position> | null>(null);
+  // REP18-01 (D75(a)): controles accionables en la última medición (con el ancho del panel entonces) y cuándo apareció o
+  // se habilitó cada uno por una llegada, en `performance.now()`: reloj monótono que no fija quien fija la fecha (las
+  // historias de Storybook la fijan con MockDate y con `Date.now()` la guarda no acabaría nunca).
+  const actionableRef = useRef<{ width: number; controls: Set<Element> } | null>(null);
+  const arrivedAtRef = useRef(new Map<Element, number>());
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían).
   // D67(a): también los que crecieron solos, recortados a su alto anterior.
   const floorsRef = useRef(new Map<HTMLElement, HeldNoticeStyle>());
@@ -441,6 +479,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
    */
   const releaseForWidth = useCallback(() => {
     movedAtRef.current.clear();
+    arrivedAtRef.current.clear();
     return dropRetained();
   }, [dropRetained]);
 
@@ -722,6 +761,43 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));
 
+  /**
+   * REP18-01 (D75(a)): un control que APARECE o SE HABILITA sin acción del usuario (una llegada asíncrona) en cualquier
+   * parte del panel (cabecera, filas, lo de tras las filas, el pie) o en sus listas flotantes queda guardado desde ESE
+   * momento (D49): un toque que llega en el segundo siguiente no lo acciona. Lo que aparece en el turno del usuario es
+   * suyo, y con otro ancho (giro, ventana) todo se recoloca: no se guarda. El teclado no pasa por esta guarda.
+   */
+  const noteArrivals = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+    const width = root.getBoundingClientRect().width;
+    const controls = actionableControls();
+    const previous = actionableRef.current;
+    if (previous && Math.abs(previous.width - width) < 1 && !userTurnRef.current) {
+      markMoved(
+        arrivedAtRef.current,
+        [...controls].filter((control) => !previous.controls.has(control)),
+        performance.now(),
+      );
+    }
+    actionableRef.current = { width, controls };
+  }, [rootRef]);
+
+  // Las llegadas se miden con cada cambio del documento (los portales del buscador están fuera del panel), en su
+  // microtarea: antes de pintar.
+  useEffect(() => {
+    noteArrivals();
+    const mutations = new MutationObserver((records) => {
+      if (changesDom(records)) {
+        noteArrivals();
+      }
+    });
+    mutations.observe(document.body, ARRIVAL_MUTATIONS);
+    return () => mutations.disconnect();
+  }, [noteArrivals]);
+
   // Lo que cambia sin render del panel (el aviso de duplicado al saber si ya está en una compra), y
   // el desplazamiento del usuario, que solo renueva la medición (y, D54(a), la base del pie, que se mueve al desplazar si
   // no está pegado). REP15-01: un cambio del DOM sin render del panel (la cabecera) se mide en su microtarea, antes de
@@ -817,10 +893,17 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
      * ella): el foco no debe desplazar.
      */
     isPointerHolding: useCallback(() => holdRef.current !== null && !keyedRef.current, []),
-    /** D49/D54(a), para manejadores: `control` se movió (compactación, pie o llegada) hace menos de 1 s. */
+    /**
+     * D49/D54(a), para manejadores: `control` se movió (compactación, pie o llegada) hace menos de 1 s. REP18-01 (D75(a)):
+     * o apareció o se habilitó por una llegada.
+     */
     movedByCompaction: useCallback((control: Element) => {
-      const at = movedAtRef.current.get(control);
-      return at !== undefined && Date.now() - at < COMPACTION_GUARD_MS;
+      const moved = movedAtRef.current.get(control);
+      const arrived = arrivedAtRef.current.get(control);
+      return (
+        (moved !== undefined && Date.now() - moved < COMPACTION_GUARD_MS) ||
+        (arrived !== undefined && performance.now() - arrived < COMPACTION_GUARD_MS)
+      );
     }, []),
   };
 }
