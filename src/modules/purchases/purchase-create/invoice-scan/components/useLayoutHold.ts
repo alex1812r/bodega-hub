@@ -463,6 +463,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían).
   // D67(a): también los que crecieron solos, recortados a su alto anterior.
   const floorsRef = useRef(new Map<HTMLElement, HeldNoticeStyle>());
+  // REP18-03 (D75(d)): desplazamiento del contenedor del panel en la última medición de los avisos.
+  const scrollTopRef = useRef<{ scroller: Element; top: number } | null>(null);
   // D67(a): orden de filas retenido porque una llegada asíncrona cambió el del modelo (una fila que cambia de lista).
   const [retainedOrder, setRetainedOrder] = useState<TOrder | null>(null);
   const retainedOrderRef = useRef<TOrder | null>(null);
@@ -741,6 +743,12 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     const typing =
       userTurnRef.current && focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
     if (floor && sameWidth && !typing) {
+      // REP18-03 (D75(d), B-p19B-1): con la página al final, lo que encoge solo recorta el desplazamiento en cuanto algo
+      // fuerza el layout (antes de retenerlo aquí): todo baja sin entrada del usuario. Retenido, vuelve a donde estaba.
+      const scroller = scrollParent(root);
+      const lastTop = scrollTopRef.current?.scroller === scroller ? scrollTopRef.current.top : null;
+      const shrunkMax = scroller.scrollHeight - scroller.clientHeight;
+      let shrunk = false;
       const keepStyle = (notice: HTMLElement) => {
         if (!floorsRef.current.has(notice)) {
           floorsRef.current.set(notice, noticeStyle(notice));
@@ -757,6 +765,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
             notice.style.display = "block";
           }
           notice.style.minHeight = `${was}px`;
+          shrunk = true;
         } else if (was !== undefined && height - was >= 1 && !userTurnRef.current && movesRowControls(root, notice)) {
           // D67(a) (M-p17B-1): lo que crece solo (sin acción del usuario en este turno) y bajaría controles de las filas
           // se recorta a su alto anterior (el que no se veía, oculto: tampoco abre el hueco del `gap`). Lo que asome de
@@ -770,6 +779,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
           }
           markMoved(movedAtRef.current, [...notice.querySelectorAll(CONTROL_SELECTOR)]);
         }
+      }
+      // Solo una llegada (fuera del turno del usuario) y solo el recorte: estaba más abajo de lo que el contenido encogido
+      // deja y subió.
+      if (shrunk && !userTurnRef.current && lastTop !== null && lastTop - shrunkMax >= 1 && lastTop - scroller.scrollTop >= 1) {
+        scroller.scrollTop = lastTop;
       }
     }
     const { width, heights, rowBlocks } = measureNotices(root, anchor);
@@ -810,6 +824,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     arrivalPositionsRef.current = arrivals;
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
+    const panelScroller = scrollParent(root);
+    scrollTopRef.current = { scroller: panelScroller, top: panelScroller.scrollTop };
     if (floor) {
       setRetains(retainsSpace(root, holdRef.current?.heights, floorsRef.current));
     }

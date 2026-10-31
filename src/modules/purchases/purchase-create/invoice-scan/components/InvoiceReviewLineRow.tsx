@@ -81,6 +81,8 @@ function finiteOrNull(value: number): number | null {
 /**
  * REP16-01b (D67(a)): motivos que `line` añadiría si la tasa del día que falta desviara su costo (una tasa que lo deja
  * en diez veces su último costo). Su texto solo difiere del real en las cifras: reservado, mide lo que ocupará.
+ * REP18-03 (D75(d), B-p19B-1): con la tasa 1 el costo en REF es el importe en Bs, la cifra más larga: se reserva el texto
+ * más largo de los dos (en la última fila nada retiene lo que crezca y bajaría el pie con la página al final).
  */
 function deviationNeedsAhead(
   state: InvoiceReviewState,
@@ -88,12 +90,16 @@ function deviationNeedsAhead(
   lastCostRef: number,
   needs: readonly string[],
 ): string[] {
-  const system = line.unitPrice / (lastCostRef * 10);
-  if (!Number.isFinite(system) || system <= 0) {
-    return [];
-  }
-  const ahead = lineNeedMessages({ ...state, rate: { ...state.rate, choice: "system", system } }, line);
-  return ahead.filter((need) => !needs.includes(need));
+  const aheadWith = (system: number) => {
+    if (!Number.isFinite(system) || system <= 0) {
+      return [];
+    }
+    const ahead = lineNeedMessages({ ...state, rate: { ...state.rate, choice: "system", system } }, line);
+    return ahead.filter((need) => !needs.includes(need));
+  };
+  const deviated = aheadWith(line.unitPrice / (lastCostRef * 10));
+  const atRateOne = aheadWith(1);
+  return atRateOne.join("").length > deviated.join("").length ? atRateOne : deviated;
 }
 
 /**
