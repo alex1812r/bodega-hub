@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { INVOICE_DUPLICATES_DEBOUNCE_MS } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import type { InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
 
 import type { InvoiceReviewContext } from "../reviewModel";
@@ -31,6 +32,24 @@ const CONTEXT: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX
 const EXEMPT_LINE = { read: { quantity: 1, unitPrice: 1750, lineTotal: 1750 }, match: { taxRateCode: "exento" } };
 const DUPLICATE: InvoiceDuplicateMatch = { scanId: "scan-anterior", purchaseId: null, number: "000123", date: null };
 
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
+
+function setupUser() {
+  return userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
+}
+
 function renderPanel(overrides: Partial<InvoiceReviewPanelProps>) {
   render(
     <InvoiceReviewPanel
@@ -53,8 +72,10 @@ function loadButton() {
   return screen.getByRole("button", { name: "Cargar en la compra" });
 }
 
+/** REP17-04 (M-p18Q-1, D69(a)): la espera de la consulta de duplicados se adelanta con el reloj falso. */
 async function duplicatesChecked() {
-  await waitFor(() => expect(screen.queryByText("Comprobando duplicados…")).not.toBeInTheDocument());
+  await advance(INVOICE_DUPLICATES_DEBOUNCE_MS);
+  expect(screen.queryByText("Comprobando duplicados…")).not.toBeInTheDocument();
 }
 
 describe("InvoiceReviewPanel · el pie compacto nombra todos los motivos de bloqueo (REP13-06b)", () => {
@@ -81,7 +102,7 @@ describe("InvoiceReviewPanel · el pie compacto nombra todos los motivos de bloq
   });
 
   it("fecha, duplicado y diferencia; el duplicado lleva a su casilla", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPanel({
       duplicateFetcher: jest.fn(async () => [DUPLICATE]),
       response: makeReviewResponse({
@@ -100,7 +121,7 @@ describe("InvoiceReviewPanel · el pie compacto nombra todos los motivos de bloq
   });
 
   it("alto reservado: resolver los motivos no cambia la línea compacta ni la del total (Cargar no se mueve)", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPanel({
       duplicateFetcher: jest.fn(async () => [DUPLICATE]),
       response: makeReviewResponse({
@@ -124,7 +145,7 @@ describe("InvoiceReviewPanel · el pie compacto nombra todos los motivos de bloq
   });
 
   it("con el detalle abierto los motivos se dicen una vez, en el detalle", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPanel({ response: makeReviewResponse({ lines: [{}] }) });
     await duplicatesChecked();
 

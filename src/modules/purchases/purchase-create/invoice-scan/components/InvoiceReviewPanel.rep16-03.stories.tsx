@@ -9,6 +9,8 @@
  * 3. B-p17B-3: los altos retenidos (layout pendiente tras un toque, avisos retenidos tras una llegada) sobrevivían al
  *    giro y dejaban huecos hasta desplazar. Al cambiar el ancho se sueltan todos, sin guardar controles como movidos:
  *    tras girar se aceptan «Restaurar» a 1,4 s y el 2.º homónimo a 150 ms (N7 de pasada-17-B).
+ *    REP17-02: desde REP17-01 (D70(d)) el aviso de duplicado reserva su sitio y no encoge al irse; el aviso retenido es la
+ *    reserva del desvío de una línea, que la tasa del día deja de usar al llegar sin desviarla (B-p18B-2).
  *
  * Correr: `npx vitest --project storybook run src/modules/purchases/purchase-create/invoice-scan/components/InvoiceReviewPanel.rep16-03.stories.tsx`
  * Fuera de Vitest (Storybook en el navegador) no hay viewport real y la medición se omite.
@@ -17,6 +19,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MockDate from "mockdate";
 import { http, HttpResponse } from "msw";
+import { type ComponentProps, useEffect, useState } from "react";
 import { expect, fn, screen, waitFor, within } from "storybook/test";
 
 import type { InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
@@ -33,10 +36,10 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 const LONG_NAME = "Distribuidora Internacional de Alimentos y Víveres Los Andes del Sur, C.A. (CAOS16B)";
 const SUPPLIER_ERROR = "caos: no se pudo leer el proveedor";
-const DUPLICATE_SCAN_ID = "6b1f2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3";
 const HOMONYM = "CAOSG Jabon Azul 250g";
 
 const extraction = {
@@ -63,8 +66,22 @@ const lines = [
   doubtfulLine(3, 0.72, { read: { description: "Harina P.A.N. 1kg", rawText: "HARINA PAN 1KG" } }),
 ];
 const response = makeReviewResponse({ extraction, lines });
-/** El escaneo avisó de un duplicado; la consulta del proveedor elegido dice que no hay ninguno (el aviso se va). */
-const duplicateResponse = makeReviewResponse({ extraction, lines, matched: { duplicateOfScanId: DUPLICATE_SCAN_ID } });
+/**
+ * Sin tasa impresa; L2 (Bs 450, último costo 0,50 REF) reserva el sitio de su desvío mientras falta la tasa del día. Con
+ * 900 no se desvía (450 / 900 = 0,50): la reserva sobra y queda retenida (D65(b)).
+ */
+const lateRateResponse = makeReviewResponse({
+  extraction: { date: extraction.date, number: extraction.number, supplier: extraction.supplier },
+  lines: [
+    homonymLine,
+    lines[1],
+    doubtfulLine(3, 0.72, {
+      match: { lastUnitCostRef: 0.5, taxRateCode: "exento" },
+      read: { description: "Harina P.A.N. 1kg", lineTotal: 450, quantity: 1, rawText: "HARINA PAN 1KG", unitPrice: 450 },
+    }),
+  ],
+});
+const LATE_RATE = 900;
 
 type Gate<T> = { promise: Promise<T>; open: (value: T) => void };
 
@@ -89,7 +106,6 @@ async function loadBrowser() {
   return import("vitest/browser").catch(() => null);
 }
 
-type Browser = NonNullable<Awaited<ReturnType<typeof loadBrowser>>>;
 type Point = { x: number; y: number };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -120,33 +136,6 @@ function footer() {
 
 function supplierField() {
   return screen.getByRole("combobox", { name: /proveedor/i }) as HTMLInputElement;
-}
-
-/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
-function pagePoint(point: Point): Point {
-  let x = point.x;
-  let y = point.y;
-  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
-    const box = frame.getBoundingClientRect();
-    const width = frame.clientWidth + 2 * frame.clientLeft;
-    const scale = width ? box.width / width : 1;
-    x = box.left + (frame.clientLeft + x) * scale;
-    y = box.top + (frame.clientTop + y) * scale;
-  }
-  return { x, y };
-}
-
-/** Toque real (CDP `Input.dispatchTouchEvent`), como `tapAt` de REP15-01. */
-async function tapAt(browser: Browser, point: Point) {
-  const session = browser.cdp();
-  const touch = pagePoint(point);
-  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  try {
-    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
-    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  } finally {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-  }
 }
 
 function centerOf(element: Element): Point {
@@ -360,12 +349,24 @@ function rotateHoldStory(
       const after = heldHeights();
       await sleep(Math.max(0, 1400 - (Date.now() - tapped)));
       const restore = within(row(index)).getByRole("button", { name: "Restaurar" });
+      // REP17-17: con el sitio de «Compactar lista» tras las filas, a 844×390 con la página al final «Restaurar» puede quedar
+      // justo encima de la vista tras girar: se trae a la vista (desplazar no guarda nada) como haría el usuario.
+      const reachable = () => {
+        const center = centerOf(restore);
+        return restore.contains(document.elementFromPoint(center.x, center.y));
+      };
+      if (!reachable()) {
+        restore.scrollIntoView({ block: "center" });
+        await sleep(100);
+      }
       const restoredAt = Date.now() - tapped;
       const point = centerOf(restore);
-      const under = document.elementFromPoint(point.x, point.y)?.closest("button")?.textContent ?? "-";
+      const hit = document.elementFromPoint(point.x, point.y);
+      const under = hit?.closest("button")?.textContent ?? "-";
+      const where = `«Restaurar» en (${Math.round(point.x)},${Math.round(point.y)}) con ventana ${window.innerWidth}×${window.innerHeight}, en el punto ${hit?.tagName ?? "nada"}${hit instanceof HTMLElement && hit.dataset.testid ? `[${hit.dataset.testid}]` : ""}`;
       await tapAt(browser, point);
       await sleep(500);
-      const text = `${from.join("×")} → ${to.join("×")}${leave ? " (pointerleave al girar)" : ""}: retenidos antes de girar [${before.join(", ")}] → tras girar [${after.join(", ")}]; bajo el dedo «${under}»; L${index} tras «Restaurar» a ${restoredAt} ms del 1.er toque: ${row(index).dataset.status}`;
+      const text = `${from.join("×")} → ${to.join("×")}${leave ? " (pointerleave al girar)" : ""}: retenidos antes de girar [${before.join(", ")}] → tras girar [${after.join(", ")}]; bajo el dedo «${under}» (${where}); L${index} tras «Restaurar» a ${restoredAt} ms del 1.er toque: ${row(index).dataset.status}`;
       console.warn(`[REP16-03 giro con layout pendiente] ${text}`);
       await expect(before.length, `${text} (el toque debía retener)`).toBeGreaterThan(0);
       await expect(after, text).toEqual([]);
@@ -375,24 +376,40 @@ function rotateHoldStory(
   };
 }
 
+/** Llega la tasa del día (como `useExchangeRate` en la página), sin evento del usuario: lo que cambie es una llegada. */
+let arriveRate: () => void = () => undefined;
+
+function LateRatePanel(props: ComponentProps<typeof InvoiceReviewPanel>) {
+  const [context, setContext] = useState(props.context);
+  useEffect(() => {
+    arriveRate = () => setContext({ ...props.context, systemRateVes: LATE_RATE });
+  }, [props.context]);
+  return <InvoiceReviewPanel {...props} context={context} />;
+}
+
 /**
- * (3b) B-p17B-3 (`rotdup-1024`): el aviso de duplicado se va solo (queda retenido a su alto), girar. Tras girar no queda
- * ningún alto retenido, y el toque al 2.º homónimo 150 ms después del giro lo elige.
+ * (3b) B-p17B-3 (`rotdup-1024`): un aviso se va solo (queda retenido a su alto), girar. Tras girar no queda ningún alto
+ * retenido, y el toque al 2.º homónimo 150 ms después del giro lo elige. REP17-02: el aviso es la reserva del desvío de L2,
+ * que la tasa del día deja de usar al llegar sin desviarla.
  */
 function rotateNoticeStory(): Story {
   return {
-    args: { context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES }, response: duplicateResponse },
+    args: { response: lateRateResponse },
+    render: (args) => <LateRatePanel {...args} />,
     play: async () => {
       gates.supplier.open();
+      gates.duplicates.open([]);
       const browser = await prepare(1024, 1366);
       if (!browser) {
         return;
       }
       await waitFor(() => expect(supplierField()).toHaveValue(LONG_NAME));
-      await waitFor(() => expect(screen.getByText(/ya se escaneó antes/)).toBeInTheDocument());
+      // L0 (la de los homónimos) va tras L1 (sin emparejar): arriba de la vista, para que tras girar no quede bajo el pie.
+      row(0).scrollIntoView({ block: "start" });
       await sleep(300);
-      gates.duplicates.open([]);
-      await waitFor(() => expect(screen.queryByText(/ya se escaneó antes/)).toBeNull());
+      arriveRate();
+      // La reserva del desvío de L2 deja de usarse (su alto queda retenido).
+      await waitFor(() => expect(panel().querySelector('[data-testid="invoice-review-options-reserve"]')).toBeNull());
       await sleep(300);
       const before = heldHeights();
       await browser.page.viewport(1366, 1024);
@@ -433,6 +450,7 @@ const meta = {
     MockDate.reset();
     gates = newGates();
   },
+  afterEach: settleCdpAcks,
   component: InvoiceReviewPanel,
   decorators: [
     (Story) => {

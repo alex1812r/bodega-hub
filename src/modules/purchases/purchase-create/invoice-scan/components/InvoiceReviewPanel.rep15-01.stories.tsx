@@ -39,6 +39,7 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { compactList, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 /** El del lab (`fixtures-p16b-sup.sql`, M-p16B-1). */
 const LONG_NAME = "Distribuidora Internacional de Alimentos y Víveres Los Andes del Sur, C.A. (CAOS16B)";
@@ -144,7 +145,6 @@ async function loadBrowser() {
   return import("vitest/browser").catch(() => null);
 }
 
-type Browser = NonNullable<Awaited<ReturnType<typeof loadBrowser>>>;
 type Point = { x: number; y: number };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -167,33 +167,6 @@ function row(index: number) {
 
 function supplierField() {
   return screen.getByRole("combobox", { name: /proveedor/i }) as HTMLInputElement;
-}
-
-/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
-function pagePoint(point: Point): Point {
-  let x = point.x;
-  let y = point.y;
-  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
-    const box = frame.getBoundingClientRect();
-    const width = frame.clientWidth + 2 * frame.clientLeft;
-    const scale = width ? box.width / width : 1;
-    x = box.left + (frame.clientLeft + x) * scale;
-    y = box.top + (frame.clientTop + y) * scale;
-  }
-  return { x, y };
-}
-
-/** Toque real (CDP `Input.dispatchTouchEvent`), como `tapAt` de `layout.stories`. */
-async function tapAt(browser: Browser, point: Point) {
-  const session = browser.cdp();
-  const touch = pagePoint(point);
-  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  try {
-    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
-    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  } finally {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-  }
 }
 
 function centerOf(element: Element): Point {
@@ -413,14 +386,9 @@ function measureStory(width: number, height: number): Story {
         () => expect(within(row(1)).queryByText(/consultando el costo previo/i)).not.toBeInTheDocument(),
       );
 
-      // Desplazar suelta toda retención: la cabecera sigue con el alto del primer render.
-      const main = document.querySelector("main");
-      if (main) {
-        main.scrollTop = 40;
-        await sleep(300);
-        main.scrollTop = 0;
-        await sleep(400);
-      }
+      // REP17-17 (D72(b)): «Compactar lista» suelta toda retención: la cabecera sigue con el alto del primer render.
+      await compactList(browser);
+      await sleep(400);
       const last = measure();
       report.push(`primer render → tras soltar: ${first.header}/${first.datos} → ${last.header}/${last.datos}`);
       if (last.header !== first.header || last.datos !== first.datos) {
@@ -459,13 +427,9 @@ function rateStory(width: number, height: number, printedRate: number | undefine
         await sleep(400);
       });
       const held = heldNotices("header");
-      const main = document.querySelector("main");
-      if (main) {
-        main.scrollTop = 40;
-        await sleep(300);
-        main.scrollTop = 0;
-        await sleep(400);
-      }
+      // REP17-17 (D72(b)): «Compactar lista» suelta toda retención.
+      await compactList(browser);
+      await sleep(400);
       const last = measure();
       const text = `${width}×${height} impresa ${printedRate ?? "-"} → del día ${systemRate}: ${frames.join(" → ")}${held.length ? ` retenidos ${held.join(", ")}` : ""}; tras soltar ${first.header} → ${last.header}`;
       console.warn(`[REP15-01b tasa] ${text}`);
@@ -597,6 +561,7 @@ const meta = {
     MockDate.reset();
     gates = newGates();
   },
+  afterEach: settleCdpAcks,
   component: InvoiceReviewPanel,
   decorators: [
     (Story) => {

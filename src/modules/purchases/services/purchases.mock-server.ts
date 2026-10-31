@@ -626,6 +626,11 @@ function purchasesByClientRequest() {
   return mockState("purchases:byClientRequest", () => new Map<string, PurchaseMock>());
 }
 
+/** REP17-05 (D70(f)): la clave ya creó su compra en la tienda; repetirla es un replay. */
+export function hasPurchaseWithClientRequestId(clientRequestId: string, storeId: string) {
+  return purchasesByClientRequest().has(`${storeId}:${clientRequestId}`);
+}
+
 export function createPurchase(input: PurchaseInput, storeId: string) {
   const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}` : null;
   const previous = requestKey ? purchasesByClientRequest().get(requestKey) : undefined;

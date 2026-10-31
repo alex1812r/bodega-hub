@@ -1,10 +1,32 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import type { EntityFetcherParams, ProductEntityOption } from "@/shared/components/EntityAutocomplete";
+import {
+  ENTITY_AUTOCOMPLETE_DEBOUNCE_MS,
+  type EntityFetcherParams,
+  type ProductEntityOption,
+} from "@/shared/components/EntityAutocomplete";
 
 import { InvoiceReviewProductSearch } from "./InvoiceReviewProductSearch";
+
+/**
+ * REP17-04 (M-p18Q-1, D69(a)): reloj falso. findBy* corre en tiempo falso y la espera del
+ * autocompletado tras teclear se adelanta a mano; nada depende del segundo real de waitFor.
+ */
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+async function advance(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
 
 function product(id: string, label: string): ProductEntityOption {
   return {
@@ -71,7 +93,7 @@ describe("InvoiceReviewProductSearch", () => {
   });
 
   it("si el usuario edita el texto, la búsqueda es la normal (sin tokens)", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     const fetcher = renderSearch("REFRESCO GLUP SABOR 2LT");
 
     const input = await screen.findByRole("combobox", { name: "Producto de la línea 1" });
@@ -80,12 +102,11 @@ describe("InvoiceReviewProductSearch", () => {
 
     await user.clear(input);
     await user.type(input, "pepsi");
+    await advance(ENTITY_AUTOCOMPLETE_DEBOUNCE_MS);
 
-    await waitFor(() => {
-      const options = screen.getAllByRole("option");
-      expect(options).toHaveLength(1);
-      expect(options[0]).toHaveTextContent("Refresco Pepsi 2 Lt");
-    });
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent("Refresco Pepsi 2 Lt");
     const queriesAfterEdit = fetcher.mock.calls.slice(callsBeforeEdit).map(([params]) => params.query);
     expect(queriesAfterEdit).toContain("pepsi");
     expect(queriesAfterEdit.every((query) => "pepsi".startsWith(query))).toBe(true);

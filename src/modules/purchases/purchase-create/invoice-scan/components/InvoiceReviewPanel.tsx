@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FileImage } from "lucide-react";
-import { type FocusEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type FocusEvent, type KeyboardEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
 import { fetchLastUnitCostRef } from "@/modules/invoice-scan/client/fetchLastUnitCost";
@@ -291,8 +291,16 @@ export function InvoiceReviewPanel({
       (rateAtOpen && rateBeforeSystem ? [rateAtOpen, rateBeforeSystem] : []).flatMap((rate) => {
         const before = { ...state, rate };
         const likely = rate.printed ?? 1000;
+        // REP17-01 (D70(a)): con el campo ya a la vista, también lo que tendrá con la tasa escrita (teclear no lo agranda).
+        const typed =
+          rate.choice === "manual" && rate.manual === undefined
+            ? [reviewReducer(before, { type: "setRateChoice", choice: "manual", manualRate: likely })]
+            : [];
         // A +30 %: aún verosímil frente a la impresa (±25 % de la del día) y con tantas cifras como la del día más alta.
-        return [before, reviewReducer(before, { type: "adoptSystemRate", systemRateVes: Math.round(likely * 130) / 100 })];
+        return [before, ...typed].flatMap((base) => [
+          base,
+          reviewReducer(base, { type: "adoptSystemRate", systemRateVes: Math.round(likely * 130) / 100 }),
+        ]);
       }),
     [rateAtOpen, rateBeforeSystem, state],
   );
@@ -340,11 +348,15 @@ export function InvoiceReviewPanel({
       date,
       total: state.extraction.total,
     });
+  const currentDuplicateQuery = duplicateQuery(supplierId, state.header.number, state.header.date);
   const duplicates = useInvoiceDuplicates(
-    duplicateQuery(supplierId, state.header.number, state.header.date),
+    currentDuplicateQuery,
     duplicateFetcher,
     duplicateQuery(readContactId, state.extraction.number, state.extraction.date),
   );
+  // REP17-01 (D70(d), B-p18B-1): con consulta, su respuesta puede llegar (también tras cambiar proveedor, número o fecha)
+  // y el aviso tras las filas aparecer: su sitio queda reservado (si no, al llegar bajaría el pie).
+  const duplicatePossible = currentDuplicateQuery !== null;
   const duplicateKey = duplicates.matches ? (duplicates.matches[0]?.scanId ?? null) : (state.duplicateOfScanId ?? null);
   const [acknowledgedDuplicate, setAcknowledgedDuplicate] = useState<string | null>(null);
   const duplicateUnacknowledged = duplicateKey !== null && acknowledgedDuplicate !== duplicateKey;
@@ -377,9 +389,9 @@ export function InvoiceReviewPanel({
   // D39-7 (C8-M1): fila a la que se llevó el foco por programa; sus flechas no marcan candidato
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
-  // D46: tras una activación con el puntero, las filas conservan caja y orden (layout pendiente) y
-  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s. D49: el
-  // layout se aplica al desplazar, con teclado o al salir el ratón del panel, nunca por tiempo.
+  // D46: tras una activación con el puntero, las filas conservan caja y orden (layout retenido) y
+  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s. D72: lo retenido solo se suelta
+  // con «Compactar lista» o al cambiar el ancho; nunca solo.
   const rootRef = useRef<HTMLDivElement>(null);
   const layoutHold = useLayoutHold<RowOrder>(rootRef, (key) => {
     // Al aplicarse el layout, la fila con el foco cambió de lista: el foco vuelve a ella sin desplazar
@@ -426,6 +438,16 @@ export function InvoiceReviewPanel({
       retainOrder(previous.shown);
     }
   });
+  // D72(b): hay algo retenido (cajas, avisos o el orden de las filas): se ofrece «Compactar lista».
+  const canCompact = layoutHold.retainsSpace || !sameRowOrder(naturalOrder, shownOrder);
+
+  /** D72(b): el botón se va al compactar; el foco que tenía pasa al pie (nunca a BODY). */
+  function compactList(event: MouseEvent<HTMLButtonElement>) {
+    if (document.activeElement === event.currentTarget) {
+      footerRef.current?.focus({ preventScroll: true });
+    }
+    layoutHold.compact();
+  }
   // Una confirmada cuyo cantidad × costo no cuadra sigue colapsada (el orden es del
   // modelo), pero el botón lo dice para que se abra a revisarla.
   const confirmedMismatches = sections.confirmed.filter((line) =>
@@ -496,7 +518,7 @@ export function InvoiceReviewPanel({
     const choice =
       !need && line !== undefined && line.accepted && isPendingStatus(line.status) && needsOptionChoice(next, line);
     const needsSupplier = target === null && !next.header.supplier.contactId;
-    const keepScroll = layoutHold.isHolding();
+    const keepScroll = layoutHold.isPointerHolding();
     setFocusRequest((current) => ({
       seq: (current?.seq ?? 0) + 1,
       target,
@@ -850,6 +872,7 @@ export function InvoiceReviewPanel({
         onPickProduct={handlePickProduct}
         onRowKeyDown={handleRowKeyDown}
         productFetcher={productFetcher}
+        rateFailed={context.systemRateFailed}
         ratePending={ratePending}
         rowRef={(element) => {
           if (element) {
@@ -972,8 +995,14 @@ export function InvoiceReviewPanel({
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-4">
-          {/* D46-a: encabezado y avisos no encogen bajo el dedo (las filas subirían). */}
-          <div className="flex min-w-0 flex-col gap-4" data-layout-box="header" style={layoutHold.boxStyle("header")}>
+          {/* D46-a: encabezado y avisos no encogen bajo el dedo (las filas subirían). REP17-01 (D70(a)): lo que aparece o
+              se mueve en ellos sin acción del usuario no actúa durante 1 s (D49). */}
+          <div
+            className="flex min-w-0 flex-col gap-4"
+            data-layout-arrival-guard
+            data-layout-box="header"
+            style={layoutHold.boxStyle("header")}
+          >
             <div ref={headerRef}>
               <InvoiceReviewHeader
                 onAction={applyPanelAction}
@@ -1061,8 +1090,19 @@ export function InvoiceReviewPanel({
             duplicateCheckboxRef={duplicateCheckboxRef}
             duplicates={duplicates.matches}
             onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
+            reserveSpace={duplicatePossible}
             state={state}
           />
+
+          {/* REP17-17 (D72(b)): lo retenido se suelta a petición. Sitio reservado desde el primer render, tras las filas
+              (nunca sobre una): que el botón aparezca o se vaya no mueve nada. */}
+          <div className="flex h-9 items-center" data-testid="invoice-review-compact-slot">
+            {canCompact ? (
+              <Button onClick={compactList} size="sm" variant="outline">
+                Compactar lista
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         <aside aria-label="Factura escaneada" className="hidden lg:block">

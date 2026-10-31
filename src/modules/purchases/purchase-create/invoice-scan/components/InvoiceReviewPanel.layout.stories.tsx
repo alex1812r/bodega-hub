@@ -18,12 +18,14 @@ import { type ComponentProps, useEffect, useState } from "react";
 import { expect, fn, screen, waitFor, within } from "storybook/test";
 
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
+import type { InvoiceDuplicatesFetcher } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import { invoiceScanQueryKeys } from "@/modules/invoice-scan/client/useInvoiceScanImages";
 import { purchaseSuppliersQueryKeys } from "@/modules/purchases/hooks/usePurchaseSuppliers";
 import type { EntityFetcher, ProductEntityOption } from "@/shared/components/EntityAutocomplete";
 
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { compactList, deferCdpAck, fillField, openCdpSession, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
@@ -136,6 +138,8 @@ const products: ProductEntityOption[] = [
 
 const productFetcher: EntityFetcher<"product"> = async () => products;
 const noSuppliers: EntityFetcher<"contact"> = async () => [];
+// REP17-07 (M-r17Q-1): sin él, la consulta iba al servidor de Vitest y fallaba cuando le tocaba (según la carga).
+const noDuplicates: InvoiceDuplicatesFetcher = async () => [];
 
 /** Clics y viewport reales de Vitest browser (Playwright); `null` fuera de Vitest. */
 async function loadBrowser() {
@@ -218,17 +222,51 @@ function observableState() {
  * las filas sin que la revisión las moviera.
  */
 async function clickAt(browser: Browser, point: Point) {
-  const { x, y } = await moveMouseTo(browser, point);
-  const session = browser.cdp();
-  await session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-  await session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  await clickGesture(browser, point).landed;
 }
 
-/** Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`). */
-async function moveMouseTo(browser: Browser, point: Point): Promise<Point> {
-  const target = pagePoint(point);
-  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", ...target });
-  return target;
+function clickGesture(browser: Browser, point: Point) {
+  const { x, y } = pagePoint(point);
+  return sendGesture(browser, "pointerup", (session) => [
+    session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
+    session.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }),
+    session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }),
+  ]);
+}
+
+/**
+ * REP17-09 (M-r17Q2-1): un gesto real por CDP, con sus órdenes seguidas (el canal las entrega en orden, como
+ * `mouse.click` de Puppeteer). Con la carpeta entera, mientras otros archivos cerraban y abrían, cada acuse tardaba
+ * 0,3–1,1 s aunque la entrada llegaba a la página en < 0,25 s. `landed`: el último evento del gesto llegó a la
+ * ventana (o ya no llegará: hay acuse).
+ * REP17-10 (M-r17Q3-1): los acuses de las preparaciones llegaron a tardar 1,6–2,3 s cada uno; ya no se esperan en serie:
+ * el `afterEach` del meta espera todos los de la historia (`settleCdpAcks`). REP17-11: ya no los espera; comprueba sus fallos.
+ */
+type Gesture = { landed: Promise<void> };
+type CdpSession = ReturnType<Browser["cdp"]>;
+
+function sendGesture(
+  browser: Browser,
+  lastEvent: "pointerup" | "pointermove" | "keyup" | "wheel",
+  send: (session: CdpSession) => Promise<unknown>[],
+): Gesture {
+  const arrived = new Promise<void>((resolve) => {
+    window.addEventListener(lastEvent, () => resolve(), { capture: true, once: true });
+  });
+  const done = openCdpSession(browser)
+    .then((session) => Promise.all(send(session)))
+    .then(() => undefined);
+  deferCdpAck(done);
+  return { landed: Promise.race([arrived, done]) };
+}
+
+/**
+ * Lleva el ratón a un punto de la pantalla sin desplazar la página (por CDP, como `clickAt`).
+ * REP17-11 (D69(a)): sigue cuando el movimiento llega a la página; su fallo de CDP lo ve `settleCdpAcks`.
+ */
+async function moveMouseTo(browser: Browser, point: Point) {
+  const { x, y } = pagePoint(point);
+  await sendGesture(browser, "pointermove", (session) => [session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })]).landed;
 }
 
 type Pointer = "mouse" | "touch";
@@ -250,35 +288,86 @@ function pagePoint(point: Point): Point {
 
 /** Toque real (CDP `Input.dispatchTouchEvent`): pointerdown/up con `pointerType` touch y su clic. */
 async function tapAt(browser: Browser, point: Point) {
-  const session = browser.cdp();
-  const touch = pagePoint(point);
-  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  try {
-    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
-    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  } finally {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-  }
+  await tapGesture(browser, point).landed;
 }
 
-const activateAt = (browser: Browser, point: Point, pointer: Pointer) =>
-  pointer === "touch" ? tapAt(browser, point) : clickAt(browser, point);
+/** La emulación táctil se apaga en el mismo gesto aunque falle el toque (cada orden se procesa por separado). */
+function tapGesture(browser: Browser, point: Point) {
+  const touch = pagePoint(point);
+  return sendGesture(browser, "pointerup", (session) => [
+    session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }),
+    session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] }),
+    session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }),
+    session.send("Emulation.setTouchEmulationEnabled", { enabled: false }),
+  ]);
+}
+
+const activateAt = async (browser: Browser, point: Point, pointer: Pointer) => {
+  await activationGesture(browser, point, pointer).landed;
+};
+
+const activationGesture = (browser: Browser, point: Point, pointer: Pointer) =>
+  pointer === "touch" ? tapGesture(browser, point) : clickGesture(browser, point);
 
 function centerOf(element: Element): Point {
   const box = element.getBoundingClientRect();
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
 
-/** Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda. */
+/**
+ * REP17-07 (M-r17Q-1): el control a la vista y sin nada encima (el pie fijo tapa el borde de abajo de la ventana).
+ * Si ni centrado se alcanza, el usuario tampoco podría: es del panel, no del test.
+ */
+function revealForClick(element: HTMLElement) {
+  const atCenter = () => {
+    const point = centerOf(element);
+    return document.elementFromPoint(point.x, point.y);
+  };
+  const reachable = () => element.contains(atCenter());
+  if (reachable()) {
+    return;
+  }
+  element.scrollIntoView({ block: "center" });
+  if (!reachable()) {
+    throw new Error(`${describeControl(element)} queda bajo ${describeControl(atCenter())} incluso centrado en la ventana`);
+  }
+}
+
+/**
+ * Paso previo con clic real; se deja pasar la guarda, una tecla cierra la activación y, REP17-17 (D72(b)), si quedó algo
+ * retenido se compacta con «Compactar lista».
+ * REP17-09 (M-r17Q2-1): clic y tecla por CDP, el clic en el centro que `revealForClick` acaba de comprobar libre,
+ * como el clic objetivo. Mientras la carpeta cerraba y abría archivos, `userEvent.click` (Playwright) tardaba
+ * 10–13 s y `userEvent.keyboard` hasta 2,5 s. La guarda corre desde que el clic llega a la página.
+ * REP17-10: la tecla, desde que llega; sus acuses se esperan al final de la historia.
+ */
 async function setupClick(browser: Browser, element: HTMLElement) {
-  await browser.userEvent.click(element);
+  revealForClick(element);
+  await clickGesture(browser, centerOf(element)).landed;
   await sleep(POINTER_GUARD_MS + 100);
-  await browser.userEvent.keyboard("{Shift}");
+  await shiftGesture(browser).landed;
+  await compactList(browser);
+}
+
+/** Clic real (CDP) en el centro de un campo, que `revealForClick` comprueba libre. REP17-10: antes `userEvent.click`. */
+async function clickField(browser: Browser, field: HTMLElement) {
+  revealForClick(field);
+  await clickGesture(browser, centerOf(field)).landed;
+}
+
+/** Shift real (CDP `Input.dispatchKeyEvent`): una tecla que no escribe ni mueve el foco. */
+function shiftGesture(browser: Browser) {
+  const key = { code: "ShiftLeft", key: "Shift", location: 1, windowsVirtualKeyCode: 16 };
+  return sendGesture(browser, "keyup", (session) => [
+    session.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key, modifiers: 8 }),
+    session.send("Input.dispatchKeyEvent", { type: "keyUp", ...key }),
+  ]);
 }
 
 /**
  * La medición de D46-c sobre `target`: tras el clic real no queda OTRO control de decisión en el
  * punto, y el 2.º clic en ese punto a 600 ms no cambia ninguna otra línea ni deja el foco en BODY.
+ * REP17-09: los tiempos cuentan desde que el clic llega a la página, no desde su acuse por CDP.
  */
 async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElement, timing: Timing) {
   target.scrollIntoView({ block: "center" });
@@ -292,7 +381,8 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   const others = () => Object.fromEntries(Object.entries(statuses()).filter(([index]) => index !== line));
 
   const before = observableState();
-  await activateAt(browser, point, timing.pointer);
+  const first = activationGesture(browser, point, timing.pointer);
+  await first.landed;
   const start = performance.now();
   for (const at of timing.probes) {
     await sleep(at - (performance.now() - start));
@@ -316,7 +406,7 @@ async function expectNothingNewUnderPointer(browser: Browser, target: HTMLElemen
   }
   const secondInPanel = panel().contains(secondTarget);
 
-  await activateAt(browser, point, timing.pointer);
+  await activationGesture(browser, point, timing.pointer).landed;
   await sleep(300);
   // Las líneas que siguen en pantalla (plegar confirmadas las quita) no cambiaron.
   const afterSecond = others();
@@ -370,7 +460,7 @@ const CASES = {
     setup: async (browser) => {
       await setupClick(browser, button(row(3), /^Mayonesa Mavesa 445g/));
       await setupClick(browser, button(row(3), /^Por bulto/));
-      await browser.userEvent.fill(within(row(3)).getByLabelText(/^Unidades por/), "12");
+      await fillField(browser, within(row(3)).getByLabelText(/^Unidades por/), "12");
       await sleep(300);
     },
     target: () => button(row(3), /^Cargar como 6 unidades/),
@@ -460,6 +550,7 @@ const meta = {
   args: {
     canCreateProduct: true,
     context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES },
+    duplicateFetcher: noDuplicates,
     lastUnitCostFetcher: async () => null,
     onDiscard: fn(),
     onLoad: fn(),
@@ -493,6 +584,7 @@ const meta = {
   beforeEach() {
     MockDate.reset();
   },
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/Layout bajo el puntero",
@@ -735,7 +827,7 @@ function mp112(width: number): Story {
       await sleep(3000);
       const search = button(row(1), /Buscar producto/);
       const aim = centerOf(search);
-      await browser.userEvent.hover(search);
+      await moveMouseTo(browser, aim);
       await sleep(1400);
       await expect(describeControl(document.elementFromPoint(aim.x, aim.y)?.closest("button") ?? null)).toBe(
         describeControl(search),
@@ -758,12 +850,11 @@ export const MP112Raton1280 = mp112(1280);
 export const MP112Raton390 = mp112(390);
 
 /**
- * D49: con el ratón, el layout se aplica al salir del panel completo; al volver, el clic antes de
- * 1 s sobre un control que se movió no actúa y pasado 1 s sí.
- * REP13-05 (M-qa23-1): desde REP12-04 la fila que sigue a la compactada vuelve a su punto desplazando la
- * página, y el chip de L2 ya no se mueve al salir (en la UI real resuelve al primer clic, QA-23). Solo
- * lo movía el desplazamiento que hacía Playwright al pasar el ratón. En una ventana sin desplazamiento
- * nada compensa la compactación: el chip de L2 sí se mueve y la guarda se mide sobre él.
+ * D71(a) (sustituye a D49 «con ratón compacta al salir del panel»): con el ratón, salir del panel completo NO aplica el
+ * layout, igual que levantar el dedo: la caja se conserva y el chip de L2 no se mueve. REP17-17 (D72): tampoco el teclado;
+ * lo aplica «Compactar lista», y el clic antes de 1 s sobre un control que se movió no actúa y pasado 1 s sí (D49).
+ * REP13-05 (M-qa23-1): en una ventana sin desplazamiento nada compensa la compactación: el chip de L2 se mueve y la
+ * guarda se mide sobre él.
  */
 export const SalirDelPanelRaton1280: Story = {
   args: { response: c11ThreeResponse },
@@ -782,9 +873,17 @@ export const SalirDelPanelRaton1280: Story = {
     const chipTop = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ })[0]?.getBoundingClientRect().top ?? 0;
     const outside = panel().getBoundingClientRect();
     await moveMouseTo(browser, { x: 4, y: Math.max(4, outside.top - 8) });
-    await sleep(100);
-    await expect(row(0).getBoundingClientRect().height, "fuera del panel: se aplica").toBeLessThan(heldHeight);
+    await sleep(POINTER_GUARD_MS + 100);
+    await expect(row(0).getBoundingClientRect().height, "fuera del panel: la caja se conserva (D71(a))").toBe(heldHeight);
+    const [held] = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ });
+    await expect(held.getBoundingClientRect().top, "fuera del panel: el chip de L2 no se mueve").toBe(chipTop);
 
+    await shiftGesture(browser).landed;
+    await sleep(100);
+    await expect(row(0).getBoundingClientRect().height, "el teclado no lo aplica (D72)").toBe(heldHeight);
+    await expect(await compactList(browser), "se ofrece «Compactar lista»").not.toBeNull();
+    await sleep(100);
+    await expect(row(0).getBoundingClientRect().height, "«Compactar lista» lo aplica").toBeLessThan(heldHeight);
     const [chip] = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ });
     await expect(chip.getBoundingClientRect().top, "la compactación mueve el chip de L2").toBeLessThan(chipTop - 1);
     await clickAt(browser, centerOf(chip));
@@ -820,7 +919,7 @@ async function openSearchAtBottom(browser: Browser, opener: RegExp) {
   await setupClick(browser, button(row(0), opener));
   const input = within(row(0)).getByLabelText("Producto de la línea 1");
   input.scrollIntoView({ block: "end" });
-  await browser.userEvent.fill(input, "Galleta");
+  await fillField(browser, input, "Galleta");
   await screen.findAllByRole("option", { name: /CAOSG Galleta Maria/ });
   await sleep(POINTER_GUARD_MS + 200);
 }
@@ -842,7 +941,7 @@ function chipBajoOpcion(width: number, pointer: Pointer, at: number): Story {
       // Ventana baja: el campo puede quedar al pie y la lista se abre hacia arriba.
       await browser.page.viewport(width, 560);
       await openSearchAtBottom(browser, /Buscar producto/);
-      await browser.userEvent.keyboard("{ArrowDown}{Enter}");
+      await pressKeys(browser, "{ArrowDown}{Enter}");
       await sleep(300);
       await openSearchAtBottom(browser, /Cambiar producto/);
 
@@ -908,7 +1007,7 @@ function ordenTabBuscador(width: number): Story {
         visited.push(`${describeControl(focused)}@${Math.round(top)}`);
         await expect(top, `Tab sube: ${visited.join(" → ")}`).toBeGreaterThanOrEqual(previousTop - 1);
         previousTop = top;
-        await browser.userEvent.keyboard("{Tab}");
+        await pressKeys(browser, "{Tab}");
         await sleep(50);
       }
       await expect(visited.some((item) => item.startsWith("INPUT")), `pasa por el buscador: ${visited.join(" → ")}`).toBe(true);
@@ -920,10 +1019,9 @@ export const OrdenTabBuscador1280 = ordenTabBuscador(1280);
 export const OrdenTabBuscador390 = ordenTabBuscador(390);
 
 /**
- * B-p11-2 (caos p11): tras aplicarse el layout (aquí al desplazar), el toque que cae en un campo de
- * texto que se movió no le da el foco (ni abre el teclado) antes de 1 s; pasado 1 s, sí.
- * REP12-04 (B-qa02-1): la fila que sigue a la compactada ya no se mueve (anclaje); se descarta L1 y el
- * campo es la Cantidad de L0, que la compactación sí mueve.
+ * B-p11-2 (caos p11): tras compactar, el toque que cae en un campo de texto que se movió no le da el foco (ni abre el
+ * teclado) antes de 1 s; pasado 1 s, sí. REP17-17 (D72): desplazar ya no compacta; compacta «Compactar lista». Se
+ * descarta L1 y el campo es la Cantidad de L2, que sube al compactar.
  */
 export const CampoMovidoSinFocoTactil390: Story = {
   args: { response: c11ThreeResponse },
@@ -932,16 +1030,22 @@ export const CampoMovidoSinFocoTactil390: Story = {
     if (!browser) {
       return;
     }
-    row(0).scrollIntoView({ block: "start" });
+    // L1 arriba: la Cantidad de L2 queda a la vista (sobre el pie fijo) al compactar.
+    row(1).scrollIntoView({ block: "start" });
     await sleep(POINTER_GUARD_MS + 200);
     await tapAt(browser, centerOf(button(row(1), /Descartar línea/)));
     await sleep(POINTER_GUARD_MS + 200);
-    const quantity = within(row(0)).getByLabelText(/^Cantidad/);
-    const before = quantity.getBoundingClientRect().top;
+    const quantity = within(row(2)).getByLabelText(/^Cantidad/);
     window.scrollBy({ top: 40, behavior: "instant" });
     await sleep(150);
-    const moved = quantity.getBoundingClientRect().top - (before - 40);
-    await expect(Math.abs(moved), `al desplazar se aplica el layout y mueve el campo (${Math.round(moved)} px)`).toBeGreaterThan(40);
+    await expect(row(1).querySelector('[data-testid="invoice-review-held-summary"]'), "desplazar no compacta (D72)").not.toBeNull();
+    const before = quantity.getBoundingClientRect().top;
+    await expect(await compactList(browser), "se ofrece «Compactar lista»").not.toBeNull();
+    await sleep(150);
+    const moved = before - quantity.getBoundingClientRect().top;
+    await expect(moved, `al compactar sube el campo (${Math.round(moved)} px)`).toBeGreaterThan(40);
+    const aim = centerOf(quantity);
+    await expect(document.elementFromPoint(aim.x, aim.y), "la Cantidad de L2 está a la vista, sin nada encima").toBe(quantity);
 
     await tapAt(browser, centerOf(quantity));
     await sleep(150);
@@ -998,9 +1102,9 @@ export const ResumenRetenidoDescartada390Tactil = resumenRetenido(390, "touch", 
 
 /**
  * B-qa02-3 (QA REP11-02, D49): tras descartar L0, activar la Cantidad de L1 y teclear (el mismo
- * valor: el texto de la fila no cambia, solo la compactación podría mover el campo) compacta el
- * layout (el teclado lo aplica), pero el campo en que se escribe se queda en el mismo punto de la
- * pantalla (< 2 px) y conserva el foco y lo tecleado.
+ * valor: el texto de la fila no cambia, solo la compactación podría mover el campo): REP17-17 (D72) el teclado no
+ * compacta; el campo en que se escribe se queda en el mismo punto de la pantalla (< 2 px) y conserva el foco y lo
+ * tecleado.
  */
 function teclearTrasDescartar(width: number, pointer: Pointer): Story {
   return {
@@ -1020,9 +1124,9 @@ function teclearTrasDescartar(width: number, pointer: Pointer): Story {
       await sleep(300);
       await expect(document.activeElement, "la Cantidad de L1 tiene el foco").toBe(quantity);
       const before = quantity.getBoundingClientRect().top;
-      await browser.userEvent.keyboard("1");
+      await pressKeys(browser, "1");
       await sleep(300);
-      await expect(row(0).getBoundingClientRect().height, "el teclado aplica el layout").toBeLessThan(heldHeight);
+      await expect(row(0).getBoundingClientRect().height, "el teclado no compacta (D72)").toBe(heldHeight);
       await expect(document.activeElement, "el foco sigue en la Cantidad").toBe(quantity);
       await expect(quantity instanceof HTMLInputElement ? quantity.value : "", "lo tecleado llega al campo").toBe("1");
       const moved = quantity.getBoundingClientRect().top - before;
@@ -1148,33 +1252,49 @@ export const C12BM1Pie390Tactil700Pegado = c12bm1Pie(390, "touch", 700, 600);
 export const C12BM1Pie1280Raton700 = c12bm1Pie(1280, "mouse", 700);
 export const C12BM1Pie1280Raton700Pegado = c12bm1Pie(1280, "mouse", 700, 560);
 
-type Compaction = "salir" | "desplazar" | "teclado";
+type Gesto = "salir" | "desplazar" | "teclado";
 
-/** Mueve el ratón real (CDP) a un punto de la pantalla, sin que Playwright desplace la página. */
-async function mouseMoveTo(browser: Browser, point: Point) {
-  const target = pagePoint(point);
-  await browser.cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
+/** Lo que desplaza la rueda de `salir`. */
+const WHEEL_PX = 100;
+
+/** Margen izquierdo del decorador (p-4): fuera del panel, sobre nada accionable. */
+function outsidePanel(): Point {
+  return { x: 4, y: Math.round(window.innerHeight / 2) };
 }
 
-/** Aplica el layout pendiente como el usuario: sacando el ratón del panel, desplazando o con el teclado. */
-async function compact(browser: Browser, how: Compaction) {
-  if (how === "salir") {
-    // Margen izquierdo del decorador (p-4): fuera del panel, sobre nada accionable.
-    await mouseMoveTo(browser, { x: 4, y: Math.round(window.innerHeight / 2) });
-  } else if (how === "desplazar") {
-    window.scrollBy({ top: 40, behavior: "instant" });
-  } else {
-    await browser.userEvent.keyboard("{Shift}");
-  }
-  await sleep(300);
+/** Rueda real (CDP `mouseWheel`) en un punto de la pantalla. */
+function wheelGesture(browser: Browser, point: Point, deltaY: number) {
+  const { x, y } = pagePoint(point);
+  return sendGesture(browser, "wheel", (session) => [
+    session.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY }),
+  ]);
 }
 
 /**
- * B-qa02-1 (D52): con L1 arriba de la vista, descartarla y aplicar el layout (salir del panel,
- * desplazar o teclado). La fila siguiente (L2) no se va: su posición en pantalla cambia < 2 px
- * (descontando los 40 px que desplaza el usuario), aunque L1 encoja.
+ * Lo que antes aplicaba el layout pendiente: desplazar o el teclado. D71(a): `salir` saca el ratón del panel y luego gira
+ * la rueda fuera de él. REP17-17 (D72(a)): nada de ello compacta. Devuelve lo que desplazó el usuario.
  */
-function anclajeCompactacion(width: number, pointer: Pointer, how: Compaction): Story {
+async function gesture(browser: Browser, how: Gesto): Promise<number> {
+  let scrolled = 0;
+  if (how === "salir") {
+    scrolled = WHEEL_PX;
+    await wheelGesture(browser, outsidePanel(), WHEEL_PX).landed;
+  } else if (how === "desplazar") {
+    scrolled = 40;
+    window.scrollBy({ top: 40, behavior: "instant" });
+  } else {
+    await shiftGesture(browser).landed;
+  }
+  await sleep(300);
+  return scrolled;
+}
+
+/**
+ * B-qa02-1 (D52): con L1 arriba de la vista, descartarla y desplazar, usar el teclado o (D71(a)) sacar el ratón del panel
+ * y girar la rueda fuera de él. REP17-17 (D72(a)): nada de ello compacta: L1 conserva su caja, la fila siguiente (L2) se
+ * mueve solo lo que desplaza el usuario (< 2 px de diferencia) y se ofrece «Compactar lista».
+ */
+function anclajeCompactacion(width: number, pointer: Pointer, how: Gesto): Story {
   return {
     args: { response: c11ThreeResponse },
     play: async () => {
@@ -1192,13 +1312,19 @@ function anclajeCompactacion(width: number, pointer: Pointer, how: Compaction): 
       await expect(row(1).dataset.status, "L1 descartada").toBe("discarded");
       const heldHeight = row(1).getBoundingClientRect().height;
       const before = row(2).getBoundingClientRect().top;
-      const expected = before - (how === "desplazar" ? 40 : 0);
-      await compact(browser, how);
+      if (how === "salir") {
+        await moveMouseTo(browser, outsidePanel());
+        await sleep(POINTER_GUARD_MS + 200);
+        await expect(row(1).getBoundingClientRect().height, "fuera del panel: la caja se conserva (D71(a))").toBe(heldHeight);
+        await expect(row(2).getBoundingClientRect().top, "fuera del panel: L2 no se mueve").toBe(before);
+      }
+      const expected = before - (await gesture(browser, how));
       const after = row(2).getBoundingClientRect().top;
       const report = `${width} ${pointer} ${how} · L1 ${Math.round(heldHeight)}→${Math.round(row(1).getBoundingClientRect().height)} px · L2 antes ${Math.round(before)} esperado ${Math.round(expected)} después ${Math.round(after)} · scrollY ${Math.round(window.scrollY)}`;
       console.log(`[B-qa02-1] ${report}`);
-      await expect(row(1).getBoundingClientRect().height, `se aplicó el layout: ${report}`).toBeLessThan(heldHeight - 40);
+      await expect(row(1).getBoundingClientRect().height, `no compacta (D72): ${report}`).toBe(heldHeight);
       await expect(Math.abs(after - expected), `L2 se desplazó ${Math.round(after - expected)} px: ${report}`).toBeLessThan(2);
+      await expect(screen.getByRole("button", { name: "Compactar lista" }), `se ofrece «Compactar lista»: ${report}`).toBeInTheDocument();
     },
   };
 }
@@ -1214,7 +1340,8 @@ export const AnclajeCompactacion390TactilTeclado = anclajeCompactacion(390, "tou
  * el documento, el navegador recorta el desplazamiento y lo que está ENCIMA del panel baja: un campo
  * del formulario (aquí la fecha, fuera del panel) queda bajo el puntero que acaba de salir del panel.
  * La activación antes de 1 s desde la compactación no le da el foco (D49, guarda anclada a la
- * compactación); pasado 1 s, sí.
+ * compactación); pasado 1 s, sí. D71(a): con el ratón, salir no compacta. REP17-17 (D72): tampoco una tecla ni desplazar;
+ * compacta «Compactar lista» (con el teclado, el puntero ya fuera del panel).
  */
 function campoFueraDelPanel(width: number, pointer: Pointer): Story {
   return {
@@ -1248,10 +1375,23 @@ function campoFueraDelPanel(width: number, pointer: Pointer): Story {
       // Entre la fecha y el panel (fuera del panel, nada accionable).
       const point = { x: centerOf(date).x, y: panel().getBoundingClientRect().top - 3 };
       if (pointer === "mouse") {
-        await mouseMoveTo(browser, point);
+        // D71(a): salir del panel no aplica nada (ni mueve la fecha); D72: una tecla tampoco.
+        const held = row(1).getBoundingClientRect().height;
+        const dateTop = date.getBoundingClientRect().top;
+        await moveMouseTo(browser, point);
+        await sleep(300);
+        await expect(row(1).getBoundingClientRect().height, `fuera del panel: la caja se conserva: ${geo()}`).toBe(held);
+        await expect(date.getBoundingClientRect().top, `fuera del panel: la fecha no se mueve: ${geo()}`).toBe(dateTop);
+        await shiftGesture(browser).landed;
+        await sleep(100);
+        await expect(row(1).getBoundingClientRect().height, `una tecla no compacta: ${geo()}`).toBe(held);
       } else {
+        const held = row(1).getBoundingClientRect().height;
         window.scrollBy({ top: -10, behavior: "instant" });
+        await sleep(100);
+        await expect(row(1).getBoundingClientRect().height, `desplazar no compacta: ${geo()}`).toBe(held);
       }
+      await expect(await compactList(browser), "se ofrece «Compactar lista»").not.toBeNull();
       const start = performance.now();
       await sleepUntil(start, 300);
       const under = document.elementFromPoint(point.x, point.y);
@@ -1306,8 +1446,8 @@ function f19dAviso(width: number, pointer: Pointer, at: number): Story {
       }
       const field = screen.getByRole("combobox", { name: /proveedor/i });
       field.scrollIntoView({ block: "center" });
-      await browser.userEvent.click(field);
-      await browser.userEvent.type(field, "Farma");
+      await clickField(browser, field);
+      await typeText(browser, "Farma");
       const option = await screen.findByRole("option", { name: /farmatodo/i });
       await sleep(POINTER_GUARD_MS + 200);
       const aim = centerOf(field);
@@ -1360,7 +1500,11 @@ const casillasResponse = makeReviewResponse({
  */
 function casillasTactiles(width: number): Story {
   return {
-    args: { response: casillasResponse },
+    args: {
+      // REP17-07: la consulta confirma el duplicado del escaneo (antes la casilla dependía de que fallara la de la red).
+      duplicateFetcher: async () => [{ date: "2026-10-14", number: "000123", purchaseId: null, scanId: "scan-previo" }],
+      response: casillasResponse,
+    },
     play: async () => {
       const browser = await prepare(width);
       if (!browser) {
@@ -1400,9 +1544,9 @@ export const Rep1206FalloDuplicadosPiePlegado390: Story = {
     }
     const field = screen.getByRole("combobox", { name: /proveedor/i });
     field.scrollIntoView({ block: "center" });
-    await browser.userEvent.click(field);
-    await browser.userEvent.type(field, "Farma");
-    await browser.userEvent.click(await screen.findByRole("option", { name: /farmatodo/i }));
+    await clickField(browser, field);
+    await typeText(browser, "Farma");
+    await clickAt(browser, centerOf(await screen.findByRole("option", { name: /farmatodo/i })));
     const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
     await expect(within(footer).getByRole("button", { name: "Ver detalle del total" }), "pie plegado").toBeVisible();
     await waitFor(
@@ -1498,8 +1642,8 @@ function avisoDuplicadoFilas(width: number, height: number, pointer: Pointer, af
         return;
       }
       const field = screen.getByRole("combobox", { name: /proveedor/i });
-      await browser.userEvent.click(field);
-      await browser.userEvent.type(field, "Farma");
+      await clickField(browser, field);
+      await typeText(browser, "Farma");
       const option = await screen.findByRole("option", { name: /farmatodo/i });
       await sleep(POINTER_GUARD_MS + 200);
       await activateAt(browser, centerOf(option), pointer);
@@ -1607,7 +1751,7 @@ function avisoIvaAlTeclear(width: number): Story {
       const before = rowTops();
       await expect(screen.queryByTestId("invoice-review-tax-notice"), "sin aviso de IVA antes").toBeNull();
 
-      await browser.userEvent.fill(cost, "594");
+      await fillField(browser, cost, "594");
       await whenShown(() => screen.queryByTestId("invoice-review-tax-notice"), 2000);
       await expectRowsKept(browser, `[B-p14B-2] ${width}`, before, points);
     },
@@ -1702,7 +1846,7 @@ function toqueTrasTeclearCosto(width: number, height: number, pointer: Pointer):
       const topBefore = discard.getBoundingClientRect().top;
       await expect(decisionAt(aim), "«Descartar línea» en su punto antes de teclear").toBe(discard);
 
-      await browser.userEvent.fill(cost, "594");
+      await fillField(browser, cost, "594");
       const start = performance.now();
       await whenShown(() => screen.queryByTestId("line-mismatch-1"), 2000);
       const moved = Math.round(discard.getBoundingClientRect().top - topBefore);

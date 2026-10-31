@@ -19,6 +19,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { clickAt, pressKeys, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 const SUPPLIER_NAME = "Mercaseu 2030, C.A.";
 const LINE = { match: { taxRateCode: "exento" }, read: { lineTotal: 1750, quantity: 1, unitPrice: 1750 } };
@@ -32,7 +33,6 @@ const NO_RATE: InvoiceReviewContext = { taxRates: REVIEW_TAX_RATES };
 
 const noSuppliers: EntityFetcher<"contact"> = async () => [];
 
-type Point = { x: number; y: number };
 type Pointer = "mouse" | "touch";
 
 async function loadBrowser() {
@@ -46,39 +46,17 @@ type Browser = NonNullable<Awaited<ReturnType<typeof loadBrowser>>>;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
-function pagePoint(point: Point): Point {
-  let { x, y } = point;
-  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
-    const box = frame.getBoundingClientRect();
-    const width = frame.clientWidth + 2 * frame.clientLeft;
-    const scale = width ? box.width / width : 1;
-    x = box.left + (frame.clientLeft + x) * scale;
-    y = box.top + (frame.clientTop + y) * scale;
-  }
-  return { x, y };
-}
-
-/** Ratón o toque reales por CDP en el centro del elemento (como `InvoiceReviewPanel.layout.stories`). */
+/**
+ * Ratón o toque reales por CDP en el centro del elemento (como `InvoiceReviewPanel.layout.stories`).
+ * REP17-11 (D69(a)): el paso siguiente arranca cuando el gesto llega a la página; sus fallos de CDP, en el `afterEach`. Con
+ * `npm run test:storybook` completo, los cuatro acuses en serie de cada toque agotaban los 15 s de «Tasa Toque 390».
+ */
 async function activate(browser: Browser, element: Element, pointer: Pointer) {
   element.scrollIntoView({ block: "center" });
   await sleep(600);
   const box = element.getBoundingClientRect();
-  const target = pagePoint({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
-  const session = browser.cdp();
-  if (pointer === "touch") {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-    try {
-      await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [target] });
-      await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    } finally {
-      await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-    }
-  } else {
-    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...target });
-    await session.send("Input.dispatchMouseEvent", { type: "mousePressed", ...target, button: "left", clickCount: 1 });
-    await session.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...target, button: "left", clickCount: 1 });
-  }
+  const center = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  await (pointer === "touch" ? tapAt(browser, center) : clickAt(browser, center));
   await sleep(300);
 }
 
@@ -151,6 +129,14 @@ function radios() {
   );
 }
 
+/**
+ * Cada opción de la tasa, por su nombre, y si está elegida. REP17-02: el orden lo fija el diseño (D70(a): «Tasa de hoy»
+ * aparece debajo del campo de la tasa escrita, nunca encima); lo que se comprueba es qué opción hay y cuál está elegida.
+ */
+function radioStates() {
+  return Object.fromEntries(radios().map((radio) => [radio.slice(0, radio.lastIndexOf("=")), radio.slice(radio.lastIndexOf("=") + 1)]));
+}
+
 /** El panel con la tasa del día que llega tarde (como `useExchangeRate` en la página). */
 function LateRatePanel(props: ComponentProps<typeof InvoiceReviewPanel>) {
   const [context, setContext] = useState<InvoiceReviewContext>(NO_RATE);
@@ -178,8 +164,7 @@ function rateStory(width: number, height: number, pointer: Pointer): Story {
       await activate(browser, screen.getByRole("radio", { name: "Escribir la tasa" }), pointer);
       const input = screen.getByLabelText("Tasa Bs por REF");
       await activate(browser, input, pointer);
-      await browser.userEvent.keyboard("950");
-      await browser.userEvent.keyboard("{Tab}");
+      await pressKeys(browser, "950{Tab}");
       await sleep(300);
       const typed = log(`tasa ${pointer} ${width}: escrita «${notice()}» ${JSON.stringify(radios())}`);
       await snapshot(browser, `tasa-${pointer}-${width}-2-escrita`);
@@ -192,17 +177,21 @@ function rateStory(width: number, height: number, pointer: Pointer): Story {
       await snapshot(browser, `tasa-${pointer}-${width}-3-llega`);
       await expect(notice(), arrived).not.toMatch(/No hay tasa del día|se usa la tasa impresa/);
       await expect(notice(), arrived).toMatch(/Ya hay tasa del día \(Bs\. 900,00\); se usa la tasa escrita \(Bs\. 950,00\)/);
-      await expect(radios(), arrived).toEqual([
-        "Tasa de hoy (900,00)=false",
-        "Tasa de la factura (856,30)=false",
-        "Escribir la tasa=true",
-      ]);
+      await expect(radioStates(), arrived).toEqual({
+        "Escribir la tasa": "true",
+        "Tasa de hoy (900,00)": "false",
+        "Tasa de la factura (856,30)": "false",
+      });
 
       await activate(browser, screen.getByRole("radio", { name: "Tasa de hoy (900,00)" }), pointer);
       const today = log(`tasa ${pointer} ${width}: elegida la de hoy «${notice()}» ${JSON.stringify(radios())}`);
       await snapshot(browser, `tasa-${pointer}-${width}-4-hoy`);
       await expect(notice(), today).toMatch(/La factura trae tasa Bs\. 856,30; hoy es Bs\. 900,00\./);
-      await expect(radios()[0], today).toBe("Tasa de hoy (900,00)=true");
+      await expect(radioStates(), today).toEqual({
+        "Escribir la tasa": "false",
+        "Tasa de hoy (900,00)": "true",
+        "Tasa de la factura (856,30)": "false",
+      });
     },
   };
 }
@@ -252,6 +241,7 @@ const meta = {
   beforeEach() {
     MockDate.reset();
   },
+  afterEach: settleCdpAcks,
   parameters: { layout: "fullscreen" },
   tags: ["!dev", "!autodocs"],
   title: "Modules/Purchases/InvoiceReviewPanel/REP14-04 proveedor y aviso de tasa",

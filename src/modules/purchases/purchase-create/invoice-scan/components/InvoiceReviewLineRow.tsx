@@ -58,6 +58,8 @@ export type InvoiceReviewLineRowProps = {
    * último costo) puede aparecer sin que nadie actúe.
    */
   ratePending?: boolean;
+  /** REP17-05 (D69(b)): la consulta de la tasa del día falló; lo reservado por `ratePending` pide escribirla. */
+  rateFailed?: boolean;
   productFetcher?: EntityFetcher<"product">;
   rowRef?: Ref<HTMLLIElement>;
   /** D46-a: clave de caja de la fila (`data-layout-box`) y su alto mínimo con el layout pendiente. */
@@ -113,6 +115,7 @@ export function InvoiceReviewLineRow({
   onPickProduct,
   onRowKeyDown,
   productFetcher,
+  rateFailed = false,
   ratePending = false,
   rowRef,
   searchOpen,
@@ -371,11 +374,17 @@ export function InvoiceReviewLineRow({
               <div
                 aria-hidden={reserveOptions || undefined}
                 className={cn(
-                  "flex flex-col gap-2 rounded-lg border border-outline-variant p-3",
+                  "relative flex flex-col gap-2 rounded-lg border border-outline-variant p-3",
                   reserveOptions ? "invisible" : null,
                 )}
                 data-testid={reserveOptions ? "invoice-review-options-reserve" : undefined}
               >
+                {reserveOptions ? (
+                  // REP17-05 (D69(b), B-p18Q-1): la reserva dice qué espera; fuera del flujo, no cambia su alto.
+                  <p className="visible absolute inset-0 flex items-center justify-center px-3 text-center text-xs text-on-surface-variant">
+                    {rateFailed ? "Sin tasa del día: escríbela arriba" : "Esperando la tasa del día…"}
+                  </p>
+                ) : null}
                 <div aria-label="Cómo se compra" className="flex flex-wrap gap-2" role="group">
                   {(showPack ? (["unit", "pack"] as const) : (["unit"] as const)).map((mode) => {
                     // B-p7-3 / D42: cada opción dice antes qué entra al stock y a qué costo, con o sin aviso.

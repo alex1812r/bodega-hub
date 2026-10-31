@@ -1,8 +1,8 @@
 /**
  * REP11-02 · D48(b) + D49 (M-p11-2, C11B-M1, B-p11-1): el layout pendiente nunca se aplica por
- * tiempo. Con ratón, solo al salir el puntero del PANEL completo; con táctil, nunca solo; siempre al
- * desplazar o usar el teclado. Durante 1 s tras aplicarlo se ignoran las activaciones de puntero
- * sobre controles cuya caja se movió. La fila descartada/resuelta retenida muestra un resumen.
+ * tiempo. Con ratón o táctil, nunca solo (D71(a): sacar el ratón del panel o de la ventana tampoco; REP17-17, D72(a):
+ * ni desplazar ni el teclado); solo con «Compactar lista». Durante 1 s tras compactar se ignoran las activaciones de
+ * puntero sobre controles cuya caja se movió. La fila descartada/resuelta retenida muestra un resumen.
  */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -52,6 +52,7 @@ if (typeof window.PointerEvent === "undefined") {
 const CONTEXT: InvoiceReviewContext = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES };
 const HARINA = productUuid(1);
 const ROW_HEIGHT = 200;
+const DISCARDED_HEIGHT = 80;
 /** Panel de revisión: 390 × 2000 px desde el origen. */
 const PANEL = { left: 0, right: 390, top: 0, bottom: 2000 };
 const POINT = { clientX: 180, clientY: 360 };
@@ -86,14 +87,16 @@ let scrollIntoView: jest.Mock;
 let rect: jest.SpyInstance;
 
 /**
- * jsdom no maqueta. Cada fila mide ROW_HEIGHT; lo que hay dentro de la línea 1 está más abajo
+ * jsdom no maqueta. Cada fila mide ROW_HEIGHT (la descartada, DISCARDED_HEIGHT, salvo su alto retenido); lo que hay dentro de la línea 1 está más abajo
  * mientras la línea 0 conserva su caja (layout pendiente) y sube cuando se aplica el layout.
  */
 function fakeRect(this: Element) {
   if (this.matches('[data-testid="invoice-review-panel"]')) {
     return { ...PANEL, height: PANEL.bottom, width: PANEL.right, x: 0, y: 0, toJSON: () => ({}) };
   }
-  const height = this.matches("li[data-line-index]") ? ROW_HEIGHT : 0;
+  const natural = this instanceof HTMLElement && this.dataset.status === "discarded" ? DISCARDED_HEIGHT : ROW_HEIGHT;
+  const floor = this instanceof HTMLElement ? Number.parseFloat(this.style.minHeight) || 0 : 0;
+  const height = this.matches("li[data-line-index]") ? Math.max(natural, floor) : 0;
   const held = document.querySelector<HTMLElement>('li[data-line-index="0"]')?.style.minHeight;
   const top = this.closest('li[data-line-index="1"]') ? (held ? 400 : 250) : 0;
   return { bottom: top + height, height, left: 0, right: 390, top, width: 390, x: 0, y: top, toJSON: () => ({}) };
@@ -154,6 +157,11 @@ const discardButton = (index: number) => within(row(index)).getByRole("button", 
 const harinaChip = (index: number) => within(row(index)).getByRole("button", { name: /^CAOSG Harina Maiz 1kg/ });
 const held = (index: number) => row(index).style.minHeight === `${ROW_HEIGHT}px`;
 
+/** REP17-17 (D72(b)): «Compactar lista» con el teclado (clic sin punto de pantalla). */
+function compactList() {
+  fireEvent.click(screen.getByRole("button", { name: "Compactar lista" }));
+}
+
 const twoHarinas = () => makeReviewResponse({ lines: [harinaByName(1), harinaByName(2)] });
 
 describe("REP11-02 · D49: el layout pendiente no se aplica por tiempo", () => {
@@ -176,23 +184,33 @@ describe("REP11-02 · D49: el layout pendiente no se aplica por tiempo", () => {
     expect(held(0)).toBe(true);
   });
 
-  it("con el ratón, se aplica al salir el puntero del panel completo", () => {
+  it("D71(a): con el ratón, salir el puntero del panel completo no la aplica; el teclado tampoco (D72); «Compactar lista» sí", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "mouse");
     moveMouse(INSIDE_PANEL);
     expect(held(0)).toBe(true);
 
     moveMouse(OUTSIDE_PANEL);
+    advance(3000);
 
+    expect(held(0)).toBe(true);
+    fireEvent.keyDown(document.body, { key: "Shift" });
+    expect(held(0)).toBe(true);
+    compactList();
     expect(held(0)).toBe(false);
   });
 
-  it("con el ratón, se aplica al salir de la ventana", () => {
+  it("D71(a): con el ratón, salir de la ventana no la aplica; desplazar tampoco (D72); «Compactar lista» sí", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "mouse");
 
     fireEvent.pointerLeave(document.documentElement, { pointerId: 1, pointerType: "mouse" });
+    advance(3000);
 
+    expect(held(0)).toBe(true);
+    fireEvent.scroll(window);
+    expect(held(0)).toBe(true);
+    compactList();
     expect(held(0)).toBe(false);
   });
 
@@ -206,10 +224,12 @@ describe("REP11-02 · D49: el layout pendiente no se aplica por tiempo", () => {
     expect(held(0)).toBe(true);
   });
 
-  it("con táctil, se aplica al desplazar o con el teclado", () => {
+  it("con táctil, ni desplazar ni el teclado la aplican (D72); «Compactar lista» sí", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "touch");
     fireEvent.scroll(window);
+    expect(held(0)).toBe(true);
+    compactList();
     expect(held(0)).toBe(false);
 
     press(within(row(0)).getByRole("button", { name: /Restaurar/ }), "touch", { clientX: 300, clientY: 40 });
@@ -217,16 +237,18 @@ describe("REP11-02 · D49: el layout pendiente no se aplica por tiempo", () => {
     press(discardButton(0), "touch", { clientX: 180, clientY: 120 });
     expect(held(0)).toBe(true);
     fireEvent.keyDown(document.body, { key: "Shift" });
+    expect(held(0)).toBe(true);
+    compactList();
     expect(held(0)).toBe(false);
   });
 });
 
-describe("REP11-02 · D49: guarda anclada al momento de aplicar el layout", () => {
-  it("C11B-M1: el toque en un control que se movió al aplicarse, antes de 1 s, no actúa", () => {
+describe("REP11-02 · D49: guarda anclada al momento de compactar", () => {
+  it("C11B-M1: el toque en un control que se movió al compactar, antes de 1 s, no actúa", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "touch");
     advance(1500);
-    fireEvent.keyDown(document.body, { key: "Shift" });
+    compactList();
     expect(held(0)).toBe(false);
 
     advance(500);
@@ -235,12 +257,15 @@ describe("REP11-02 · D49: guarda anclada al momento de aplicar el layout", () =
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
-  it("con el ratón que vuelve al panel tras salir, el clic sobre lo movido antes de 1 s no actúa", () => {
+  it("con el ratón fuera del panel, se compacta con el teclado y al volver, el clic sobre lo movido antes de 1 s no actúa", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "mouse");
     advance(1200);
     moveMouse(OUTSIDE_PANEL);
     advance(400);
+    expect(held(0)).toBe(true);
+    compactList();
+    expect(held(0)).toBe(false);
     moveMouse({ clientX: 120, clientY: 600 });
 
     press(harinaChip(1), "mouse", { clientX: 120, clientY: 600 });
@@ -248,10 +273,10 @@ describe("REP11-02 · D49: guarda anclada al momento de aplicar el layout", () =
     expect(row(1)).toHaveAttribute("data-status", "pending_doubtful");
   });
 
-  it("pasado 1 s desde que se aplicó, el control movido sí actúa", () => {
+  it("pasado 1 s desde que se compactó, el control movido sí actúa", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "touch");
-    fireEvent.keyDown(document.body, { key: "Shift" });
+    compactList();
 
     advance(1000);
     press(harinaChip(1), "touch", { clientX: 120, clientY: 600 });
@@ -259,22 +284,22 @@ describe("REP11-02 · D49: guarda anclada al momento de aplicar el layout", () =
     expect(row(1)).toHaveAttribute("data-status", "resolved");
   });
 
-  it("un control que no se movió al aplicarse sí actúa antes de 1 s", () => {
+  it("un control que no se movió al compactar sí actúa antes de 1 s", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "touch");
     advance(1200);
-    fireEvent.keyDown(document.body, { key: "Shift" });
+    compactList();
 
     press(within(row(0)).getByRole("button", { name: /Restaurar/ }), "touch", { clientX: 300, clientY: 40 });
 
     expect(row(0)).not.toHaveAttribute("data-status", "discarded");
   });
 
-  it("6.17: el teclado no sufre la guarda tras aplicarse el layout", () => {
+  it("6.17: el teclado no sufre la guarda tras compactar", () => {
     renderPanel(twoHarinas());
     press(discardButton(0), "touch");
     advance(1200);
-    fireEvent.keyDown(document.body, { key: "Shift" });
+    compactList();
 
     fireEvent.keyDown(row(1), { key: "Enter" });
     fireEvent.keyUp(row(1), { key: "Enter" });
@@ -295,6 +320,8 @@ describe("REP11-02 · B-p11-1: la fila retenida muestra un resumen en vez de un 
     expect(within(row(0)).getAllByRole("button").length).toBeLessThanOrEqual(buttonsBefore);
 
     fireEvent.scroll(window);
+    expect(within(row(0)).getByTestId("invoice-review-held-summary")).toBeInTheDocument();
+    compactList();
     expect(within(row(0)).queryByTestId("invoice-review-held-summary")).not.toBeInTheDocument();
   });
 

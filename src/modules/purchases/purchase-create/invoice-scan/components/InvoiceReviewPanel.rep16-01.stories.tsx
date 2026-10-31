@@ -32,6 +32,7 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { compactList, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 const HARINA = "CAOSG Harina Maiz 1kg";
 
@@ -137,8 +138,6 @@ async function loadBrowser() {
   return import("vitest/browser").catch(() => null);
 }
 
-type Browser = NonNullable<Awaited<ReturnType<typeof loadBrowser>>>;
-type Point = { x: number; y: number };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -166,33 +165,6 @@ function main() {
     throw new Error("Sin main");
   }
   return element;
-}
-
-/** Punto del documento de la story en la página de Playwright (el iframe del runner puede escalarse). */
-function pagePoint(point: Point): Point {
-  let x = point.x;
-  let y = point.y;
-  for (let view: Window = window, frame = view.frameElement; frame; view = view.parent, frame = view.frameElement) {
-    const box = frame.getBoundingClientRect();
-    const width = frame.clientWidth + 2 * frame.clientLeft;
-    const scale = width ? box.width / width : 1;
-    x = box.left + (frame.clientLeft + x) * scale;
-    y = box.top + (frame.clientTop + y) * scale;
-  }
-  return { x, y };
-}
-
-/** Toque real (CDP `Input.dispatchTouchEvent`), como `tapAt` de `layout.stories`. */
-async function tapAt(browser: Browser, point: Point) {
-  const session = browser.cdp();
-  const touch = pagePoint(point);
-  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  try {
-    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] });
-    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  } finally {
-    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
-  }
 }
 
 const CONTROL_SELECTOR = "button, a[href], input, select, textarea, [role='button'], [role='checkbox'], [role='radio']";
@@ -338,7 +310,8 @@ const inReview = (index: number) => Boolean(row(index).closest('ul[aria-label="L
 
 /**
  * D67(a): la tasa que llega tarde desvía la confirmada L0 y el modelo la pasa a las por revisar (delante de L1): las filas
- * pintadas no cambian de lista ni de orden hasta que el usuario desplaza; entonces L0 sube a las por revisar.
+ * pintadas no cambian de lista ni de orden (REP17-17, D72: tampoco al desplazar) hasta que el usuario pulsa «Compactar
+ * lista»; entonces L0 sube a las por revisar.
  */
 function confirmedStory(width: number, height: number): Story {
   return {
@@ -358,17 +331,26 @@ function confirmedStory(width: number, height: number): Story {
       const retained = document.querySelector('li[data-line-index="0"]') === null || !inReview(0);
       main().scrollTop += main().scrollTop > 40 ? -40 : 40;
       await sleep(400);
+      const keptAfterScroll = document.querySelector('li[data-line-index="0"]') === null || !inReview(0);
+      await compactList(browser);
+      await sleep(400);
       const released = inReview(0);
-      const text = `${width}×${height} confirmada que se desvía: filas ${before} → ${heights()}; movidos ${moved.join(", ") || "ninguno"}; retenida en confirmadas ${retained}; tras desplazar por revisar ${released}`;
+      const text = `${width}×${height} confirmada que se desvía: filas ${before} → ${heights()}; movidos ${moved.join(", ") || "ninguno"}; retenida en confirmadas ${retained}; tras desplazar sigue ${keptAfterScroll}; tras compactar por revisar ${released}`;
       console.warn(`[REP16-01 confirmada] ${text}`);
-      await expect({ moved, released, retained }, text).toEqual({ moved: [], released: true, retained: true });
+      await expect({ keptAfterScroll, moved, released, retained }, text).toEqual({
+        keptAfterScroll: true,
+        moved: [],
+        released: true,
+        retained: true,
+      });
     },
   };
 }
 
 /**
  * D67(a): lo que crece solo en un aviso de una fila (sin acción del usuario) más allá de lo reservado no baja los
- * controles de las filas siguientes: useLayoutHold lo recorta a su alto anterior hasta que el usuario desplaza.
+ * controles de las filas siguientes: useLayoutHold lo recorta a su alto anterior (REP17-17, D72: también al desplazar)
+ * hasta que el usuario pulsa «Compactar lista».
  */
 function growStory(width: number, height: number): Story {
   return {
@@ -393,13 +375,21 @@ function growStory(width: number, height: number): Story {
       const scrollBefore = main().scrollTop;
       main().scrollTop += scrollBefore > 40 ? -40 : 40;
       await sleep(400);
+      const keptAfterScroll = notice.style.maxHeight !== "" || notice.style.display === "none";
       const scrolled = main().scrollTop - scrollBefore;
+      await compactList(browser);
+      await sleep(400);
       const releasedTop = Math.round(within(row(2)).getByRole("button", { name: /Descartar línea/ }).getBoundingClientRect().top) + scrolled;
       const released = notice.style.maxHeight === "" && notice.style.display !== "none";
       extra.remove();
-      const text = `${width}×${height} aviso que crece 120 px: movidos ${moved.join(", ") || "ninguno"}; recortado ${clipped}; tras desplazar suelto ${released} (Descartar L2 ${top} → ${releasedTop} sin el desplazamiento)`;
+      const text = `${width}×${height} aviso que crece 120 px: movidos ${moved.join(", ") || "ninguno"}; recortado ${clipped}; tras desplazar sigue ${keptAfterScroll}; tras compactar suelto ${released} (Descartar L2 ${top} → ${releasedTop} sin el desplazamiento)`;
       console.warn(`[REP16-01 crece] ${text}`);
-      await expect({ clipped, moved, released }, text).toEqual({ clipped: true, moved: [], released: true });
+      await expect({ clipped, keptAfterScroll, moved, released }, text).toEqual({
+        clipped: true,
+        keptAfterScroll: true,
+        moved: [],
+        released: true,
+      });
       await expect(releasedTop - top, text).toBeGreaterThanOrEqual(100);
     },
   };
@@ -454,6 +444,7 @@ const meta = {
     MockDate.reset();
     lastCost = gate<number | null>();
   },
+  afterEach: settleCdpAcks,
   component: InvoiceReviewPanel,
   decorators: [
     (Story) => {

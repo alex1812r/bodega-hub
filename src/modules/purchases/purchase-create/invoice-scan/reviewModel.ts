@@ -76,6 +76,8 @@ export const USD_ANOMALY_NOTICE =
 export type InvoiceReviewContext = {
   /** Tasa Bs/REF vigente de la tienda; ausente si no hay tasa del día (6.7). */
   systemRateVes?: number;
+  /** REP17-05 (D69(b)): la consulta de la tasa del día falló (no llegará sola: hay que escribirla). */
+  systemRateFailed?: boolean;
   /** Última tasa conocida (aunque no sea del día): sin tasa del día acota la impresa. */
   lastKnownRateVes?: number;
   /** Catálogo de alícuotas activas: código → porcentaje (`{ general: 16, exento: 0 }`). */
@@ -1399,7 +1401,16 @@ export function getEffectiveRate(state: InvoiceReviewState): number | undefined 
 export function getRateNotice(state: InvoiceReviewState): string | undefined {
   const { rate } = state;
   if (rate.choice !== "manual") {
-    return rate.system === undefined ? rate.notice : undefined;
+    if (rate.system === undefined) {
+      return rate.notice;
+    }
+    // REP17-07 (B-r17Q-1): con una tasa escrita que se puede recuperar, se dice cuál de las otras se usa.
+    if (rate.manual === undefined) {
+      return undefined;
+    }
+    return rate.choice === "printed" && rate.printed !== undefined
+      ? `Los costos se convierten con la tasa de la factura (${formatVesBs(rate.printed)}).`
+      : `Los costos se convierten con la tasa del día (${formatVesBs(rate.system)}).`;
   }
   if (rate.system !== undefined) {
     return rate.manual !== undefined

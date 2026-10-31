@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { INVOICE_DUPLICATES_DEBOUNCE_MS } from "@/modules/invoice-scan/client/useInvoiceDuplicates";
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
 import type { ProductEntityOption } from "@/shared/components/EntityAutocomplete";
 
@@ -93,6 +94,7 @@ function manualClock() {
 afterEach(() => {
   clockSpy?.mockRestore();
   clockSpy = undefined;
+  jest.useRealTimers();
 });
 
 function renderPanel(response: InvoiceScanResponse, overrides: Partial<InvoiceReviewPanelProps> = {}) {
@@ -668,7 +670,9 @@ describe("InvoiceReviewPanel", () => {
   });
 
   it("sin proveedor confirmado ofrece los candidatos y bloquea la carga", async () => {
-    const user = userEvent.setup();
+    // REP17-04 (M-p18Q-1, D69(a)): reloj falso; la espera de la consulta de duplicados se adelanta a mano.
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     renderPanel(
       makeReviewResponse({
         lines: [{}],
@@ -685,7 +689,10 @@ describe("InvoiceReviewPanel", () => {
     await user.click(screen.getByRole("button", { name: /Chevere Depot C\.A\./ }));
     // REP12-01: con el proveedor elegido, Cargar espera la consulta de duplicados de ese proveedor.
     expect(loadButton()).toBeDisabled();
-    await waitFor(() => expect(loadButton()).toBeEnabled());
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(INVOICE_DUPLICATES_DEBOUNCE_MS);
+    });
+    expect(loadButton()).toBeEnabled();
   });
 
   it("SCN-08-F1 (6.17): la siguiente dudosa con empaque recibe el foco en la fila; Enter acepta, luego unidades y Enter salta", async () => {
