@@ -10,14 +10,14 @@
  *
  * Gestos (solo por CDP, `InvoiceReviewPanel.rep17-18.cdpGestures.ts`): rueda (varios pasos, horizontal, hasta el borde
  * de arriba y contra él), dedo (corto, largo, flick, desde el hueco), pinch, salida del panel con el ratón (por arriba y por los lados,
- * con y sin pausa), teclado (Tab, Shift+Tab, flechas) y portátil táctil (dedo y luego rueda). Propiedad: ningún control
+ * con y sin pausa), teclado (Tab de una fila a otra, Shift+Tab, flechas) y portátil táctil (dedo y luego rueda). Propiedad: ningún control
  * del panel cambia de posición en el DOCUMENTO (en el contenido desplazable: el desplazamiento del gesto no cuenta) en
  * ningún frame, y lo retenido sigue retenido. En una caja fija (el pie, el visor) se mide la posición dentro de la caja
  * y el alto de la caja (su sitio en la ventana es el de la caja fija).
  *
  * «Compactar lista» (D72(b)): sin pulsarlo nada se mueve; el botón (rol button, nombre /Compactar lista/) está con
- * algo retenido; al pulsarlo se compacta (se mueve algo y el botón se va: no queda nada retenido), y un control que se
- * movió no actúa si se pulsa en seguida en su sitio nuevo (D49).
+ * algo retenido; al pulsarlo (desplazado hasta el pie de la franja visible) se compacta (se mueve algo y el botón se va:
+ * no queda nada retenido), y un control que se movió en pantalla no actúa si se pulsa en seguida en su sitio nuevo (D49).
  */
 import { expect, within } from "storybook/test";
 
@@ -399,6 +399,36 @@ function leave(side: "arriba" | "izquierda" | "derecha", pauseMs: number): Gestu
   };
 }
 
+/** Los controles del panel a los que llega Tab, en orden del documento (el panel no usa tabindex positivos). */
+function tabStops(): HTMLElement[] {
+  return [...panel().querySelectorAll<HTMLElement>(CONTROL_SELECTOR)].filter(
+    (element) => element.tabIndex >= 0 && !element.matches(":disabled") && isVisible(element.getBoundingClientRect()),
+  );
+}
+
+/**
+ * Tab como NAVEGACIÓN entre filas. Sobre una fila pendiente Tab es una acción, no navegación: abre su buscador
+ * («Tab abre el buscador», `InvoiceReviewPanel.test.tsx`), que crece dentro de la fila como al pulsar «Buscar
+ * producto». Por eso el foco empieza (sin desplazar) dos paradas antes de la segunda fila: el primer Tab va al último
+ * control de la fila anterior y el segundo entra en la segunda fila (cruza el límite entre filas), y ninguna tecla se
+ * pulsa sobre una fila. Si el foco no acaba en esa fila el caso no prueba lo que dice y falla.
+ */
+const tabAcrossRows: Gesture = async (browser) => {
+  const stops = tabStops();
+  const row = stops.filter((element) => element.matches("li[data-line-index]"))[1];
+  const index = row ? stops.indexOf(row) : -1;
+  const start = stops[index - 2];
+  if (!row || !start || [start, stops[index - 1]].some((element) => element.matches("li[data-line-index]"))) {
+    throw new Error("Tab: sin dos controles antes de la segunda fila para cruzar a ella navegando");
+  }
+  start.focus({ preventScroll: true });
+  await pressNavigation(browser, ["Tab", "Tab"]);
+  if (document.activeElement !== row) {
+    const now = document.activeElement ? nameOf(document.activeElement) : "nada";
+    throw new Error(`Tab: desde ${nameOf(start)} el foco acabó en ${now}, no en ${nameOf(row)}`);
+  }
+};
+
 export type Family = "rueda" | "dedo" | "pinch" | "salida" | "teclado" | "portatil";
 
 const FAMILIES: Record<Family, Variant[]> = {
@@ -442,7 +472,7 @@ const FAMILIES: Record<Family, Variant[]> = {
     { above: 0, fromHole: false, gesture: leave("derecha", PAUSE_MS), id: "por un lado con pausa" },
   ],
   teclado: [
-    { above: 0, fromHole: false, gesture: (browser) => pressNavigation(browser, ["Tab", "Tab"]), id: "Tab" },
+    { above: 0, fromHole: false, gesture: tabAcrossRows, id: "Tab" },
     { above: 0, fromHole: false, gesture: (browser) => pressNavigation(browser, ["Tab", "Tab"], true), id: "Shift+Tab" },
     { above: 0, fromHole: false, gesture: (browser) => pressNavigation(browser, ["ArrowDown", "ArrowDown", "ArrowUp"]), id: "flechas" },
   ],
@@ -506,6 +536,70 @@ async function runVariant(browser: Browser, retention: Retention, variant: Varia
   });
 }
 
+/**
+ * Pulsa en seguida `target`, movido al compactar: la guarda D49 cancela el clic antes de que llegue al control
+ * (`preventDefault` y `stopPropagation` en captura). Falla si el clic no cae en él o si llega sin cancelar; en un
+ * «Descartar línea», también si la fila ya no lo tiene (se descartó).
+ */
+async function pressMoved(browser: Browser, target: Element): Promise<string[]> {
+  const line = target.closest("li[data-line-index]");
+  const discard = /Descartar línea/.test(target.textContent ?? "") && line instanceof HTMLElement ? line.dataset.lineIndex : undefined;
+  const name = `${nameOf(target)} (${zoneOf(target)})`;
+  let landed = false;
+  let reached = false;
+  const onWindowClick = (event: Event) => {
+    landed ||= event.target instanceof Node && target.contains(event.target);
+  };
+  const onTargetClick = (event: Event) => {
+    reached ||= !event.defaultPrevented;
+  };
+  window.addEventListener("click", onWindowClick, true);
+  target.addEventListener("click", onTargetClick);
+  try {
+    await clickAt(browser, centerOf(target));
+    await settle("pulsar lo movido");
+  } finally {
+    window.removeEventListener("click", onWindowClick, true);
+    target.removeEventListener("click", onTargetClick);
+  }
+  if (!landed) {
+    return [`el clic en ${name}, movido al compactar, no cayó en él: no comprueba la guarda D49`];
+  }
+  const now = discard === undefined ? null : panel().querySelector(`li[data-line-index="${discard}"]`);
+  const discarded =
+    discard !== undefined && !(now !== null && [...now.querySelectorAll("button")].some((item) => /Descartar línea/.test(item.textContent ?? "")));
+  return reached || discarded ? [`${name}, movido al compactar, actuó al pulsarlo en seguida (sin guarda D49)`] : [];
+}
+
+/** Punto de la pantalla de cada control del panel, a la vista o no (lo que compara la guarda D49). */
+function screenPlaces(): Map<Element, { top: number; left: number }> {
+  return new Map(
+    [...panel().querySelectorAll(CONTROL_SELECTOR)].map((element) => {
+      const { top, left } = element.getBoundingClientRect();
+      return [element, { left, top }] as const;
+    }),
+  );
+}
+
+/**
+ * El usuario desplaza (desplazar no suelta nada, D72(a)) hasta tener `button` al pie de la franja visible (sobre el pie
+ * fijo, si lo hay): encima se ve lo de antes del botón y, si debajo queda contenido, compactar no recorta el
+ * desplazamiento y lo que sigue al hueco sube en pantalla (a 844×390, con el botón centrado, el recorte dejaba todo en
+ * su sitio de la pantalla y ningún control movido a la vista).
+ */
+async function bringToBandBottom(button: HTMLElement) {
+  const main = scroller();
+  const footer = panel().querySelector('[data-layout-box="footer"]');
+  const pinnedTop = footer && pinOf(footer, main) ? footer.getBoundingClientRect().top : Number.POSITIVE_INFINITY;
+  const bottom = Math.min(window.innerHeight, pinnedTop) - 8;
+  main.scrollTop = Math.max(0, Math.min(main.scrollHeight - main.clientHeight, main.scrollTop + button.getBoundingClientRect().bottom - bottom));
+  await settle("desplazar hasta «Compactar lista»");
+  // Si el botón no queda a la vista, `clickElement` lo centraría desplazando y todo se movería en pantalla por eso.
+  if (!isClear(button)) {
+    throw new Error("«Compactar lista» no queda a la vista al pie de la franja visible");
+  }
+}
+
 /** «Compactar lista»: sin pulsarlo nada se mueve; pulsado, se compacta y lo movido queda bajo la guarda D49. */
 async function runCompact(browser: Browser, retention: Retention): Promise<string[]> {
   return withCase(RETENTIONS[retention].fixture, async () => {
@@ -522,10 +616,17 @@ async function runCompact(browser: Browser, retention: Retention): Promise<strin
       failures.push(`con ${heldText(before)} no hay botón «Compactar lista»`);
       return failures.map((failure) => `${retention} · compactar · ${failure}`);
     }
+    await bringToBandBottom(button);
     const compaction = trackPanel();
+    const onScreen = screenPlaces();
+    const pressed = centerOf(button);
     await clickElement(browser, button);
     await settle("compactar");
     compaction.sample();
+    const movedOnScreen = [...onScreen].filter(([element, at]) => {
+      const box = element.getBoundingClientRect();
+      return element.isConnected && (Math.abs(box.top - at.top) > 0.5 || Math.abs(box.left - at.left) > 0.5);
+    });
     // El clic en el botón es una activación con el puntero (D46-a fija las cajas un momento): lo que dice que ya no queda
     // nada retenido es que el botón, visible solo con algo retenido, se fue.
     if (compactButton()) {
@@ -535,19 +636,19 @@ async function runCompact(browser: Browser, retention: Retention): Promise<strin
     if (moved.length === 0) {
       failures.push("tras pulsar «Compactar lista» no se movió nada: no compactó");
     }
-    // D49: el primer «Descartar línea» que se movió y está a la vista, pulsado en seguida en su sitio nuevo, no actúa.
-    const target = moved.find((element) => /Descartar línea/.test(element.textContent ?? "") && isClear(element));
-    const line = target?.closest("li[data-line-index]");
-    if (!target || !(line instanceof HTMLElement)) {
-      failures.push("ningún «Descartar línea» movido por la compactación queda a la vista para comprobar la guarda D49");
+    // D49: un control que se movió EN PANTALLA (bajo el puntero) y está a la vista, pulsado en seguida en su sitio nuevo, no
+    // actúa. El primer «Descartar línea» si se ve alguno; si no, el control movido más cercano a donde se pulsó «Compactar
+    // lista» (el siguiente toque del usuario cae ahí). Un control que solo se movió en el documento (el recorte del
+    // desplazamiento al acortarse la página lo deja en el mismo punto de la pantalla) no está bajo la guarda.
+    const candidates = movedOnScreen.map(([element]) => element).filter((element) => element.matches(HIT_SELECTOR) && isClear(element));
+    const distance = (element: Element) => Math.hypot(centerOf(element).x - pressed.x, centerOf(element).y - pressed.y);
+    const target =
+      candidates.find((element) => element.matches("button") && /^Descartar línea/.test(element.textContent?.trim() ?? "")) ??
+      [...candidates].sort((a, b) => distance(a) - distance(b))[0];
+    if (!target) {
+      failures.push("ningún control movido en pantalla por la compactación queda a la vista para comprobar la guarda D49");
     } else {
-      await clickAt(browser, centerOf(target));
-      await settle("pulsar lo movido");
-      const now = panel().querySelector(`li[data-line-index="${line.dataset.lineIndex}"]`);
-      const still = now !== null && [...now.querySelectorAll("button")].some((item) => /Descartar línea/.test(item.textContent ?? ""));
-      if (!still) {
-        failures.push(`«Descartar línea» de L${line.dataset.lineIndex}, movido al compactar, actuó al pulsarlo en seguida (sin guarda D49)`);
-      }
+      failures.push(...(await pressMoved(browser, target)));
     }
     return failures.map((failure) => `${retention} · compactar · ${failure}`);
   });
