@@ -349,12 +349,24 @@ function rotateHoldStory(
       const after = heldHeights();
       await sleep(Math.max(0, 1400 - (Date.now() - tapped)));
       const restore = within(row(index)).getByRole("button", { name: "Restaurar" });
+      // REP17-17: con el sitio de «Compactar lista» tras las filas, a 844×390 con la página al final «Restaurar» puede quedar
+      // justo encima de la vista tras girar: se trae a la vista (desplazar no guarda nada) como haría el usuario.
+      const reachable = () => {
+        const center = centerOf(restore);
+        return restore.contains(document.elementFromPoint(center.x, center.y));
+      };
+      if (!reachable()) {
+        restore.scrollIntoView({ block: "center" });
+        await sleep(100);
+      }
       const restoredAt = Date.now() - tapped;
       const point = centerOf(restore);
-      const under = document.elementFromPoint(point.x, point.y)?.closest("button")?.textContent ?? "-";
+      const hit = document.elementFromPoint(point.x, point.y);
+      const under = hit?.closest("button")?.textContent ?? "-";
+      const where = `«Restaurar» en (${Math.round(point.x)},${Math.round(point.y)}) con ventana ${window.innerWidth}×${window.innerHeight}, en el punto ${hit?.tagName ?? "nada"}${hit instanceof HTMLElement && hit.dataset.testid ? `[${hit.dataset.testid}]` : ""}`;
       await tapAt(browser, point);
       await sleep(500);
-      const text = `${from.join("×")} → ${to.join("×")}${leave ? " (pointerleave al girar)" : ""}: retenidos antes de girar [${before.join(", ")}] → tras girar [${after.join(", ")}]; bajo el dedo «${under}»; L${index} tras «Restaurar» a ${restoredAt} ms del 1.er toque: ${row(index).dataset.status}`;
+      const text = `${from.join("×")} → ${to.join("×")}${leave ? " (pointerleave al girar)" : ""}: retenidos antes de girar [${before.join(", ")}] → tras girar [${after.join(", ")}]; bajo el dedo «${under}» (${where}); L${index} tras «Restaurar» a ${restoredAt} ms del 1.er toque: ${row(index).dataset.status}`;
       console.warn(`[REP16-03 giro con layout pendiente] ${text}`);
       await expect(before.length, `${text} (el toque debía retener)`).toBeGreaterThan(0);
       await expect(after, text).toEqual([]);

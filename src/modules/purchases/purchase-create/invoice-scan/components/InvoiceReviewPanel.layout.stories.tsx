@@ -25,7 +25,7 @@ import type { EntityFetcher, ProductEntityOption } from "@/shared/components/Ent
 
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { deferCdpAck, fillField, openCdpSession, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
+import { compactList, deferCdpAck, fillField, openCdpSession, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
 import { POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
@@ -334,7 +334,8 @@ function revealForClick(element: HTMLElement) {
 }
 
 /**
- * Paso previo con clic real; el teclado aplica el layout pendiente y se deja pasar la guarda.
+ * Paso previo con clic real; se deja pasar la guarda, una tecla cierra la activación y, REP17-17 (D72(b)), si quedó algo
+ * retenido se compacta con «Compactar lista».
  * REP17-09 (M-r17Q2-1): clic y tecla por CDP, el clic en el centro que `revealForClick` acaba de comprobar libre,
  * como el clic objetivo. Mientras la carpeta cerraba y abría archivos, `userEvent.click` (Playwright) tardaba
  * 10–13 s y `userEvent.keyboard` hasta 2,5 s. La guarda corre desde que el clic llega a la página.
@@ -345,6 +346,7 @@ async function setupClick(browser: Browser, element: HTMLElement) {
   await clickGesture(browser, centerOf(element)).landed;
   await sleep(POINTER_GUARD_MS + 100);
   await shiftGesture(browser).landed;
+  await compactList(browser);
 }
 
 /** Clic real (CDP) en el centro de un campo, que `revealForClick` comprueba libre. REP17-10: antes `userEvent.click`. */
@@ -849,8 +851,8 @@ export const MP112Raton390 = mp112(390);
 
 /**
  * D71(a) (sustituye a D49 «con ratón compacta al salir del panel»): con el ratón, salir del panel completo NO aplica el
- * layout, igual que levantar el dedo: la caja se conserva y el chip de L2 no se mueve. Lo aplica el teclado, y el clic
- * antes de 1 s sobre un control que se movió no actúa y pasado 1 s sí (D49).
+ * layout, igual que levantar el dedo: la caja se conserva y el chip de L2 no se mueve. REP17-17 (D72): tampoco el teclado;
+ * lo aplica «Compactar lista», y el clic antes de 1 s sobre un control que se movió no actúa y pasado 1 s sí (D49).
  * REP13-05 (M-qa23-1): en una ventana sin desplazamiento nada compensa la compactación: el chip de L2 se mueve y la
  * guarda se mide sobre él.
  */
@@ -878,7 +880,10 @@ export const SalirDelPanelRaton1280: Story = {
 
     await shiftGesture(browser).landed;
     await sleep(100);
-    await expect(row(0).getBoundingClientRect().height, "el teclado lo aplica").toBeLessThan(heldHeight);
+    await expect(row(0).getBoundingClientRect().height, "el teclado no lo aplica (D72)").toBe(heldHeight);
+    await expect(await compactList(browser), "se ofrece «Compactar lista»").not.toBeNull();
+    await sleep(100);
+    await expect(row(0).getBoundingClientRect().height, "«Compactar lista» lo aplica").toBeLessThan(heldHeight);
     const [chip] = within(row(2)).getAllByRole("button", { name: /^CAOSG Jabon Azul 250g/ });
     await expect(chip.getBoundingClientRect().top, "la compactación mueve el chip de L2").toBeLessThan(chipTop - 1);
     await clickAt(browser, centerOf(chip));
@@ -1014,10 +1019,9 @@ export const OrdenTabBuscador1280 = ordenTabBuscador(1280);
 export const OrdenTabBuscador390 = ordenTabBuscador(390);
 
 /**
- * B-p11-2 (caos p11): tras aplicarse el layout (aquí al desplazar), el toque que cae en un campo de
- * texto que se movió no le da el foco (ni abre el teclado) antes de 1 s; pasado 1 s, sí.
- * REP12-04 (B-qa02-1): la fila que sigue a la compactada ya no se mueve (anclaje); se descarta L1 y el
- * campo es la Cantidad de L0, que la compactación sí mueve.
+ * B-p11-2 (caos p11): tras compactar, el toque que cae en un campo de texto que se movió no le da el foco (ni abre el
+ * teclado) antes de 1 s; pasado 1 s, sí. REP17-17 (D72): desplazar ya no compacta; compacta «Compactar lista». Se
+ * descarta L1 y el campo es la Cantidad de L2, que sube al compactar.
  */
 export const CampoMovidoSinFocoTactil390: Story = {
   args: { response: c11ThreeResponse },
@@ -1026,16 +1030,22 @@ export const CampoMovidoSinFocoTactil390: Story = {
     if (!browser) {
       return;
     }
-    row(0).scrollIntoView({ block: "start" });
+    // L1 arriba: la Cantidad de L2 queda a la vista (sobre el pie fijo) al compactar.
+    row(1).scrollIntoView({ block: "start" });
     await sleep(POINTER_GUARD_MS + 200);
     await tapAt(browser, centerOf(button(row(1), /Descartar línea/)));
     await sleep(POINTER_GUARD_MS + 200);
-    const quantity = within(row(0)).getByLabelText(/^Cantidad/);
-    const before = quantity.getBoundingClientRect().top;
+    const quantity = within(row(2)).getByLabelText(/^Cantidad/);
     window.scrollBy({ top: 40, behavior: "instant" });
     await sleep(150);
-    const moved = quantity.getBoundingClientRect().top - (before - 40);
-    await expect(Math.abs(moved), `al desplazar se aplica el layout y mueve el campo (${Math.round(moved)} px)`).toBeGreaterThan(40);
+    await expect(row(1).querySelector('[data-testid="invoice-review-held-summary"]'), "desplazar no compacta (D72)").not.toBeNull();
+    const before = quantity.getBoundingClientRect().top;
+    await expect(await compactList(browser), "se ofrece «Compactar lista»").not.toBeNull();
+    await sleep(150);
+    const moved = before - quantity.getBoundingClientRect().top;
+    await expect(moved, `al compactar sube el campo (${Math.round(moved)} px)`).toBeGreaterThan(40);
+    const aim = centerOf(quantity);
+    await expect(document.elementFromPoint(aim.x, aim.y), "la Cantidad de L2 está a la vista, sin nada encima").toBe(quantity);
 
     await tapAt(browser, centerOf(quantity));
     await sleep(150);
@@ -1092,9 +1102,9 @@ export const ResumenRetenidoDescartada390Tactil = resumenRetenido(390, "touch", 
 
 /**
  * B-qa02-3 (QA REP11-02, D49): tras descartar L0, activar la Cantidad de L1 y teclear (el mismo
- * valor: el texto de la fila no cambia, solo la compactación podría mover el campo) compacta el
- * layout (el teclado lo aplica), pero el campo en que se escribe se queda en el mismo punto de la
- * pantalla (< 2 px) y conserva el foco y lo tecleado.
+ * valor: el texto de la fila no cambia, solo la compactación podría mover el campo): REP17-17 (D72) el teclado no
+ * compacta; el campo en que se escribe se queda en el mismo punto de la pantalla (< 2 px) y conserva el foco y lo
+ * tecleado.
  */
 function teclearTrasDescartar(width: number, pointer: Pointer): Story {
   return {
@@ -1116,7 +1126,7 @@ function teclearTrasDescartar(width: number, pointer: Pointer): Story {
       const before = quantity.getBoundingClientRect().top;
       await pressKeys(browser, "1");
       await sleep(300);
-      await expect(row(0).getBoundingClientRect().height, "el teclado aplica el layout").toBeLessThan(heldHeight);
+      await expect(row(0).getBoundingClientRect().height, "el teclado no compacta (D72)").toBe(heldHeight);
       await expect(document.activeElement, "el foco sigue en la Cantidad").toBe(quantity);
       await expect(quantity instanceof HTMLInputElement ? quantity.value : "", "lo tecleado llega al campo").toBe("1");
       const moved = quantity.getBoundingClientRect().top - before;
@@ -1242,7 +1252,7 @@ export const C12BM1Pie390Tactil700Pegado = c12bm1Pie(390, "touch", 700, 600);
 export const C12BM1Pie1280Raton700 = c12bm1Pie(1280, "mouse", 700);
 export const C12BM1Pie1280Raton700Pegado = c12bm1Pie(1280, "mouse", 700, 560);
 
-type Compaction = "salir" | "desplazar" | "teclado";
+type Gesto = "salir" | "desplazar" | "teclado";
 
 /** Lo que desplaza la rueda de `salir`. */
 const WHEEL_PX = 100;
@@ -1261,10 +1271,10 @@ function wheelGesture(browser: Browser, point: Point, deltaY: number) {
 }
 
 /**
- * Aplica el layout pendiente como el usuario: desplazando o con el teclado. D71(a): `salir` saca el ratón del panel (no
- * aplica nada: lo comprueba la historia) y luego gira la rueda fuera de él. Devuelve lo que desplazó el usuario.
+ * Lo que antes aplicaba el layout pendiente: desplazar o el teclado. D71(a): `salir` saca el ratón del panel y luego gira
+ * la rueda fuera de él. REP17-17 (D72(a)): nada de ello compacta. Devuelve lo que desplazó el usuario.
  */
-async function compact(browser: Browser, how: Compaction): Promise<number> {
+async function gesture(browser: Browser, how: Gesto): Promise<number> {
   let scrolled = 0;
   if (how === "salir") {
     scrolled = WHEEL_PX;
@@ -1280,11 +1290,11 @@ async function compact(browser: Browser, how: Compaction): Promise<number> {
 }
 
 /**
- * B-qa02-1 (D52): con L1 arriba de la vista, descartarla y aplicar el layout (desplazar, teclado o, D71(a), la rueda
- * con el ratón fuera del panel tras comprobar que salir no aplica nada). La fila siguiente (L2) no se va: su posición en
- * pantalla cambia < 2 px (descontando lo que desplaza el usuario), aunque L1 encoja.
+ * B-qa02-1 (D52): con L1 arriba de la vista, descartarla y desplazar, usar el teclado o (D71(a)) sacar el ratón del panel
+ * y girar la rueda fuera de él. REP17-17 (D72(a)): nada de ello compacta: L1 conserva su caja, la fila siguiente (L2) se
+ * mueve solo lo que desplaza el usuario (< 2 px de diferencia) y se ofrece «Compactar lista».
  */
-function anclajeCompactacion(width: number, pointer: Pointer, how: Compaction): Story {
+function anclajeCompactacion(width: number, pointer: Pointer, how: Gesto): Story {
   return {
     args: { response: c11ThreeResponse },
     play: async () => {
@@ -1308,12 +1318,13 @@ function anclajeCompactacion(width: number, pointer: Pointer, how: Compaction): 
         await expect(row(1).getBoundingClientRect().height, "fuera del panel: la caja se conserva (D71(a))").toBe(heldHeight);
         await expect(row(2).getBoundingClientRect().top, "fuera del panel: L2 no se mueve").toBe(before);
       }
-      const expected = before - (await compact(browser, how));
+      const expected = before - (await gesture(browser, how));
       const after = row(2).getBoundingClientRect().top;
       const report = `${width} ${pointer} ${how} · L1 ${Math.round(heldHeight)}→${Math.round(row(1).getBoundingClientRect().height)} px · L2 antes ${Math.round(before)} esperado ${Math.round(expected)} después ${Math.round(after)} · scrollY ${Math.round(window.scrollY)}`;
       console.log(`[B-qa02-1] ${report}`);
-      await expect(row(1).getBoundingClientRect().height, `se aplicó el layout: ${report}`).toBeLessThan(heldHeight - 40);
+      await expect(row(1).getBoundingClientRect().height, `no compacta (D72): ${report}`).toBe(heldHeight);
       await expect(Math.abs(after - expected), `L2 se desplazó ${Math.round(after - expected)} px: ${report}`).toBeLessThan(2);
+      await expect(screen.getByRole("button", { name: "Compactar lista" }), `se ofrece «Compactar lista»: ${report}`).toBeInTheDocument();
     },
   };
 }
@@ -1329,7 +1340,8 @@ export const AnclajeCompactacion390TactilTeclado = anclajeCompactacion(390, "tou
  * el documento, el navegador recorta el desplazamiento y lo que está ENCIMA del panel baja: un campo
  * del formulario (aquí la fecha, fuera del panel) queda bajo el puntero que acaba de salir del panel.
  * La activación antes de 1 s desde la compactación no le da el foco (D49, guarda anclada a la
- * compactación); pasado 1 s, sí. D71(a): con el ratón, salir no compacta; compacta una tecla con el ratón ya fuera.
+ * compactación); pasado 1 s, sí. D71(a): con el ratón, salir no compacta. REP17-17 (D72): tampoco una tecla ni desplazar;
+ * compacta «Compactar lista» (con el teclado, el puntero ya fuera del panel).
  */
 function campoFueraDelPanel(width: number, pointer: Pointer): Story {
   return {
@@ -1363,7 +1375,7 @@ function campoFueraDelPanel(width: number, pointer: Pointer): Story {
       // Entre la fecha y el panel (fuera del panel, nada accionable).
       const point = { x: centerOf(date).x, y: panel().getBoundingClientRect().top - 3 };
       if (pointer === "mouse") {
-        // D71(a): salir del panel no aplica nada (ni mueve la fecha); con el ratón ya fuera, lo aplica el teclado.
+        // D71(a): salir del panel no aplica nada (ni mueve la fecha); D72: una tecla tampoco.
         const held = row(1).getBoundingClientRect().height;
         const dateTop = date.getBoundingClientRect().top;
         await moveMouseTo(browser, point);
@@ -1371,9 +1383,15 @@ function campoFueraDelPanel(width: number, pointer: Pointer): Story {
         await expect(row(1).getBoundingClientRect().height, `fuera del panel: la caja se conserva: ${geo()}`).toBe(held);
         await expect(date.getBoundingClientRect().top, `fuera del panel: la fecha no se mueve: ${geo()}`).toBe(dateTop);
         await shiftGesture(browser).landed;
+        await sleep(100);
+        await expect(row(1).getBoundingClientRect().height, `una tecla no compacta: ${geo()}`).toBe(held);
       } else {
+        const held = row(1).getBoundingClientRect().height;
         window.scrollBy({ top: -10, behavior: "instant" });
+        await sleep(100);
+        await expect(row(1).getBoundingClientRect().height, `desplazar no compacta: ${geo()}`).toBe(held);
       }
+      await expect(await compactList(browser), "se ofrece «Compactar lista»").not.toBeNull();
       const start = performance.now();
       await sleepUntil(start, 300);
       const under = document.elementFromPoint(point.x, point.y);

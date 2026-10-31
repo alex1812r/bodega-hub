@@ -39,7 +39,7 @@ import {
   unmatchedLine,
 } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
-import { settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
+import { compactList, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 
 /** El del lab (`fixtures-p16b-sup.sql`, M-p16B-1). */
 const LONG_NAME = "Distribuidora Internacional de Alimentos y Víveres Los Andes del Sur, C.A. (CAOS16B)";
@@ -386,14 +386,9 @@ function measureStory(width: number, height: number): Story {
         () => expect(within(row(1)).queryByText(/consultando el costo previo/i)).not.toBeInTheDocument(),
       );
 
-      // Desplazar suelta toda retención: la cabecera sigue con el alto del primer render.
-      const main = document.querySelector("main");
-      if (main) {
-        main.scrollTop = 40;
-        await sleep(300);
-        main.scrollTop = 0;
-        await sleep(400);
-      }
+      // REP17-17 (D72(b)): «Compactar lista» suelta toda retención: la cabecera sigue con el alto del primer render.
+      await compactList(browser);
+      await sleep(400);
       const last = measure();
       report.push(`primer render → tras soltar: ${first.header}/${first.datos} → ${last.header}/${last.datos}`);
       if (last.header !== first.header || last.datos !== first.datos) {
@@ -432,13 +427,9 @@ function rateStory(width: number, height: number, printedRate: number | undefine
         await sleep(400);
       });
       const held = heldNotices("header");
-      const main = document.querySelector("main");
-      if (main) {
-        main.scrollTop = 40;
-        await sleep(300);
-        main.scrollTop = 0;
-        await sleep(400);
-      }
+      // REP17-17 (D72(b)): «Compactar lista» suelta toda retención.
+      await compactList(browser);
+      await sleep(400);
       const last = measure();
       const text = `${width}×${height} impresa ${printedRate ?? "-"} → del día ${systemRate}: ${frames.join(" → ")}${held.length ? ` retenidos ${held.join(", ")}` : ""}; tras soltar ${first.header} → ${last.header}`;
       console.warn(`[REP15-01b tasa] ${text}`);

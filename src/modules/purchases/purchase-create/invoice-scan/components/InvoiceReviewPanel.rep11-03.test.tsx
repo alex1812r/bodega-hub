@@ -96,12 +96,17 @@ function harinaByName(quantity: number): ReviewFixtureLine {
 
 let rect: jest.SpyInstance;
 
-/** Como en REP11-02: lo de la línea 1 está más abajo mientras la línea 0 conserva su caja. */
+/**
+ * Como en REP11-02: lo de la línea 1 está más abajo mientras la línea 0 conserva su caja; la descartada mide 80 px salvo su
+ * alto retenido.
+ */
 function fakeRect(this: Element) {
   if (this.matches('[data-testid="invoice-review-panel"]')) {
     return { ...PANEL, height: PANEL.bottom, width: PANEL.right, x: 0, y: 0, toJSON: () => ({}) };
   }
-  const height = this.matches("li[data-line-index]") ? ROW_HEIGHT : 0;
+  const natural = this instanceof HTMLElement && this.dataset.status === "discarded" ? 80 : ROW_HEIGHT;
+  const floor = this instanceof HTMLElement ? Number.parseFloat(this.style.minHeight) || 0 : 0;
+  const height = this.matches("li[data-line-index]") ? Math.max(natural, floor) : 0;
   const held = document.querySelector<HTMLElement>('li[data-line-index="0"]')?.style.minHeight;
   const top = this.closest('li[data-line-index="1"]') ? (held ? 400 : 250) : 0;
   return { bottom: top + height, height, left: 0, right: 390, top, width: 390, x: 0, y: top, toJSON: () => ({}) };
@@ -222,10 +227,10 @@ describe("REP11-03 · B-p11-1 (caos): el chip que queda bajo la opción elegida"
 });
 
 describe("REP11-03 · B-p11-2 (caos): tras compactar, el pointerdown no da el foco a un campo movido", () => {
-  it("el mousedown sobre la Cantidad de la fila de abajo, < 1 s tras aplicarse el layout, se cancela", () => {
+  it("el mousedown sobre la Cantidad de la fila de abajo, < 1 s tras compactar («Compactar lista»), se cancela", () => {
     renderPanel(twoHarinas());
     press(within(row(0)).getByRole("button", { name: /Descartar línea/ }), "touch", { clientX: 180, clientY: 360 });
-    fireEvent.keyDown(document.body, { key: "Shift" });
+    fireEvent.click(screen.getByRole("button", { name: "Compactar lista" }));
 
     advance(300);
     const quantity = within(row(1)).getAllByRole("textbox")[0];
@@ -237,7 +242,7 @@ describe("REP11-03 · B-p11-2 (caos): tras compactar, el pointerdown no da el fo
   it("pasado 1 s, el mousedown sobre ese campo no se cancela", () => {
     renderPanel(twoHarinas());
     press(within(row(0)).getByRole("button", { name: /Descartar línea/ }), "touch", { clientX: 180, clientY: 360 });
-    fireEvent.keyDown(document.body, { key: "Shift" });
+    fireEvent.click(screen.getByRole("button", { name: "Compactar lista" }));
 
     advance(1000);
     const quantity = within(row(1)).getAllByRole("textbox")[0];

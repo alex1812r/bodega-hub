@@ -9,8 +9,8 @@ import { useLayoutHold } from "./useLayoutHold";
  * se apoya sobre el hueco retenido de L1, más cerca de L2 que de «Restaurar línea», y arrastra 30 px hacia arriba. El
  * desplazamiento del arrastre llega a la página en un frame que no depende de la revisión: después del `touchmove` (con la
  * máquina cargada), antes, o repartido en varios frames. Sin él, el punto del dedo cae 30 px más arriba en el contenido,
- * más cerca de «Restaurar línea»: anclar ahí sube L2 lo soltado (194 px). En todos los repartos, L2 (lo que el dedo arrastra)
- * se mueve exactamente lo arrastrado.
+ * más cerca de «Restaurar línea»: anclar ahí sube L2 lo soltado (194 px). REP17-17 (D72(a)): el dedo ya no suelta nada; en
+ * todos los repartos sigue retenido y L2 (lo que el dedo arrastra) se mueve exactamente lo arrastrado.
  */
 
 /** Geometría simulada (px): alto visible del contenedor y su desplazamiento. */
@@ -156,7 +156,7 @@ type Order =
   | "desplazamiento en dos frames, el touchmove entre ellos"
   | "tres touchmove, cada uno antes de su desplazamiento";
 
-describe("REP17-15 · el dedo suelta el layout pendiente anclado en cualquier reparto de frames", () => {
+describe("REP17-15 · REP17-17 · el dedo no suelta el layout retenido en ningún reparto de frames", () => {
   let rect: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
 
@@ -228,8 +228,8 @@ describe("REP17-15 · el dedo suelta el layout pendiente anclado en cualquier re
     }
     fireEvent.touchEnd(l1(), { touches: [] });
 
-    expect(screen.getByTestId("root")).toHaveAttribute("data-held", "no");
-    expect(l1Height()).toBe(L1_DISCARDED);
+    expect(screen.getByTestId("root")).toHaveAttribute("data-held", "yes");
+    expect(l1Height()).toBe(L1_PENDING);
     expect(l2().getBoundingClientRect().top - (before - DRAG_PX)).toBe(0);
   });
 });

@@ -8,7 +8,8 @@ import { useLayoutHold } from "./useLayoutHold";
  * REP17-06 · D70(c) (B-r17Q-2), D71(a): con el ratón, sacarlo del panel no suelta nada (al volver al mismo punto está el
  * mismo control); lo suelta la rueda, sin mover lo que estaba bajo su última posición dentro del panel. Un aviso que
  * encoge solo (la reserva que la tasa del día no usa) queda retenido; el ratón, sobre un control de las filas, sale del
- * panel (sigue retenido) y gira la rueda fuera de él:
+ * panel (sigue retenido) y gira la rueda fuera de él. REP17-17 (D72(a)): la rueda tampoco suelta nada ya; lo de abajo
+ * describe lo que se hacía antes:
  * - con desplazamiento que compense lo soltado, se suelta anclado al control, y lo que movió la liberación (lo de encima)
  *   queda guardado desde ese instante (D49);
  * - sin él (página arriba, hueco encima), sigue retenido: el control no se mueve.
@@ -125,7 +126,7 @@ function mouseOutOfPanel(exit: Exit) {
   }
 }
 
-describe("REP17-06 · D70(c), D71(a) · sacar el ratón del panel no mueve lo que estaba bajo él", () => {
+describe("REP17-06 · REP17-17 · sacar el ratón del panel y girar la rueda no sueltan nada ni mueven lo que estaba bajo él", () => {
   let rect: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
 
@@ -153,7 +154,7 @@ describe("REP17-06 · D70(c), D71(a) · sacar el ratón del panel no mueve lo qu
   });
 
   it.each<Exit>(["pointermove", "pointerleave"])(
-    "salir (%s) no suelta nada; la rueda, con desplazamiento que lo compense, suelta anclado al control y lo de encima queda guardado (D49)",
+    "salir (%s) no suelta nada; la rueda, con desplazamiento que lo compense, tampoco (D72(a)) y nada queda guardado",
     (exit) => {
       const { rerender } = render(<Harness tick={0} />);
       const scroller = wireScroller();
@@ -171,11 +172,11 @@ describe("REP17-06 · D70(c), D71(a) · sacar el ratón del panel no mueve lo qu
 
       fireEvent.wheel(document.body, { deltaY: 40 });
 
-      expect(notice().style.minHeight).toBe("");
+      expect(notice().style.minHeight).toBe("200px");
       expect(rowControl().getBoundingClientRect().top).toBe(before);
       expect(document.elementFromPoint(100, before + 10)).toBe(rowControl());
       expect(movedByCompaction(rowControl())).toBe(false);
-      expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(true);
+      expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(false);
     },
   );
 

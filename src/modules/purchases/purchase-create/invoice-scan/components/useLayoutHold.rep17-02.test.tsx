@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 
 import { useLayoutHold } from "./useLayoutHold";
@@ -12,6 +12,8 @@ import { useLayoutHold } from "./useLayoutHold";
  *   se movió el dedo;
  * - con él, se suelta anclando el desplazamiento al control: se mueve lo que se movió el dedo, y lo que movió la
  *   liberación (lo de encima) queda guardado desde ese instante (D49).
+ * REP17-17 (D72): ni el arrastre ni una tecla sueltan ya nada, haya o no desplazamiento que lo compense; lo suelta
+ * «Compactar lista», y lo que se mueve con ello queda guardado desde ese instante (D49).
  * Y un aviso retenido que solo encoge conserva su `display` (la rejilla que apila sus reservas); el que se vacía
  * (`empty:hidden`) conserva su sitio como bloque.
  */
@@ -81,6 +83,9 @@ function Harness({ tick, empty = false }: { tick: number; empty?: boolean }) {
             Descartar línea
           </button>
         </section>
+        <button onClick={hold.compact} type="button">
+          Compactar lista
+        </button>
       </div>
     </main>
   );
@@ -132,7 +137,7 @@ function shortDrag(scroller: HTMLElement, px: number) {
   fireEvent.touchEnd(control, { touches: [] });
 }
 
-describe("REP17-02 · D70(c) · soltar lo retenido no mueve lo que está bajo el dedo", () => {
+describe("REP17-02 · REP17-17 · el arrastre y el teclado no sueltan lo retenido; «Compactar lista» sí, con la guarda D49", () => {
   let rect: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
 
@@ -175,7 +180,7 @@ describe("REP17-02 · D70(c) · soltar lo retenido no mueve lo que está bajo el
     expect(notice().style.minHeight).toBe("200px");
   });
 
-  it("con desplazamiento que lo compense, se suelta anclado al control y lo de encima queda guardado (D49)", () => {
+  it("con desplazamiento que lo compense, el arrastre tampoco lo suelta; «Compactar lista» sí y guarda lo que movió (D49)", () => {
     const { rerender } = render(<Harness tick={0} />);
     const scroller = wireScroller();
     geometry.scrollTop = 300;
@@ -186,16 +191,24 @@ describe("REP17-02 · D70(c) · soltar lo retenido no mueve lo que está bajo el
 
     shortDrag(scroller, 24);
 
-    expect(notice().style.minHeight).toBe("");
+    expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before - 24);
     expect(movedByCompaction(rowControl())).toBe(false);
-    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(true);
+
+    act(() => {
+      screen.getByRole("button", { name: "Compactar lista" }).click();
+    });
+
+    expect(notice().style.minHeight).toBe("");
+    expect(rowControl().getBoundingClientRect().top).toBe(before - 24 - (200 - 28));
+    expect(movedByCompaction(rowControl())).toBe(true);
+    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(false);
   });
 
   it.each([
-    { scrollTop: 0, released: false, title: "sin desplazamiento que lo compense, una tecla no lo suelta" },
-    { scrollTop: 300, released: true, title: "con él, una tecla lo suelta anclado al control" },
-  ])("ratón sobre el control de las filas: $title", ({ scrollTop, released }) => {
+    { scrollTop: 0, title: "sin desplazamiento que lo compense, una tecla no lo suelta" },
+    { scrollTop: 300, title: "con él, una tecla tampoco lo suelta" },
+  ])("ratón sobre el control de las filas: $title", ({ scrollTop }) => {
     const { rerender } = render(<Harness tick={0} />);
     const scroller = wireScroller();
     geometry.scrollTop = scrollTop;
@@ -207,7 +220,7 @@ describe("REP17-02 · D70(c) · soltar lo retenido no mueve lo que está bajo el
 
     fireEvent.keyDown(window, { key: "Shift" });
 
-    expect(notice().style.minHeight).toBe(released ? "" : "200px");
+    expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before);
   });
 

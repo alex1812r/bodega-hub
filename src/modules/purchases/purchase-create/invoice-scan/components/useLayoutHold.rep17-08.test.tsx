@@ -10,7 +10,8 @@ import { useLayoutHold } from "./useLayoutHold";
  * no usa) queda retenido; el ratón se queda sobre un control de las filas y luego sale del panel de un trazo:
  * - por la derecha cruzando el visor pegado (1440/1366: la franja entre el visor y el borde de la ventana);
  * - por arriba, cruzando la cabecera, fuera de la ventana (1280, 1024×1366).
- * En ambos sigue retenido y el control no se mueve; al volver sobre él, la rueda o una tecla lo sueltan anclado a él. Si
+ * En ambos sigue retenido y el control no se mueve; REP17-17 (D72(a)): al volver sobre él, la rueda o una tecla tampoco lo
+ * sueltan. Si
  * estuvo quieto sobre el visor, también sigue retenido.
  */
 
@@ -140,7 +141,7 @@ function retainNotice() {
   expect(notice().style.minHeight).toBe("200px");
 }
 
-describe("REP17-08 · D70(c), D71(a) · al sacar el ratón del panel tras estar quieto, nada se suelta ni se mueve", () => {
+describe("REP17-08 · REP17-17 · al sacar el ratón del panel tras estar quieto, y al volver con la rueda o una tecla, nada se suelta ni se mueve", () => {
   let rect: jest.SpyInstance;
   let now: jest.SpyInstance;
   const elementFromPoint = document.elementFromPoint;
@@ -184,7 +185,7 @@ describe("REP17-08 · D70(c), D71(a) · al sacar el ratón del panel tras estar 
     document.elementFromPoint = elementFromPoint;
   });
 
-  it("por la derecha cruzando el visor pegado: sigue retenido; al volver, la rueda suelta anclado al control", () => {
+  it("por la derecha cruzando el visor pegado: sigue retenido; al volver, la rueda tampoco lo suelta", () => {
     retainNotice();
     const y = rowControl().getBoundingClientRect().top + 10;
     const before = rowControl().getBoundingClientRect().top;
@@ -200,13 +201,13 @@ describe("REP17-08 · D70(c), D71(a) · al sacar el ratón del panel tras estar 
     mouse("pointermove", 100, y, PAUSE_MS);
     fireEvent.wheel(rowControl(), { deltaY: 40 });
 
-    expect(notice().style.minHeight).toBe("");
+    expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before);
     expect(movedByCompaction(rowControl())).toBe(false);
-    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(true);
+    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(false);
   });
 
-  it("por arriba, cruzando la cabecera, fuera de la ventana: sigue retenido; al volver, una tecla suelta anclado al control", () => {
+  it("por arriba, cruzando la cabecera, fuera de la ventana: sigue retenido; al volver, una tecla tampoco lo suelta", () => {
     retainNotice();
     const y = rowControl().getBoundingClientRect().top + 10;
     const before = rowControl().getBoundingClientRect().top;
@@ -223,9 +224,9 @@ describe("REP17-08 · D70(c), D71(a) · al sacar el ratón del panel tras estar 
     mouse("pointermove", 100, y, PAUSE_MS);
     fireEvent.keyDown(document.body, { key: "ArrowDown" });
 
-    expect(notice().style.minHeight).toBe("");
+    expect(notice().style.minHeight).toBe("200px");
     expect(rowControl().getBoundingClientRect().top).toBe(before);
-    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(true);
+    expect(movedByCompaction(screen.getByRole("button", { name: "Cabecera" }))).toBe(false);
   });
 
   it("quieto sobre el visor pegado y salida por la derecha: sigue retenido y el control de las filas no se mueve", () => {
