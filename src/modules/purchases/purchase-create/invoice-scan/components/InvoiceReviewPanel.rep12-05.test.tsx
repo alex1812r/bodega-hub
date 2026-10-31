@@ -16,6 +16,7 @@ import { type ContactEntityOption, ENTITY_AUTOCOMPLETE_DEBOUNCE_MS } from "@/sha
 import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel, type InvoiceReviewPanelProps } from "./InvoiceReviewPanel";
+import { COMPACTION_GUARD_MS } from "./useLayoutHold";
 
 jest.mock("../../../hooks/usePurchaseSuppliers", () => ({
   fetchPurchaseSupplierOptions: jest.fn(async () => []),
@@ -135,6 +136,8 @@ async function chooseFarmatodoByTouch() {
   await user.type(screen.getByRole("combobox", { name: /proveedor/i }), "Farma");
   await advance(ENTITY_AUTOCOMPLETE_DEBOUNCE_MS);
   const option = screen.getByRole("option", { name: /farmatodo/i });
+  // REP18-01 (D75(a)): la lista llegó sola (respuesta del buscador): se elige pasada su guarda.
+  await advance(COMPACTION_GUARD_MS);
   tap(option, OPTION);
   await advance(300);
 }
@@ -194,6 +197,8 @@ describe("REP12-05 · M-qa-rep12-1: el toque tras elegir el proveedor no reconoc
     const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     await user.type(screen.getByRole("combobox", { name: /proveedor/i }), "Farma");
     await advance(ENTITY_AUTOCOMPLETE_DEBOUNCE_MS);
+    // REP18-01 (D75(a)): la lista llegó sola (respuesta del buscador): se elige pasada su guarda.
+    await advance(COMPACTION_GUARD_MS);
     tap(screen.getByRole("option", { name: /farmatodo/i }), OPTION);
     await advance(2000);
     // El dedo baja; la respuesta llega y el aviso aparece bajo él; el dedo sube. Pasada la guarda de

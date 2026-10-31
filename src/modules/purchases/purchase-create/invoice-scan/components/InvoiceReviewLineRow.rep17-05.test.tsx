@@ -3,6 +3,8 @@
  * último costo (REP16-01) quedaba en blanco y sin texto; con la tasa caída, para siempre. La reserva dice qué espera
  * («Esperando la tasa del día…») o, si la consulta falló, qué hacer («Sin tasa del día: escríbela arriba»), sin
  * cambiar su caja: el texto va fuera del flujo y la reserva conserva sus clases.
+ * REP18-01 (D75(b), M-p19B-1): el texto ya no va sobre la reserva de las opciones (al llegar la tasa aparecían justo
+ * ahí y el toque sobre el texto elegía «Por unidad»), sino en la franja reservada de los avisos de la fila.
  */
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
@@ -57,18 +59,20 @@ function renderRow(rateFailed: boolean) {
 }
 
 describe("REP17-05 · B-p18Q-1: la reserva de las opciones dice qué espera", () => {
-  it("mientras la tasa del día está pendiente: «Esperando la tasa del día…» dentro de la reserva", () => {
+  it("mientras la tasa del día está pendiente: «Esperando la tasa del día…» en los avisos de la fila, no en la reserva", () => {
     renderRow(false);
-    const reserve = screen.getByTestId("invoice-review-options-reserve");
-    expect(reserve).toHaveTextContent(PENDING_TEXT);
-    expect(reserve).not.toHaveTextContent(FAILED_TEXT);
+    const notices = screen.getByTestId("invoice-review-line-notices");
+    expect(notices).toHaveTextContent(PENDING_TEXT);
+    expect(notices).not.toHaveTextContent(FAILED_TEXT);
+    expect(screen.getByTestId("invoice-review-options-reserve")).not.toHaveTextContent(PENDING_TEXT);
   });
 
-  it("si la consulta de la tasa falló: «Sin tasa del día: escríbela arriba» dentro de la reserva", () => {
+  it("si la consulta de la tasa falló: «Sin tasa del día: escríbela arriba» en los avisos de la fila, no en la reserva", () => {
     renderRow(true);
-    const reserve = screen.getByTestId("invoice-review-options-reserve");
-    expect(reserve).toHaveTextContent(FAILED_TEXT);
-    expect(reserve).not.toHaveTextContent(PENDING_TEXT);
+    const notices = screen.getByTestId("invoice-review-line-notices");
+    expect(notices).toHaveTextContent(FAILED_TEXT);
+    expect(notices).not.toHaveTextContent(PENDING_TEXT);
+    expect(screen.getByTestId("invoice-review-options-reserve")).not.toHaveTextContent(FAILED_TEXT);
   });
 
   it("el texto no cambia la caja: la reserva conserva sus clases y el texto va fuera del flujo, visible", () => {
