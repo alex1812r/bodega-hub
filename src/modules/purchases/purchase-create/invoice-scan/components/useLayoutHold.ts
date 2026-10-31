@@ -209,8 +209,16 @@ const PANEL_MUTATIONS: MutationObserverInit = {
   subtree: true,
 };
 
-/** REP18-01 (D75(a)): lo que puede hacer aparecer o habilitar un control (el texto no). */
-const ARRIVAL_MUTATIONS: MutationObserverInit = { attributes: true, attributeOldValue: true, childList: true, subtree: true };
+/**
+ * REP18-01 (D75(a)): lo que puede hacer aparecer o habilitar un control (el texto no). REP18-01b: solo los atributos que
+ * lo habilitan, lo muestran o lo hacen control; los demás (`value`, `aria-*` de estado) cambian al teclear y no.
+ */
+const ARRIVAL_MUTATIONS: MutationObserverInit = {
+  attributeFilter: ["aria-disabled", "aria-hidden", "class", "disabled", "hidden", "href", "inert", "open", "role", "style"],
+  attributeOldValue: true,
+  childList: true,
+  subtree: true,
+};
 
 /** D67(a): `notice` va antes del último control de las filas: si crece, baja controles de alguna fila. */
 function movesRowControls(root: Element, notice: Element): boolean {
@@ -329,11 +337,26 @@ function isActionable(control: Element): boolean {
 }
 
 /**
- * REP18-01 (D75(a)): controles accionables del documento (el panel y sus listas flotantes, en portales). Solo se
- * consultan desde el panel (sus clics, también los de sus portales, pasan por él): lo de fuera no se frena por esto.
+ * REP18-01b: dónde puede aparecer un control del panel: el panel y sus listas flotantes. `EntityAutocomplete` las monta
+ * (portal) como hijas del diálogo que contiene el campo o, si no hay, de `body`: las hijas de ese contenedor que no
+ * contienen el panel. El resto del documento (el formulario, la cabecera de la página) no se recorre.
  */
-function actionableControls(): Set<Element> {
-  return new Set([...document.querySelectorAll(CONTROL_SELECTOR)].filter(isActionable));
+function arrivalScopes(root: Element): { host: Element; scopes: Element[] } {
+  const host = root.closest("[role='dialog']") ?? document.body;
+  return { host, scopes: [root, ...[...host.children].filter((child) => !child.contains(root))] };
+}
+
+/** REP18-01b: el cambio es del panel o de sus listas flotantes (o monta o quita una: cambia `host`). */
+function inArrivalScope(record: MutationRecord, { host, scopes }: ReturnType<typeof arrivalScopes>): boolean {
+  return record.target === host || scopes.some((scope) => scope.contains(record.target));
+}
+
+/**
+ * REP18-01 (D75(a)): controles accionables del panel y de sus listas flotantes (`arrivalScopes`). Solo se consultan
+ * desde el panel (sus clics, también los de sus portales, pasan por él): lo de fuera no se frena por esto.
+ */
+function actionableControls(scopes: readonly Element[]): Set<Element> {
+  return new Set(scopes.flatMap((scope) => [...scope.querySelectorAll(CONTROL_SELECTOR)].filter(isActionable)));
 }
 
 /** Controles de `now` que no estaban en `before` o cambiaron de sitio (≥ 1 px). */
@@ -511,6 +534,36 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     [rootRef],
   );
 
+  /**
+   * REP18-01 (D75(a)): un control que APARECE o SE HABILITA sin acción del usuario (una llegada asíncrona) en cualquier
+   * parte del panel (cabecera, filas, lo de tras las filas, el pie) o en sus listas flotantes queda guardado desde ESE
+   * momento (D49): un toque que llega en el segundo siguiente no lo acciona. Lo que aparece en el turno del usuario es
+   * suyo, y con otro ancho (giro, ventana) todo se recoloca: no se guarda. El teclado no pasa por esta guarda.
+   * REP18-01b: en el turno del usuario (al teclear, un cambio por tecla) no se mide: solo se descarta la base, y el fin
+   * del turno mide la de entonces. Sin base, medir solo la fija.
+   */
+  const noteArrivals = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+    if (userTurnRef.current) {
+      actionableRef.current = null;
+      return;
+    }
+    const width = root.getBoundingClientRect().width;
+    const controls = actionableControls(arrivalScopes(root).scopes);
+    const previous = actionableRef.current;
+    if (previous && Math.abs(previous.width - width) < 1) {
+      markMoved(
+        arrivedAtRef.current,
+        [...controls].filter((control) => !previous.controls.has(control)),
+        performance.now(),
+      );
+    }
+    actionableRef.current = { width, controls };
+  }, [rootRef]);
+
   // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la
   // acción): lo que cambie en él es suyo. Una tecla, además, cierra lo que era de la última activación con el puntero.
   useEffect(() => {
@@ -524,6 +577,10 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       if (frame !== undefined) {
         cancelAnimationFrame(frame);
         frame = undefined;
+      }
+      // REP18-01b: el turno descartó la base de las llegadas: se mide la de ahora (sin guardar nada).
+      if (actionableRef.current === null) {
+        noteArrivals();
       }
     };
     const watch = () => {
@@ -568,7 +625,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         window.removeEventListener(type, mark, { capture: true });
       }
     };
-  }, [rootRef]);
+  }, [noteArrivals, rootRef]);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
@@ -761,42 +818,20 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));
 
-  /**
-   * REP18-01 (D75(a)): un control que APARECE o SE HABILITA sin acción del usuario (una llegada asíncrona) en cualquier
-   * parte del panel (cabecera, filas, lo de tras las filas, el pie) o en sus listas flotantes queda guardado desde ESE
-   * momento (D49): un toque que llega en el segundo siguiente no lo acciona. Lo que aparece en el turno del usuario es
-   * suyo, y con otro ancho (giro, ventana) todo se recoloca: no se guarda. El teclado no pasa por esta guarda.
-   */
-  const noteArrivals = useCallback(() => {
-    const root = rootRef.current;
-    if (!root) {
-      return;
-    }
-    const width = root.getBoundingClientRect().width;
-    const controls = actionableControls();
-    const previous = actionableRef.current;
-    if (previous && Math.abs(previous.width - width) < 1 && !userTurnRef.current) {
-      markMoved(
-        arrivedAtRef.current,
-        [...controls].filter((control) => !previous.controls.has(control)),
-        performance.now(),
-      );
-    }
-    actionableRef.current = { width, controls };
-  }, [rootRef]);
-
-  // Las llegadas se miden con cada cambio del documento (los portales del buscador están fuera del panel), en su
-  // microtarea: antes de pintar.
+  // Las llegadas se miden con cada cambio del panel o de sus listas flotantes (en portales, fuera del panel: se observa
+  // `body`), en su microtarea: antes de pintar.
   useEffect(() => {
     noteArrivals();
     const mutations = new MutationObserver((records) => {
-      if (changesDom(records)) {
+      const root = rootRef.current;
+      const scope = root ? arrivalScopes(root) : null;
+      if (scope && changesDom(records.filter((record) => inArrivalScope(record, scope)))) {
         noteArrivals();
       }
     });
     mutations.observe(document.body, ARRIVAL_MUTATIONS);
     return () => mutations.disconnect();
-  }, [noteArrivals]);
+  }, [noteArrivals, rootRef]);
 
   // Lo que cambia sin render del panel (el aviso de duplicado al saber si ya está en una compra), y
   // el desplazamiento del usuario, que solo renueva la medición (y, D54(a), la base del pie, que se mueve al desplazar si
