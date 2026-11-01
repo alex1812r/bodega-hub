@@ -26,7 +26,7 @@ import type { EntityFetcher, ProductEntityOption } from "@/shared/components/Ent
 import { makeReviewResponse, productUuid, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES, type ReviewFixtureLine } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
 import { compactList, deferCdpAck, fillField, openCdpSession, pressKeys, settleCdpAcks, typeText } from "./InvoiceReviewPanel.cdpInput";
-import { POINTER_GUARD_MS } from "./useLayoutHold";
+import { COMPACTION_GUARD_MS, POINTER_GUARD_MS } from "./useLayoutHold";
 
 const HARINA = productUuid(1);
 /** f19d (REP12-05): proveedor que el usuario elige a mano en la revisión. */
@@ -914,14 +914,31 @@ const galletas: ProductEntityOption[] = Array.from({ length: 8 }, (_, index) => 
  * Abre el buscador de L0 con su campo al pie de la ventana (la lista se abre hacia arriba, sobre los
  * chips de la fila) y busca «Galleta».
  */
+/**
+ * REP18-01 (D75(a)): las opciones de una lista flotante que llegan con una respuesta del buscador no actúan con el puntero
+ * durante 1 s (cada respuesta intermedia, al teclear, trae otra lista). Devuelve las opciones `name` cuando las mismas
+ * llevan a la vista más que esa guarda.
+ */
+async function settledOptions(name: RegExp) {
+  let options = await screen.findAllByRole("option", { name });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await sleep(COMPACTION_GUARD_MS + 200);
+    const now = screen.queryAllByRole("option", { name });
+    if (now.length > 0 && now.length === options.length && now.every((option, index) => option === options[index])) {
+      return now;
+    }
+    options = now.length > 0 ? now : await screen.findAllByRole("option", { name });
+  }
+  throw new Error(`Las opciones ${name} no dejan de cambiar`);
+}
+
 async function openSearchAtBottom(browser: Browser, opener: RegExp) {
   row(0).scrollIntoView({ block: "start" });
   await setupClick(browser, button(row(0), opener));
   const input = within(row(0)).getByLabelText("Producto de la línea 1");
   input.scrollIntoView({ block: "end" });
   await fillField(browser, input, "Galleta");
-  await screen.findAllByRole("option", { name: /CAOSG Galleta Maria/ });
-  await sleep(POINTER_GUARD_MS + 200);
+  await settledOptions(/CAOSG Galleta Maria/);
 }
 
 /**
@@ -1546,7 +1563,8 @@ export const Rep1206FalloDuplicadosPiePlegado390: Story = {
     field.scrollIntoView({ block: "center" });
     await clickField(browser, field);
     await typeText(browser, "Farma");
-    await clickAt(browser, centerOf(await screen.findByRole("option", { name: /farmatodo/i })));
+    const [farmatodo] = await settledOptions(/farmatodo/i);
+    await clickAt(browser, centerOf(farmatodo));
     const footer = screen.getByRole("contentinfo", { name: "Resumen de la revisión" });
     await expect(within(footer).getByRole("button", { name: "Ver detalle del total" }), "pie plegado").toBeVisible();
     await waitFor(
