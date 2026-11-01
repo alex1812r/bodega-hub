@@ -106,6 +106,24 @@ describe("REP18-01 · D75(a) · lo que aparece por una llegada no actúa con el 
     expect(perUnit(1)).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("REP18-07: el dedo que se posa dentro del segundo no la elige aunque el clic llegue pasado; el toque siguiente, sí", async () => {
+    await rateArrives();
+    await advance(COMPACTION_GUARD_MS - 10);
+
+    // Bajo carga el fin del toque (y su clic) llega tarde: el dedo se posó antes de cumplirse el segundo.
+    const point = { clientX: 120, clientY: 300, detail: 1 };
+    fireEvent.pointerDown(perUnit(1), { ...point, pointerId: 7, pointerType: "touch" });
+    await advance(20);
+    fireEvent.mouseDown(perUnit(1), point);
+    fireEvent.pointerUp(perUnit(1), { ...point, pointerId: 7, pointerType: "touch" });
+    fireEvent.mouseUp(perUnit(1), point);
+    fireEvent.click(perUnit(1), point);
+    expect(perUnit(1)).toHaveAttribute("aria-pressed", "false");
+
+    touch(perUnit(1));
+    expect(perUnit(1)).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("fila: el teclado no se bloquea (Enter sobre la opción recién aparecida la elige)", async () => {
     const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     await rateArrives();
