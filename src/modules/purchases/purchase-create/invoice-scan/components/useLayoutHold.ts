@@ -70,10 +70,15 @@ export function readPointerActivation(
   if (event.detail < 1 || (event.clientX === 0 && event.clientY === 0) || !(event.target instanceof Element)) {
     return null;
   }
-  const closest = event.target.closest(CONTROL_SELECTOR);
-  // Una etiqueta acciona su control: el clic que el navegador reenvía al control no es otro control.
-  const control = closest instanceof HTMLLabelElement ? (closest.control ?? closest) : closest;
+  const control = pointedControl(event.target);
   return control ? { x: event.clientX, y: event.clientY, at: Date.now(), control } : null;
+}
+
+/** Control que acciona un puntero sobre `target`. */
+function pointedControl(target: Element): Element | null {
+  const closest = target.closest(CONTROL_SELECTOR);
+  // Una etiqueta acciona su control: el clic que el navegador reenvía al control no es otro control.
+  return closest instanceof HTMLLabelElement ? (closest.control ?? closest) : closest;
 }
 
 /**
@@ -460,6 +465,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // historias de Storybook la fijan con MockDate y con `Date.now()` la guarda no acabaría nunca).
   const actionableRef = useRef<{ width: number; controls: Set<Element> } | null>(null);
   const arrivedAtRef = useRef(new Map<Element, number>());
+  // REP18-07: control guardado cuando se posó el puntero del último gesto (su clic llega después, a veces pasado 1 s).
+  const guardedPressRef = useRef<Element | null>(null);
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían).
   // D67(a): también los que crecieron solos, recortados a su alto anterior.
   const floorsRef = useRef(new Map<HTMLElement, HeldNoticeStyle>());
@@ -908,6 +915,27 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     };
   }, [rootRef]);
 
+  /** D49/D54(a)/D75(a): `control` se movió, apareció o se habilitó hace menos de 1 s. */
+  const recentlyMoved = useCallback((control: Element) => {
+    const moved = movedAtRef.current.get(control);
+    const arrived = arrivedAtRef.current.get(control);
+    return (
+      (moved !== undefined && Date.now() - moved < COMPACTION_GUARD_MS) ||
+      (arrived !== undefined && performance.now() - arrived < COMPACTION_GUARD_MS)
+    );
+  }, []);
+
+  // REP18-07: la guarda se decide al posarse el puntero: el clic (y el `mousedown` de un toque) llega al levantarlo, y
+  // un dedo que se posó dentro del segundo no acciona aunque lo levante pasado. Cada gesto nuevo lo decide de nuevo.
+  useEffect(() => {
+    const onPointerDown = (event: Event) => {
+      const control = event.target instanceof Element ? pointedControl(event.target) : null;
+      guardedPressRef.current = control && recentlyMoved(control) ? control : null;
+    };
+    window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: true });
+    return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+  }, [recentlyMoved]);
+
   const holding = hold !== null;
 
   useEffect(() => {
@@ -946,15 +974,11 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     isPointerHolding: useCallback(() => holdRef.current !== null && !keyedRef.current, []),
     /**
      * D49/D54(a), para manejadores: `control` se movió (compactación, pie o llegada) hace menos de 1 s. REP18-01 (D75(a)):
-     * o apareció o se habilitó por una llegada.
+     * o apareció o se habilitó por una llegada. REP18-07: o lo estaba cuando se posó el puntero de este gesto.
      */
-    movedByCompaction: useCallback((control: Element) => {
-      const moved = movedAtRef.current.get(control);
-      const arrived = arrivedAtRef.current.get(control);
-      return (
-        (moved !== undefined && Date.now() - moved < COMPACTION_GUARD_MS) ||
-        (arrived !== undefined && performance.now() - arrived < COMPACTION_GUARD_MS)
-      );
-    }, []),
+    movedByCompaction: useCallback(
+      (control: Element) => guardedPressRef.current === control || recentlyMoved(control),
+      [recentlyMoved],
+    ),
   };
 }
