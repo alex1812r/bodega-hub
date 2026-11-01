@@ -22,6 +22,10 @@
  *
  * Como mucho un toque con efecto por montaje (lo que cambia puede tapar el resto): lo que queda sin tocar se toca en
  * otro montaje idéntico del mismo caso. El teclado no es parte de este test.
+ *
+ * REP18-13: un toque cuyo pointerdown cae pasado el segundo de la guarda (o no llega) es INCONCLUSO, con o sin efecto:
+ * la guarda ya venció y el toque no dice nada de ella. No cuenta ni como fallo ni como paso: ese control se vuelve a
+ * tocar en otro montaje. Solo si se agotan los montajes sin un toque válido el caso falla, «inconcluso por carga».
  */
 import { expect } from "storybook/test";
 
@@ -220,8 +224,12 @@ function diff(before: string[], after: string[]) {
 const TAP_FROM_MS = 500;
 const TAP_BUDGET_MS = 850;
 const GUARD_MS = 1000;
-/** Montajes del mismo caso para tocar lo que quedó sin tocar (como mucho un toque con efecto por montaje). */
-const MAX_MOUNTS = 5;
+/**
+ * Montajes del mismo caso para tocar lo que quedó sin tocar: como mucho un toque con efecto por montaje (cada caso hace
+ * aparecer como mucho 2 controles) y, bajo carga, cada toque tardío (inconcluso) cuesta otro montaje. 8 deja margen
+ * para varios tardíos seguidos sin alargar sin tope una historia que nunca logra tocar a tiempo.
+ */
+const MAX_MOUNTS = 8;
 
 const frame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -306,7 +314,7 @@ async function toPage(page: Page) {
 }
 
 /** Un montaje: prepara, anota la rejilla, suelta la llegada y toca lo aparecido que no esté en `tested`. */
-async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase, tested: Set<string>) {
+async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase, tested: Set<string>, late: Map<string, string[]>) {
   return withCase(appearCase.fixture, async () => {
     await appearCase.prepare(browser);
     await toPage(appearCase.page);
@@ -322,20 +330,26 @@ async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase,
       await pause(wait);
     }
     for (const item of pending) {
-      if (performance.now() - arrivedAt > TAP_BUDGET_MS) {
+      const elapsed = performance.now() - arrivedAt;
+      if (elapsed > TAP_BUDGET_MS) {
+        // Sin tiempo de tocar dentro del segundo: también inconcluso.
+        late.set(item.key, [...(late.get(item.key) ?? []), `sin tocar: ${Math.round(elapsed)} ms de la llegada al ir a tocar`]);
         break;
       }
       const box = item.control.getBoundingClientRect();
       if (!item.control.isConnected || item.point.x < box.left || item.point.x > box.right || item.point.y < box.top || item.point.y > box.bottom) {
         continue;
       }
-      tested.add(item.key);
       const own = appearCase.firstListing === true && zoneOf(item.control) === "lista flotante";
       const result = await tapOnce(browser, input, item, arrivedAt);
       if (result.downMs === null || result.downMs > GUARD_MS) {
-        const when = result.downMs === null ? "no llegó a la ventana" : `cayó a ${Math.round(result.downMs)} ms de la llegada (> 1 s)`;
-        failures.push(`${item.key}: el toque ${when}: no prueba la guarda`);
+        // Inconcluso: queda sin tocar para otro montaje; lo que cambió (si cambió) puede tapar el resto.
+        const when = result.downMs === null ? "no llegó" : `cayó a ${Math.round(result.downMs)} ms de la llegada (> 1 s)${result.effect ? " con efecto" : ""}`;
+        late.set(item.key, [...(late.get(item.key) ?? []), when]);
+        console.warn(`[REP18-02 inconcluso] ${appearCase.id} · ${item.key}: el toque ${when}: se repite en otro montaje`);
+        break;
       }
+      tested.add(item.key);
       if (own && !result.effect) {
         failures.push(`${item.key} es del primer listado de la lista flotante (D76(a)) y el ${input === "dedo" ? "toque" : "clic"} en (${item.point.x},${item.point.y}) no eligió`);
       }
@@ -355,11 +369,13 @@ async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase,
 /** Corre un caso: monta tantas veces como haga falta para tocar todo lo que aparece; devuelve los fallos. */
 async function runAppearCase(browser: Browser, input: Input, appearCase: AppearCase) {
   const tested = new Set<string>();
+  /** Por control, sus toques inconclusos (pasado el segundo de la guarda o sin llegar). */
+  const late = new Map<string, string[]>();
   const failures: string[] = [];
   let appeared = 0;
   let left: string[] = [];
   for (let mount = 0; mount < MAX_MOUNTS; mount += 1) {
-    const result = await mountOnce(browser, input, appearCase, tested);
+    const result = await mountOnce(browser, input, appearCase, tested, late);
     appeared = Math.max(appeared, result.appeared);
     failures.push(...result.failures);
     left = result.left;
@@ -367,8 +383,14 @@ async function runAppearCase(browser: Browser, input: Input, appearCase: AppearC
       break;
     }
   }
-  if (left.length > 0) {
-    failures.push(`sin tocar tras ${MAX_MOUNTS} montajes: ${left.join(", ")}`);
+  const inconclusive = left.filter((key) => late.has(key));
+  if (inconclusive.length > 0) {
+    const detail = inconclusive.map((key) => `${key} (${late.get(key)?.join("; ")})`).join(", ");
+    failures.push(`inconcluso por carga: tras ${MAX_MOUNTS} montajes ningún toque a ≤ 1 s de la llegada en ${detail}`);
+  }
+  const untouched = left.filter((key) => !late.has(key));
+  if (untouched.length > 0) {
+    failures.push(`sin tocar tras ${MAX_MOUNTS} montajes: ${untouched.join(", ")}`);
   }
   return { appeared, failures: failures.map((failure) => `${appearCase.id} · ${failure}`), tapped: [...tested] };
 }
