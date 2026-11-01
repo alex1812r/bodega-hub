@@ -25,6 +25,9 @@ export const COMPACTION_GUARD_MS = 1000;
  */
 const USER_TURN_MS = 250;
 
+/** REP18-08: eventos de un gesto con el puntero (sobre los que decide la guarda de lo aparecido). */
+const POINTER_EVENTS: ReadonlySet<string> = new Set(["pointerdown", "mousedown", "touchstart", "click"]);
+
 /** Controles que una activación con el puntero puede accionar. */
 const CONTROL_SELECTOR =
   "button, a[href], input, select, textarea, label, [role='button'], [role='checkbox'], [role='radio'], [role='option'], [role='switch'], [role='tab']";
@@ -364,6 +367,40 @@ function actionableControls(scopes: readonly Element[]): Set<Element> {
   return new Set(scopes.flatMap((scope) => [...scope.querySelectorAll(CONTROL_SELECTOR)].filter(isActionable)));
 }
 
+/**
+ * REP18-08 (D75(a)): zona de la acción del usuario: la caja `[data-layout-box]` más externa dentro de `root` (la fila,
+ * la cabecera, el pie) que contiene `element`; `null` fuera de toda caja (lo de tras las filas, fuera del panel).
+ */
+function zoneKey(root: Element, element: Element): string | null {
+  let key: string | null = null;
+  for (let box = element.closest<HTMLElement>(LAYOUT_BOX_SELECTOR); box && box !== root && root.contains(box); ) {
+    key = box.dataset.layoutBox ?? key;
+    box = box.parentElement?.closest<HTMLElement>(LAYOUT_BOX_SELECTOR) ?? null;
+  }
+  return key;
+}
+
+/** REP18-08: zonas de las acciones del turno del usuario (`zoneKey`), los controles que tocó fuera de toda caja y si actuó en una lista flotante. */
+type UserZone = { keys: Set<string>; controls: Set<Element>; floating: boolean };
+
+/**
+ * REP18-08: `control` es de la acción del usuario: está en la caja de una acción del turno, es el control que tocó, o está
+ * en una lista flotante (fuera del panel) y el usuario actuó en una o tiene el foco en la caja de una acción (el buscador
+ * que la abre).
+ */
+function inUserZone(root: Element, zone: UserZone, control: Element): boolean {
+  if (zone.controls.has(control)) {
+    return true;
+  }
+  if (!root.contains(control)) {
+    const focused = document.activeElement;
+    const focusedKey = focused instanceof Element && root.contains(focused) ? zoneKey(root, focused) : null;
+    return zone.floating || (focusedKey !== null && zone.keys.has(focusedKey));
+  }
+  const key = zoneKey(root, control);
+  return key !== null && zone.keys.has(key);
+}
+
 /** Controles de `now` que no estaban en `before` o cambiaron de sitio (≥ 1 px). */
 function movedControls(before: ReadonlyMap<Element, Position>, now: ReadonlyMap<Element, Position>): Element[] {
   return [...now].flatMap(([control, position]) => {
@@ -465,6 +502,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // historias de Storybook la fijan con MockDate y con `Date.now()` la guarda no acabaría nunca).
   const actionableRef = useRef<{ width: number; controls: Set<Element> } | null>(null);
   const arrivedAtRef = useRef(new Map<Element, number>());
+  // REP18-08: hubo cambios que pueden traer un control durante el turno del usuario, aún sin medir.
+  const arrivalsPendingRef = useRef(false);
   // REP18-07: control guardado cuando se posó el puntero del último gesto (su clic llega después, a veces pasado 1 s).
   const guardedPressRef = useRef<Element | null>(null);
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían).
@@ -546,32 +585,42 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   /**
    * REP18-01 (D75(a)): un control que APARECE o SE HABILITA sin acción del usuario (una llegada asíncrona) en cualquier
    * parte del panel (cabecera, filas, lo de tras las filas, el pie) o en sus listas flotantes queda guardado desde ESE
-   * momento (D49): un toque que llega en el segundo siguiente no lo acciona. Lo que aparece en el turno del usuario es
-   * suyo, y con otro ancho (giro, ventana) todo se recoloca: no se guarda. El teclado no pasa por esta guarda.
-   * REP18-01b: en el turno del usuario (al teclear, un cambio por tecla) no se mide: solo se descarta la base, y el fin
-   * del turno mide la de entonces. Sin base, medir solo la fija.
+   * momento (D49): un toque que llega en el segundo siguiente no lo acciona. REP18-08: en el turno del usuario, lo que
+   * aparece en la zona de su acción (`inUserZone`) es suyo; con otro ancho (giro, ventana) todo se recoloca: no se guarda.
+   * El teclado no pasa por esta guarda.
+   * REP18-01b: en el turno del usuario (al teclear, un cambio por tecla) no se mide en cada cambio: se anota, y se mide al
+   * acabar el turno o al posarse el puntero siguiente (`measureArrivals` con su zona). Sin base, medir solo la fija.
    */
+  const measureArrivals = useCallback(
+    (zone: UserZone | null) => {
+      const root = rootRef.current;
+      if (!root) {
+        return;
+      }
+      arrivalsPendingRef.current = false;
+      const width = root.getBoundingClientRect().width;
+      const controls = actionableControls(arrivalScopes(root).scopes);
+      const previous = actionableRef.current;
+      if (previous && Math.abs(previous.width - width) < 1) {
+        // REP18-08 (D75(a)): lo que llegó en el turno del usuario fuera de la zona de su acción es una llegada igual.
+        markMoved(
+          arrivedAtRef.current,
+          [...controls].filter((control) => !previous.controls.has(control) && !(zone && inUserZone(root, zone, control))),
+          performance.now(),
+        );
+      }
+      actionableRef.current = { width, controls };
+    },
+    [rootRef],
+  );
+
   const noteArrivals = useCallback(() => {
-    const root = rootRef.current;
-    if (!root) {
-      return;
-    }
     if (userTurnRef.current) {
-      actionableRef.current = null;
+      arrivalsPendingRef.current = true;
       return;
     }
-    const width = root.getBoundingClientRect().width;
-    const controls = actionableControls(arrivalScopes(root).scopes);
-    const previous = actionableRef.current;
-    if (previous && Math.abs(previous.width - width) < 1) {
-      markMoved(
-        arrivedAtRef.current,
-        [...controls].filter((control) => !previous.controls.has(control)),
-        performance.now(),
-      );
-    }
-    actionableRef.current = { width, controls };
-  }, [rootRef]);
+    measureArrivals(null);
+  }, [measureArrivals]);
 
   // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la
   // acción): lo que cambie en él es suyo. Una tecla, además, cierra lo que era de la última activación con el puntero.
@@ -580,6 +629,13 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     let frame: number | undefined;
     // Hubo cambios en el panel desde el último frame del turno.
     let changed = false;
+    // REP18-08: zona de las acciones del turno: lo que aparece en ella es del usuario.
+    let zone: UserZone = { keys: new Set(), controls: new Set(), floating: false };
+    const flush = () => {
+      if (arrivalsPendingRef.current || actionableRef.current === null) {
+        measureArrivals(zone);
+      }
+    };
     const end = () => {
       userTurnRef.current = false;
       clearTimeout(timer);
@@ -587,10 +643,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         cancelAnimationFrame(frame);
         frame = undefined;
       }
-      // REP18-01b: el turno descartó la base de las llegadas: se mide la de ahora (sin guardar nada).
-      if (actionableRef.current === null) {
-        noteArrivals();
-      }
+      // REP18-01b: lo que cambió en el turno se mide al acabar.
+      flush();
+      zone = { keys: new Set(), controls: new Set(), floating: false };
     };
     const watch = () => {
       frame = requestAnimationFrame(() => {
@@ -607,6 +662,22 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       if (event.type === "keydown") {
         keyedRef.current = true;
         anchorRef.current = null;
+      }
+      // REP18-08: lo que llegó en el turno se mide antes de que la guarda decida sobre este gesto (el teclado no la pasa).
+      if (userTurnRef.current && POINTER_EVENTS.has(event.type)) {
+        flush();
+      }
+      const target = event.target;
+      const panel = rootRef.current;
+      if (panel && target instanceof Element) {
+        const key = zoneKey(panel, target);
+        const control = pointedControl(target);
+        if (key !== null) {
+          zone.keys.add(key);
+        } else if (control) {
+          zone.controls.add(control);
+        }
+        zone.floating ||= !panel.contains(target) && arrivalScopes(panel).scopes.some((scope) => scope.contains(target));
       }
       userTurnRef.current = true;
       changed = true;
@@ -634,7 +705,7 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         window.removeEventListener(type, mark, { capture: true });
       }
     };
-  }, [noteArrivals, rootRef]);
+  }, [measureArrivals, rootRef]);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
