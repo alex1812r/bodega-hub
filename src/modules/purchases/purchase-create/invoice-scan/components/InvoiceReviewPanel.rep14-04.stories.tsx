@@ -20,7 +20,6 @@ import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
 import { clickAt, pressKeys, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
-import { COMPACTION_GUARD_MS } from "./useLayoutHold";
 
 const SUPPLIER_NAME = "Mercaseu 2030, C.A.";
 const LINE = { match: { taxRateCode: "exento" }, read: { lineTotal: 1750, quantity: 1, unitPrice: 1750 } };
@@ -184,8 +183,6 @@ function rateStory(width: number, height: number, pointer: Pointer): Story {
         "Tasa de la factura (856,30)": "false",
       });
 
-      // REP18-08 (D75(a)): «Tasa de hoy» aparece por la llegada (el clic simulado no es del panel): no actúa durante 1 s.
-      await sleep(COMPACTION_GUARD_MS);
       await activate(browser, screen.getByRole("radio", { name: "Tasa de hoy (900,00)" }), pointer);
       const today = log(`tasa ${pointer} ${width}: elegida la de hoy «${notice()}» ${JSON.stringify(radios())}`);
       await snapshot(browser, `tasa-${pointer}-${width}-4-hoy`);

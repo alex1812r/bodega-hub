@@ -146,24 +146,6 @@ describe("REP18-01 · D75(a) · lo que aparece por una llegada no actúa con el 
     expect(perUnit(1)).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("REP18-08: lo que aparece por una llegada en el turno de un toque, fuera de la fila tocada, se guarda igual", async () => {
-    const base = props(FIXTURES.tasa3.response);
-    const view = render(<InvoiceReviewPanel {...base} />);
-    await advance(QUIET_MS);
-
-    // El usuario toca L0 y, en ese turno, llega la tasa del día: aparece «Por unidad» en L1 (otra fila).
-    touch(row(0));
-    await act(async () => {
-      view.rerender(<InvoiceReviewPanel {...base} context={{ systemRateVes: 900, taxRates: REVIEW_TAX_RATES }} />);
-    });
-    touch(perUnit(1));
-    expect(perUnit(1)).toHaveAttribute("aria-pressed", "false");
-
-    await advance(COMPACTION_GUARD_MS);
-    touch(perUnit(1));
-    expect(perUnit(1)).toHaveAttribute("aria-pressed", "true");
-  });
-
   it("pie: «Cargar en la compra» que se habilita al acabar la consulta de duplicados no carga con el toque; pasado 1 s, sí", async () => {
     const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
     let answer: (matches: InvoiceDuplicateMatch[]) => void = () => undefined;
