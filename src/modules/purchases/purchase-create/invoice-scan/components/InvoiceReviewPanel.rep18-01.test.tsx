@@ -175,34 +175,71 @@ describe("REP18-01 · D75(a) · lo que aparece por una llegada no actúa con el 
     touch(load);
     expect(base.onLoad).toHaveBeenCalledTimes(1);
   });
+});
 
-  it("lista flotante: la opción del buscador que llega sobre «Buscando...» no se elige con el toque", async () => {
-    const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
-    // Cada consulta del buscador (la del texto leído y las de sus palabras) espera a que llegue la respuesta.
-    let answer: () => void = () => undefined;
-    const arrived = new Promise<void>((resolve) => {
-      answer = resolve;
-    });
-    const productFetcher: EntityFetcher<"product"> = async () => {
-      await arrived;
-      return SEARCH_PRODUCTS;
-    };
-    render(
-      <InvoiceReviewPanel
-        {...props(FIXTURES.estados.response, { context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES }, productFetcher })}
-      />,
-    );
-    await advance(QUIET_MS);
-    await user.click(within(row(3)).getByRole("button", { name: /Buscar producto/ }));
-    await advance(QUIET_MS);
-    expect(screen.getByText("Buscando...")).toBeInTheDocument();
+/** `estados`: abre el buscador de la fila sin producto, con «Buscando...» hasta que se suelte la respuesta (`answer`). */
+async function openSearchPending() {
+  const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
+  // Cada consulta del buscador (la del texto leído y las de sus palabras) espera a que llegue la respuesta.
+  let answer: () => void = () => undefined;
+  const arrived = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const productFetcher: EntityFetcher<"product"> = async () => {
+    await arrived;
+    return SEARCH_PRODUCTS;
+  };
+  render(
+    <InvoiceReviewPanel
+      {...props(FIXTURES.estados.response, { context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES }, productFetcher })}
+    />,
+  );
+  await advance(QUIET_MS);
+  await user.click(within(row(3)).getByRole("button", { name: /Buscar producto/ }));
+  await advance(QUIET_MS);
+  expect(screen.getByText("Buscando...")).toBeInTheDocument();
+  return answer;
+}
+
+const arroz = () => screen.getByRole("option", { name: /Arroz Mary 1kg/ });
+
+describe("REP18-10 · D76(a) · las primeras opciones de la lista flotante son del usuario; las de un refresco, no", () => {
+  it("primer listado: la opción que llega sobre «Buscando...» se elige con el toque antes de 1 s", async () => {
+    const answer = await openSearchPending();
 
     await act(async () => answer());
-    const option = screen.getByRole("option", { name: /Arroz Mary 1kg/ });
-    touch(option);
+    await advance(300);
+    touch(arroz());
 
-    expect(screen.getByRole("option", { name: /Arroz Mary 1kg/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Arroz Mary 1kg/ })).not.toBeInTheDocument();
+    expect(row(3)).not.toHaveAttribute("data-status", "pending_unmatched");
+  });
+
+  it("refresco con la lista abierta que pone otra opción bajo el dedo: el toque antes de 1 s no elige; pasado, sí", async () => {
+    const answer = await openSearchPending();
+    await act(async () => answer());
+    await advance(QUIET_MS);
+
+    // `EntityAutocomplete` pasa por «Buscando...» entre dos listados; el refresco que deja la lista abierta (resultados
+    // tardíos, otro buscador) se reproduce en el DOM: donde estaba «Arroz» hay otra opción y luego vuelve «Arroz».
+    const option = arroz();
+    const other = option.cloneNode(true);
+    if (!(other instanceof HTMLElement)) {
+      throw new Error("Sin copia de la opción");
+    }
+    other.textContent = "Otra opción";
+    await act(async () => option.replaceWith(other));
+    await advance(QUIET_MS);
+    await act(async () => other.replaceWith(option));
+
+    touch(arroz());
+    expect(arroz()).toBeInTheDocument();
     expect(row(3)).toHaveAttribute("data-status", "pending_unmatched");
+
+    await advance(COMPACTION_GUARD_MS);
+    touch(arroz());
+    expect(screen.queryByRole("option", { name: /Arroz Mary 1kg/ })).not.toBeInTheDocument();
+    expect(row(3)).not.toHaveAttribute("data-status", "pending_unmatched");
   });
 });
 

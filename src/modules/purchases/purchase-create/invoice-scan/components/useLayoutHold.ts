@@ -35,6 +35,10 @@ const TYPING_SELECTOR = "input, textarea, select, [contenteditable='true']";
 /** Cajas cuya altura se conserva mientras el layout está retenido (`data-layout-box="<clave>"`). */
 const LAYOUT_BOX_SELECTOR = "[data-layout-box]";
 
+/** REP18-10 (D76(a)): opciones de una lista flotante y la lista que las contiene. */
+const OPTION_SELECTOR = "[role='option']";
+const LISTBOX_SELECTOR = "[role='listbox']";
+
 /**
  * D54(a): zonas (el pie fijo) que pueden cambiar de alto con la acción aunque estén retenidas: un
  * control suyo que aparece o se mueve con el layout retenido queda guardado desde ESE momento.
@@ -364,6 +368,15 @@ function actionableControls(scopes: readonly Element[]): Set<Element> {
   return new Set(scopes.flatMap((scope) => [...scope.querySelectorAll(CONTROL_SELECTOR)].filter(isActionable)));
 }
 
+/** REP18-10 (D76(a)): listas (`[role='listbox']`) de `scopes` con alguna opción, habilitada o no. */
+function listsWithOptions(scopes: readonly Element[]): Set<Element> {
+  return new Set(
+    scopes.flatMap((scope) =>
+      [...scope.querySelectorAll(OPTION_SELECTOR)].flatMap((option) => option.closest(LISTBOX_SELECTOR) ?? []),
+    ),
+  );
+}
+
 /** Controles de `now` que no estaban en `before` o cambiaron de sitio (≥ 1 px). */
 function movedControls(before: ReadonlyMap<Element, Position>, now: ReadonlyMap<Element, Position>): Element[] {
   return [...now].flatMap(([control, position]) => {
@@ -463,7 +476,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // REP18-01 (D75(a)): controles accionables en la última medición (con el ancho del panel entonces) y cuándo apareció o
   // se habilitó cada uno por una llegada, en `performance.now()`: reloj monótono que no fija quien fija la fecha (las
   // historias de Storybook la fijan con MockDate y con `Date.now()` la guarda no acabaría nunca).
-  const actionableRef = useRef<{ width: number; controls: Set<Element> } | null>(null);
+  // REP18-10 (D76(a)): con ellos, las listas que ya tenían opciones.
+  const actionableRef = useRef<{ width: number; controls: Set<Element>; lists: Set<Element> } | null>(null);
   const arrivedAtRef = useRef(new Map<Element, number>());
   // REP18-07: control guardado cuando se posó el puntero del último gesto (su clic llega después, a veces pasado 1 s).
   const guardedPressRef = useRef<Element | null>(null);
@@ -550,6 +564,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
    * suyo, y con otro ancho (giro, ventana) todo se recoloca: no se guarda. El teclado no pasa por esta guarda.
    * REP18-01b: en el turno del usuario (al teclear, un cambio por tecla) no se mide: solo se descarta la base, y el fin
    * del turno mide la de entonces. Sin base, medir solo la fija.
+   * REP18-10 (D76(a)): las opciones de una lista que no tenía ninguna («Buscando...», o recién abierta) son lo que el
+   * usuario pidió al teclear: no se guardan. Las que llegan a una lista que ya tenía opciones (un refresco, resultados
+   * tardíos) caen donde había otra opción o un hueco: sí.
    */
   const noteArrivals = useCallback(() => {
     const root = rootRef.current;
@@ -561,16 +578,22 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
       return;
     }
     const width = root.getBoundingClientRect().width;
-    const controls = actionableControls(arrivalScopes(root).scopes);
+    const { scopes } = arrivalScopes(root);
+    const controls = actionableControls(scopes);
+    const lists = listsWithOptions(scopes);
     const previous = actionableRef.current;
     if (previous && Math.abs(previous.width - width) < 1) {
+      const firstListing = (control: Element) => {
+        const list = control.matches(OPTION_SELECTOR) ? control.closest(LISTBOX_SELECTOR) : null;
+        return list !== null && !previous.lists.has(list);
+      };
       markMoved(
         arrivedAtRef.current,
-        [...controls].filter((control) => !previous.controls.has(control)),
+        [...controls].filter((control) => !previous.controls.has(control) && !firstListing(control)),
         performance.now(),
       );
     }
-    actionableRef.current = { width, controls };
+    actionableRef.current = { width, controls, lists };
   }, [rootRef]);
 
   // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la

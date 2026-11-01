@@ -13,6 +13,10 @@
  * - el toque no debe tener efecto: el estado del modelo que se ve (estado de cada fila, opciones pulsadas, casillas y
  *   radios marcados, valores, desplegables, diálogos, si se compactó, callbacks de la página y enlaces) sigue igual.
  *
+ * REP18-10 (D76(a)): las opciones del primer listado de la lista flotante (pasa de «Buscando...» a tener opciones) son
+ * del usuario: en «candidatos» el toque en menos de 1 s debe elegir. Lo que un refresco con la lista abierta pone donde
+ * había otra opción («refresco») sí debe quedar sin efecto.
+ *
  * El último costo no hace aparecer controles (las opciones se muestran mientras se consulta, REP15-01): su caso queda
  * como cobertura con 0 controles aparecidos.
  *
@@ -278,6 +282,10 @@ export type AppearCase = {
   arrival: Arrival;
   /** Cuándo está confirmado el efecto de la llegada (por defecto el del arnés de REP16-02). */
   adopted?: () => boolean;
+  /** REP18-10 (D76(a)): lo aparecido en la lista flotante es su primer listado, del usuario: el toque debe elegir. */
+  firstListing?: boolean;
+  /** Suelta la llegada y devuelve cuándo está confirmada (por defecto `release(arrival, adopted)`). */
+  releaseArrival?: () => Promise<() => boolean>;
 };
 
 async function toPage(page: Page) {
@@ -303,7 +311,7 @@ async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase,
     await appearCase.prepare(browser);
     await toPage(appearCase.page);
     const grid = recordGrid();
-    const confirmed = await release(appearCase.arrival, appearCase.adopted);
+    const confirmed = await (appearCase.releaseArrival?.() ?? release(appearCase.arrival, appearCase.adopted));
     const arrivedAt = performance.now();
     await settle(`${appearCase.arrival.source}:${appearCase.arrival.outcome}`, confirmed);
     const appeared = appearedSince(grid);
@@ -322,10 +330,17 @@ async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase,
         continue;
       }
       tested.add(item.key);
+      const own = appearCase.firstListing === true && zoneOf(item.control) === "lista flotante";
       const result = await tapOnce(browser, input, item, arrivedAt);
       if (result.downMs === null || result.downMs > GUARD_MS) {
         const when = result.downMs === null ? "no llegó a la ventana" : `cayó a ${Math.round(result.downMs)} ms de la llegada (> 1 s)`;
         failures.push(`${item.key}: el toque ${when}: no prueba la guarda`);
+      }
+      if (own && !result.effect) {
+        failures.push(`${item.key} es del primer listado de la lista flotante (D76(a)) y el ${input === "dedo" ? "toque" : "clic"} en (${item.point.x},${item.point.y}) no eligió`);
+      }
+      if (result.effect && own) {
+        break;
       }
       if (result.effect) {
         failures.push(`${item.key} apareció donde había ${item.before} y el ${input === "dedo" ? "toque" : "clic"} en (${item.point.x},${item.point.y}) tuvo efecto: ${result.effect}`);
@@ -363,6 +378,7 @@ async function runAppearCase(browser: Browser, input: Input, appearCase: AppearC
 const withRate = (fixture: Fixture, systemRateVes: number): Fixture => ({ ...fixture, systemRateVes });
 
 const RATE: Arrival = { outcome: "ok", source: "rate" };
+const CANDIDATES: Arrival = { outcome: "ok", source: "candidates" };
 const nothing = async () => undefined;
 
 /** Fila sin producto del buscador en `estados` (la de REP16-02). */
@@ -373,12 +389,54 @@ async function openSearch() {
   await settle("abrir el buscador");
 }
 
-function pickArroz() {
+function arrozOption() {
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => /Arroz Mary 1kg/.test(item.textContent ?? ""));
   if (!option) {
     throw new Error("Sin «Arroz Mary 1kg» en el buscador");
   }
-  option.click();
+  return option;
+}
+
+function pickArroz() {
+  arrozOption().click();
+}
+
+/**
+ * REP18-10 (D76(a)): refresco con la lista abierta. `EntityAutocomplete` pasa por «Buscando...» entre dos listados, así
+ * que el refresco que la deja abierta (resultados tardíos, otro buscador) se reproduce en el DOM: con los candidatos ya
+ * listados, donde está «Arroz Mary 1kg» se pone otra opción (una copia inerte) y la llegada devuelve «Arroz» (el nodo de
+ * React, con su manejador) a ese punto.
+ */
+function refreshCase(): AppearCase {
+  let swap: { option: HTMLElement; other: HTMLElement } | null = null;
+  return {
+    arrival: CANDIDATES,
+    fixture: FIXTURES.estados,
+    id: "refresco del buscador abierto: otra opción bajo el dedo",
+    page: "tal cual",
+    prepare: async () => {
+      await openSearch();
+      await arrive(RATE);
+      await arrive(CANDIDATES);
+      const option = arrozOption();
+      const other = option.cloneNode(true);
+      if (!(other instanceof HTMLElement)) {
+        throw new Error("Sin copia de la opción");
+      }
+      other.textContent = "Otra opción";
+      option.replaceWith(other);
+      swap = { option, other };
+      await settle("otra opción en la lista");
+    },
+    releaseArrival: async () => {
+      if (!swap) {
+        throw new Error("Sin refresco preparado");
+      }
+      swap.other.replaceWith(swap.option);
+      swap = null;
+      return () => true;
+    },
+  };
 }
 
 export const APPEAR_CASES = {
@@ -393,16 +451,19 @@ export const APPEAR_CASES = {
   tasaLargaFinal: { arrival: RATE, fixture: withRate(FIXTURES.tasa3, 12345.67), id: "tasa 12.345,67 al final", page: "final", prepare: nothing },
   /** La tasa no desvía L1 (9.000): su reserva queda retenida y «Compactar lista» aparece en el pie. */
   tasaSinDesvio: { arrival: RATE, fixture: withRate(FIXTURES.tasa3, 9000), id: "tasa 9000: L1 sin desvío, «Compactar lista» en el pie", page: "final", prepare: nothing },
+  /** REP18-10 (D76(a)): el primer listado tras «Buscando...» es del usuario: se elige con el toque antes de 1 s. */
   candidatos: {
-    arrival: { outcome: "ok", source: "candidates" },
+    arrival: CANDIDATES,
+    firstListing: true,
     fixture: FIXTURES.estados,
-    id: "candidatos del buscador",
+    id: "candidatos del buscador: primer listado, tocable",
     page: "tal cual",
     prepare: async () => {
       await openSearch();
       await arrive(RATE);
     },
   },
+  refresco: refreshCase(),
   ultimoCosto: {
     arrival: { outcome: "deviated", source: "lastCost" },
     fixture: FIXTURES.estados,
@@ -411,7 +472,7 @@ export const APPEAR_CASES = {
     prepare: async () => {
       await openSearch();
       await arrive(RATE);
-      await arrive({ outcome: "ok", source: "candidates" });
+      await arrive(CANDIDATES);
       pickArroz();
       await settle("elegir producto");
     },
