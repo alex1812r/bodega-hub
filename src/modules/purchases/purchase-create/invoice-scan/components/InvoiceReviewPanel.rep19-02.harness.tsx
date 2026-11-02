@@ -16,6 +16,8 @@
  *   que deja su texto se elige con el toque;
  * - «Cambiar producto tras ver confirmadas» (M-q1809-1): toca «1 línea confirmada · ver» y, 300 o 700 ms después,
  *   «Cambiar producto» de la fila que se desplegó: actúa.
+ * - «recién montado con la tasa en caché» (REP19-05, M-q1904-1): el montaje no es una llegada; «Descartar línea»
+ *   tocado 300 ms después de montar el panel con la tasa del día ya presente actúa.
  */
 import { expect } from "storybook/test";
 
@@ -406,6 +408,64 @@ async function runChangeProduct(browser: Browser, input: Input, delayMs: number)
   return { failures: [`inconcluso por carga: tras ${MAX_MOUNTS} montajes ningún toque a ≤ 1 s (${late.join("; ")})`], text: "inconcluso" };
 }
 
+/** Desde que se pide el montaje hasta el toque (dentro del segundo de D75(a)). */
+const MOUNT_TAP_MS = 300;
+
+/** El primer «Descartar línea» del panel a la vista y sin nada encima (por ejemplo, el pie fijo). */
+function discardInView() {
+  const buttons = panelRoot()?.querySelectorAll<HTMLButtonElement>('li[data-line-index] [data-row-action="discard"]') ?? [];
+  return [...buttons].find(inView);
+}
+
+/**
+ * REP19-05 (M-q1904-1): monta `tasa3` con la tasa del día ya en caché y, MOUNT_TAP_MS después de pedir el montaje, toca
+ * el primer «Descartar línea» a la vista (o el primero, llevado a la vista). Devuelve el efecto (`null`: ninguno) o
+ * «tardío» si el toque cayó pasado el segundo.
+ */
+async function mountedWithRateOnce(browser: Browser, input: Input): Promise<ChangeProductResult> {
+  const askedAt = performance.now();
+  return withCase(
+    FIXTURES.tasa3,
+    async () => {
+      let button = discardInView();
+      if (!button) {
+        panelRoot()?.querySelector('li[data-line-index] [data-row-action="discard"]')?.scrollIntoView({ block: "center" });
+        await settle("llevar «Descartar línea» a la vista");
+        button = discardInView();
+      }
+      if (!button) {
+        throw new Error("Ningún «Descartar línea» a la vista");
+      }
+      const line = button.closest("li[data-line-index]")?.getAttribute("data-line-index");
+      const wait = askedAt + MOUNT_TAP_MS - performance.now();
+      if (wait > 0) {
+        await pause(wait);
+      }
+      const result = await tapOnce(browser, input, { before: "en el panel desde el montaje", control: button, key: `L${line} «Descartar línea»`, point: center(button) }, askedAt);
+      if (result.downMs === null || result.downMs > GUARD_MS) {
+        return { late: result.downMs === null ? "no llegó" : `cayó a ${Math.round(result.downMs)} ms del montaje` };
+      }
+      return { effect: result.effect, downMs: result.downMs };
+    },
+    true,
+  );
+}
+
+async function runMountedWithRate(browser: Browser, input: Input) {
+  const late: string[] = [];
+  for (let mount = 0; mount < MAX_MOUNTS; mount += 1) {
+    const result = await mountedWithRateOnce(browser, input);
+    if ("late" in result) {
+      late.push(result.late);
+      console.warn(`[REP19-02 inconcluso] recién montado con tasa: ${result.late}: se repite`);
+      continue;
+    }
+    const what = `«Descartar línea» a ${Math.round(result.downMs)} ms del montaje con la tasa en caché`;
+    return { failures: result.effect ? [] : [`${what} no actuó (M-q1904-1)`], text: `${what}: ${result.effect ?? "sin efecto"}` };
+  }
+  return { failures: [`inconcluso por carga: tras ${MAX_MOUNTS} montajes ningún toque a ≤ 1 s (${late.join("; ")})`], text: "inconcluso" };
+}
+
 async function opened(viewport: keyof typeof VIEWPORTS) {
   const result = await openViewport(viewport);
   if (result) {
@@ -435,6 +495,23 @@ export function typingPlay(caseId: TypingCaseId, viewport: keyof typeof VIEWPORT
       await expect(result.appeared, `${text}: no apareció nada que tocar`).toBeGreaterThan(0);
     }
     await expect(failures, text).toEqual([]);
+  };
+}
+
+/** `play` de M-q1904-1: con la tasa en caché, «Descartar línea» tocado a < 1 s del montaje actúa (el montaje no es una llegada). */
+export function mountedWithRatePlay(viewport: keyof typeof VIEWPORTS) {
+  return async () => {
+    const page = await opened(viewport);
+    if (!page) {
+      return;
+    }
+    const input = inputOf(viewport);
+    const result = await runMountedWithRate(page.browser, input);
+    await settleCdpAcks();
+    const text = `${page.label} (${input}) ${result.text}`;
+    result.failures.forEach((failure) => console.warn(`[REP19-02 rojo] ${page.label} ${failure}`));
+    console.warn(`[REP19-02] ${text}`);
+    await expect(result.failures, text).toEqual([]);
   };
 }
 
