@@ -47,7 +47,7 @@ import {
 } from "./InvoiceReviewPanel.rep16-02.harness";
 import { heldNow } from "./InvoiceReviewPanel.rep17-18.harness";
 
-type Browser = NonNullable<Awaited<ReturnType<typeof openViewport>>>["browser"];
+export type Browser = NonNullable<Awaited<ReturnType<typeof openViewport>>>["browser"];
 type Point = { x: number; y: number };
 
 function panel() {
@@ -135,7 +135,7 @@ function recordGrid(): Grid {
 }
 
 /** Un control que apareció o se habilitó en un punto (de la rejilla) donde antes no estaba. */
-type Appeared = { control: Element; key: string; point: Point; before: string };
+export type Appeared = { control: Element; key: string; point: Point; before: string };
 
 /** El punto lo recibe `control` (o, si deja pasar el puntero, el contenedor que lo tiene y que no es otro control). */
 function receives(control: Element, point: Point) {
@@ -223,7 +223,7 @@ function diff(before: string[], after: string[]) {
  */
 const TAP_FROM_MS = 500;
 const TAP_BUDGET_MS = 850;
-const GUARD_MS = 1000;
+export const GUARD_MS = 1000;
 /**
  * Montajes del mismo caso para tocar lo que quedó sin tocar: como mucho un toque con efecto por montaje (cada caso hace
  * aparecer como mucho 2 controles) y, bajo carga, cada toque tardío (inconcluso) cuesta otro montaje. 8 deja margen
@@ -234,7 +234,7 @@ const MAX_MOUNTS = 8;
 const frame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-type Input = "dedo" | "ratón";
+export type Input = "dedo" | "ratón";
 
 /** Resultado de un toque: qué cambió (`null`: nada) y a cuánto de la llegada cayó (`null`: no llegó a la ventana). */
 type TapResult = { effect: string | null; downMs: number | null };
@@ -243,7 +243,7 @@ type TapResult = { effect: string | null; downMs: number | null };
  * Toca `point` y devuelve qué cambió. Un enlace activado (el clic llega al documento sin que lo frene el panel)
  * cuenta como efecto; su navegación se cancela para no salir de la historia.
  */
-async function tapOnce(browser: Browser, input: Input, item: Appeared, arrivedAt: number): Promise<TapResult> {
+export async function tapOnce(browser: Browser, input: Input, item: Appeared, arrivedAt: number): Promise<TapResult> {
   const before = modelState();
   let downAt: number | null = null;
   let followed = false;
@@ -296,7 +296,7 @@ export type AppearCase = {
   releaseArrival?: () => Promise<() => boolean>;
 };
 
-async function toPage(page: Page) {
+export async function toPage(page: Page) {
   if (page === "tal cual") {
     return;
   }
@@ -367,7 +367,7 @@ async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase,
 }
 
 /** Corre un caso: monta tantas veces como haga falta para tocar todo lo que aparece; devuelve los fallos. */
-async function runAppearCase(browser: Browser, input: Input, appearCase: AppearCase) {
+export async function runAppearCase(browser: Browser, input: Input, appearCase: AppearCase) {
   const tested = new Set<string>();
   /** Por control, sus toques inconclusos (pasado el segundo de la guarda o sin llegar). */
   const late = new Map<string, string[]>();
