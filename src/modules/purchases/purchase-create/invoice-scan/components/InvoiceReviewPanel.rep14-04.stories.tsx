@@ -20,6 +20,7 @@ import type { InvoiceReviewContext } from "../reviewModel";
 import { makeReviewResponse, REVIEW_SCAN_ID, REVIEW_SUPPLIER_ID, REVIEW_TAX_RATES } from "../reviewFixtures";
 import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
 import { clickAt, pressKeys, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
+import { COMPACTION_GUARD_MS } from "./useLayoutHold";
 
 const SUPPLIER_NAME = "Mercaseu 2030, C.A.";
 const LINE = { match: { taxRateCode: "exento" }, read: { lineTotal: 1750, quantity: 1, unitPrice: 1750 } };
@@ -172,7 +173,9 @@ function rateStory(width: number, height: number, pointer: Pointer): Story {
       await expect(notice(), typed).toMatch(/se usa la tasa escrita \(Bs\. 950,00\)/);
 
       (screen.getByTestId("rep14-04-rate-arrives") as HTMLButtonElement).click();
-      await sleep(300);
+      // REP19-01 (D77(a)): «Tasa de hoy» aparece por la llegada (declarada) de la tasa: 1 s guardada para el puntero. En
+      // 8910175 el clic de DOM que la suelta abría el «turno del usuario» y la guarda no actuaba (el hueco de M-p20B-1).
+      await sleep(COMPACTION_GUARD_MS);
       const arrived = log(`tasa ${pointer} ${width}: llegó la del día «${notice()}» ${JSON.stringify(radios())}`);
       await snapshot(browser, `tasa-${pointer}-${width}-3-llega`);
       await expect(notice(), arrived).not.toMatch(/No hay tasa del día|se usa la tasa impresa/);

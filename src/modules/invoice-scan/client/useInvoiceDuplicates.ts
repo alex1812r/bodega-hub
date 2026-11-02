@@ -29,19 +29,26 @@ type Result = { key: string; matches?: InvoiceDuplicateMatch[] };
  *
  * `failed` (REP12-05, B-qa-rep12-2): la consulta vigente falló; no bloquea (D52), pero quien lo usa
  * debe decir que no se pudo comprobar.
+ *
+ * `arrive` (REP19-01, D77(a)): la respuesta (o el fallo) se aplica como una llegada declarada.
  */
 export function useInvoiceDuplicates(
   query: InvoiceDuplicateQuery | null,
   fetcher: InvoiceDuplicatesFetcher = fetchInvoiceDuplicates,
   answered: InvoiceDuplicateQuery | null = null,
+  arrive: (apply: () => void) => void = (apply) => apply(),
 ): { matches: InvoiceDuplicateMatch[] | undefined; pending: boolean; failed: boolean } {
   const key = query ? JSON.stringify(query) : null;
   const answeredKey = answered ? JSON.stringify(answered) : null;
   const [result, setResult] = useState<Result | null>(null);
   const fetcherRef = useRef(fetcher);
+  const arriveRef = useRef(arrive);
   useEffect(() => {
     fetcherRef.current = fetcher;
   }, [fetcher]);
+  useEffect(() => {
+    arriveRef.current = arrive;
+  }, [arrive]);
 
   useEffect(() => {
     if (key === null) {
@@ -52,13 +59,13 @@ export function useInvoiceDuplicates(
       fetcherRef.current(JSON.parse(key) as InvoiceDuplicateQuery, controller.signal).then(
         (matches) => {
           if (!controller.signal.aborted) {
-            setResult({ key, matches });
+            arriveRef.current(() => setResult({ key, matches }));
           }
         },
         () => {
           // Sin respuesta válida para esta consulta: el aviso vuelve al del escaneo.
           if (!controller.signal.aborted) {
-            setResult({ key });
+            arriveRef.current(() => setResult({ key }));
           }
         },
       );

@@ -11,6 +11,7 @@ import { Badge } from "@/shared/components/Badge/Badge";
 import { Button } from "@/shared/components/Button";
 import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import { Input } from "@/shared/components/Input";
+import { useArrivedValue } from "@/shared/hooks/useLayoutArrival";
 import { formControlErrorClassName, formHelperClassName, formHelperErrorClassName } from "@/shared/styles/form-controls";
 import { cn } from "@/shared/utils/cn";
 
@@ -267,8 +268,8 @@ function DuplicateNoticeReserve({ acknowledge, text }: { acknowledge: boolean; t
  * aparecer o irse no mueve nada de encima ni las líneas. Lo que acorte la página al irse queda bajo useLayoutHold
  * (D65(b), `data-layout-notice`).
  * REP17-01 (D70(d), B-p18B-1): mientras haya consulta (`reserveSpace`) o con el aviso a la vista, ocupa el alto
- * del más alto de sus textos: aparecer o cambiar de texto no baja el pie; lo que aparece en él sin acción del usuario no
- * actúa durante 1 s (D49).
+ * del más alto de sus textos: aparecer o cambiar de texto no baja el pie; lo que aparece en él por una llegada declarada no
+ * actúa durante 1 s (D49; REP19-01, D77: la compra del escaneo duplicado también se declara al llegar).
  */
 export function InvoiceReviewDuplicateNotice({
   duplicateAcknowledged = false,
@@ -282,8 +283,8 @@ export function InvoiceReviewDuplicateNotice({
   // Factura duplicada: si el escaneo anterior ya está en una compra, se enlaza. No bloquea, pero
   // Cargar exige marcar la casilla (REP12-01, D52). Con la consulta del proveedor elegido ya
   // respondida manda ella; si no, el aviso del escaneo.
-  const { purchaseId: scanDuplicatePurchaseId } = useInvoiceScanPurchase(
-    duplicates === undefined ? state.duplicateOfScanId : undefined,
+  const scanDuplicatePurchaseId = useArrivedValue(
+    useInvoiceScanPurchase(duplicates === undefined ? state.duplicateOfScanId : undefined).purchaseId,
   );
   const showDuplicate = duplicates === undefined ? Boolean(state.duplicateOfScanId) : duplicates.length > 0;
   const duplicatePurchaseId =
@@ -297,7 +298,7 @@ export function InvoiceReviewDuplicateNotice({
   const texts = duplicateTexts(duplicateCriterionLabel(header, duplicates));
 
   return (
-    <div className="grid empty:hidden" data-layout-arrival-guard data-layout-notice>
+    <div className="grid empty:hidden" data-layout-notice>
       {showDuplicate || reserveSpace
         ? duplicateCriterionLabels(header).map((criterion) => {
             const reserved = duplicateTexts(criterion);
