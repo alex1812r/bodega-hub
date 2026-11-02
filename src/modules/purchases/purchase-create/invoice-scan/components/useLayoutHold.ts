@@ -476,6 +476,15 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const arrivingRef = useRef(false);
   const [arrivals, setArrivals] = useState(0);
   const arrivedAtRef = useRef(new Map<Element, number>());
+  // REP19-05 (M-q1904-1): el montaje (o remontaje) del panel acabó: pasaron sus efectos. Lo que se declara antes (la tasa
+  // del día ya en caché, adoptada en el efecto de layout del montaje) ya estaba al montarse: no es una llegada.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   // REP18-07: control guardado cuando se posó el puntero del último gesto (su clic llega después, a veces pasado 1 s).
   const guardedPressRef = useRef<Element | null>(null);
   // REP15-01 (D65(b)): avisos que encogieron solos, retenidos a su alto anterior (y el estilo en línea que tenían).
@@ -557,12 +566,14 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
    * REP19-01 (D77(a)): declara una llegada asíncrona. Toma la foto síncrona de los controles (si no hay ya una llegada en
    * curso) y aplica su estado; el commit que lo aplica compara con la foto (`arrivals`). No mira si el usuario está en su
    * turno: lo que una llegada trae se guarda aunque esté tecleando en otro campo (M-p20B-1), y lo que trae un gesto no
-   * pasa por aquí (D77(b)).
+   * pasa por aquí (D77(b)). REP19-05 (M-q1904-1): sin foto mientras el panel se monta (raíz sin montar o efectos del
+   * montaje sin pasar): lo que ya estaba disponible se adopta sin guarda, y una foto previa a lo que el montaje hace en
+   * sus efectos (el foco inicial desplaza la página) marcaría todo el panel como aparecido.
    */
   const declareArrival = useCallback(
     (apply: () => void) => {
       const root = rootRef.current;
-      if (!root) {
+      if (!root || !mountedRef.current) {
         apply();
         return;
       }

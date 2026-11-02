@@ -338,7 +338,7 @@ function sampleInto(tracked: Tracked[], moves: Moves) {
   }
 }
 
-function newRuntime(fixture: Fixture): Runtime {
+function newRuntime(fixture: Fixture, rateAtMount: boolean): Runtime {
   seq += 1;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   queryClient.setQueryData(invoiceScanQueryKeys.images(fixture.response.scanId), []);
@@ -353,7 +353,7 @@ function newRuntime(fixture: Fixture): Runtime {
     queryClient,
     seq,
     supplier: deferred(),
-    systemRateVes: undefined,
+    systemRateVes: rateAtMount ? fixture.systemRateVes : undefined,
   };
 }
 
@@ -471,9 +471,12 @@ function describeMoves(moves: Moves) {
     .join("; ");
 }
 
-/** Monta `fixture` con todas sus fuentes retenidas, corre `body` con el panel ya quieto y lo desmonta. */
-export async function withCase<T>(fixture: Fixture, body: () => Promise<T>): Promise<T> {
-  runtime = newRuntime(fixture);
+/**
+ * Monta `fixture` con todas sus fuentes retenidas, corre `body` con el panel ya quieto y lo desmonta. REP19-05: con
+ * `rateAtMount`, la tasa del día ya está (en caché) cuando el panel se monta.
+ */
+export async function withCase<T>(fixture: Fixture, body: () => Promise<T>, rateAtMount = false): Promise<T> {
+  runtime = newRuntime(fixture, rateAtMount);
   const caseSeq = runtime.seq;
   emit();
   try {

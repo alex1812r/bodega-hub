@@ -10,7 +10,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
 import { CaseHost, harnessHandlers } from "./InvoiceReviewPanel.rep16-02.harness";
-import { changeProductPlay, typingPlay } from "./InvoiceReviewPanel.rep19-02.harness";
+import { changeProductPlay, mountedWithRatePlay, typingPlay } from "./InvoiceReviewPanel.rep19-02.harness";
 
 const meta = {
   component: CaseHost,
@@ -30,3 +30,4 @@ export const DuplicadoTecleando: Story = { play: typingPlay("duplicadosK30", "w1
 export const PrimerListadoTecleandoTocable: Story = { play: typingPlay("primerListado", "w1280") };
 export const CambiarProductoTrasVer300: Story = { play: changeProductPlay(300, "w1280") };
 export const CambiarProductoTrasVer700: Story = { play: changeProductPlay(700, "w1280") };
+export const RecienMontadoConTasaDescartarTocable: Story = { play: mountedWithRatePlay("w1280") };

@@ -6,7 +6,8 @@ import { createContext, useContext, useLayoutEffect, useState } from "react";
  * REP19-01 (D77(a)): declaración de una llegada asíncrona (respuesta de una consulta, su error) en el sitio donde se
  * resuelve. Quien la recibe (la guarda de `useLayoutHold` de la revisión de factura) toma una foto síncrona de los
  * controles justo antes de `apply` y, tras el commit de lo que `apply` pida, guarda 1 s para el puntero lo que apareció,
- * se habilitó o se movió respecto a la foto. Fuera de un proveedor, `apply` sin más.
+ * se habilitó o se movió respecto a la foto. Fuera de un proveedor, `apply` sin más. REP19-05: lo que se declara
+ * mientras el panel se monta (lo que ya estaba disponible al montarse) no es una llegada: se aplica sin foto.
  * - `arrive`: desde la respuesta (un `then`, un manejador): aplica en un commit síncrono.
  * - `arriveInLayoutEffect`: desde un efecto de layout (React aplica lo que pide ahí antes de pintar).
  */
