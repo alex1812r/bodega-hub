@@ -6,9 +6,13 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
+
+import type { LayoutArrival } from "@/shared/hooks/useLayoutArrival";
 
 /** D46-b: ventana y radio de la guarda espacial entre dos activaciones con el puntero. */
 export const POINTER_GUARD_MS = 1000;
@@ -16,14 +20,6 @@ export const POINTER_GUARD_RADIUS_PX = 32;
 
 /** D49: tras compactar (o un cambio de layout sin acción), ventana en que no actúa un control cuya caja se movió. */
 export const COMPACTION_GUARD_MS = 1000;
-
-/**
- * D67(a): tras una acción del usuario, lo que cambia es suyo mientras el panel siga cambiando por ella (los efectos que
- * siguen a la acción pintan en tareas posteriores): el turno acaba en el primer frame sin cambios en el panel, y como
- * mucho a los USER_TURN_MS. Pasado, un cambio es una llegada asíncrona (REP16-01b: con solo la ventana fija, lo que
- * llegaba en ella, p. ej. la tasa 100 ms después de un clic, crecía sin retenerse).
- */
-const USER_TURN_MS = 250;
 
 /** Controles que una activación con el puntero puede accionar. */
 const CONTROL_SELECTOR =
@@ -44,12 +40,6 @@ const LISTBOX_SELECTOR = "[role='listbox']";
  * control suyo que aparece o se mueve con el layout retenido queda guardado desde ESE momento.
  */
 const SHIFT_GUARD_SELECTOR = "[data-layout-shift-guard]";
-
-/**
- * REP17-01 (D70(a)): zonas (la cabecera, el aviso tras las filas) en que un control que aparece o se mueve sin acción del
- * usuario (una llegada asíncrona) queda guardado desde ESE momento (D49), aunque nada se retenga.
- */
-const ARRIVAL_GUARD_SELECTOR = "[data-layout-arrival-guard]";
 
 /**
  * D60(c): avisos dinámicos (duplicado, tasa, IVA) que aparecen, cambian o se van sin que se toquen
@@ -218,17 +208,6 @@ const PANEL_MUTATIONS: MutationObserverInit = {
   subtree: true,
 };
 
-/**
- * REP18-01 (D75(a)): lo que puede hacer aparecer o habilitar un control (el texto no). REP18-01b: solo los atributos que
- * lo habilitan, lo muestran o lo hacen control; los demás (`value`, `aria-*` de estado) cambian al teclear y no.
- */
-const ARRIVAL_MUTATIONS: MutationObserverInit = {
-  attributeFilter: ["aria-disabled", "aria-hidden", "class", "disabled", "hidden", "href", "inert", "open", "role", "style"],
-  attributeOldValue: true,
-  childList: true,
-  subtree: true,
-};
-
 /** D67(a): `notice` va antes del último control de las filas: si crece, baja controles de alguna fila. */
 function movesRowControls(root: Element, notice: Element): boolean {
   const rows = root.querySelectorAll(ROW_BOX_SELECTOR);
@@ -314,19 +293,6 @@ function shiftGuardedPositions(root: Element): Map<Element, Position> {
   return positions;
 }
 
-/** Posición de los controles de las zonas `[data-layout-arrival-guard]` respecto a `root` (desplazar no la cambia). */
-function arrivalGuardedPositions(root: Element): Map<Element, Position> {
-  const origin = root.getBoundingClientRect();
-  const positions = new Map<Element, Position>();
-  for (const zone of root.querySelectorAll(ARRIVAL_GUARD_SELECTOR)) {
-    for (const control of zone.querySelectorAll(CONTROL_SELECTOR)) {
-      const { top, left } = control.getBoundingClientRect();
-      positions.set(control, { top: top - origin.top, left: left - origin.left });
-    }
-  }
-  return positions;
-}
-
 /**
  * REP18-01 (D75(a)): el control se puede accionar: habilitado, no inerte, no oculto a la accesibilidad (la reserva de las
  * opciones, `aria-hidden`) y pintado (no `visibility: hidden` ni sin caja).
@@ -350,22 +316,9 @@ function isActionable(control: Element): boolean {
  * (portal) como hijas del diálogo que contiene el campo o, si no hay, de `body`: las hijas de ese contenedor que no
  * contienen el panel. El resto del documento (el formulario, la cabecera de la página) no se recorre.
  */
-function arrivalScopes(root: Element): { host: Element; scopes: Element[] } {
+function arrivalScopes(root: Element): Element[] {
   const host = root.closest("[role='dialog']") ?? document.body;
-  return { host, scopes: [root, ...[...host.children].filter((child) => !child.contains(root))] };
-}
-
-/** REP18-01b: el cambio es del panel o de sus listas flotantes (o monta o quita una: cambia `host`). */
-function inArrivalScope(record: MutationRecord, { host, scopes }: ReturnType<typeof arrivalScopes>): boolean {
-  return record.target === host || scopes.some((scope) => scope.contains(record.target));
-}
-
-/**
- * REP18-01 (D75(a)): controles accionables del panel y de sus listas flotantes (`arrivalScopes`). Solo se consultan
- * desde el panel (sus clics, también los de sus portales, pasan por él): lo de fuera no se frena por esto.
- */
-function actionableControls(scopes: readonly Element[]): Set<Element> {
-  return new Set(scopes.flatMap((scope) => [...scope.querySelectorAll(CONTROL_SELECTOR)].filter(isActionable)));
+  return [root, ...[...host.children].filter((child) => !child.contains(root))];
 }
 
 /** REP18-10 (D76(a)): listas (`[role='listbox']`) de `scopes` con alguna opción, habilitada o no. */
@@ -375,6 +328,48 @@ function listsWithOptions(scopes: readonly Element[]): Set<Element> {
       [...scope.querySelectorAll(OPTION_SELECTOR)].flatMap((option) => option.closest(LISTBOX_SELECTOR) ?? []),
     ),
   );
+}
+
+/**
+ * REP19-01 (D77(a)): foto síncrona, justo antes de aplicar una llegada, de los controles del panel y de sus listas
+ * flotantes (`arrivalScopes`): su punto de pantalla y si se pueden accionar. Con el ancho del panel y las listas que ya
+ * tenían opciones (REP18-10).
+ */
+type ArrivalSnapshot = {
+  width: number;
+  controls: ReadonlyMap<Element, Position & { actionable: boolean }>;
+  lists: ReadonlySet<Element>;
+};
+
+function arrivalSnapshot(root: Element): ArrivalSnapshot {
+  const scopes = arrivalScopes(root);
+  const controls = new Map<Element, Position & { actionable: boolean }>();
+  for (const scope of scopes) {
+    for (const control of scope.querySelectorAll(CONTROL_SELECTOR)) {
+      const { top, left } = control.getBoundingClientRect();
+      controls.set(control, { top, left, actionable: isActionable(control) });
+    }
+  }
+  return { width: root.getBoundingClientRect().width, controls, lists: listsWithOptions(scopes) };
+}
+
+/**
+ * REP19-01 (D77(a)(c)): controles accionables tras la llegada que en la foto previa no estaban, no se podían accionar o
+ * estaban en otro punto (≥ 1 px). No cuentan, por D76(a), las opciones de una lista que en la foto no tenía ninguna (el
+ * primer listado es lo que el usuario pidió al teclear), ni nada si cambió el ancho (giro, ventana: todo se recoloca).
+ */
+function arrivedControls(before: ArrivalSnapshot, after: ArrivalSnapshot): Element[] {
+  if (Math.abs(before.width - after.width) >= 1) {
+    return [];
+  }
+  return [...after.controls].flatMap(([control, now]) => {
+    const was = before.controls.get(control);
+    const changed =
+      !was || !was.actionable || Math.abs(was.top - now.top) >= 1 || Math.abs(was.left - now.left) >= 1;
+    const list = control.matches(OPTION_SELECTOR) ? control.closest(LISTBOX_SELECTOR) : null;
+    const firstListing = list !== null && !before.lists.has(list);
+    return now.actionable && changed && !firstListing ? [control] : [];
+  });
 }
 
 /** Controles de `now` que no estaban en `before` o cambiaron de sitio (≥ 1 px). */
@@ -451,8 +446,9 @@ function scrollBack(element: Element, delta: number) {
  * `movedByCompaction` dice si un control se movió (o apareció) con ello (D49).
  * D54(a): las zonas `[data-layout-shift-guard]` (el pie) se miden además tras cada render con el
  * layout retenido: lo que aparece o se mueve en ellas queda guardado igual, desde ese render.
- * REP18-01 (D75(a)): en todo el panel y sus listas flotantes, lo que aparece o se habilita por una llegada asíncrona
- * queda guardado igual, desde que aparece (`noteArrivals`).
+ * REP18-01 (D75(a)), REP19-01 (D77): en todo el panel y sus listas flotantes, lo que aparece, se habilita o se mueve
+ * por una llegada asíncrona DECLARADA (`arrival`) queda guardado igual, desde su commit, esté o no el usuario tecleando.
+ * Lo que trae un gesto del usuario no es una llegada y no se guarda por esto.
  * `onFocusLost`: al soltarse el layout, la caja que tenía el foco se volvió a montar (cambió de
  * lista) y el foco cayó en BODY; recibe su clave.
  */
@@ -471,13 +467,14 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const focusedKeyRef = useRef<string | undefined>(undefined);
   // D60(c): avisos dinámicos y filas en la última medición.
   const noticeLayoutRef = useRef<NoticeLayout | null>(null);
-  // REP17-01: controles de las zonas `[data-layout-arrival-guard]` en la última medición.
-  const arrivalPositionsRef = useRef<Map<Element, Position> | null>(null);
-  // REP18-01 (D75(a)): controles accionables en la última medición (con el ancho del panel entonces) y cuándo apareció o
-  // se habilitó cada uno por una llegada, en `performance.now()`: reloj monótono que no fija quien fija la fecha (las
-  // historias de Storybook la fijan con MockDate y con `Date.now()` la guarda no acabaría nunca).
-  // REP18-10 (D76(a)): con ellos, las listas que ya tenían opciones.
-  const actionableRef = useRef<{ width: number; controls: Set<Element>; lists: Set<Element> } | null>(null);
+  // REP19-01 (D77(a)): foto previa a la llegada en curso (la primera si se juntan varias antes de su commit), si hay una
+  // llegada en curso (hasta la microtarea tras su commit: lo que React aplique en cadena antes de pintar es de ella), y
+  // cuántas se declararon (el commit que las aplica). Cuándo apareció, se habilitó o se movió cada control por una
+  // llegada, en `performance.now()`: reloj monótono que no fija quien fija la fecha (las historias de Storybook la fijan
+  // con MockDate y con `Date.now()` la guarda no acabaría nunca).
+  const arrivalRef = useRef<ArrivalSnapshot | null>(null);
+  const arrivingRef = useRef(false);
+  const [arrivals, setArrivals] = useState(0);
   const arrivedAtRef = useRef(new Map<Element, number>());
   // REP18-07: control guardado cuando se posó el puntero del último gesto (su clic llega después, a veces pasado 1 s).
   const guardedPressRef = useRef<Element | null>(null);
@@ -489,8 +486,6 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // D67(a): orden de filas retenido porque una llegada asíncrona cambió el del modelo (una fila que cambia de lista).
   const [retainedOrder, setRetainedOrder] = useState<TOrder | null>(null);
   const retainedOrderRef = useRef<TOrder | null>(null);
-  // D67(a): turno de una acción del usuario (clic, tecla, escribir): lo que cambie en él es suyo, no una llegada.
-  const userTurnRef = useRef(false);
   // D72(b): hay espacio retenido (se ofrece «Compactar lista»), y cuántas veces se compactó (el render que lo pinta).
   const [retains, setRetains] = useState(false);
   const [compactions, setCompactions] = useState(0);
@@ -543,12 +538,13 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   }, [dropRetained, rootRef]);
 
   /**
-   * D67(a): el orden de filas del modelo cambió sin acción del usuario (una llegada asíncrona pasa una fila de lista):
-   * se conserva `order`, el pintado (con el layout retenido el orden ya está fijado). Solo desde efectos.
+   * D67(a): el orden de filas del modelo cambió por una llegada asíncrona (pasa una fila de lista): se conserva `order`,
+   * el pintado (con el layout retenido el orden ya está fijado). REP19-01 (D77(d)): solo en el commit de una llegada
+   * declarada; lo que cambia un gesto del usuario es suyo. Solo desde efectos.
    */
   const retainOrder = useCallback(
     (order: TOrder) => {
-      if (!rootRef.current || holdRef.current || userTurnRef.current || retainedOrderRef.current !== null) {
+      if (!rootRef.current || holdRef.current || !arrivingRef.current || retainedOrderRef.current !== null) {
         return;
       }
       retainedOrderRef.current = order;
@@ -558,106 +554,53 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   );
 
   /**
-   * REP18-01 (D75(a)): un control que APARECE o SE HABILITA sin acción del usuario (una llegada asíncrona) en cualquier
-   * parte del panel (cabecera, filas, lo de tras las filas, el pie) o en sus listas flotantes queda guardado desde ESE
-   * momento (D49): un toque que llega en el segundo siguiente no lo acciona. Lo que aparece en el turno del usuario es
-   * suyo, y con otro ancho (giro, ventana) todo se recoloca: no se guarda. El teclado no pasa por esta guarda.
-   * REP18-01b: en el turno del usuario (al teclear, un cambio por tecla) no se mide: solo se descarta la base, y el fin
-   * del turno mide la de entonces. Sin base, medir solo la fija.
-   * REP18-10 (D76(a)): las opciones de una lista que no tenía ninguna («Buscando...», o recién abierta) son lo que el
-   * usuario pidió al teclear: no se guardan. Las que llegan a una lista que ya tenía opciones (un refresco, resultados
-   * tardíos) caen donde había otra opción o un hueco: sí.
+   * REP19-01 (D77(a)): declara una llegada asíncrona. Toma la foto síncrona de los controles (si no hay ya una llegada en
+   * curso) y aplica su estado; el commit que lo aplica compara con la foto (`arrivals`). No mira si el usuario está en su
+   * turno: lo que una llegada trae se guarda aunque esté tecleando en otro campo (M-p20B-1), y lo que trae un gesto no
+   * pasa por aquí (D77(b)).
    */
-  const noteArrivals = useCallback(() => {
+  const declareArrival = useCallback(
+    (apply: () => void) => {
+      const root = rootRef.current;
+      if (!root) {
+        apply();
+        return;
+      }
+      arrivalRef.current ??= arrivalSnapshot(root);
+      arrivingRef.current = true;
+      apply();
+      setArrivals((count) => count + 1);
+    },
+    [rootRef],
+  );
+
+  /** D77(a)(c): lo que difiere de la foto de la llegada en curso queda guardado desde ahora. */
+  const guardArrival = useCallback(() => {
+    const before = arrivalRef.current;
     const root = rootRef.current;
-    if (!root) {
-      return;
+    if (before && root) {
+      markMoved(arrivedAtRef.current, arrivedControls(before, arrivalSnapshot(root)), performance.now());
     }
-    if (userTurnRef.current) {
-      actionableRef.current = null;
-      return;
-    }
-    const width = root.getBoundingClientRect().width;
-    const { scopes } = arrivalScopes(root);
-    const controls = actionableControls(scopes);
-    const lists = listsWithOptions(scopes);
-    const previous = actionableRef.current;
-    if (previous && Math.abs(previous.width - width) < 1) {
-      const firstListing = (control: Element) => {
-        const list = control.matches(OPTION_SELECTOR) ? control.closest(LISTBOX_SELECTOR) : null;
-        return list !== null && !previous.lists.has(list);
-      };
-      markMoved(
-        arrivedAtRef.current,
-        [...controls].filter((control) => !previous.controls.has(control) && !firstListing(control)),
-        performance.now(),
-      );
-    }
-    actionableRef.current = { width, controls, lists };
   }, [rootRef]);
 
-  // D67(a): una acción del usuario marca su turno (USER_TURN_MS, para lo que React pinte en efectos que siguen a la
-  // acción): lo que cambie en él es suyo. Una tecla, además, cierra lo que era de la última activación con el puntero.
+  /**
+   * D77(a): desde la respuesta de una consulta (un `then`) o un manejador, su estado se aplica en un commit síncrono: entre
+   * la foto y el commit no cabe un gesto. Desde un efecto de layout, React ya lo aplica antes de pintar.
+   */
+  const arrival = useMemo<LayoutArrival>(
+    () => ({ arrive: (apply) => flushSync(() => declareArrival(apply)), arriveInLayoutEffect: declareArrival }),
+    [declareArrival],
+  );
+
+  // Una tecla cierra lo que era de la última activación con el puntero (no retiene ni ancla más).
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let frame: number | undefined;
-    // Hubo cambios en el panel desde el último frame del turno.
-    let changed = false;
-    const end = () => {
-      userTurnRef.current = false;
-      clearTimeout(timer);
-      if (frame !== undefined) {
-        cancelAnimationFrame(frame);
-        frame = undefined;
-      }
-      // REP18-01b: el turno descartó la base de las llegadas: se mide la de ahora (sin guardar nada).
-      if (actionableRef.current === null) {
-        noteArrivals();
-      }
+    const onKeyDown = () => {
+      keyedRef.current = true;
+      anchorRef.current = null;
     };
-    const watch = () => {
-      frame = requestAnimationFrame(() => {
-        frame = undefined;
-        if (changed) {
-          changed = false;
-          watch();
-        } else {
-          end();
-        }
-      });
-    };
-    const mark = (event: Event) => {
-      if (event.type === "keydown") {
-        keyedRef.current = true;
-        anchorRef.current = null;
-      }
-      userTurnRef.current = true;
-      changed = true;
-      clearTimeout(timer);
-      timer = setTimeout(end, USER_TURN_MS);
-      if (frame === undefined) {
-        watch();
-      }
-    };
-    const root = rootRef.current;
-    const mutations = new MutationObserver((records) => {
-      changed ||= changesDom(records);
-    });
-    if (root) {
-      mutations.observe(root, PANEL_MUTATIONS);
-    }
-    const events = ["pointerdown", "mousedown", "touchstart", "click", "keydown", "input", "change"] as const;
-    for (const type of events) {
-      window.addEventListener(type, mark, { capture: true, passive: true });
-    }
-    return () => {
-      end();
-      mutations.disconnect();
-      for (const type of events) {
-        window.removeEventListener(type, mark, { capture: true });
-      }
-    };
-  }, [noteArrivals, rootRef]);
+    window.addEventListener("keydown", onKeyDown, { capture: true, passive: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, []);
 
   const holdLayout = useCallback(
     (control: Element, order: TOrder) => {
@@ -767,11 +710,12 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     }
     // REP15-01 (D65(b)): lo que llega tarde (tasa, duplicados, último costo) y encoge o quita un aviso sin que nadie
     // actúe no sube lo de debajo: el aviso conserva su alto (D72: hasta «Compactar lista»; con el layout retenido,
-    // también lo que creció tras fijar las cajas). Lo que se teclea es del usuario (REP16-01b: en su turno; un campo
-    // enfocado sin teclear, como el buscador abierto, no frena lo que llega).
+    // también lo que creció tras fijar las cajas). Lo que se teclea es del usuario y no se retiene: REP19-01 (D77(d)), un
+    // cambio que no es de una llegada declarada con el foco en un campo del panel; en el commit de una llegada se retiene
+    // aunque el foco esté en un campo (el buscador abierto, o tecleando en otro: M-p20B-1).
     const focused = document.activeElement;
     const typing =
-      userTurnRef.current && focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
+      !arrivingRef.current && focused instanceof Element && focused.matches(TYPING_SELECTOR) && root.contains(focused);
     if (floor && sameWidth && !typing) {
       // REP18-03 (D75(d), B-p19B-1): con la página al final, lo que encoge solo recorta el desplazamiento en cuanto algo
       // fuerza el layout (antes de retenerlo aquí): todo baja sin entrada del usuario. Retenido, vuelve a donde estaba.
@@ -796,8 +740,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
           }
           notice.style.minHeight = `${was}px`;
           shrunk = true;
-        } else if (was !== undefined && height - was >= 1 && !userTurnRef.current && movesRowControls(root, notice)) {
-          // D67(a) (M-p17B-1): lo que crece solo (sin acción del usuario en este turno) y bajaría controles de las filas
+        } else if (was !== undefined && height - was >= 1 && arrivingRef.current && movesRowControls(root, notice)) {
+          // D67(a) (M-p17B-1): lo que crece solo (REP19-01: en el commit de una llegada declarada) y bajaría controles de las filas
           // se recorta a su alto anterior (el que no se veía, oculto: tampoco abre el hueco del `gap`). Lo que asome de
           // él queda guardado desde ahora (D49).
           keepStyle(notice);
@@ -810,9 +754,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
           markMoved(movedAtRef.current, [...notice.querySelectorAll(CONTROL_SELECTOR)]);
         }
       }
-      // Solo una llegada (fuera del turno del usuario) y solo el recorte: estaba más abajo de lo que el contenido encogido
-      // deja y subió.
-      if (shrunk && !userTurnRef.current && lastTop !== null && lastTop - shrunkMax >= 1 && lastTop - scroller.scrollTop >= 1) {
+      // Solo una llegada declarada y solo el recorte: estaba más abajo de lo que el contenido encogido deja y subió.
+      if (shrunk && arrivingRef.current && lastTop !== null && lastTop - shrunkMax >= 1 && lastTop - scroller.scrollTop >= 1) {
         scroller.scrollTop = lastTop;
       }
     }
@@ -846,13 +789,6 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         markMoved(movedAtRef.current, moved);
       }
     }
-    // REP17-01 (D70(a)): lo que aparece o se mueve en la cabecera o en el aviso tras las filas sin acción del usuario
-    // (con el mismo ancho) queda guardado desde ahora: un toque que llega justo después no lo acciona.
-    const arrivals = arrivalGuardedPositions(root);
-    if (sameWidth && arrivalPositionsRef.current && !userTurnRef.current) {
-      markMoved(movedAtRef.current, movedControls(arrivalPositionsRef.current, arrivals));
-    }
-    arrivalPositionsRef.current = arrivals;
     noticeLayoutRef.current = { width, heights, anchorTop: anchor.getBoundingClientRect().top, rowBlocks };
     const panelScroller = scrollParent(root);
     scrollTopRef.current = { scroller: panelScroller, top: panelScroller.scrollTop };
@@ -864,20 +800,20 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   // Tras cada render del panel (antes de pintar), después del ancla del control pulsado.
   useLayoutEffect(() => followNotices(true));
 
-  // Las llegadas se miden con cada cambio del panel o de sus listas flotantes (en portales, fuera del panel: se observa
-  // `body`), en su microtarea: antes de pintar.
-  useEffect(() => {
-    noteArrivals();
-    const mutations = new MutationObserver((records) => {
-      const root = rootRef.current;
-      const scope = root ? arrivalScopes(root) : null;
-      if (scope && changesDom(records.filter((record) => inArrivalScope(record, scope)))) {
-        noteArrivals();
-      }
+  // REP19-01 (D77(a)): en el commit que aplica una llegada declarada (tras retener sus avisos), lo que difiere de su foto
+  // queda guardado; y otra vez en la microtarea siguiente, cuando React ya aplicó lo que ella pidió en cadena (el orden
+  // retenido) y antes de pintar. Ahí acaba la llegada.
+  useLayoutEffect(() => {
+    if (!arrivalRef.current) {
+      return;
+    }
+    guardArrival();
+    void Promise.resolve().then(() => {
+      guardArrival();
+      arrivalRef.current = null;
+      arrivingRef.current = false;
     });
-    mutations.observe(document.body, ARRIVAL_MUTATIONS);
-    return () => mutations.disconnect();
-  }, [noteArrivals, rootRef]);
+  }, [arrivals, guardArrival]);
 
   // Lo que cambia sin render del panel (el aviso de duplicado al saber si ya está en una compra), y
   // el desplazamiento del usuario, que solo renueva la medición (y, D54(a), la base del pie, que se mueve al desplazar si
@@ -986,6 +922,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     boxStyle,
     holdLayout,
     retainOrder,
+    /** REP19-01 (D77(a)): declarar una llegada asíncrona donde se resuelve (`LayoutArrivalContext` para los hijos). */
+    arrival,
     /** D72(b): hay espacio retenido (cajas con alto fijado o avisos) que `compact` soltaría. */
     retainsSpace: retains,
     /** D72(b): «Compactar lista», el único gesto que suelta lo retenido (además del cambio de ancho). */

@@ -82,12 +82,13 @@ function Harness({ arrival = false, noticeText = "" }: { arrival?: boolean; noti
   const rootRef = useRef<HTMLDivElement>(null);
   const hold = useLayoutHold<string[]>(rootRef, () => undefined);
   const [discarded, setDiscarded] = useState(false);
-  const { retainOrder } = hold;
+  const { arrival: { arriveInLayoutEffect }, retainOrder } = hold;
   useEffect(() => {
     if (arrival) {
-      retainOrder(["L1", "L2"]);
+      // REP19-01 (D77(d)): el orden solo se retiene en el commit de una llegada declarada.
+      arriveInLayoutEffect(() => retainOrder(["L1", "L2"]));
     }
-  }, [arrival, retainOrder]);
+  }, [arrival, arriveInLayoutEffect, retainOrder]);
   return (
     <main data-geo="scroller" data-testid="scroller" style={{ overflowY: "auto" }}>
       <div

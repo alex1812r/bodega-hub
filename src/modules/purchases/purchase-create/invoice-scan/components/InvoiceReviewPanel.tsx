@@ -16,6 +16,7 @@ import type { EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { Modal } from "@/shared/components/Modal";
+import { LayoutArrivalContext, useArrivedValue } from "@/shared/hooks/useLayoutArrival";
 
 import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModal";
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
@@ -149,8 +150,19 @@ const ACTIVATION_SELECTOR = "[data-candidate], [data-choice], [data-cost-ack], [
  */
 const GUARDED_CONTROL_SELECTOR = "[data-guarded-activation]";
 
+/** REP19-01 (D77(a)): la carga de las imágenes pinta lo mismo (cargando, error o las mismas URLs). */
+function sameImages(left: ReturnType<typeof useInvoiceScanImages>, right: ReturnType<typeof useInvoiceScanImages>) {
+  return (
+    left.isLoading === right.isLoading &&
+    left.error === right.error &&
+    left.urls.length === right.urls.length &&
+    left.urls.every((url, index) => url === right.urls[index])
+  );
+}
+
 function InvoiceScanImages({ scanId }: { scanId: string }) {
-  const images = useInvoiceScanImages(scanId);
+  // REP19-01 (D77(a)): las imágenes (o su error, con «Reintentar») llegan como una llegada declarada.
+  const images = useArrivedValue(useInvoiceScanImages(scanId), sameImages);
 
   if (images.isLoading) {
     return <LoadingState title="Cargando la factura..." />;
@@ -269,14 +281,28 @@ export function InvoiceReviewPanel({
   supplierFetcher,
 }: InvoiceReviewPanelProps) {
   const { dispatch, state, summary } = useInvoiceReview(response, context);
+  const rowRefs = useRef(new Map<number, HTMLLIElement>());
+  const footerRef = useRef<HTMLElement>(null);
+  // D46: tras una activación con el puntero, las filas conservan caja y orden (layout retenido) y
+  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s. D72: lo retenido solo se suelta
+  // con «Compactar lista» o al cambiar el ancho; nunca solo.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const layoutHold = useLayoutHold<RowOrder>(rootRef, (key) => {
+    // Al aplicarse el layout, la fila con el foco cambió de lista: el foco vuelve a ella sin desplazar
+    // (o al pie si no lo admite); nunca se queda en BODY.
+    const row = key.startsWith("row:") ? rowRefs.current.get(Number(key.slice("row:".length))) : undefined;
+    (row?.hasAttribute("tabindex") ? row : footerRef.current)?.focus({ preventScroll: true });
+  });
   // REP6-05: la tasa del día que llega con la revisión ya abierta pasa a ser la preseleccionada
-  // (el reductor la ignora si ya había tasa del día o el usuario eligió una).
+  // (el reductor la ignora si ya había tasa del día o el usuario eligió una). REP19-01 (D77(a)): es una llegada
+  // declarada, adoptada antes de pintar.
   const lateSystemRate = context.systemRateVes;
-  useEffect(() => {
+  const { arrive, arriveInLayoutEffect } = layoutHold.arrival;
+  useLayoutEffect(() => {
     if (lateSystemRate !== undefined) {
-      dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate });
+      arriveInLayoutEffect(() => dispatch({ type: "adoptSystemRate", systemRateVes: lateSystemRate }));
     }
-  }, [dispatch, lateSystemRate]);
+  }, [arriveInLayoutEffect, dispatch, lateSystemRate]);
   // REP15-01b (D65(a)): abierta sin tasa del día, el aviso de tasa reserva desde el primer render el alto que tiene al
   // abrir y el que tendrá cuando llegue sin que nadie actúe (con una del día que difiera de la impresa).
   const [rateAtOpen] = useState(() => (state.rate.system === undefined ? state.rate : null));
@@ -326,12 +352,12 @@ export function InvoiceReviewPanel({
       lastCostRequestsRef.current.add(key);
       lastUnitCostFetcher(productId, supplierId)
         .then(
-          (result) => dispatch({ type: "setLastUnitCost", index, productId, result }),
-          () => dispatch({ type: "setLastUnitCost", index, productId, result: "error" }),
+          (result) => arrive(() => dispatch({ type: "setLastUnitCost", index, productId, result })),
+          () => arrive(() => dispatch({ type: "setLastUnitCost", index, productId, result: "error" })),
         )
         .finally(() => lastCostRequestsRef.current.delete(key));
     }
-  }, [dispatch, lastUnitCostFetcher, state.lines, supplierId]);
+  }, [arrive, dispatch, lastUnitCostFetcher, state.lines, supplierId]);
   // REP12-01 (D52): al cambiar el proveedor (o el número/fecha) se vuelve a consultar el duplicado;
   // el aviso no bloquea, pero Cargar exige reconocerlo (por escaneo previo al que apunta).
   // Intento 2: mientras la consulta vigente no responde, Cargar no carga (el aviso del escaneo no
@@ -353,6 +379,7 @@ export function InvoiceReviewPanel({
     currentDuplicateQuery,
     duplicateFetcher,
     duplicateQuery(readContactId, state.extraction.number, state.extraction.date),
+    arrive,
   );
   // REP17-01 (D70(d), B-p18B-1): con consulta, su respuesta puede llegar (también tras cambiar proveedor, número o fecha)
   // y el aviso tras las filas aparecer: su sitio queda reservado (si no, al llegar bajaría el pie).
@@ -374,8 +401,6 @@ export function InvoiceReviewPanel({
     const first = nextPendingIndex(state, null);
     return first === null ? null : { seq: 0, target: first };
   });
-  const rowRefs = useRef(new Map<number, HTMLLIElement>());
-  const footerRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
   const guardUntilRef = useRef(0);
@@ -389,16 +414,6 @@ export function InvoiceReviewPanel({
   // D39-7 (C8-M1): fila a la que se llevó el foco por programa; sus flechas no marcan candidato
   // hasta que el usuario actúe en ella (Enter/Espacio, puntero, o salir y volver a la fila).
   const autoFocusedRowRef = useRef<number | null>(null);
-  // D46: tras una activación con el puntero, las filas conservan caja y orden (layout retenido) y
-  // otra activación en el mismo punto sobre un control distinto se ignora durante 1 s. D72: lo retenido solo se suelta
-  // con «Compactar lista» o al cambiar el ancho; nunca solo.
-  const rootRef = useRef<HTMLDivElement>(null);
-  const layoutHold = useLayoutHold<RowOrder>(rootRef, (key) => {
-    // Al aplicarse el layout, la fila con el foco cambió de lista: el foco vuelve a ella sin desplazar
-    // (o al pie si no lo admite); nunca se queda en BODY.
-    const row = key.startsWith("row:") ? rowRefs.current.get(Number(key.slice("row:".length))) : undefined;
-    (row?.hasAttribute("tabindex") ? row : footerRef.current)?.focus({ preventScroll: true });
-  });
   const lastPointerActivationRef = useRef<PointerActivation | null>(null);
   // B-p11-1: elección con el puntero en una lista flotante (portal); lo que destapó al cerrarse no se
   // acciona en ese punto hasta que el puntero se aleje o pase REVEAL_GUARD_MS.
@@ -889,296 +904,298 @@ export function InvoiceReviewPanel({
   }
 
   return (
-    <div
-      className="flex min-w-0 flex-col gap-4"
-      data-layout-box="panel"
-      data-testid="invoice-review-panel"
-      // D33-a (C6-M1): la autorrepetición del teclado y el 2.º clic de un doble clic no activan
-      // nada (fila, chip, opción, Descartar/Restaurar, Cargar).
-      onClickCapture={(event) => {
-        if (!(event.target instanceof Element)) {
-          return;
-        }
-        const guardedControl = event.target.closest(GUARDED_CONTROL_SELECTOR);
-        if (
-          (event.detail > 1 && (guardedControl || event.target.closest(ACTIVATION_SELECTOR))) ||
-          (guardedControl && awaitingReleaseRef.current)
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        const activation = readPointerActivation(event);
-        if (!activation) {
-          return;
-        }
-        // D46-b: lo que apareció bajo el dedo tras la activación anterior no se acciona. D49: tampoco
-        // lo que movió la aplicación del layout pendiente hace menos de 1 s. B-p11-1: ni lo que destapó
-        // una lista flotante al elegir en ella.
-        if (isPointerGuarded(activation)) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        lastPointerActivationRef.current = activation;
-        // La lista del buscador vive en un portal: su clic llega por el árbol de React, no por el DOM.
-        revealActivationRef.current = rootRef.current?.contains(activation.control) ? null : activation;
-        // D46-a: antes de que la acción cambie nada, se fijan las cajas y el orden actuales.
-        layoutHold.holdLayout(activation.control, {
-          review: sections.review.map((line) => line.index),
-          confirmed: sections.confirmed.map((line) => line.index),
-        });
-      }}
-      onKeyDownCapture={(event) => {
-        if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        if (ACTIVATION_KEYS.has(event.key)) {
-          pressedRef.current.add(`key:${event.key}`);
-        }
-      }}
-      // B-p11-2 (caos p11): el foco (y el teclado en pantalla) llega en el `mousedown`, antes del clic
-      // que la guarda ignora: sobre un control guardado tampoco entra el foco.
-      onMouseDownCapture={(event) => {
-        const activation = readPointerActivation(event);
-        if (activation && isPointerGuarded(activation)) {
-          event.preventDefault();
-        }
-      }}
-      onPointerDownCapture={(event) => {
-        pressedRef.current.add(`pointer:${event.pointerId}`);
-        // D39-7: el puntero sobre la fila es acción del usuario en ella.
-        if (
-          event.target instanceof Element &&
-          event.target.closest("[data-line-index]")?.getAttribute("data-line-index") ===
-            String(autoFocusedRowRef.current)
-        ) {
-          autoFocusedRowRef.current = null;
-        }
-      }}
-      ref={rootRef}
-      style={layoutHold.boxStyle("panel")}
-      onBlur={(event) => {
-        // D39-7: si el foco sale de la fila llevada por programa, volver a ella es del usuario.
-        if (event.target.getAttribute("data-line-index") === String(autoFocusedRowRef.current)) {
-          autoFocusedRowRef.current = null;
-        }
-      }}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Revisión de la factura</h2>
-          <p className="text-sm text-on-surface-variant">
-            Confirma cada línea antes de cargarla en la compra. Nada se enlaza sin tu confirmación.
-          </p>
-        </div>
-        <Button className="lg:hidden" onClick={() => setViewerOpen(true)} variant="outline">
-          <FileImage aria-hidden className="size-4" />
-          Ver factura
-        </Button>
-      </div>
-
-      <InvoiceReviewConfirmedNotice state={state} />
-
-      {/* D36: Enter sobre una fila con aviso no elige; se anuncia qué falta y cómo llegar a la opción. */}
-      <p aria-live="polite" className="sr-only" data-testid="invoice-review-announcement">
-        {choiceNotice
-          ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(state, choiceNotice).join(" ")} ${
-              choiceNotice.choiceMade && awaitsCostAcknowledgement(state, choiceNotice)
-                ? "Pulsa Tab para ir a confirmar el costo."
-                : "Pulsa Tab para ir a las opciones."
-            }`
-          : ""}
-      </p>
-
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="flex min-w-0 flex-col gap-4">
-          {/* D46-a: encabezado y avisos no encogen bajo el dedo (las filas subirían). REP17-01 (D70(a)): lo que aparece o
-              se mueve en ellos sin acción del usuario no actúa durante 1 s (D49). */}
-          <div
-            className="flex min-w-0 flex-col gap-4"
-            data-layout-arrival-guard
-            data-layout-box="header"
-            style={layoutHold.boxStyle("header")}
-          >
-            <div ref={headerRef}>
-              <InvoiceReviewHeader
-                onAction={applyPanelAction}
-                onRescan={onRescan}
-                state={state}
-                supplierFetcher={supplierFetcher}
-              />
-            </div>
-            {/* D60(c): avisos que cambian sin tocarlos; useLayoutHold devuelve las filas a su punto. REP15-01b: el de tasa
-                reserva su alto (lo que llega tarde no lo cambia); la retención queda para lo que cambia el usuario. */}
-            <div className="grid empty:hidden" data-layout-notice>
-              <InvoiceReviewRateNotice
-                onAction={applyPanelAction}
-                reserve={rateReserve}
-                state={state}
-                systemRateArrivedLate={rateAtOpen !== null && state.rate.system !== undefined}
-              />
-            </div>
-            <div className="empty:hidden" data-layout-notice>
-              <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
-            </div>
+    // REP19-01 (D77(a)): los hijos (buscadores, aviso de duplicado, proveedor) declaran sus llegadas a la guarda del panel.
+    <LayoutArrivalContext value={layoutHold.arrival}>
+      <div
+        className="flex min-w-0 flex-col gap-4"
+        data-layout-box="panel"
+        data-testid="invoice-review-panel"
+        // D33-a (C6-M1): la autorrepetición del teclado y el 2.º clic de un doble clic no activan
+        // nada (fila, chip, opción, Descartar/Restaurar, Cargar).
+        onClickCapture={(event) => {
+          if (!(event.target instanceof Element)) {
+            return;
+          }
+          const guardedControl = event.target.closest(GUARDED_CONTROL_SELECTOR);
+          if (
+            (event.detail > 1 && (guardedControl || event.target.closest(ACTIVATION_SELECTOR))) ||
+            (guardedControl && awaitingReleaseRef.current)
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          const activation = readPointerActivation(event);
+          if (!activation) {
+            return;
+          }
+          // D46-b: lo que apareció bajo el dedo tras la activación anterior no se acciona. D49: tampoco
+          // lo que movió la aplicación del layout pendiente hace menos de 1 s. B-p11-1: ni lo que destapó
+          // una lista flotante al elegir en ella.
+          if (isPointerGuarded(activation)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          lastPointerActivationRef.current = activation;
+          // La lista del buscador vive en un portal: su clic llega por el árbol de React, no por el DOM.
+          revealActivationRef.current = rootRef.current?.contains(activation.control) ? null : activation;
+          // D46-a: antes de que la acción cambie nada, se fijan las cajas y el orden actuales.
+          layoutHold.holdLayout(activation.control, {
+            review: sections.review.map((line) => line.index),
+            confirmed: sections.confirmed.map((line) => line.index),
+          });
+        }}
+        onKeyDownCapture={(event) => {
+          if (event.repeat && (event.key === "Enter" || event.key === "Escape")) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (ACTIVATION_KEYS.has(event.key)) {
+            pressedRef.current.add(`key:${event.key}`);
+          }
+        }}
+        // B-p11-2 (caos p11): el foco (y el teclado en pantalla) llega en el `mousedown`, antes del clic
+        // que la guarda ignora: sobre un control guardado tampoco entra el foco.
+        onMouseDownCapture={(event) => {
+          const activation = readPointerActivation(event);
+          if (activation && isPointerGuarded(activation)) {
+            event.preventDefault();
+          }
+        }}
+        onPointerDownCapture={(event) => {
+          pressedRef.current.add(`pointer:${event.pointerId}`);
+          // D39-7: el puntero sobre la fila es acción del usuario en ella.
+          if (
+            event.target instanceof Element &&
+            event.target.closest("[data-line-index]")?.getAttribute("data-line-index") ===
+              String(autoFocusedRowRef.current)
+          ) {
+            autoFocusedRowRef.current = null;
+          }
+        }}
+        ref={rootRef}
+        style={layoutHold.boxStyle("panel")}
+        onBlur={(event) => {
+          // D39-7: si el foco sale de la fila llevada por programa, volver a ella es del usuario.
+          if (event.target.getAttribute("data-line-index") === String(autoFocusedRowRef.current)) {
+            autoFocusedRowRef.current = null;
+          }
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Revisión de la factura</h2>
+            <p className="text-sm text-on-surface-variant">
+              Confirma cada línea antes de cargarla en la compra. Nada se enlaza sin tu confirmación.
+            </p>
           </div>
+          <Button className="lg:hidden" onClick={() => setViewerOpen(true)} variant="outline">
+            <FileImage aria-hidden className="size-4" />
+            Ver factura
+          </Button>
+        </div>
 
-          <section
-            aria-label="Líneas de la factura"
-            data-layout-notice-anchor
-            className="overflow-hidden rounded-xl border border-border bg-surface-container-lowest dark:border-slate-800"
-          >
-            {state.lines.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-on-surface-variant" role="status">
-                No se leyó ninguna línea en la factura. Repite la foto o registra la compra a mano.
-              </p>
-            ) : null}
-            {sections.review.length > 0 ? (
-              <ul aria-label="Líneas por revisar" className="divide-y divide-border dark:divide-slate-800">
-                {sections.review.map((line) => renderRow(line.index))}
-              </ul>
-            ) : modelSections.review.length === 0 && state.lines.length > 0 && !state.confirmedPurchase ? (
-              <p className="px-4 py-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
-                Todas las líneas quedaron emparejadas con tus productos. Revisa los totales y carga la compra.
-              </p>
-            ) : null}
-            {sections.confirmed.length > 0 ? (
-              <div className="border-t border-border dark:border-slate-800">
-                <button
-                  aria-expanded={confirmedOpen}
-                  className="flex w-full cursor-pointer items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                  onClick={() => setConfirmedOpen((open) => !open)}
-                  type="button"
-                >
-                  <span>
-                    {confirmedToggleLabel(sections.confirmed.length, confirmedOpen)}
-                    {confirmedMismatches > 0 ? (
-                      <span className="ml-2 text-xs font-normal text-red-700 dark:text-red-300">
-                        {confirmedMismatches === 1
-                          ? "1 con total distinto al leído"
-                          : `${confirmedMismatches} con total distinto al leído`}
-                      </span>
-                    ) : null}
-                  </span>
-                  {confirmedOpen ? (
-                    <ChevronUp aria-hidden className="size-4" />
-                  ) : (
-                    <ChevronDown aria-hidden className="size-4" />
-                  )}
-                </button>
-                {confirmedOpen ? (
-                  <ul
-                    aria-label="Líneas confirmadas"
-                    className="divide-y divide-border border-t border-border dark:divide-slate-800 dark:border-slate-800"
-                    onBlur={handleConfirmedBlur}
-                    onFocus={handleConfirmedFocus}
-                  >
-                    {sections.confirmed.map((line) => renderRow(line.index))}
-                  </ul>
-                ) : null}
+        <InvoiceReviewConfirmedNotice state={state} />
+
+        {/* D36: Enter sobre una fila con aviso no elige; se anuncia qué falta y cómo llegar a la opción. */}
+        <p aria-live="polite" className="sr-only" data-testid="invoice-review-announcement">
+          {choiceNotice
+            ? `Línea ${choiceNotice.index + 1}: ${lineNeedMessages(state, choiceNotice).join(" ")} ${
+                choiceNotice.choiceMade && awaitsCostAcknowledgement(state, choiceNotice)
+                  ? "Pulsa Tab para ir a confirmar el costo."
+                  : "Pulsa Tab para ir a las opciones."
+              }`
+            : ""}
+        </p>
+
+        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+          <div className="flex min-w-0 flex-col gap-4">
+            {/* D46-a: encabezado y avisos no encogen bajo el dedo (las filas subirían). REP17-01 (D70(a)), REP19-01 (D77):
+                lo que aparece o se mueve en ellos por una llegada declarada no actúa durante 1 s (D49). */}
+            <div
+              className="flex min-w-0 flex-col gap-4"
+              data-layout-box="header"
+              style={layoutHold.boxStyle("header")}
+            >
+              <div ref={headerRef}>
+                <InvoiceReviewHeader
+                  onAction={applyPanelAction}
+                  onRescan={onRescan}
+                  state={state}
+                  supplierFetcher={supplierFetcher}
+                />
               </div>
-            ) : null}
-          </section>
+              {/* D60(c): avisos que cambian sin tocarlos; useLayoutHold devuelve las filas a su punto. REP15-01b: el de tasa
+                  reserva su alto (lo que llega tarde no lo cambia); la retención queda para lo que cambia el usuario. */}
+              <div className="grid empty:hidden" data-layout-notice>
+                <InvoiceReviewRateNotice
+                  onAction={applyPanelAction}
+                  reserve={rateReserve}
+                  state={state}
+                  systemRateArrivedLate={rateAtOpen !== null && state.rate.system !== undefined}
+                />
+              </div>
+              <div className="empty:hidden" data-layout-notice>
+                <InvoiceReviewTaxNotice onAction={dispatch} state={state} />
+              </div>
+            </div>
 
-          {/* REP15-01b (D65(a)): el aviso de duplicado llega tras la consulta (o al teclear el número) y se va; tras las
-              líneas no mueve nada de encima ni las líneas (si acorta la página, lo retiene useLayoutHold, D65(b)). */}
-          <InvoiceReviewDuplicateNotice
-            duplicateAcknowledged={!duplicateUnacknowledged}
-            duplicateCheckboxRef={duplicateCheckboxRef}
-            duplicates={duplicates.matches}
-            onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
-            reserveSpace={duplicatePossible}
-            state={state}
-          />
+            <section
+              aria-label="Líneas de la factura"
+              data-layout-notice-anchor
+              className="overflow-hidden rounded-xl border border-border bg-surface-container-lowest dark:border-slate-800"
+            >
+              {state.lines.length === 0 ? (
+                <p className="px-4 py-6 text-center text-sm text-on-surface-variant" role="status">
+                  No se leyó ninguna línea en la factura. Repite la foto o registra la compra a mano.
+                </p>
+              ) : null}
+              {sections.review.length > 0 ? (
+                <ul aria-label="Líneas por revisar" className="divide-y divide-border dark:divide-slate-800">
+                  {sections.review.map((line) => renderRow(line.index))}
+                </ul>
+              ) : modelSections.review.length === 0 && state.lines.length > 0 && !state.confirmedPurchase ? (
+                <p className="px-4 py-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
+                  Todas las líneas quedaron emparejadas con tus productos. Revisa los totales y carga la compra.
+                </p>
+              ) : null}
+              {sections.confirmed.length > 0 ? (
+                <div className="border-t border-border dark:border-slate-800">
+                  <button
+                    aria-expanded={confirmedOpen}
+                    className="flex w-full cursor-pointer items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    onClick={() => setConfirmedOpen((open) => !open)}
+                    type="button"
+                  >
+                    <span>
+                      {confirmedToggleLabel(sections.confirmed.length, confirmedOpen)}
+                      {confirmedMismatches > 0 ? (
+                        <span className="ml-2 text-xs font-normal text-red-700 dark:text-red-300">
+                          {confirmedMismatches === 1
+                            ? "1 con total distinto al leído"
+                            : `${confirmedMismatches} con total distinto al leído`}
+                        </span>
+                      ) : null}
+                    </span>
+                    {confirmedOpen ? (
+                      <ChevronUp aria-hidden className="size-4" />
+                    ) : (
+                      <ChevronDown aria-hidden className="size-4" />
+                    )}
+                  </button>
+                  {confirmedOpen ? (
+                    <ul
+                      aria-label="Líneas confirmadas"
+                      className="divide-y divide-border border-t border-border dark:divide-slate-800 dark:border-slate-800"
+                      onBlur={handleConfirmedBlur}
+                      onFocus={handleConfirmedFocus}
+                    >
+                      {sections.confirmed.map((line) => renderRow(line.index))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
 
-          {/* REP17-17 (D72(b)): lo retenido se suelta a petición. Sitio reservado desde el primer render, tras las filas
-              (nunca sobre una): que el botón aparezca o se vaya no mueve nada. */}
-          <div className="flex h-9 items-center" data-testid="invoice-review-compact-slot">
-            {canCompact ? (
-              <Button onClick={compactList} size="sm" variant="outline">
-                Compactar lista
-              </Button>
-            ) : null}
+            {/* REP15-01b (D65(a)): el aviso de duplicado llega tras la consulta (o al teclear el número) y se va; tras las
+                líneas no mueve nada de encima ni las líneas (si acorta la página, lo retiene useLayoutHold, D65(b)). */}
+            <InvoiceReviewDuplicateNotice
+              duplicateAcknowledged={!duplicateUnacknowledged}
+              duplicateCheckboxRef={duplicateCheckboxRef}
+              duplicates={duplicates.matches}
+              onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
+              reserveSpace={duplicatePossible}
+              state={state}
+            />
+
+            {/* REP17-17 (D72(b)): lo retenido se suelta a petición. Sitio reservado desde el primer render, tras las filas
+                (nunca sobre una): que el botón aparezca o se vaya no mueve nada. */}
+            <div className="flex h-9 items-center" data-testid="invoice-review-compact-slot">
+              {canCompact ? (
+                <Button onClick={compactList} size="sm" variant="outline">
+                  Compactar lista
+                </Button>
+              ) : null}
+            </div>
           </div>
+
+          <aside aria-label="Factura escaneada" className="hidden lg:block">
+            <div className="sticky top-4 rounded-xl border border-border bg-surface-container-lowest p-3 dark:border-slate-800">
+              <InvoiceScanImages scanId={state.scanId} />
+            </div>
+          </aside>
         </div>
 
-        <aside aria-label="Factura escaneada" className="hidden lg:block">
-          <div className="sticky top-4 rounded-xl border border-border bg-surface-container-lowest p-3 dark:border-slate-800">
-            <InvoiceScanImages scanId={state.scanId} />
-          </div>
-        </aside>
-      </div>
-
-      <InvoiceReviewFooter
-        detailStyle={layoutHold.boxStyle("footer-detail")}
-        duplicateCheckFailed={duplicates.failed}
-        duplicatePending={duplicates.pending}
-        duplicateUnacknowledged={duplicateUnacknowledged}
-        footerRef={footerRef}
-        footerStyle={layoutHold.boxStyle("footer")}
-        onAction={dispatch}
-        onDiscard={() => setDiscardScanOpen(true)}
-        onLoad={handleLoad}
-        onReviewDuplicate={() => {
-          // El motivo del pie lleva a la casilla del aviso (arriba, en el encabezado).
-          duplicateCheckboxRef.current?.scrollIntoView?.({ block: "center" });
-          duplicateCheckboxRef.current?.focus({ preventScroll: true });
-        }}
-        state={state}
-        summary={summary}
-      />
-
-      {/* D36 (C7-M3): descartar tira la revisión y volver a escanear cobra otra página. REP14-04
-          (B-p14-2): un escaneo ya confirmado no se vuelve a cargar; descartar solo cierra la revisión. */}
-      <ConfirmActionModal
-        cancelLabel="Seguir revisando"
-        confirmLabel="Descartar escaneo"
-        description={
-          state.confirmedPurchase
-            ? `Se cierra la revisión. ${confirmedPurchaseMessage(state.confirmedPurchase)}. La compra registrada no cambia.`
-            : "Se cierra la revisión y se pierde lo que hayas corregido. Para usar esta factura habrá que escanearla otra vez, y cuenta como un escaneo nuevo."
-        }
-        onConfirm={() => {
-          setDiscardScanOpen(false);
-          onDiscard();
-        }}
-        onOpenChange={setDiscardScanOpen}
-        open={discardScanOpen}
-        title="¿Descartar el escaneo?"
-        variant="danger"
-      />
-
-      <Modal onOpenChange={setViewerOpen} open={viewerOpen} title="Factura escaneada">
-        {viewerOpen ? <InvoiceScanImages scanId={state.scanId} /> : null}
-      </Modal>
-
-      {canCreateProduct ? (
-        <PurchaseNewProductModal
-          initialValues={newProduct?.values}
-          onCreated={(product) => {
-            const index = newProduct?.index;
-            setNewProduct(null);
-            if (index !== undefined) {
-              applyProductChoice({
-                type: "chooseProduct",
-                index,
-                product: { productId: product.id, name: product.name },
-                created: true,
-              });
-            }
+        <InvoiceReviewFooter
+          detailStyle={layoutHold.boxStyle("footer-detail")}
+          duplicateCheckFailed={duplicates.failed}
+          duplicatePending={duplicates.pending}
+          duplicateUnacknowledged={duplicateUnacknowledged}
+          footerRef={footerRef}
+          footerStyle={layoutHold.boxStyle("footer")}
+          onAction={dispatch}
+          onDiscard={() => setDiscardScanOpen(true)}
+          onLoad={handleLoad}
+          onReviewDuplicate={() => {
+            // El motivo del pie lleva a la casilla del aviso (arriba, en el encabezado).
+            duplicateCheckboxRef.current?.scrollIntoView?.({ block: "center" });
+            duplicateCheckboxRef.current?.focus({ preventScroll: true });
           }}
-          onOpenChange={(open) => {
-            if (!open) {
-              setNewProduct(null);
-            }
-          }}
-          open={newProduct !== null}
-          returnFocusTo={newProductOpenerRef}
+          state={state}
+          summary={summary}
         />
-      ) : null}
-    </div>
+
+        {/* D36 (C7-M3): descartar tira la revisión y volver a escanear cobra otra página. REP14-04
+            (B-p14-2): un escaneo ya confirmado no se vuelve a cargar; descartar solo cierra la revisión. */}
+        <ConfirmActionModal
+          cancelLabel="Seguir revisando"
+          confirmLabel="Descartar escaneo"
+          description={
+            state.confirmedPurchase
+              ? `Se cierra la revisión. ${confirmedPurchaseMessage(state.confirmedPurchase)}. La compra registrada no cambia.`
+              : "Se cierra la revisión y se pierde lo que hayas corregido. Para usar esta factura habrá que escanearla otra vez, y cuenta como un escaneo nuevo."
+          }
+          onConfirm={() => {
+            setDiscardScanOpen(false);
+            onDiscard();
+          }}
+          onOpenChange={setDiscardScanOpen}
+          open={discardScanOpen}
+          title="¿Descartar el escaneo?"
+          variant="danger"
+        />
+
+        <Modal onOpenChange={setViewerOpen} open={viewerOpen} title="Factura escaneada">
+          {viewerOpen ? <InvoiceScanImages scanId={state.scanId} /> : null}
+        </Modal>
+
+        {canCreateProduct ? (
+          <PurchaseNewProductModal
+            initialValues={newProduct?.values}
+            onCreated={(product) => {
+              const index = newProduct?.index;
+              setNewProduct(null);
+              if (index !== undefined) {
+                applyProductChoice({
+                  type: "chooseProduct",
+                  index,
+                  product: { productId: product.id, name: product.name },
+                  created: true,
+                });
+              }
+            }}
+            onOpenChange={(open) => {
+              if (!open) {
+                setNewProduct(null);
+              }
+            }}
+            open={newProduct !== null}
+            returnFocusTo={newProductOpenerRef}
+          />
+        ) : null}
+      </div>
+    </LayoutArrivalContext>
   );
 }

@@ -15,6 +15,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useLayoutArrival } from "@/shared/hooks/useLayoutArrival";
 import {
   formControlClassName,
   formControlErrorClassName,
@@ -184,6 +185,8 @@ export function EntityAutocomplete<K extends EntityKind>({
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
+  // REP19-01 (D77(a)): las respuestas de la búsqueda (y sus errores) son llegadas declaradas a quien las guarde.
+  const { arrive } = useLayoutArrival();
 
   const [text, setText] = useState(initialQuery);
   const [isDirty, setIsDirty] = useState(initialQuery !== "");
@@ -285,15 +288,17 @@ export function EntityAutocomplete<K extends EntityKind>({
 
         const visibleItems = toVisibleOptions(items, "results");
 
-        setSearch({ items: visibleItems, key, status: "success" });
-        setActiveIndex(null);
-        setIsListSeen(true);
+        arrive(() => {
+          setSearch({ items: visibleItems, key, status: "success" });
+          setActiveIndex(null);
+          setIsListSeen(true);
+        });
         shownScanRef.current = null;
         return visibleItems;
       },
       (searchError: unknown) => {
         if (requestId === requestIdRef.current) {
-          setSearch({ error: searchError, key, status: "error" });
+          arrive(() => setSearch({ error: searchError, key, status: "error" }));
           shownScanRef.current = null;
         }
 
@@ -677,8 +682,10 @@ export function EntityAutocomplete<K extends EntityKind>({
         return;
       }
 
-      setPendingScans((count) => count - 1);
-      settleScan(code, outcome, epoch === fieldEpochRef.current);
+      arrive(() => {
+        setPendingScans((count) => count - 1);
+        settleScan(code, outcome, epoch === fieldEpochRef.current);
+      });
     });
     scanQueueRef.current = turn.then(() => undefined);
   }

@@ -428,17 +428,19 @@ function pickArroz() {
  * que el refresco que la deja abierta (resultados tardíos, otro buscador) se reproduce en el DOM: con los candidatos ya
  * listados, donde está «Arroz Mary 1kg» se pone otra opción (una copia inerte) y la llegada devuelve «Arroz» (el nodo de
  * React, con su manejador) a ese punto.
+ * REP19-01 (D77(a)(b)): un cambio del DOM sin llegada declarada no se guarda. El refresco vuelve en el commit de una
+ * llegada declarada, la tasa del día (aún pendiente al abrir el buscador), en la microtarea de su commit y antes de
+ * pintar, como lo haría una respuesta tardía declarada.
  */
 function refreshCase(): AppearCase {
   let swap: { option: HTMLElement; other: HTMLElement } | null = null;
   return {
-    arrival: CANDIDATES,
+    arrival: RATE,
     fixture: FIXTURES.estados,
     id: "refresco del buscador abierto: otra opción bajo el dedo",
     page: "tal cual",
     prepare: async () => {
       await openSearch();
-      await arrive(RATE);
       await arrive(CANDIDATES);
       const option = arrozOption();
       const other = option.cloneNode(true);
@@ -451,12 +453,17 @@ function refreshCase(): AppearCase {
       await settle("otra opción en la lista");
     },
     releaseArrival: async () => {
-      if (!swap) {
+      const prepared = swap;
+      if (!prepared) {
         throw new Error("Sin refresco preparado");
       }
-      swap.other.replaceWith(swap.option);
       swap = null;
-      return () => true;
+      const refresh = new MutationObserver(() => {
+        refresh.disconnect();
+        prepared.other.replaceWith(prepared.option);
+      });
+      refresh.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+      return release(RATE);
     },
   };
 }
