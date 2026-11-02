@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Camera, Copy } from "lucide-react";
 import Link from "next/link";
-import { type RefObject, useId, useRef } from "react";
+import { Fragment, type RefObject, useId, useRef } from "react";
 
 import { useInvoiceScanPurchase } from "@/modules/invoice-scan/client/useInvoiceScanPurchase";
 import type { InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
@@ -17,6 +17,7 @@ import { cn } from "@/shared/utils/cn";
 import { getHeaderDateMessage, type InvoiceReviewAction, type InvoiceReviewState } from "../reviewModel";
 import {
   duplicateCriterionLabel,
+  duplicateCriterionLabels,
   formatConfidencePct,
   formatScore,
   LOW_EXTRACTION_CONFIDENCE,
@@ -231,9 +232,8 @@ const duplicateNoticeClassName =
   "col-start-1 row-start-1 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
 const ACKNOWLEDGE_TEXT = "No es la misma compra, o quiero cargarla igual";
 
-/** Textos del aviso: ya registrada en una compra (con «Ver») o ya escaneada. */
-function duplicateTexts(header: InvoiceReviewState["header"]) {
-  const criterion = duplicateCriterionLabel(header);
+/** Textos del aviso con un criterio: ya registrada en una compra (con «Ver») o ya escaneada. */
+function duplicateTexts(criterion: string) {
   return {
     purchase: `Esta factura (${criterion}) ya se registró en una compra. Revisa que no la cargues dos veces.`,
     scan: `Esta factura (${criterion}) ya se escaneó antes en la tienda. Revisa que no la cargues dos veces.`,
@@ -293,16 +293,22 @@ export function InvoiceReviewDuplicateNotice({
   const ownCheckboxRef = useRef<HTMLInputElement>(null);
   const acknowledgeRef = duplicateCheckboxRef ?? ownCheckboxRef;
   const acknowledge = useFreshPressCheckbox(acknowledgeRef);
-  const texts = duplicateTexts(header);
+  // REP19-03 (B-p20B-1): el criterio sale de lo que casó (`duplicates`); la reserva cubre todos los posibles.
+  const texts = duplicateTexts(duplicateCriterionLabel(header, duplicates));
 
   return (
     <div className="grid empty:hidden" data-layout-arrival-guard data-layout-notice>
-      {showDuplicate || reserveSpace ? (
-        <>
-          <DuplicateNoticeReserve acknowledge={onDuplicateAcknowledge !== undefined} text={`${texts.purchase} Ver`} />
-          <DuplicateNoticeReserve acknowledge={onDuplicateAcknowledge !== undefined} text={texts.scan} />
-        </>
-      ) : null}
+      {showDuplicate || reserveSpace
+        ? duplicateCriterionLabels(header).map((criterion) => {
+            const reserved = duplicateTexts(criterion);
+            return (
+              <Fragment key={criterion}>
+                <DuplicateNoticeReserve acknowledge={onDuplicateAcknowledge !== undefined} text={`${reserved.purchase} Ver`} />
+                <DuplicateNoticeReserve acknowledge={onDuplicateAcknowledge !== undefined} text={reserved.scan} />
+              </Fragment>
+            );
+          })
+        : null}
       {showDuplicate ? (
         <div
           className={duplicateNoticeClassName}
