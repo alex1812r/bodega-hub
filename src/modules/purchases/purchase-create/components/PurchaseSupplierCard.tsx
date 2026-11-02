@@ -13,6 +13,7 @@ import {
   type EntityAutocompleteValue,
   type EntityFetcher,
 } from "@/shared/components/EntityAutocomplete";
+import { useArrivedValue } from "@/shared/hooks/useLayoutArrival";
 
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
 
@@ -36,6 +37,13 @@ type PurchaseSupplierCardProps = {
   wrapSelectedName?: boolean;
 };
 
+type SupplierLookup = Pick<ReturnType<typeof usePurchaseSupplier>, "data" | "error" | "isPending">;
+
+/** Pintan lo mismo (el nombre, el error, si carga): la consulta puede devolver otro objeto con lo mismo. */
+function sameSupplierLookup(left: SupplierLookup, right: SupplierLookup) {
+  return left.data?.name === right.data?.name && left.error?.message === right.error?.message && left.isPending === right.isPending;
+}
+
 export function PurchaseSupplierCard({
   onSupplierChange,
   selectedSupplierId,
@@ -48,8 +56,12 @@ export function PurchaseSupplierCard({
   const pickedLabel = selectedSupplierId ? pickedLabels[selectedSupplierId] : undefined;
   // El id que llega desde fuera (borrador restaurado, compra duplicada) no trae
   // nombre: se lee el proveedor solo en ese caso.
-  const externalSupplier = usePurchaseSupplier(
-    pickedLabel === undefined ? selectedSupplierId : undefined,
+  // REP19-01 (D77(a)): lo que trae esa lectura (nombre, error) se adopta como una llegada declarada (en la revisión de
+  // factura, la guarda del panel guarda lo que mueva o haga aparecer).
+  const lookup = usePurchaseSupplier(pickedLabel === undefined ? selectedSupplierId : undefined);
+  const externalSupplier = useArrivedValue(
+    { data: lookup.data, error: lookup.error, isPending: lookup.isPending },
+    sameSupplierLookup,
   );
   const isResolvingName =
     Boolean(selectedSupplierId) && pickedLabel === undefined && externalSupplier.isPending;

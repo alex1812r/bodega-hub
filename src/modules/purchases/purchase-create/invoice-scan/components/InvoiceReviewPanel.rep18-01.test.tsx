@@ -12,9 +12,9 @@ import { FIXTURES, SEARCH_PRODUCTS } from "./InvoiceReviewPanel.rep16-02.fixture
 import { COMPACTION_GUARD_MS } from "./useLayoutHold";
 
 /**
- * REP18-01 · D75(a)(b) (M-p19B-1): un control que APARECE o SE HABILITA por una llegada asíncrona (sin turno del usuario)
+ * REP18-01 · D75(a)(b) (M-p19B-1): un control que APARECE o SE HABILITA por una llegada asíncrona (REP19-01, D77: declarada)
  * ignora durante 1 s las activaciones con el puntero, con un único mecanismo para todo el panel (filas, pie, la lista
- * flotante del buscador); el teclado no se bloquea, y lo que aparece en el turno del usuario es suyo. D75(b): el aviso
+ * flotante del buscador); el teclado no se bloquea, y lo que aparece por un gesto sin llegada es del usuario. D75(b): el aviso
  * «Esperando la tasa del día…» no está en el sitio donde aparecerán las opciones.
  */
 
@@ -133,17 +133,19 @@ describe("REP18-01 · D75(a) · lo que aparece por una llegada no actúa con el 
     expect(perUnit(1)).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("en el turno del usuario lo que aparece es suyo: no se guarda", async () => {
+  // REP19-01 (D77(a)): sustituye a «en el turno del usuario lo que aparece es suyo: no se guarda». El turno por tiempo se
+  // eliminó: la tasa es una llegada declarada y lo que trae se guarda aunque el usuario acabe de pulsar una tecla
+  // (M-p20B-1). Lo que trae un gesto sin llegada sigue sin guardarse (InvoiceReviewPanel.rep19-01.test.tsx, D77(b)).
+  it("tras una tecla del usuario, lo que trae la llegada de la tasa se guarda igual (D77(a))", async () => {
     const base = props(FIXTURES.tasa3.response);
     const view = render(<InvoiceReviewPanel {...base} />);
     await advance(QUIET_MS);
 
-    // Una tecla abre el turno del usuario (USER_TURN_MS): lo que cambie en él no es una llegada.
     fireEvent.keyDown(row(1), { key: "Shift" });
     view.rerender(<InvoiceReviewPanel {...base} context={{ systemRateVes: 900, taxRates: REVIEW_TAX_RATES }} />);
 
     touch(perUnit(1));
-    expect(perUnit(1)).toHaveAttribute("aria-pressed", "true");
+    expect(perUnit(1)).toHaveAttribute("aria-pressed", "false");
   });
 
   it("pie: «Cargar en la compra» que se habilita al acabar la consulta de duplicados no carga con el toque; pasado 1 s, sí", async () => {
@@ -178,7 +180,7 @@ describe("REP18-01 · D75(a) · lo que aparece por una llegada no actúa con el 
 });
 
 /** `estados`: abre el buscador de la fila sin producto, con «Buscando...» hasta que se suelte la respuesta (`answer`). */
-async function openSearchPending() {
+async function openSearchPending(context: InvoiceReviewPanelProps["context"] = { systemRateVes: 900, taxRates: REVIEW_TAX_RATES }) {
   const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) });
   // Cada consulta del buscador (la del texto leído y las de sus palabras) espera a que llegue la respuesta.
   let answer: () => void = () => undefined;
@@ -189,23 +191,20 @@ async function openSearchPending() {
     await arrived;
     return SEARCH_PRODUCTS;
   };
-  render(
-    <InvoiceReviewPanel
-      {...props(FIXTURES.estados.response, { context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES }, productFetcher })}
-    />,
-  );
+  const base = props(FIXTURES.estados.response, { context, productFetcher });
+  const view = render(<InvoiceReviewPanel {...base} />);
   await advance(QUIET_MS);
   await user.click(within(row(3)).getByRole("button", { name: /Buscar producto/ }));
   await advance(QUIET_MS);
   expect(screen.getByText("Buscando...")).toBeInTheDocument();
-  return answer;
+  return { answer, base, view };
 }
 
 const arroz = () => screen.getByRole("option", { name: /Arroz Mary 1kg/ });
 
 describe("REP18-10 · D76(a) · las primeras opciones de la lista flotante son del usuario; las de un refresco, no", () => {
   it("primer listado: la opción que llega sobre «Buscando...» se elige con el toque antes de 1 s", async () => {
-    const answer = await openSearchPending();
+    const { answer } = await openSearchPending();
 
     await act(async () => answer());
     await advance(300);
@@ -216,12 +215,14 @@ describe("REP18-10 · D76(a) · las primeras opciones de la lista flotante son d
   });
 
   it("refresco con la lista abierta que pone otra opción bajo el dedo: el toque antes de 1 s no elige; pasado, sí", async () => {
-    const answer = await openSearchPending();
+    const { answer, base, view } = await openSearchPending({ taxRates: REVIEW_TAX_RATES });
     await act(async () => answer());
     await advance(QUIET_MS);
 
     // `EntityAutocomplete` pasa por «Buscando...» entre dos listados; el refresco que deja la lista abierta (resultados
     // tardíos, otro buscador) se reproduce en el DOM: donde estaba «Arroz» hay otra opción y luego vuelve «Arroz».
+    // REP19-01 (D77(a)(b)): un cambio del DOM sin llegada declarada no se guarda; el refresco vuelve en el commit de una
+    // llegada declarada (la tasa del día), en su microtarea y antes de pintar, como lo haría una respuesta tardía.
     const option = arroz();
     const other = option.cloneNode(true);
     if (!(other instanceof HTMLElement)) {
@@ -230,7 +231,14 @@ describe("REP18-10 · D76(a) · las primeras opciones de la lista flotante son d
     other.textContent = "Otra opción";
     await act(async () => option.replaceWith(other));
     await advance(QUIET_MS);
-    await act(async () => other.replaceWith(option));
+    const refresh = new MutationObserver(() => {
+      refresh.disconnect();
+      other.replaceWith(option);
+    });
+    refresh.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+    await act(async () => {
+      view.rerender(<InvoiceReviewPanel {...base} context={{ systemRateVes: 900, taxRates: REVIEW_TAX_RATES }} />);
+    });
 
     touch(arroz());
     expect(arroz()).toBeInTheDocument();
@@ -257,23 +265,24 @@ async function measuredDuring(body: () => Promise<void> | void) {
   }
 }
 
-describe("REP18-01b · la guarda de llegadas solo mide lo que puede traer un control, fuera del turno del usuario", () => {
-  it("al teclear no mide en cada tecla; al acabar el turno mide la base y la tasa que llega después se guarda", async () => {
+// REP19-01 (D77(d)): la base que se medía por cambio del DOM fuera del turno del usuario se eliminó. Solo se mide (foto y
+// comparación) en una llegada declarada: ni al teclear ni por cambios del DOM, dentro o fuera del panel.
+describe("REP18-01b · REP19-01 · la guarda de llegadas solo mide en una llegada declarada", () => {
+  it("al teclear no mide; la llegada que sigue (duplicados del número, la tasa) sí, y se guarda", async () => {
     const base = props(FIXTURES.tasa3.response);
     const view = render(<InvoiceReviewPanel {...base} />);
     await advance(QUIET_MS);
     const field = screen.getByLabelText<HTMLInputElement>("Número de factura");
 
     const typing = await measuredDuring(() => {
-      // Cada tecla escrita (el evento `change` de React) abre o alarga el turno del usuario.
       for (const digit of "4567") {
         fireEvent.change(field, { target: { value: `${field.value}${digit}` } });
       }
     });
     expect(typing).toBe(0);
+    // La respuesta de duplicados del número tecleado es una llegada declarada.
     expect(await measuredDuring(() => advance(QUIET_MS))).toBeGreaterThan(0);
 
-    // La llegada se mide en su microtarea (en el navegador, antes del siguiente evento).
     await act(async () => {
       view.rerender(<InvoiceReviewPanel {...base} context={{ systemRateVes: 900, taxRates: REVIEW_TAX_RATES }} />);
     });
@@ -281,7 +290,7 @@ describe("REP18-01b · la guarda de llegadas solo mide lo que puede traer un con
     expect(perUnit(1)).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("no mide por cambios fuera del panel y de sus listas flotantes, ni por atributos que no traen un control", async () => {
+  it("no mide por cambios del DOM sin llegada, fuera ni dentro del panel", async () => {
     render(
       <div>
         <button type="button">Fuera del panel</button>
@@ -297,15 +306,10 @@ describe("REP18-01b · la guarda de llegadas solo mide lo que puede traer un con
         outside.className = "otra";
         row(1).setAttribute("data-rep18-01b", "1");
         row(1).setAttribute("aria-busy", "true");
-      }),
-    );
-    expect(unrelated).toBe(0);
-    const inPanel = await measuredDuring(() =>
-      act(async () => {
         row(1).classList.add("rep18-01b");
       }),
     );
-    expect(inPanel).toBeGreaterThan(0);
+    expect(unrelated).toBe(0);
   });
 });
 

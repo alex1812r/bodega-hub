@@ -3,7 +3,7 @@
  * colores por estado, formato de importes y precarga de "Nuevo producto".
  * La semántica (estados, totales, bloqueos) es de `../reviewModel.ts`.
  */
-import { getInvoiceDateIssue } from "@/modules/invoice-scan/contracts";
+import { getInvoiceDateIssue, type InvoiceDuplicateMatch } from "@/modules/invoice-scan/contracts";
 import {
   NO_RATE_PRICE_ISSUE,
   PRICE_DEVIATION_LIMIT,
@@ -42,15 +42,32 @@ import {
  * mismo (o uno a un carácter, con la misma fecha y total); sin número, proveedor y total, y la
  * fecha si la hay. REP15-02 (B-p16Q-1): con los valores EFECTIVOS de la consulta, los de la
  * cabecera (`state.header`: número tecleado, fecha de la cabecera), no los leídos.
+ * REP19-03 (B-p20B-1, D77(f)): con número en la cabecera también casa un previo SIN ningún número por fecha y total
+ * (REP14-01). `match.number` es el número efectivo del previo, que cae al leído: nulo es «ni leído ni confirmado». Con
+ * las coincidencias de la consulta (`matches`), si ninguna trae número, casó por fecha y total.
  */
-export function duplicateCriterionLabel(effective: Pick<InvoiceReviewState["header"], "number" | "date">): string {
-  if (normalizeInvoiceNumber(effective.number)) {
-    return "mismo proveedor y número igual o casi igual";
+export function duplicateCriterionLabel(
+  effective: Pick<InvoiceReviewState["header"], "number" | "date">,
+  matches?: readonly Pick<InvoiceDuplicateMatch, "number">[],
+): string {
+  const matchedByNumber = matches === undefined || matches.some((match) => normalizeInvoiceNumber(match.number) !== "");
+  if (normalizeInvoiceNumber(effective.number) && matchedByNumber) {
+    return DUPLICATE_BY_NUMBER_LABEL;
   }
+  return duplicateWithoutNumberLabel(effective.date);
+}
+
+/** REP19-03 (REP17-01): todos los criterios que el aviso puede decir con esta cabecera, para reservar su alto. */
+export function duplicateCriterionLabels(effective: Pick<InvoiceReviewState["header"], "number" | "date">): string[] {
+  const withoutNumber = duplicateWithoutNumberLabel(effective.date);
+  return normalizeInvoiceNumber(effective.number) ? [DUPLICATE_BY_NUMBER_LABEL, withoutNumber] : [withoutNumber];
+}
+
+const DUPLICATE_BY_NUMBER_LABEL = "mismo proveedor y número igual o casi igual";
+
+function duplicateWithoutNumberLabel(date: string | undefined): string {
   // REP15-02b (B-qa1502-2): la fecha cuenta solo si la consulta la manda (buildInvoiceDuplicateQuery).
-  return effective.date && getInvoiceDateIssue(effective.date) === undefined
-    ? "mismo proveedor, fecha y total"
-    : "mismo proveedor y total";
+  return date && getInvoiceDateIssue(date) === undefined ? "mismo proveedor, fecha y total" : "mismo proveedor y total";
 }
 
 /** Por debajo de esta confianza global de la lectura se sugiere repetir la foto. */

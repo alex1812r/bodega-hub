@@ -16,7 +16,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MockDate from "mockdate";
 import { http, HttpResponse } from "msw";
-import { type ComponentProps, useEffect, useState } from "react";
+import { type ComponentProps, useEffect, useLayoutEffect, useState } from "react";
 import { expect, fn, screen, waitFor, within } from "storybook/test";
 
 import { invoiceScanQueryKeys } from "@/modules/invoice-scan/client/useInvoiceScanImages";
@@ -120,6 +120,9 @@ let lastCost = gate<number | null>();
 
 const RATE_EVENT = "rep16-01:system-rate";
 
+/** REP19-01 (D77(d)): lo que crece en el último aviso de L1 en el commit de la llegada de la tasa (`growStory`). */
+let growsWithRate: HTMLElement | null = null;
+
 /** La tasa del día llega con la revisión ya abierta (REP6-05): la página la pasa en `context` más tarde. */
 function LateRatePanel(props: ComponentProps<typeof InvoiceReviewPanel>) {
   const [systemRateVes, setSystemRateVes] = useState<number | undefined>(undefined);
@@ -128,6 +131,13 @@ function LateRatePanel(props: ComponentProps<typeof InvoiceReviewPanel>) {
     window.addEventListener(RATE_EVENT, onRate);
     return () => window.removeEventListener(RATE_EVENT, onRate);
   }, []);
+  // Tras los efectos del panel (el suyo declara la llegada de la tasa) y antes de que React aplique lo que ella pide.
+  useLayoutEffect(() => {
+    const notices = systemRateVes === undefined ? null : document.querySelectorAll('li[data-line-index="1"] [data-layout-notice]');
+    if (growsWithRate && notices && notices.length > 0) {
+      notices[notices.length - 1].append(growsWithRate);
+    }
+  }, [systemRateVes]);
   return <InvoiceReviewPanel {...props} context={systemRateVes === undefined ? props.context : { ...props.context, systemRateVes }} />;
 }
 
@@ -351,10 +361,11 @@ function confirmedStory(width: number, height: number): Story {
  * D67(a): lo que crece solo en un aviso de una fila (sin acción del usuario) más allá de lo reservado no baja los
  * controles de las filas siguientes: useLayoutHold lo recorta a su alto anterior (REP17-17, D72: también al desplazar)
  * hasta que el usuario pulsa «Compactar lista».
+ * REP19-01 (D77(d)): el recorte es de lo que crece en el commit de una llegada declarada; un cambio del DOM sin llegada
+ * no lo es. El aviso crece con la llegada de la tasa (la revisión se abre sin ella), en su commit y antes de pintar.
  */
 function growStory(width: number, height: number): Story {
   return {
-    args: { context: { systemRateVes: 900, taxRates: REVIEW_TAX_RATES } },
     play: async () => {
       const browser = await prepare(width, height);
       if (!browser) {
@@ -366,10 +377,12 @@ function growStory(width: number, height: number): Story {
       const extra = document.createElement("p");
       extra.style.height = "120px";
       extra.textContent = "Motivo que llega tarde";
+      growsWithRate = extra;
       const moved = await movedDuring(async () => {
-        notice.append(extra);
+        window.dispatchEvent(new CustomEvent(RATE_EVENT, { detail: 900 }));
         await sleep(500);
       });
+      growsWithRate = null;
       const clipped = notice.style.maxHeight !== "" || notice.style.display === "none";
       const top = Math.round(within(row(2)).getByRole("button", { name: /Descartar línea/ }).getBoundingClientRect().top);
       const scrollBefore = main().scrollTop;
@@ -377,12 +390,16 @@ function growStory(width: number, height: number): Story {
       await sleep(400);
       const keptAfterScroll = notice.style.maxHeight !== "" || notice.style.display === "none";
       const scrolled = main().scrollTop - scrollBefore;
+      // REP19-01: con la tasa llegada en la medición, «Compactar lista» suelta también lo que retuvo la tasa (L2 sube por
+      // ello): lo que se mide es que el aviso recupera lo que creció.
+      const clippedHeight = Math.round(notice.getBoundingClientRect().height);
       await compactList(browser);
       await sleep(400);
       const releasedTop = Math.round(within(row(2)).getByRole("button", { name: /Descartar línea/ }).getBoundingClientRect().top) + scrolled;
+      const releasedHeight = Math.round(notice.getBoundingClientRect().height);
       const released = notice.style.maxHeight === "" && notice.style.display !== "none";
       extra.remove();
-      const text = `${width}×${height} aviso que crece 120 px: movidos ${moved.join(", ") || "ninguno"}; recortado ${clipped}; tras desplazar sigue ${keptAfterScroll}; tras compactar suelto ${released} (Descartar L2 ${top} → ${releasedTop} sin el desplazamiento)`;
+      const text = `${width}×${height} aviso que crece 120 px: movidos ${moved.join(", ") || "ninguno"}; recortado ${clipped}; tras desplazar sigue ${keptAfterScroll}; tras compactar suelto ${released} (aviso ${clippedHeight} → ${releasedHeight} px; Descartar L2 ${top} → ${releasedTop} sin el desplazamiento)`;
       console.warn(`[REP16-01 crece] ${text}`);
       await expect({ clipped, keptAfterScroll, moved, released }, text).toEqual({
         clipped: true,
@@ -390,7 +407,7 @@ function growStory(width: number, height: number): Story {
         moved: [],
         released: true,
       });
-      await expect(releasedTop - top, text).toBeGreaterThanOrEqual(100);
+      await expect(releasedHeight - clippedHeight, text).toBeGreaterThanOrEqual(100);
     },
   };
 }
