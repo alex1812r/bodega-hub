@@ -10,6 +10,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import {
   completeScan,
+  discardInvalidCachedScan,
   discardScan,
   failScan,
   findConfirmedScanByPurchase,
@@ -278,10 +279,15 @@ describe("scans.server · completeScan / failScan / discardScan por RPC service 
     ]);
   });
 
-  it("discardScan llama a discard_invoice_scan con la tienda; null (404) si no hay fila o el id no es uuid", async () => {
+  it("discardScan llama a discard_invoice_scan_by_user con la tienda y el usuario; null (404) si no hay fila o el id no es uuid", async () => {
     const calls = useRpcClient(ok(dbRow({ status: "discarded" })));
     expect(await discardScan(ctx, scanId)).toMatchObject({ status: "discarded" });
-    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId, p_store_id: ctx.storeId }]);
+    // REP20-01 (D78(a)): la RPC decide con el usuario (permiso de compra, creador o admin).
+    expect(calls[0]).toEqual([
+      "rpc",
+      "discard_invoice_scan_by_user",
+      { p_id: scanId, p_store_id: ctx.storeId, p_user_id: ctx.userId },
+    ]);
 
     useRpcClient(ok(null));
     expect(await discardScan(ctx, scanId)).toBeNull();
@@ -296,6 +302,19 @@ describe("scans.server · completeScan / failScan / discardScan por RPC service 
     useRpcClient({ data: null, error: { code: "PT409", message } });
 
     await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
+  });
+
+  it("discardScan propaga el 403 de la RPC (PT403) si el usuario no creó el escaneo ni es admin", async () => {
+    const message = "Solo quien escaneó esta factura o un administrador de la tienda puede descartarla.";
+    useRpcClient({ data: null, error: { code: "PT403", message } });
+
+    await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "FORBIDDEN", message, status: 403 });
+  });
+
+  it("discardInvalidCachedScan reemplaza una lectura en caché fuera del contrato con la RPC de tienda, sin usuario", async () => {
+    const calls = useRpcClient(ok(dbRow({ status: "discarded" })));
+    expect(await discardInvalidCachedScan(ctx, scanId)).toMatchObject({ status: "discarded" });
+    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId, p_store_id: ctx.storeId }]);
   });
 
   it("saveMatch llama a save_invoice_scan_match con la tienda y devuelve la fila; null si ya no está extracted (QA REP7-01 F2)", async () => {

@@ -2943,9 +2943,10 @@ select
   ), false)
 union all
 select
-  'claim_invoice_scan: PT403 para almacen con purchases.create en denied_permissions (20261019m, REP3-03d B17-ext)',
+  'claim_invoice_scan: PT403 para almacen con purchases.create en denied_permissions (20261019m, REP3-03d B17-ext; desde 20261103a lo cubre current_user_can_create_purchase)',
   coalesce((
     select p.prosrc ilike '%current_user_role()::text = ''almacen''%pr.id = auth.uid()%pr.denied_permissions ? ''purchases.create''%errcode = ''PT403''%'
+      or p.prosrc ilike '%if not public.current_user_can_create_purchase() then%errcode = ''PT403''%'
     from pg_proc p where p.oid = to_regprocedure('public.claim_invoice_scan(uuid, uuid)')
   ), false)
 union all
@@ -3002,9 +3003,10 @@ select
   )
 union all
 select
-  'release_invoice_scan_claim: PT403 para almacen con purchases.create en denied_permissions, como claim (20261019o, REP4-02b B19)',
+  'release_invoice_scan_claim: PT403 para almacen con purchases.create en denied_permissions, como claim (20261019o, REP4-02b B19; desde 20261103a lo cubre current_user_can_create_purchase)',
   coalesce((
-    select p.prosrc ilike '%current_user_role()::text = ''almacen''%pr.id = auth.uid()%pr.denied_permissions ? ''purchases.create''%errcode = ''PT403''%update public.invoice_scans%'
+    select (p.prosrc ilike '%current_user_role()::text = ''almacen''%pr.id = auth.uid()%pr.denied_permissions ? ''purchases.create''%errcode = ''PT403''%update public.invoice_scans%'
+        or p.prosrc ilike '%if not public.current_user_can_create_purchase() then%errcode = ''PT403''%update public.invoice_scans%')
       and p.prosrc ilike '%and not exists%p.client_request_id = s.claim_request_id%and p.status <> ''cancelado''%'
       and p.prosecdef
       and has_function_privilege('authenticated', p.oid, 'execute')
@@ -3048,10 +3050,11 @@ select
   )
 union all
 select
-  'invoice_match_exact_aliases / barcode_products / previous_scans: tienda de assert_store_context(), rol admin | almacen (PT403), arrays acotados (PT400) y alias_norm / barcode exactos con = any (20261019q, REP7-01 P8-M1)',
+  'invoice_match_exact_aliases / barcode_products / previous_scans: tienda de assert_store_context(), rol admin | almacen (PT403; desde 20261103a, current_user_can_create_purchase), arrays acotados (PT400) y alias_norm / barcode exactos con = any (20261019q, REP7-01 P8-M1)',
   coalesce((
     select bool_and(p.prosrc ilike '%v_store_id := public.assert_store_context()%'
-      and p.prosrc ilike '%(''admin'', ''almacen'')%errcode = ''PT403''%'
+      and (p.prosrc ilike '%(''admin'', ''almacen'')%errcode = ''PT403''%'
+        or p.prosrc ilike '%current_user_can_create_purchase()%errcode = ''PT403''%')
       and p.prosrc ilike '%errcode = ''PT400''%')
       and count(*) = 3
     from pg_proc p
@@ -3141,10 +3144,11 @@ select
   ), false)
 union all
 select
-  'invoice_duplicate_candidates: tienda de assert_store_context(), rol admin | almacen (PT403), acotada (PT400, exige proveedor) y proveedor filtrado antes del limit (20261026a, REP12-06)',
+  'invoice_duplicate_candidates: tienda de assert_store_context(), rol admin | almacen (PT403; desde 20261103a, current_user_can_create_purchase), acotada (PT400, exige proveedor) y proveedor filtrado antes del limit (20261026a, REP12-06)',
   coalesce((
     select p.prosrc ilike '%v_store_id := public.assert_store_context()%'
-      and p.prosrc ilike '%(''admin'', ''almacen'')%errcode = ''PT403''%'
+      and (p.prosrc ilike '%(''admin'', ''almacen'')%errcode = ''PT403''%'
+        or p.prosrc ilike '%current_user_can_create_purchase()%errcode = ''PT403''%')
       and p.prosrc ilike '%p_limit > 200%'
       and p.prosrc ilike '%array_length(v_ids, 1), 0) + coalesce(array_length(v_digits, 1), 0) = 0%errcode = ''PT400''%'
       and p.prosrc ilike '%s.store_id = v_store_id%s.status not in (''discarded'', ''failed'')%s.supplier_id::text = any(v_ids)%c.store_id = v_store_id%limit p_limit%'
@@ -3324,5 +3328,77 @@ select
     from pg_proc p
     where p.oid in (to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])'),
                     to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)'))
+  ), false)
+union all
+select
+  'user_can_create_purchase(uuid) y current_user_can_create_purchase(): boolean, security definer, search_path vacio, como getEffectivePermissions (admin; almacen salvo denegacion; concesion de purchases.create sin denegacion); el primero solo service_role, el segundo authenticated / service_role, ninguno anon ni public (20261103a, REP20-01 D78(a))',
+  coalesce((
+    select count(*) = 2
+      and bool_and(p.prosecdef and p.prorettype = 'boolean'::regtype)
+      and bool_and(coalesce(array_to_string(p.proconfig, ',') ilike '%search_path=""%', false))
+      and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+      and bool_and(not exists (
+        select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+      ))
+      and bool_and(case when p.pronargs = 1
+        then not has_function_privilege('authenticated', p.oid, 'execute')
+          and p.prosrc ilike '%pr.is_active%''admin'' then true%''almacen'' or (pr.granted_permissions ? ''purchases.create'')%not (pr.denied_permissions ? ''purchases.create'')%'
+        else has_function_privilege('authenticated', p.oid, 'execute')
+          and p.prosrc ilike '%public.user_can_create_purchase(auth.uid())%'
+      end)
+    from pg_proc p
+    where p.oid in (to_regprocedure('public.user_can_create_purchase(uuid)'),
+                    to_regprocedure('public.current_user_can_create_purchase()'))
+  ), false)
+union all
+select
+  'invoice_scans y supplier_product_aliases: la politica de lectura admite el rol de antes O current_user_can_create_purchase() (20261103a, REP20-01 D78(a))',
+  (
+    select count(*) = 2
+      and bool_and(pol.qual ilike '%current_user_store_id()%' and pol.qual ilike '%current_user_can_create_purchase()%')
+    from pg_policies pol
+    where pol.schemaname = 'public' and pol.cmd = 'SELECT'
+      and ((pol.tablename = 'invoice_scans' and pol.policyname = 'Purchase viewers read invoice scans')
+        or (pol.tablename = 'supplier_product_aliases' and pol.policyname = 'Purchases viewers read supplier product aliases'))
+  )
+union all
+select
+  'reserve_invoice_scan: PT403 sin purchases.create efectivo (user_can_create_purchase) ANTES del lock, la cache y la cuota (20261103a, REP20-01 M-p21A-1)',
+  coalesce((
+    select p.prosrc ilike '%if not public.user_can_create_purchase(p_user_id) then%errcode = ''PT403''%pg_advisory_xact_lock%'
+    from pg_proc p where p.oid = to_regprocedure('public.reserve_invoice_scan(uuid, uuid, text, text, integer, integer, text, text)')
+  ), false)
+union all
+select
+  'discard_invoice_scan_by_user(uuid, uuid, uuid): permiso de compra y tienda (PT403), solo el creador o un admin (PT403), delega en discard_invoice_scan(uuid, uuid); security definer, solo service_role (20261103a, REP20-01 D78(a))',
+  coalesce((
+    select p.prosecdef
+      and p.prosrc ilike '%public.user_can_create_purchase(p_user_id)%errcode = ''PT403''%v_created_by is distinct from p_user_id%''admin''%errcode = ''PT403''%public.discard_invoice_scan(p_store_id, p_id)%'
+      and has_function_privilege('service_role', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+    from pg_proc p where p.oid = to_regprocedure('public.discard_invoice_scan_by_user(uuid, uuid, uuid)')
+  ), false)
+union all
+select
+  'claim / release / confirm / learn, invoice_match_exact_aliases / barcode_products / candidates / previous_scans e invoice_duplicate_candidates: PT403 con current_user_can_create_purchase(), sin current_user_role() (20261103a, REP20-01 D78(a))',
+  coalesce((
+    select count(*) = 9
+      and bool_and(p.prosrc ilike '%if not public.current_user_can_create_purchase() then%errcode = ''PT403''%'
+        and p.prosrc not ilike '%current_user_role()%')
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.claim_invoice_scan(uuid, uuid)'),
+      to_regprocedure('public.release_invoice_scan_claim(uuid, uuid)'),
+      to_regprocedure('public.confirm_invoice_scan(uuid, uuid, jsonb, uuid)'),
+      to_regprocedure('public.learn_invoice_aliases(uuid, jsonb)'),
+      to_regprocedure('public.invoice_match_exact_aliases(uuid, text[])'),
+      to_regprocedure('public.invoice_match_barcode_products(text[])'),
+      to_regprocedure('public.invoice_match_candidates(text, text, text[], text[], uuid, integer)'),
+      to_regprocedure('public.invoice_match_previous_scans(text, text[], text, uuid, integer)'),
+      to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
+    )
   ), false)
 order by 1;

@@ -426,6 +426,9 @@ export async function discardScan(
   return save({ ...scan, status: "discarded" });
 }
 
+/** El mock no distingue roles ni creador: el reemplazo interno es el mismo descarte. */
+export const discardInvalidCachedScan = discardScan;
+
 /**
  * Páginas cobradas hoy (día de Caracas). Misma limitación que `scans.server.ts`
  * (caos-2 N9): reutilizar una fila de otro día la pasa a hoy y el consumo de
