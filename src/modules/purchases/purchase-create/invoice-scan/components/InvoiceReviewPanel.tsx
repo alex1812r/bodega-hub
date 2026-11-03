@@ -1155,6 +1155,7 @@ export function InvoiceReviewPanel({
               duplicateCheckboxRef={duplicateCheckboxRef}
               duplicates={duplicates.matches}
               onDuplicateAcknowledge={(acknowledged) => setAcknowledgedDuplicate(acknowledged ? duplicateKey : null)}
+              pending={duplicates.pending}
               reserveSpace={duplicatePossible}
               state={state}
             />

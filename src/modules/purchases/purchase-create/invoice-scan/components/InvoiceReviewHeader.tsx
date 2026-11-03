@@ -19,6 +19,7 @@ import { getHeaderDateMessage, type InvoiceReviewAction, type InvoiceReviewState
 import {
   duplicateCriterionLabel,
   duplicateCriterionLabels,
+  DUPLICATE_PENDING_TEXT,
   formatConfidencePct,
   formatScore,
   LOW_EXTRACTION_CONFIDENCE,
@@ -227,6 +228,11 @@ export type InvoiceReviewDuplicateNoticeProps = {
   duplicateCheckboxRef?: RefObject<HTMLInputElement | null>;
   /** REP17-01 (D70(d)): hay consulta de duplicados: su respuesta puede traer el aviso y su sitio queda reservado. */
   reserveSpace?: boolean;
+  /**
+   * REP20-04 (B-p21Q-1, D78(f)): la consulta vigente aún no tiene respuesta: el aviso que haya (el del escaneo) dice un
+   * texto neutro en su misma caja, no qué casó.
+   */
+  pending?: boolean;
 };
 
 const duplicateNoticeClassName =
@@ -276,6 +282,7 @@ export function InvoiceReviewDuplicateNotice({
   duplicateCheckboxRef,
   duplicates,
   onDuplicateAcknowledge,
+  pending = false,
   reserveSpace = false,
   state,
 }: InvoiceReviewDuplicateNoticeProps) {
@@ -320,7 +327,9 @@ export function InvoiceReviewDuplicateNotice({
         >
           <Copy aria-hidden className="mt-0.5 size-4 shrink-0" />
           <div className="flex min-w-0 flex-col gap-2">
-            {duplicatePurchaseId ? (
+            {pending ? (
+              <span>{DUPLICATE_PENDING_TEXT}</span>
+            ) : duplicatePurchaseId ? (
               <span>
                 {texts.purchase}{" "}
                 <Link

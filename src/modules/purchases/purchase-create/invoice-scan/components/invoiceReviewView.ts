@@ -65,6 +65,9 @@ export function duplicateCriterionLabels(effective: Pick<InvoiceReviewState["hea
 
 const DUPLICATE_BY_NUMBER_LABEL = "mismo proveedor y número igual o casi igual";
 
+/** REP20-04 (B-p21Q-1, D78(f)): texto del aviso mientras la consulta de duplicados está en vuelo: no afirma qué casó. */
+export const DUPLICATE_PENDING_TEXT = "Comprobando si la factura ya se registró…";
+
 function duplicateWithoutNumberLabel(date: string | undefined): string {
   // REP15-02b (B-qa1502-2): la fecha cuenta solo si la consulta la manda (buildInvoiceDuplicateQuery).
   return date && getInvoiceDateIssue(date) === undefined ? "mismo proveedor, fecha y total" : "mismo proveedor y total";
