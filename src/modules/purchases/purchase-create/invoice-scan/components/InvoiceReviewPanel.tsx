@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, FileImage } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleAlert, FileImage } from "lucide-react";
 import { type FocusEvent, type KeyboardEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { InvoiceImageViewer } from "@/modules/invoice-scan/client/components/InvoiceImageViewer";
@@ -17,6 +17,7 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { Modal } from "@/shared/components/Modal";
 import { LayoutArrivalContext, useArrivedValue } from "@/shared/hooks/useLayoutArrival";
+import { cn } from "@/shared/utils/cn";
 
 import { PurchaseNewProductModal } from "../../components/PurchaseNewProductModal";
 import { buildInvoiceReviewDraft, type InvoiceReviewDraft } from "../reviewDraft";
@@ -87,7 +88,11 @@ export type InvoiceReviewPanelProps = {
    * `POST /api/purchases/invoice-scan/duplicates`.
    */
   duplicateFetcher?: InvoiceDuplicatesFetcher;
+  /** «Cargar en la compra» en curso o fallida (lo decide la página, que hace la carga; D78(c): caja reservada del panel). */
+  loadStatus?: InvoiceLoadStatus | null;
 };
+
+export type InvoiceLoadStatus = "loading" | "failed";
 
 /**
  * Destino del foco tras una acción de teclado; `seq` fuerza el efecto aunque se
@@ -177,6 +182,47 @@ function InvoiceScanImages({ scanId }: { scanId: string }) {
     );
   }
   return <InvoiceImageViewer alt="Factura escaneada" urls={images.urls} />;
+}
+
+/**
+ * REP20-03 (D78(c)): «Cargar en la compra» en curso o fallida, en una caja reservada dentro del panel. El aviso de carga y
+ * su error ocupan la misma celda (el que no toca, invisible): pasar de uno a otro no cambia el alto ni mueve nada. El
+ * fallo es la respuesta de la página, una llegada declarada; empezar a cargar es del toque en «Cargar» (D77(b)).
+ */
+function InvoiceLoadBox({ status }: { status: InvoiceLoadStatus }) {
+  const failed = useArrivedValue(status === "failed") && status === "failed";
+  return (
+    <div className="grid" data-testid="invoice-review-load">
+      <LoadingState
+        className={cn("col-start-1 row-start-1", status !== "loading" && "invisible")}
+        title="Cargando la factura en la compra..."
+        variant="inline"
+      />
+      <p
+        className={cn(
+          "col-start-1 row-start-1 flex items-center justify-center gap-2 text-sm font-medium text-red-700 dark:text-red-300",
+          !failed && "invisible",
+        )}
+        role="alert"
+      >
+        <CircleAlert aria-hidden className="size-5 shrink-0" />
+        No pudimos cargar la factura en la compra. Vuelve a intentarlo.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * REP20-03 (D78(d)): dentro de un modal que deja el panel inerte (el visor). Sus efectos van por dentro de los del modal:
+ * al montarse, antes de que el modal vuelva inerte el panel (la foto de lo que se ve); al desmontarse, después de que lo
+ * devuelva (lo que llegó mientras queda guardado).
+ */
+function PanelCovered({ cover, uncover }: { cover: () => void; uncover: () => void }) {
+  useEffect(() => {
+    cover();
+    return uncover;
+  }, [cover, uncover]);
+  return null;
 }
 
 /** Separación mínima entre el control enfocado y el pie fijo (px). */
@@ -273,6 +319,7 @@ export function InvoiceReviewPanel({
   context,
   duplicateFetcher,
   lastUnitCostFetcher = fetchLastUnitCostRef,
+  loadStatus = null,
   onDiscard,
   onLoad,
   onRescan,
@@ -984,6 +1031,8 @@ export function InvoiceReviewPanel({
           }
         }}
       >
+        {loadStatus ? <InvoiceLoadBox status={loadStatus} /> : null}
+
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Revisión de la factura</h2>
@@ -1168,6 +1217,7 @@ export function InvoiceReviewPanel({
         />
 
         <Modal onOpenChange={setViewerOpen} open={viewerOpen} title="Factura escaneada">
+          <PanelCovered cover={layoutHold.cover} uncover={layoutHold.uncover} />
           {viewerOpen ? <InvoiceScanImages scanId={state.scanId} /> : null}
         </Modal>
 

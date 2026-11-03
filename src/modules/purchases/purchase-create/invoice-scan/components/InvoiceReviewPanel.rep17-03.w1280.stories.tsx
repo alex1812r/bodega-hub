@@ -26,6 +26,7 @@ type Story = StoryObj<typeof meta>;
 export const TasaEscritaLuegoLaDelDia: Story = { play: scenarioPlay("tasaEscrita", "w1280") };
 export const DuplicadoTardio: Story = { play: scenarioPlay("duplicadoTardio", "w1280") };
 export const NoSeSueltaTrasArrastreCorto: Story = { play: scenarioPlay("noSueltaArrastre", "w1280") };
+export const FallaCargarEnLaCompra: Story = { play: scenarioPlay("cargaFalla", "w1280") };
 export const PanelTasa3_0: Story = { play: propertyPlay("tasa3", "w1280", 0, "panel") };
 export const PanelTasa3_1: Story = { play: propertyPlay("tasa3", "w1280", 1, "panel") };
 export const PanelEstados_0: Story = { play: propertyPlay("estados", "w1280", 0, "panel") };

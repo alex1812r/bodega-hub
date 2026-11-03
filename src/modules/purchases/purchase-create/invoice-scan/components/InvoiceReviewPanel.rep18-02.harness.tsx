@@ -17,6 +17,9 @@
  * del usuario: en «candidatos» el toque en menos de 1 s debe elegir. Lo que un refresco con la lista abierta pone donde
  * había otra opción («refresco») sí debe quedar sin efecto.
  *
+ * REP20-03 (D78(d)): «llegada con el visor abierto»: la tasa llega con el panel inerte bajo el visor y el usuario lo cierra;
+ * lo que apareció no actúa en el segundo siguiente al cierre.
+ *
  * El último costo no hace aparecer controles (las opciones se muestran mientras se consulta, REP15-01): su caso queda
  * como cobertura con 0 controles aparecidos.
  *
@@ -29,7 +32,7 @@
  */
 import { expect } from "storybook/test";
 
-import { clickAt, openCdpSession, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
+import { clickAt, openCdpSession, pressKeys, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 import type { Arrival } from "./InvoiceReviewPanel.rep16-02.cases";
 import { type Fixture, FIXTURES } from "./InvoiceReviewPanel.rep16-02.fixtures";
 import {
@@ -468,6 +471,46 @@ function refreshCase(): AppearCase {
   };
 }
 
+/** Lo que tarda el usuario en cerrar el visor tras la llegada (el caso `visor2` de la pasada 21). */
+const VIEWER_CLOSE_MS = 200;
+
+const viewerOpen = () => [...document.querySelectorAll('[role="dialog"]')].some(isVisible);
+
+/**
+ * REP20-03 (B-p21B-2, D78(d)): la tasa llega con el visor «Ver factura» abierto (modal por debajo de `lg`: el panel queda
+ * inerte debajo) y el usuario lo cierra con Escape VIEWER_CLOSE_MS después. Lo que difiere de cuando se abrió el visor
+ * («Por unidad» en L1) no actúa en el segundo siguiente al cierre (los toques se cuentan desde el cierre).
+ */
+function viewerCase(): AppearCase {
+  let browser: Browser | null = null;
+  return {
+    arrival: RATE,
+    fixture: FIXTURES.tasa3,
+    id: "tasa 900 con el visor abierto, cerrado con Escape",
+    page: { row: 1 },
+    prepare: async (opened) => {
+      browser = opened;
+      const open = [...panel().querySelectorAll("button")].find((button) => /Ver factura/.test(button.textContent ?? "") && isVisible(button));
+      if (!open) {
+        throw new Error("Sin «Ver factura» a la vista (desde lg el visor va al lado)");
+      }
+      open.click();
+      await settle("abrir el visor", viewerOpen);
+    },
+    releaseArrival: async () => {
+      if (!browser) {
+        throw new Error("Sin navegador");
+      }
+      const confirmed = await release(RATE);
+      await settle("tasa con el visor abierto", confirmed);
+      await pause(VIEWER_CLOSE_MS);
+      await pressKeys(browser, "{Escape}");
+      await settle("cerrar el visor", () => !viewerOpen());
+      return () => true;
+    },
+  };
+}
+
 export const APPEAR_CASES = {
   /** M-p19B-1: «Esperando la tasa del día…» en la reserva de L1 y llega 900: aparece «Por unidad». */
   tasa900: { arrival: RATE, fixture: FIXTURES.tasa3, id: "tasa 900 (tasa3)", page: { row: 1 }, prepare: nothing },
@@ -525,6 +568,7 @@ export const APPEAR_CASES = {
       await arrive({ outcome: "ok", source: "supplier" });
     },
   },
+  visor: viewerCase(),
 } satisfies Record<string, AppearCase>;
 
 export type AppearCaseId = keyof typeof APPEAR_CASES;

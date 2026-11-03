@@ -11,6 +11,8 @@
  *   hueco con el dedo en «Descartar línea» de L2; el dedo arrastra 24 px. Lo que está bajo el último punto de contacto
  *   sigue ahí: el control se movió lo que movió el dedo. REP17-18 (D72(a)): el arrastre ya no suelta nada; ningún control
  *   del panel cambia de posición en el documento y lo retenido sigue retenido.
+ * - «falla Cargar en la compra» (REP20-03, M-p21B-1): «Cargando la factura en la compra…» a la vista y la página contesta
+ *   que la carga falló, con la página arriba o al final. Ningún control del panel se mueve (D78(c)).
  */
 import { expect, within } from "storybook/test";
 
@@ -25,6 +27,7 @@ import {
   row,
   scroller,
   settle,
+  startLoad,
   type VIEWPORTS,
   withCase,
 } from "./InvoiceReviewPanel.rep16-02.harness";
@@ -230,9 +233,28 @@ async function shortDragKeeps(): Promise<string[]> {
   });
 }
 
-export type Scenario = "tasaEscrita" | "duplicadoTardio" | "noSueltaArrastre";
+/**
+ * Escenario 4 (REP20-03, M-p21B-1, D78(c)): la página tiene «Cargar en la compra» en curso («Cargando la factura en la
+ * compra…», tras el toque en «Cargar») y contesta que falló, con la página arriba (nada que el navegador compense al
+ * desplazar) o al final. Ningún control del panel se mueve.
+ */
+async function loadFails(page: "arriba" | "final"): Promise<string[]> {
+  return withCase(FIXTURES.tasa3, async () => {
+    await arrive({ outcome: "ok", source: "supplier" });
+    await arrive({ outcome: "ok", source: "rate" });
+    await startLoad();
+    const main = scroller();
+    main.scrollTop = page === "final" ? main.scrollHeight : 0;
+    await settle(`página ${page}`);
+    const moved = await measureArrival({ outcome: "fail", source: "load" }, "panel");
+    return moved ? [`falla «Cargar en la compra» · ${page} · ${moved}`] : [];
+  });
+}
+
+export type Scenario = "tasaEscrita" | "duplicadoTardio" | "noSueltaArrastre" | "cargaFalla";
 
 const SCENARIOS: Record<Scenario, (browser: Browser) => Promise<string[][]>> = {
+  cargaFalla: async () => [await loadFails("arriba"), await loadFails("final")],
   duplicadoTardio: async () => {
     const results: string[][] = [];
     for (const variant of DUPLICATE_VARIANTS) {
