@@ -56,6 +56,7 @@ import {
   INVOICE_MAX_PAGES,
   INVOICE_PAGE_NOT_FOUND_MESSAGE,
   INVOICE_SCANS_BUCKET,
+  INVOICE_STORAGE_UNAVAILABLE_MESSAGE,
   invoiceScanMediaTypes,
   invoiceScanPath,
   sha256OfPages,
@@ -75,6 +76,7 @@ export type InvoiceScanRepo = Pick<
   | "getPurchaseNumber"
   | "getScan"
   | "listFewShotExamples"
+  | "recordScanUpload"
   | "reserveScan"
   | "saveMatch"
 >;
@@ -344,6 +346,21 @@ function uploadsOf(ctx: InvoiceScanContext, sha256: string, pages: readonly Invo
   return pages.map((page, index) => ({ page, path: invoiceScanPath(ctx.storeId, sha256, index + 1, page.mediaType) }));
 }
 
+/**
+ * D78(b) (REP20-02): anota el uso de la carpeta `<store>/<sha>/` antes de leerla
+ * o escribirla, para que la purga de huérfanos no la borre; si la purga ya la
+ * reservó, sus objetos se están borrando y se responde 503 sin tocarla.
+ */
+export async function recordScanFolderUse(
+  repo: Pick<InvoiceScanRepo, "recordScanUpload">,
+  ctx: InvoiceScanContext,
+  sha256: string,
+): Promise<void> {
+  if (!(await repo.recordScanUpload(ctx, sha256))) {
+    throw new ApiError(503, "INTERNAL_ERROR", INVOICE_STORAGE_UNAVAILABLE_MESSAGE);
+  }
+}
+
 async function loadScan(
   deps: InvoiceScanDeps,
   ctx: InvoiceScanContext,
@@ -381,6 +398,7 @@ async function loadScan(
     }
   });
 
+  await recordScanFolderUse(deps.repo, ctx, input.sha256);
   const pages = await Promise.all(
     input.storagePaths.map(async (path, index) => ({
       data: await deps.storage.download(path),
@@ -576,6 +594,11 @@ export async function scanInvoice(
   const scan = await loadScan(deps, ctx, input);
   const pageCount = scan.pages.length;
   const model = deps.model();
+
+  if (scan.pendingUploads.length > 0) {
+    await recordScanFolderUse(deps.repo, ctx, scan.sha256);
+  }
+
   const reserve = () =>
     deps.repo.reserveScan(ctx, {
       imageSha256: scan.sha256,

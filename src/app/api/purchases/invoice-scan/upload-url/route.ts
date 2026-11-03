@@ -7,7 +7,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { requireInvoiceScanSession } from "@/modules/invoice-scan/server/requireScanSession";
 import * as mockScans from "@/modules/invoice-scan/server/scans.mock-server";
 import * as serverScans from "@/modules/invoice-scan/server/scans.server";
-import { INVOICE_MIXED_TYPES_MESSAGE } from "@/modules/invoice-scan/server/scanService";
+import { INVOICE_MIXED_TYPES_MESSAGE, recordScanFolderUse } from "@/modules/invoice-scan/server/scanService";
 import {
   createInvoiceUploadUrls,
   createMockInvoiceUploadUrls,
@@ -62,6 +62,7 @@ const uploadUrlQuerySchema = z
  * - `{ alreadyUploaded: false, storagePaths, uploads }`: solo algunas páginas
  *   ya existían; `uploads` firma las que faltan y `storagePaths` trae todas
  *   las rutas p1..pN para el POST.
+ * - 503 si la purga está borrando los objetos vencidos de ese hash (REP20-02).
  */
 export async function GET(request: Request) {
   try {
@@ -78,10 +79,13 @@ export async function GET(request: Request) {
       mediaType: query.types[query.types.length === 1 ? 0 : index],
       page: index + 1,
     }));
-    const liveScan = await (dataSource === "supabase" ? serverScans : mockScans).findLiveScanByHash(
-      auth,
-      query.sha256,
-    );
+    const scans = dataSource === "supabase" ? serverScans : mockScans;
+
+    // D78(b): la emisión queda anotada antes de mirar el bucket, y la purga no
+    // borra una carpeta con URL emitida en las últimas 24 h. Si la purga ya la
+    // reservó, sus objetos se están borrando: no se reutilizan (503).
+    await recordScanFolderUse(scans, auth, query.sha256);
+    const liveScan = await scans.findLiveScanByHash(auth, query.sha256);
 
     if (liveScan) {
       return jsonData({ alreadyUploaded: true, storagePaths: liveScan.storagePaths, uploads: [] });

@@ -427,13 +427,8 @@ type AdminClient = Parameters<typeof listExpiredScans>[0];
 describe("scans.server · purga a 90 días", () => {
   const sha = "a".repeat(64);
 
-  it("listExpiredScans lee sin borrar y deriva las rutas de todas las páginas", async () => {
-    const { calls, client } = fakeClient([
-      ok([
-        { id: "a", pages: 3, storage_path: `s1/${sha}/p1.png` },
-        { id: "b", pages: 1, storage_path: "s2/legacy.jpg" },
-      ]),
-    ]);
+  it("listExpiredScans lee sin borrar los ids de los escaneos vencidos", async () => {
+    const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
 
     const result = await listExpiredScans(
       client as unknown as AdminClient,
@@ -442,13 +437,10 @@ describe("scans.server · purga a 90 días", () => {
       100,
     );
 
-    expect(result).toEqual([
-      { id: "a", storagePaths: [`s1/${sha}/p1.png`, `s1/${sha}/p2.png`, `s1/${sha}/p3.png`] },
-      { id: "b", storagePaths: ["s2/legacy.jpg"] },
-    ]);
+    expect(result).toEqual(["a", "b"]);
     expect(calls[0]).toEqual([
       ["from", "invoice_scans"],
-      ["select", "id, storage_path, pages"],
+      ["select", "id"],
       ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
       ["order", "created_at", { ascending: true }],
       ["limit", 100],
@@ -456,14 +448,17 @@ describe("scans.server · purga a 90 días", () => {
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
   });
 
-  it("deleteScansByIds borra solo los ids indicados y cuenta las filas", async () => {
+  it("deleteScansByIds borra solo los ids indicados que siguen vencidos (mismo DELETE) y cuenta las filas", async () => {
     const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
 
-    expect(await deleteScansByIds(client as unknown as AdminClient, ["a", "b"])).toBe(2);
+    expect(
+      await deleteScansByIds(client as unknown as AdminClient, ["a", "b"], 90, new Date("2026-10-15T12:00:00.000Z")),
+    ).toBe(2);
     expect(calls[0]).toEqual([
       ["from", "invoice_scans"],
       ["delete"],
       ["in", "id", ["a", "b"]],
+      ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
       ["select", "id"],
     ]);
   });
@@ -471,7 +466,7 @@ describe("scans.server · purga a 90 días", () => {
   it("deleteScansByIds sin ids no consulta", async () => {
     const { client } = fakeClient([]);
 
-    expect(await deleteScansByIds(client as unknown as AdminClient, [])).toBe(0);
+    expect(await deleteScansByIds(client as unknown as AdminClient, [], 90, new Date())).toBe(0);
     expect(client.from).not.toHaveBeenCalled();
   });
 

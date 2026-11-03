@@ -434,7 +434,7 @@ describe("scans.mock-server · few-shot por proveedor", () => {
 });
 
 describe("scans.mock-server · purga a 90 días", () => {
-  it("lista sin borrar los escaneos anteriores al corte en todas las tiendas, con todas sus páginas", async () => {
+  it("lista sin borrar los escaneos anteriores al corte en todas las tiendas y solo borra los que siguen vencidos", async () => {
     const now = new Date("2026-10-15T12:00:00.000Z");
     const sha = "c".repeat(64);
     const old = await seedScanForTest(
@@ -449,17 +449,11 @@ describe("scans.mock-server · purga a 90 días", () => {
 
     const expired = await listExpiredScans(null, 90, now, 100);
 
-    expect(expired).toEqual([
-      {
-        id: old.id,
-        storagePaths: [`store-a/${sha}/p1.webp`, `store-a/${sha}/p2.webp`, `store-a/${sha}/p3.webp`],
-      },
-      { id: oldB.id, storagePaths: ["store-b/old.jpg"] },
-    ]);
+    expect(expired).toEqual([old.id, oldB.id]);
     expect(await listExpiredScans(null, 90, now, 1)).toEqual([expired[0]]);
     expect(await getScan(storeA, old.id)).not.toBeNull();
 
-    expect(await deleteScansByIds(null, [old.id, oldB.id])).toBe(2);
+    expect(await deleteScansByIds(null, [old.id, oldB.id, fresh.id], 90, now)).toBe(2);
     expect(await getScan(storeA, old.id)).toBeNull();
     expect(await getScan(storeB, oldB.id)).toBeNull();
     expect(await getScan(storeA, fresh.id)).not.toBeNull();
