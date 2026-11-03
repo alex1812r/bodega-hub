@@ -178,7 +178,8 @@ describe("/api/cron/invoice-scans/purge", () => {
         calls.push("list");
         return { data: table.slice(0, count).map(({ id }) => ({ id })), error: null };
       });
-      lt.mockReturnValue({ order: () => ({ limit }) });
+      // Los dos .or() de «sin uso desde el corte» (last_used_at / claimed_at) no filtran aquí.
+      lt.mockReturnValue({ or: () => ({ or: () => ({ order: () => ({ limit }) }) }) });
       orphans = [];
       rpc.mockImplementation(async (fn: string, args: { p_limit: number }) => {
         if (fn === "release_invoice_scan_object_claims") {
@@ -191,14 +192,13 @@ describe("/api/cron/invoice-scans/purge", () => {
       deleteIn.mockImplementation((_column: string, ids: string[]) => ({
         lt: (...args: unknown[]) => {
           deleteLt(...args);
-          return {
-            select: async () => {
-              calls.push("rows");
-              const deleted = table.filter((row) => ids.includes(row.id));
-              table = table.filter((row) => !ids.includes(row.id));
-              return { data: deleted.map(({ id }) => ({ id })), error: null };
-            },
+          const select = async () => {
+            calls.push("rows");
+            const deleted = table.filter((row) => ids.includes(row.id));
+            table = table.filter((row) => !ids.includes(row.id));
+            return { data: deleted.map(({ id }) => ({ id })), error: null };
           };
+          return { or: () => ({ or: () => ({ select }) }) };
         },
       }));
       mockedAdmin.mockReturnValue({

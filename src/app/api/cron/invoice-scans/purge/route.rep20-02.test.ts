@@ -181,7 +181,15 @@ describe("purga · TOCTOU (REP20-02, B-p21A-1)", () => {
   });
 
   describe("supabase", () => {
-    type Row = { id: string; created_at: string; status: string; pages: number; storage_path: string };
+    type Row = {
+      id: string;
+      created_at: string;
+      status: string;
+      pages: number;
+      storage_path: string;
+      last_used_at?: string;
+      claimed_at?: string;
+    };
     let table: Row[];
     /** Lo que pasa en la base entre la lista de la purga y su borrado. */
     let afterList: () => void;
@@ -207,6 +215,18 @@ describe("purga · TOCTOU (REP20-02, B-p21A-1)", () => {
         },
         lt: (column: keyof Row, value: string) => {
           filters.push((row) => String(row[column]) < value);
+          return builder;
+        },
+        // `col.is.null,col.lt.<corte>` (sin uso desde el corte): la columna nula o anterior.
+        or: (expression: string) => {
+          const [, column, value] = /^(\w+)\.is\.null,\1\.lt\.(.+)$/.exec(expression) ?? [];
+          if (!column || value === undefined) {
+            throw new Error(`or() inesperado: ${expression}`);
+          }
+          filters.push((row) => {
+            const cell = row[column as keyof Row];
+            return cell === undefined || cell === null || String(cell) < value;
+          });
           return builder;
         },
         order: () => builder,
@@ -246,5 +266,23 @@ describe("purga · TOCTOU (REP20-02, B-p21A-1)", () => {
       expect(table.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "scan-a", status: "processing" }]);
       expect(mockedRemove.mock.calls.flatMap(([, paths]) => paths)).not.toContain(path);
     });
+
+    it.each(["last_used_at", "claimed_at"] as const)(
+      "N64c (B-q2005-2): una fila vencida con %s de hoy (reabierta desde la caché o reclamada) no se lista ni se borra",
+      async (column) => {
+        const used = `store-1/${SHA_A}/p1.jpg`;
+        const idle = `store-1/${SHA_B}/p1.jpg`;
+        table = [
+          { created_at: OLD.toISOString(), id: "scan-used", pages: 1, status: "extracted", storage_path: used, [column]: NOW.toISOString() },
+          { created_at: OLD.toISOString(), id: "scan-idle", pages: 1, status: "extracted", storage_path: idle },
+        ];
+
+        const response = await purge();
+
+        expect(response.status).toBe(200);
+        expect((await response.json()).data.deleted).toBe(1);
+        expect(table.map(({ id }) => id)).toEqual(["scan-used"]);
+      },
+    );
   });
 });

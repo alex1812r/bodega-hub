@@ -939,10 +939,12 @@ notify pgrst, 'reload schema';
 -- -----------------------------------------------------------------------------
 -- 20261103a — escaneo de factura: un unico predicado de permiso de compra (REP20-01; caos p21 A M-p21A-1, D78(a)):
 --             user_can_create_purchase, current_user_can_create_purchase y discard_invoice_scan_by_user; y purga
---             sin TOCTOU (REP20-02; B-p21A-1, D78(b))
+--             sin TOCTOU (REP20-02; B-p21A-1, D78(b)); create_purchase con el predicado y purga que respeta el uso
+--             (REP20-06; QA REP20-05 M-q2005-1 y B-q2005-2)
 -- -----------------------------------------------------------------------------
 -- Ejecutar: supabase/patches/20261103a-invoice-scan-purchase-permission.sql
--- Requiere 20261019a, 20261019b, 20261019c, 20261019k, 20261019m, 20261019o, 20261019q y 20261026a (va despues de 26a).
+-- Requiere 20261010d (o deploy/ux-mejoras-01-antes-del-bff.sql), 20261019a, 20261019b, 20261019c, 20261019k, 20261019m,
+-- 20261019o, 20261019q y 20261026a (va despues de 26a).
 -- Idempotente, una transaccion. user_can_create_purchase(p_user_id) (solo service_role) y
 -- current_user_can_create_purchase() (usuario del JWT): purchases.create efectivo como getEffectivePermissions (activo;
 -- admin siempre; almacen salvo denegacion; vendedor/contador con concesion y sin denegacion). reserve_invoice_scan da
@@ -954,8 +956,13 @@ notify pgrst, 'reload schema';
 -- REP20-02: tabla invoice_scan_upload_grants (URL de subida emitida y reserva de la purga por carpeta <store>/<sha>),
 -- record_invoice_scan_upload y release_invoice_scan_object_claims (nuevas, solo service_role) y
 -- list_expired_invoice_scan_objects redefinida (misma firma): no lista la carpeta de una fila ni la de una URL emitida
--- en 24 h y reserva lo que devuelve. No toca stock ni dinero.
+-- en 24 h y reserva lo que devuelve. REP20-06: create_purchase (copia integra de 20261010d) cambia solo la comprobacion
+-- de rol por current_user_can_create_purchase() (mismo mensaje, firma, retorno y grants); invoice_scans.last_used_at,
+-- que reserve_invoice_scan anota al reabrir desde la cache, y la purga del BFF no borra una fila con last_used_at o
+-- claimed_at posteriores al corte. No cambia stock ni dinero.
 -- OJO: reaplicar 19a, 19b, 19c, 19k, 19m, 19o, 19q o 26a devuelve su version anterior (rol solo; 19c, la lista sin
--- reserva): volver a aplicar este parche despues y correr verify-patches.sql (filas "(20261103a").
--- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP20-01/REP20-02 (sin el, el descarte y upload-url del BFF
--- nuevo dan 500 por PGRST202).
+-- reserva): volver a aplicar este parche despues y correr verify-patches.sql (filas "(20261103a"). Lo mismo tras
+-- reaplicar 20261010d (o deploy/ux-mejoras-01-antes-del-bff.sql, o lo que obligue a reaplicar 20261010d): create_purchase
+-- vuelve a mirar solo el rol.
+-- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP20-01/02/06 (sin el, el descarte y upload-url del BFF
+-- nuevo dan 500 por PGRST202, y la purga, error por la columna last_used_at).

@@ -74,7 +74,7 @@ function fakeClient(results: Result[]) {
     const builder: Record<string, unknown> = {
       then: (resolve: (value: Result) => unknown) => Promise.resolve(result).then(resolve),
     };
-    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "order", "limit", "range"]) {
+    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "or", "order", "limit", "range"]) {
       builder[method] = (...args: unknown[]) => {
         chain.push([method, ...args]);
         return builder;
@@ -427,7 +427,7 @@ type AdminClient = Parameters<typeof listExpiredScans>[0];
 describe("scans.server · purga a 90 días", () => {
   const sha = "a".repeat(64);
 
-  it("listExpiredScans lee sin borrar los ids de los escaneos vencidos", async () => {
+  it("listExpiredScans lee sin borrar los ids de los escaneos vencidos y sin uso desde el corte", async () => {
     const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
 
     const result = await listExpiredScans(
@@ -442,13 +442,15 @@ describe("scans.server · purga a 90 días", () => {
       ["from", "invoice_scans"],
       ["select", "id"],
       ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
+      ["or", "last_used_at.is.null,last_used_at.lt.2026-07-17T12:00:00.000Z"],
+      ["or", "claimed_at.is.null,claimed_at.lt.2026-07-17T12:00:00.000Z"],
       ["order", "created_at", { ascending: true }],
       ["limit", 100],
     ]);
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
   });
 
-  it("deleteScansByIds borra solo los ids indicados que siguen vencidos (mismo DELETE) y cuenta las filas", async () => {
+  it("deleteScansByIds borra solo los ids indicados que siguen vencidos y sin uso (mismo DELETE) y cuenta las filas", async () => {
     const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
 
     expect(
@@ -459,6 +461,8 @@ describe("scans.server · purga a 90 días", () => {
       ["delete"],
       ["in", "id", ["a", "b"]],
       ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
+      ["or", "last_used_at.is.null,last_used_at.lt.2026-07-17T12:00:00.000Z"],
+      ["or", "claimed_at.is.null,claimed_at.lt.2026-07-17T12:00:00.000Z"],
       ["select", "id"],
     ]);
   });
