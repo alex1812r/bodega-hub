@@ -66,6 +66,7 @@ import {
 export type InvoiceScanRepo = Pick<
   typeof serverRepo,
   | "completeScan"
+  | "discardInvalidCachedScan"
   | "discardScan"
   | "failScan"
   | "findConfirmedScanByPurchase"
@@ -594,7 +595,7 @@ export async function scanInvoice(
     }
 
     console.warn("[invoice-scan] lectura en caché fuera del contrato", { code: INVOICE_SCAN_INVALID_CACHE });
-    await deps.repo.discardScan(ctx, reservation.id);
+    await deps.repo.discardInvalidCachedScan(ctx, reservation.id);
     reservation = await reserve();
   }
 

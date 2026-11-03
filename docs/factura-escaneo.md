@@ -636,17 +636,23 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 | 9 | `20261020a-supplier-alias-remove.sql` | `remove_supplier_product_alias` (quitar un alias desde el proveedor) |
 | 10 | `20261019q-invoice-match-exact.sql` | Va después de 19o (la lista de arriba omite 19m y 19o; ver `apply-all-pending.sql`) y **antes** del BFF de REP7-01. `invoice_match_exact_aliases`, `invoice_match_barcode_products` e `invoice_match_previous_scans`: claves de alias, barcodes, número y fecha de la factura por el cuerpo POST, nunca en la URL (P8-M1 / D35: 414 con facturas de ≥55 líneas). Solo lectura, `security invoker`, execute solo `authenticated`. REP7-04: índice GIN trigram `idx_products_match_name_trgm` (y `fastupdate = off` en el de alias de 19b), `invoice_match_candidates` redefinida con `%` (misma firma y resultado: 450 textos con ~1.200 productos pasan de 17 s, cortados a los 8 s con 57014, a ~0,1 s) y `save_invoice_scan_match` (solo `service_role`): guarda solo `matched` de un escaneo `extracted` tras un MATCH_ERROR |
 | 11 | `20261026a-invoice-duplicate-candidates.sql` | Va después de 19q y **antes** del BFF de REP12-06. `invoice_duplicate_candidates`: las mismas filas que `invoice_match_previous_scans`, pero con el proveedor (ids elegido / leído y dígitos del RIF leído o guardado) filtrado antes del tope de 200/50, para que un número repetido con otros proveedores no oculte el duplicado real. La usan `POST /api/purchases/invoice-scan/duplicates` y el emparejamiento del escaneo cuando hay proveedor leído (contacto resuelto o RIF leído). Solo lectura, `security invoker`, execute solo `authenticated`. **Sin el parche, el escaneo con proveedor leído falla al emparejar (PGRST202)** y la consulta de duplicados da 500 («No se pudo comprobar…», sin bloquear) |
+| 12 | `20261103a-invoice-scan-purchase-permission.sql` | Va después de 26a (requiere 19a, 19b, 19k, 19m, 19o, 19q y 26a) y **antes** del BFF de REP20-01. REP20-01 (M-p21A-1, D78(a)): un único predicado de permiso de compra, `user_can_create_purchase(p_user_id)` (solo `service_role`) y `current_user_can_create_purchase()` (usuario del JWT), con el mismo cálculo que `getEffectivePermissions` para `purchases.create`: perfil activo; admin siempre; almacén salvo denegación; vendedor y contador solo con la concesión y sin denegación. `reserve_invoice_scan` responde PT403 sin el permiso **antes** de la caché, la cuota y la reserva (el BFF da 403 sin cobrar ni llamar al modelo). Las RPC que miraban solo el rol (claim, release, confirm, learn, `invoice_match_exact_aliases`, `invoice_match_barcode_products`, `invoice_match_candidates`, `invoice_match_previous_scans` e `invoice_duplicate_candidates`) usan el predicado, con los mismos mensajes y firmas; las políticas de lectura de `invoice_scans` y `supplier_product_aliases` admiten además el predicado. `discard_invoice_scan_by_user(p_store_id, p_id, p_user_id)` (nueva, solo `service_role`) es el descarte del usuario: PT403 sin el permiso, fuera de la tienda o si no es quien creó el escaneo ni un admin de la tienda; si pasa, delega en `discard_invoice_scan(p_store_id, p_id)`. **Sin el parche, el BFF nuevo no puede descartar (PGRST202, 500)**; el parche sin el BFF nuevo deja el descarte de la ruta sin la regla del creador |
 
 **Cadena de reaplicación.** Varias funciones se redefinen en parches posteriores; la versión vigente es la del último:
 
 | Función | Se define en | Vigente |
 |---------|--------------|---------|
-| `reserve_invoice_scan` | 19e → 19g → 19i → 19k | 19k |
-| `discard_invoice_scan` | 19g → 19i → 19k | 19k |
+| `reserve_invoice_scan` | 19e → 19g → 19i → 19k → 20261103a | 20261103a |
+| `discard_invoice_scan` | 19g → 19i → 19k → 19m | 19m (el descarte del usuario es `discard_invoice_scan_by_user`, de 20261103a, que delega en ella) |
 | `complete_invoice_scan`, `fail_invoice_scan` | 19g → 19i | 19i |
-| `claim_invoice_scan`, `release_invoice_scan_claim`, `confirm_invoice_scan`, `learn_invoice_aliases` | 19b | 19b |
-| `invoice_match_candidates` | 19d → 19q | 19q (reaplicar 19d obliga a reaplicar 19q) |
-| `invoice_match_previous_scans` | 19q → 26a | 26a (REP15-02; reaplicar 19q obliga a reaplicar `20261026a` después) |
+| `claim_invoice_scan` | 19b → 19m → 20261103a | 20261103a |
+| `release_invoice_scan_claim` | 19b → 19m → 19o → 20261103a | 20261103a |
+| `confirm_invoice_scan`, `learn_invoice_aliases` | 19b → 20261103a | 20261103a |
+| `invoice_match_candidates` | 19d → 19q → 20261103a | 20261103a (reaplicar 19d obliga a reaplicar 19q y después 20261103a) |
+| `invoice_match_exact_aliases`, `invoice_match_barcode_products` | 19q → 20261103a | 20261103a |
+| `invoice_match_previous_scans` | 19q → 26a → 20261103a | 20261103a (REP15-02; reaplicar 19q obliga a reaplicar `20261026a` y después `20261103a`) |
+| `invoice_duplicate_candidates` | 26a → 20261103a | 20261103a |
+| Políticas de lectura de `invoice_scans` y `supplier_product_aliases` | 19a / 19b → 20261103a | 20261103a |
 
 - Cadenas: **19a → 19g → 19i → 19k** y **19b → 19k**.
 - Reaplicar 19a obliga a reaplicar después 19g, 19i y 19k. 19a ya no devuelve escrituras (solo concede select a `authenticated` y borra las políticas de insert y update de la tabla y la de insert de Storage), pero se mantiene el orden de despliegue.
@@ -655,6 +661,7 @@ Se aplican en este orden en el SQL Editor. Todos son idempotentes y terminan con
 - Reaplicar 19q obliga a reaplicar después 26a (`20261026a-invoice-duplicate-candidates.sql`): desde REP15-02, 26a redefine `invoice_match_previous_scans`, y 19q la devolvería a la versión anterior.
 - Reaplicar 19b obliga a reaplicar después 19k: las guardas de 19k leen las columnas del reclamo que crea 19b (sin ellas solo miran `purchase_id` y `confirmed`).
 - 19b crea `invoice_scans` como respaldo solo si no existe (sin políticas); con 19a aplicado antes no hace nada. 19k funciona con y sin 19b, pero en despliegue 19b va antes.
+- Reaplicar 19a, 19b, 19k, 19m, 19o, 19q o 26a (o cualquier cadena que acabe en ellos) obliga a reaplicar después `20261103a-invoice-scan-purchase-permission.sql`: cada uno devuelve su versión que mira solo el rol (19a y 19b, la política de lectura sin el predicado; 19k, la reserva que cobra sin mirar el permiso). 20261103a no depende de la versión de `discard_invoice_scan(p_store_id, p_id)`: reaplicar 19k o 19m no rompe `discard_invoice_scan_by_user`.
 
 ### 2. Storage
 

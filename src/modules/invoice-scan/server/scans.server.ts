@@ -346,11 +346,27 @@ export async function getProductNames(
   return Object.fromEntries(rows.map((row) => [row.id, row.name]));
 }
 
+async function rpcDiscard(
+  fn: "discard_invoice_scan" | "discard_invoice_scan_by_user",
+  args: { p_id: string; p_store_id: string; p_user_id?: string },
+): Promise<InvoiceScanRow | null> {
+  const { data, error } = await createAdminSupabaseClient()
+    .rpc(fn, args)
+    .select(scanSelect)
+    .maybeSingle<DbInvoiceScanRow>();
+
+  throwIfSupabaseError(error);
+
+  return data ? mapScan(data) : null;
+}
+
 /**
- * Descarta un escaneo `extracted` (RPC `discard_invoice_scan`, 20261019g/i,
- * solo service role, con la tienda de la sesión). null si no es de la tienda
- * (404); en otro estado la RPC responde PT409 con el mensaje de ese estado
- * (`DISCARD_NOT_ALLOWED_MESSAGES`).
+ * Descarte del usuario: un escaneo `extracted` (RPC
+ * `discard_invoice_scan_by_user`, 20261103a, solo service role, con la tienda
+ * y el usuario de la sesión). null si no es de la tienda
+ * (404); PT403 si el usuario no tiene `purchases.create` efectivo o no creó el
+ * escaneo ni es admin (D78(a)); en otro estado PT409 con el mensaje de ese
+ * estado (`DISCARD_NOT_ALLOWED_MESSAGES`).
  */
 export async function discardScan(
   ctx: InvoiceScanContext,
@@ -360,14 +376,20 @@ export async function discardScan(
     return null;
   }
 
-  const { data, error } = await createAdminSupabaseClient()
-    .rpc("discard_invoice_scan", { p_id: id, p_store_id: ctx.storeId })
-    .select(scanSelect)
-    .maybeSingle<DbInvoiceScanRow>();
+  return rpcDiscard("discard_invoice_scan_by_user", { p_id: id, p_store_id: ctx.storeId, p_user_id: ctx.userId });
+}
 
-  throwIfSupabaseError(error);
-
-  return data ? mapScan(data) : null;
+/**
+ * Reemplazo interno de una lectura en caché fuera del contrato antes de volver
+ * a leerla (`scanInvoice`): `discard_invoice_scan(p_store_id, p_id)` (19m),
+ * sin la regla de creador del descarte del usuario; la reserva ya exigió el
+ * permiso de compra.
+ */
+export async function discardInvalidCachedScan(
+  ctx: InvoiceScanContext,
+  id: string,
+): Promise<InvoiceScanRow | null> {
+  return rpcDiscard("discard_invoice_scan", { p_id: id, p_store_id: ctx.storeId });
 }
 
 /**

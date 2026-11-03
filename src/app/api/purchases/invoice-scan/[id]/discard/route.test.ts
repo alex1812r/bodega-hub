@@ -70,7 +70,7 @@ describe("POST /api/purchases/invoice-scan/[id]/discard", () => {
     expect(createAdminSupabaseClient).not.toHaveBeenCalled();
   });
 
-  it("con datos en Supabase y sesión real, descarta con la tienda de la sesión", async () => {
+  it("con datos en Supabase y sesión real, descarta con la tienda y el usuario de la sesión", async () => {
     process.env.API_DATA_SOURCE = "supabase";
     process.env.ALLOW_DEMO_AUTH = "true";
     (getAuthProfileFromSession as jest.Mock).mockResolvedValue({
@@ -90,7 +90,12 @@ describe("POST /api/purchases/invoice-scan/[id]/discard", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).data).toEqual({ scanId: SCAN_B, status: "discarded" });
-    expect(rpc).toHaveBeenCalledWith("discard_invoice_scan", { p_id: SCAN_B, p_store_id: STORE_B });
+    // REP20-01 (D78(a)): la RPC exige el permiso de compra y que sea el creador o un admin.
+    expect(rpc).toHaveBeenCalledWith("discard_invoice_scan_by_user", {
+      p_id: SCAN_B,
+      p_store_id: STORE_B,
+      p_user_id: "f2120000-0000-4000-8000-000000000001",
+    });
   });
 
   it("descarta un escaneo extracted (200) y el segundo intento es 409", async () => {
