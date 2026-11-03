@@ -458,10 +458,20 @@ export async function listFewShotExamples(
 }
 
 /**
+ * Filtros `or` de PostgREST (se combinan con AND) que dejan fuera un escaneo
+ * usado desde `cutoff` aunque se creara antes: reabierto desde la caché
+ * (`last_used_at`, 20261103a §8) o reclamado para confirmar (`claimed_at`).
+ */
+function idleSinceFilters(cutoff: string): readonly [string, string] {
+  return [`last_used_at.is.null,last_used_at.lt.${cutoff}`, `claimed_at.is.null,claimed_at.lt.${cutoff}`];
+}
+
+/**
  * Ids de los escaneos de todas las tiendas creados hace más de `olderThanDays`
- * días (cron con service role): como mucho `limit`, los más antiguos primero.
- * No borra nada: el llamador los borra con `deleteScansByIds`, que vuelve a
- * mirar la antigüedad, y sus imágenes quedan para la fase de huérfanos.
+ * días y sin uso desde entonces (cron con service role): como mucho `limit`, los
+ * más antiguos primero. No borra nada: el llamador los borra con
+ * `deleteScansByIds`, que vuelve a mirar la antigüedad y el uso, y sus imágenes
+ * quedan para la fase de huérfanos.
  */
 export async function listExpiredScans(
   adminClient: AdminClient,
@@ -470,10 +480,13 @@ export async function listExpiredScans(
   limit: number,
 ): Promise<string[]> {
   const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+  const [notReopened, notClaimed] = idleSinceFilters(cutoff);
   const { data, error } = await adminClient
     .from("invoice_scans")
     .select("id")
     .lt("created_at", cutoff)
+    .or(notReopened)
+    .or(notClaimed)
     .order("created_at", { ascending: true })
     .limit(limit);
 
@@ -533,9 +546,10 @@ export async function recordScanUpload(ctx: InvoiceScanContext, sha256: string):
 
 /**
  * Borra las filas indicadas que sigan creadas hace más de `olderThanDays` días
- * (cron con service role). La antigüedad se vuelve a comprobar en la misma
- * sentencia: una fila que un reescaneo reservó tras la lista (`created_at` =
- * hoy) no se borra. Devuelve cuántas se borraron.
+ * y sin uso desde entonces (cron con service role). La antigüedad y el uso se
+ * vuelven a comprobar en la misma sentencia: una fila que un reescaneo reservó
+ * (`created_at` = hoy), reabrió desde la caché (`last_used_at`) o reclamó para
+ * confirmar (`claimed_at`) tras la lista no se borra. Devuelve cuántas se borraron.
  */
 export async function deleteScansByIds(
   adminClient: AdminClient,
@@ -548,11 +562,14 @@ export async function deleteScansByIds(
   }
 
   const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+  const [notReopened, notClaimed] = idleSinceFilters(cutoff);
   const { data, error } = await adminClient
     .from("invoice_scans")
     .delete()
     .in("id", [...ids])
     .lt("created_at", cutoff)
+    .or(notReopened)
+    .or(notClaimed)
     .select("id");
 
   throwIfSupabaseError(error);

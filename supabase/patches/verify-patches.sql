@@ -3437,4 +3437,29 @@ select
       and p.prosrc not ilike '%s.created_at >= p_before%'
     from pg_proc p where p.oid = to_regprocedure('public.list_expired_invoice_scan_objects(timestamptz, integer)')
   ), false)
+union all
+select
+  'create_purchase: PT403 ''No autorizado para crear compras'' con current_user_can_create_purchase(), sin current_user_role(); una firma de 14 argumentos, security definer, authenticated / service_role y no anon (20261010d, redefinida en 20261103a, REP20-06 M-q2005-1)',
+  coalesce((
+    select count(*) = 1
+      and bool_and(p.pronargs = 14 and p.prosecdef
+        and p.prosrc ilike '%if not public.current_user_can_create_purchase() then%errcode = ''PT403'', message = ''No autorizado para crear compras''%purchase_idempotent_replay%'
+        and p.prosrc not ilike '%current_user_role()%'
+        and p.prosrc ilike '%perform public.purchase_disassemble_lines(v_purchase.id, null);%'
+        and has_function_privilege('authenticated', p.oid, 'execute')
+        and has_function_privilege('service_role', p.oid, 'execute')
+        and not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  ), false)
+union all
+select
+  'invoice_scans.last_used_at timestamptz y reserve_invoice_scan lo anota al reabrir desde la cache (outcome cached), para que la purga no borre un escaneo en uso (20261103a, REP20-06 B-q2005-2)',
+  coalesce((
+    select exists (
+        select 1 from information_schema.columns c
+        where c.table_schema = 'public' and c.table_name = 'invoice_scans'
+          and c.column_name = 'last_used_at' and c.data_type = 'timestamp with time zone')
+      and p.prosrc ilike '%set last_used_at = now() where s.id = v_row.id;%''outcome'', ''cached''%'
+    from pg_proc p where p.oid = to_regprocedure('public.reserve_invoice_scan(uuid, uuid, text, text, integer, integer, text, text)')
+  ), false)
 order by 1;

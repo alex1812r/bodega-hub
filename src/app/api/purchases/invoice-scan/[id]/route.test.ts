@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
 import { jpegHeader } from "@/modules/invoice-scan/server/__fixtures__/images";
 import { sha256OfPages } from "@/modules/invoice-scan/server/storage";
 import { mockState } from "@/shared/mocks/mockStore";
@@ -132,6 +133,44 @@ describe("GET /api/purchases/invoice-scan/[id]", () => {
 
   it("404 para un id que no es uuid", async () => {
     expect((await get("no-es-un-uuid", fresh().storeId)).status).toBe(404);
+  });
+
+  it.each(["vendedor", "contador"] as const)(
+    "%s con purchases.create concedido abre la revisión aunque no tenga purchases.view (M-q2005-1)",
+    async (role) => {
+      const { image, storeId } = fresh();
+      const id = await createScan(storeId, [image]);
+      (getAuthProfileFromSession as jest.Mock).mockResolvedValueOnce({
+        deniedPermissions: ["purchases.view"],
+        grantedPermissions: ["purchases.create"],
+        id: `user-${role}-concedido`,
+        isActive: true,
+        name: role,
+        role,
+        storeId,
+      });
+
+      const response = await get(id, storeId);
+
+      expect(response.status).toBe(200);
+      expect((await response.json()).data).toMatchObject({ scanId: id });
+    },
+  );
+
+  it("el vendedor con la concesión y la denegación de purchases.create sigue en 403", async () => {
+    const { image, storeId } = fresh();
+    const id = await createScan(storeId, [image]);
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValueOnce({
+      deniedPermissions: ["purchases.create"],
+      grantedPermissions: ["purchases.create"],
+      id: "user-vendedor-denegado",
+      isActive: true,
+      name: "vendedor",
+      role: "vendedor",
+      storeId,
+    });
+
+    expect((await get(id, storeId)).status).toBe(403);
   });
 
   it("403 al vendedor y 401 sin sesión", async () => {
