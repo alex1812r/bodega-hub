@@ -31,7 +31,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
-import { InvoiceReviewPanel } from "./invoice-scan/components/InvoiceReviewPanel";
+import { type InvoiceLoadStatus, InvoiceReviewPanel } from "./invoice-scan/components/InvoiceReviewPanel";
 import {
   applyInvoiceReviewDraft,
   buildInvoiceScanSubmission,
@@ -284,7 +284,8 @@ export function PurchaseCreatePage() {
   const [invoiceReplaceRequest, setInvoiceReplaceRequest] = useState<InvoiceReviewDraft | null>(
     null,
   );
-  const [isLoadingInvoice, setIsLoadingInvoice] = useState(false);
+  // «Cargar en la compra» en curso o fallida: el panel lo muestra en una caja reservada (D78(c)).
+  const [invoiceLoad, setInvoiceLoad] = useState<InvoiceLoadStatus | null>(null);
   const invoiceLoadingRef = useRef(false);
   const scanParamHandledRef = useRef(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
@@ -864,6 +865,7 @@ export function PurchaseCreatePage() {
       } else if (!(await handleRestoreDraft("saved"))) {
         return;
       }
+      setInvoiceLoad(null);
       setScannedInvoice(response);
     } finally {
       setIsResumingReview(false);
@@ -1142,6 +1144,7 @@ export function PurchaseCreatePage() {
 
   /** La factura leída abre su revisión en la página, en lugar del formulario. */
   function onInvoiceScanned(response: InvoiceScanResponse) {
+    setInvoiceLoad(null);
     setScannedInvoice(response);
     setInvoiceScanOpen(false);
   }
@@ -1157,7 +1160,7 @@ export function PurchaseCreatePage() {
     }
 
     invoiceLoadingRef.current = true;
-    setIsLoadingInvoice(true);
+    setInvoiceLoad("loading");
 
     try {
       const nextSupplierId = reviewDraft.supplier.contactId;
@@ -1215,8 +1218,10 @@ export function PurchaseCreatePage() {
         setPendingRestock(null);
       }
       setFormError(null);
+      setInvoiceLoad(null);
       setScannedInvoice(null);
     } catch (error) {
+      setInvoiceLoad("failed");
       showToast({
         description: requestErrorMessage(error),
         title: "No pudimos cargar la factura en la compra",
@@ -1224,7 +1229,6 @@ export function PurchaseCreatePage() {
       });
     } finally {
       invoiceLoadingRef.current = false;
-      setIsLoadingInvoice(false);
     }
   }
 
@@ -1410,23 +1414,19 @@ export function PurchaseCreatePage() {
       </div>
 
       {scannedInvoice ? (
-        <>
-          {isLoadingInvoice ? (
-            <LoadingState title="Cargando la factura en la compra..." variant="inline" />
-          ) : null}
-          <InvoiceReviewPanel
-            canCreateProduct={canCreateProduct}
-            context={reviewContext}
-            key={scannedInvoice.scanId}
-            onDiscard={() => discardScannedInvoice(scannedInvoice)}
-            onLoad={handleInvoiceLoad}
-            onRescan={() => {
-              discardScannedInvoice(scannedInvoice);
-              setInvoiceScanOpen(true);
-            }}
-            response={scannedInvoice}
-          />
-        </>
+        <InvoiceReviewPanel
+          canCreateProduct={canCreateProduct}
+          context={reviewContext}
+          key={scannedInvoice.scanId}
+          loadStatus={invoiceLoad}
+          onDiscard={() => discardScannedInvoice(scannedInvoice)}
+          onLoad={handleInvoiceLoad}
+          onRescan={() => {
+            discardScannedInvoice(scannedInvoice);
+            setInvoiceScanOpen(true);
+          }}
+          response={scannedInvoice}
+        />
       ) : (
       <>
       {resumeReviewResponse ? (

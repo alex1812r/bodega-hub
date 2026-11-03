@@ -160,11 +160,12 @@ const NAMED_KEYS: Record<string, KeyDefinition> = {
   ArrowDown: { code: "ArrowDown", key: "ArrowDown", keyCode: 40 },
   Backspace: { code: "Backspace", key: "Backspace", keyCode: 8 },
   Enter: { code: "Enter", key: "Enter", keyCode: 13, text: "\r" },
+  Escape: { code: "Escape", key: "Escape", keyCode: 27 },
   Space: { code: "Space", key: " ", keyCode: 32, text: " " },
   Tab: { code: "Tab", key: "Tab", keyCode: 9 },
 };
 
-/** `{Tab}`, `{Backspace}`, `{ArrowDown}`, `{Enter}`, `{Space}` y dígitos, con la sintaxis de `userEvent.keyboard`. */
+/** `{Tab}`, `{Backspace}`, `{ArrowDown}`, `{Enter}`, `{Escape}`, `{Space}` y dígitos, con la sintaxis de `userEvent.keyboard`. */
 function parseKeys(keys: string): KeyDefinition[] {
   return [...keys.matchAll(/\{(\w+)\}|(\d)|(.)/g)].map(([token, named, digit]) => {
     if (digit) {

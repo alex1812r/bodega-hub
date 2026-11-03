@@ -476,6 +476,8 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
   const arrivingRef = useRef(false);
   const [arrivals, setArrivals] = useState(0);
   const arrivedAtRef = useRef(new Map<Element, number>());
+  // REP20-03 (D78(d)): foto de cuando el panel quedó inerte bajo un modal suyo (el visor) y si llegó algo mientras.
+  const coverRef = useRef<{ snapshot: ArrivalSnapshot; arrived: boolean } | null>(null);
   // REP19-05 (M-q1904-1): el montaje (o remontaje) del panel acabó: pasaron sus efectos. Lo que se declara antes (la tasa
   // del día ya en caché, adoptada en el efecto de layout del montaje) ya estaba al montarse: no es una llegada.
   const mountedRef = useRef(false);
@@ -577,6 +579,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
         apply();
         return;
       }
+      if (coverRef.current) {
+        coverRef.current.arrived = true;
+      }
       arrivalRef.current ??= arrivalSnapshot(root);
       arrivingRef.current = true;
       apply();
@@ -591,6 +596,28 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     const root = rootRef.current;
     if (before && root) {
       markMoved(arrivedAtRef.current, arrivedControls(before, arrivalSnapshot(root)), performance.now());
+    }
+  }, [rootRef]);
+
+  /**
+   * REP20-03 (D78(d)): el panel va a quedar inerte bajo un modal suyo (el visor): una llegada que se aplique entonces no
+   * guarda nada (no hay controles accionables). Foto ahora, con el modal ya abierto y antes de que vuelva inerte el panel.
+   */
+  const cover = useCallback(() => {
+    const root = rootRef.current;
+    coverRef.current = root ? { snapshot: arrivalSnapshot(root), arrived: false } : null;
+  }, [rootRef]);
+
+  /**
+   * REP20-03 (D78(d)): el modal se cerró y el panel ya no está inerte. Si llegó algo mientras, lo que difiere de la foto de
+   * `cover` queda guardado desde ahora; si no, cerrar es solo del usuario y no guarda nada (D77(b)).
+   */
+  const uncover = useCallback(() => {
+    const covered = coverRef.current;
+    const root = rootRef.current;
+    coverRef.current = null;
+    if (covered?.arrived && root) {
+      markMoved(arrivedAtRef.current, arrivedControls(covered.snapshot, arrivalSnapshot(root)), performance.now());
     }
   }, [rootRef]);
 
@@ -939,6 +966,9 @@ export function useLayoutHold<TOrder>(rootRef: RefObject<HTMLElement | null>, on
     retainsSpace: retains,
     /** D72(b): «Compactar lista», el único gesto que suelta lo retenido (además del cambio de ancho). */
     compact,
+    /** REP20-03 (D78(d)): al abrirse un modal que deja el panel inerte (el visor), y al cerrarse. */
+    cover,
+    uncover,
     /**
      * Para manejadores: la acción en curso es de una activación con el puntero con el layout retenido (sin tecla desde
      * ella): el foco no debe desplazar.
