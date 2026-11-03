@@ -5,7 +5,7 @@ import { requireCronSecret } from "@/lib/api/requireCronSecret";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import * as mock from "@/modules/invoice-scan/server/scans.mock-server";
 import * as server from "@/modules/invoice-scan/server/scans.server";
-import { type ExpiredScan, INVOICE_SCAN_RETENTION_DAYS } from "@/modules/invoice-scan/server/scans.types";
+import { INVOICE_SCAN_RETENTION_DAYS } from "@/modules/invoice-scan/server/scans.types";
 import { removeInvoiceObjects } from "@/modules/invoice-scan/server/storage";
 
 /** Escaneos (u objetos huérfanos) por lote: acota la URL del `.in("id", …)` y el cuerpo del `remove()` de Storage. */
@@ -16,10 +16,16 @@ const PURGE_MAX_BATCHES = 20;
 type PurgeTotals = { deleted: number; objects: number };
 
 type PurgeSteps = {
-  list: (limit: number) => Promise<ExpiredScan[]>;
-  /** Objetos del bucket vencidos sin escaneo vivo (p. ej. `upload-url` sin POST correcto). */
+  list: (limit: number) => Promise<string[]>;
+  /**
+   * Objetos del bucket vencidos sin fila ni URL de subida reciente (filas ya
+   * purgadas, `upload-url` sin POST correcto), reservados para la purga.
+   */
   listOrphans: (limit: number) => Promise<string[]>;
   removeObjects: (paths: string[]) => Promise<void>;
+  /** Suelta la reserva de `listOrphans` sobre objetos ya borrados. */
+  releaseOrphans: (paths: string[]) => Promise<void>;
+  /** Borra solo las filas que sigan vencidas (vuelve a mirar `created_at`). */
   deleteRows: (ids: string[]) => Promise<number>;
 };
 
@@ -44,19 +50,18 @@ async function purgeInBatches(steps: PurgeSteps) {
       break;
     }
 
-    const objectPaths = expired.flatMap((scan) => scan.storagePaths);
-    // Primero Storage: si falla, las filas del lote se conservan y la próxima
-    // corrida reintenta, en vez de dejar imágenes huérfanas sin referencia.
-    await removeOrReport(steps, objectPaths, totals);
-    totals.deleted += await steps.deleteRows(expired.map((scan) => scan.id));
-    totals.objects += objectPaths.length;
+    // D78(b): primero las filas, con la antigüedad comprobada en el mismo DELETE.
+    // Sus imágenes quedan sin fila y las borra la fase de huérfanos, que no toca
+    // la carpeta de una fila viva ni la de una URL de subida reciente.
+    totals.deleted += await steps.deleteRows(expired);
 
     if (expired.length < PURGE_BATCH_SIZE) {
       break;
     }
   }
 
-  // Después, las imágenes que nunca llegaron a tener fila.
+  // Después, las imágenes sin fila: las de las filas recién borradas y las que
+  // nunca llegaron a tenerla.
   for (let batch = 0; batch < PURGE_MAX_BATCHES; batch += 1) {
     const orphans = await steps.listOrphans(PURGE_BATCH_SIZE);
     if (orphans.length === 0) {
@@ -65,6 +70,7 @@ async function purgeInBatches(steps: PurgeSteps) {
 
     await removeOrReport(steps, orphans, totals);
     totals.objects += orphans.length;
+    await steps.releaseOrphans(orphans);
 
     if (orphans.length < PURGE_BATCH_SIZE) {
       break;
@@ -78,18 +84,20 @@ function purgeSupabase(now: Date) {
   const admin = createAdminSupabaseClient();
 
   return purgeInBatches({
-    deleteRows: (ids) => server.deleteScansByIds(admin, ids),
+    deleteRows: (ids) => server.deleteScansByIds(admin, ids, INVOICE_SCAN_RETENTION_DAYS, now),
     list: (limit) => server.listExpiredScans(admin, INVOICE_SCAN_RETENTION_DAYS, now, limit),
     listOrphans: (limit) => server.listExpiredScanObjects(admin, INVOICE_SCAN_RETENTION_DAYS, now, limit),
+    releaseOrphans: (paths) => server.releaseScanObjectClaims(admin, paths),
     removeObjects: (paths) => removeInvoiceObjects(admin, paths),
   });
 }
 
 function purgeMock(now: Date) {
   return purgeInBatches({
-    deleteRows: (ids) => mock.deleteScansByIds(null, ids),
+    deleteRows: (ids) => mock.deleteScansByIds(null, ids, INVOICE_SCAN_RETENTION_DAYS, now),
     list: (limit) => mock.listExpiredScans(null, INVOICE_SCAN_RETENTION_DAYS, now, limit),
     listOrphans: (limit) => mock.listExpiredScanObjects(null, INVOICE_SCAN_RETENTION_DAYS, now, limit),
+    releaseOrphans: (paths) => mock.releaseScanObjectClaims(null, paths),
     removeObjects: (paths) => mock.removeScanObjects(null, paths),
   });
 }

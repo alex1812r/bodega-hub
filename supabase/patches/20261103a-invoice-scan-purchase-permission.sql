@@ -1,10 +1,11 @@
 -- =============================================================================
 -- 20261103a — escaneo de factura: un único predicado de permiso de compra
---             (REP20-01; caos p21 A M-p21A-1, D78(a))
+--             (REP20-01; caos p21 A M-p21A-1, D78(a)) y purga sin TOCTOU
+--             (REP20-02; caos p21 A B-p21A-1, D78(b))
 -- Proyecto: BodegaHub
--- Requiere: 20261019a, 20261019b, 20261019k, 20261019m, 20261019o, 20261019q y
---           20261026a. Se aplica DESPUÉS de todos ellos (fila 12 del orden de
---           docs/factura-escaneo.md) y ANTES del BFF de REP20-01.
+-- Requiere: 20261019a, 20261019b, 20261019c, 20261019k, 20261019m, 20261019o,
+--           20261019q y 20261026a. Se aplica DESPUÉS de todos ellos (fila 12 del
+--           orden de docs/factura-escaneo.md) y ANTES del BFF de REP20-01/REP20-02.
 -- =============================================================================
 -- El BFF autoriza el escaneo con los permisos efectivos (getEffectivePermissions
 -- de @bodega/core/permissions: rol + granted_permissions − denied_permissions),
@@ -38,12 +39,29 @@
 --    learn_invoice_aliases (copia de 19b); invoice_match_exact_aliases,
 --    invoice_match_barcode_products e invoice_match_candidates (copia de 19q);
 --    invoice_duplicate_candidates e invoice_match_previous_scans (copia de 26a).
+-- 6. Purga (REP20-02, B-p21A-1): el cron borra primero las filas, con created_at
+--    comprobado en el mismo DELETE (BFF), y sus imágenes pasan a la fase de
+--    huérfanos. Tabla invoice_scan_upload_grants (sin acceso para anon /
+--    authenticated): por carpeta <store>/<sha>, la última URL de subida emitida y
+--    la reserva de la purga.
+--    record_invoice_scan_upload(p_store_id, p_sha256) (nueva, solo service_role):
+--    upload-url la anota ANTES de mirar el bucket, y el POST del escaneo antes de
+--    leer o escribir la carpeta; false (el BFF da 503 sin firmar, leer ni reservar)
+--    si la purga tiene la carpeta reservada (< 15 min).
+--    list_expired_invoice_scan_objects (redefine la de 19c, misma firma): excluye
+--    la carpeta de CUALQUIER fila y la de una URL emitida en 24 h, y reserva lo que
+--    devuelve en la misma sentencia; la fila de la carpeta serializa reserva y
+--    anotación. Antes limpia anotaciones de más de 24 h y reservas de más de 15 min.
+--    release_invoice_scan_object_claims(p_names) (nueva, solo service_role): el
+--    cron suelta la reserva tras borrar de Storage.
 --
--- Reaplicación: reaplicar 19a, 19b, 19k, 19m, 19o, 19q o 26a devuelve su versión
--- con el rol solo (o la política vieja): volver a aplicar este parche después y
--- correr verify-patches.sql (filas "(20261103a").
+-- Reaplicación: reaplicar 19a, 19b, 19c, 19k, 19m, 19o, 19q o 26a devuelve su
+-- versión con el rol solo (o la política vieja; 19c, la lista sin reserva que
+-- borra imágenes reutilizadas): volver a aplicar este parche después y correr
+-- verify-patches.sql (filas "(20261103a").
 --
--- Idempotente (create or replace / drop policy if exists). No toca stock ni dinero.
+-- Idempotente (create or replace / if not exists / drop policy if exists). No toca
+-- stock ni dinero.
 -- =============================================================================
 
 begin;
@@ -1426,6 +1444,143 @@ $$;
 
 revoke all on function public.invoice_match_previous_scans(text, text[], text, uuid, integer) from public, anon;
 grant execute on function public.invoice_match_previous_scans(text, text[], text, uuid, integer) to authenticated;
+
+-- 6. Purga sin TOCTOU (REP20-02, B-p21A-1, D78(b)) -------------------------------------
+-- El borrado de filas del cron ya vuelve a mirar created_at en el mismo DELETE (BFF).
+-- Aquí, la fase de huérfanos: no borra un objeto con fila ni con URL de subida emitida
+-- en las últimas 24 h, y lo que lista queda reservado hasta que el cron lo borra.
+
+create table if not exists public.invoice_scan_upload_grants (
+  store_id text not null,
+  image_sha256 text not null,
+  issued_at timestamptz,
+  purge_claimed_at timestamptz,
+  primary key (store_id, image_sha256)
+);
+
+comment on table public.invoice_scan_upload_grants is
+  'Por carpeta <store_id>/<sha256> del bucket invoice-scans: última URL de subida emitida (upload-url) y reserva de la purga (REP20-02, D78(b)). Solo la tocan las funciones security definer.';
+
+alter table public.invoice_scan_upload_grants enable row level security;
+revoke all on table public.invoice_scan_upload_grants from public, anon, authenticated;
+
+create or replace function public.record_invoice_scan_upload(p_store_id uuid, p_sha256 text)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  if p_store_id is null or p_sha256 is null or p_sha256 !~ '^[0-9a-f]{64}$' then
+    raise exception using errcode = 'PT400', message = 'Escaneo no válido';
+  end if;
+
+  -- La fila de la carpeta serializa esta anotación con la reserva de la purga.
+  insert into public.invoice_scan_upload_grants as g (store_id, image_sha256, issued_at)
+  values (p_store_id::text, p_sha256, now())
+  on conflict (store_id, image_sha256) do update
+    set issued_at = excluded.issued_at,
+        purge_claimed_at = null
+    where g.purge_claimed_at is null
+       or g.purge_claimed_at < now() - interval '15 minutes';
+
+  return found;
+end;
+$$;
+
+comment on function public.record_invoice_scan_upload(uuid, text) is
+  'upload-url y POST del escaneo: anota el uso (URL de subida emitida) de <store>/<sha>; false si la purga tiene reservada la carpeta (sus objetos se están borrando). REP20-02, D78(b).';
+
+revoke all on function public.record_invoice_scan_upload(uuid, text) from public, anon, authenticated;
+grant execute on function public.record_invoice_scan_upload(uuid, text) to service_role;
+
+-- Redefine la de 20261019c (misma firma y retorno). Antes protegía solo la carpeta de
+-- una fila con created_at >= p_before; ahora la de cualquier fila y la de una URL
+-- emitida en 24 h, y reserva lo que devuelve.
+create or replace function public.list_expired_invoice_scan_objects(
+  p_before timestamptz,
+  p_limit integer
+)
+returns table (name text)
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  delete from public.invoice_scan_upload_grants g
+  where (g.issued_at is null or g.issued_at < now() - interval '24 hours')
+    and (g.purge_claimed_at is null or g.purge_claimed_at < now() - interval '15 minutes');
+
+  with candidates as (
+    select o.name as object_name,
+           o.created_at as object_created_at,
+           split_part(o.name, '/', 1) as folder_store,
+           split_part(o.name, '/', 2) as folder_sha
+    from storage.objects o
+    where o.bucket_id = 'invoice-scans'
+      and o.created_at < p_before
+      and not exists (
+        select 1
+        from public.invoice_scans s
+        where s.store_id::text = split_part(o.name, '/', 1)
+          and s.image_sha256 = split_part(o.name, '/', 2)
+      )
+      and not exists (
+        select 1
+        from public.invoice_scan_upload_grants g
+        where g.store_id = split_part(o.name, '/', 1)
+          and g.image_sha256 = split_part(o.name, '/', 2)
+          and g.issued_at >= now() - interval '24 hours'
+      )
+    order by o.created_at asc
+    limit greatest(coalesce(p_limit, 0), 0)
+  ),
+  claimed as (
+    -- Misma fila que record_invoice_scan_upload: si upload-url anotó la carpeta
+    -- después de la lectura de arriba, el WHERE la deja fuera.
+    insert into public.invoice_scan_upload_grants as g (store_id, image_sha256, purge_claimed_at)
+    select distinct c.folder_store, c.folder_sha, now() from candidates c
+    on conflict (store_id, image_sha256) do update
+      set purge_claimed_at = now()
+      where g.issued_at is null
+         or g.issued_at < now() - interval '24 hours'
+    returning g.store_id, g.image_sha256
+  )
+  select c.object_name
+  from candidates c
+  join claimed k on k.store_id = c.folder_store and k.image_sha256 = c.folder_sha
+  order by c.object_created_at asc;
+$$;
+
+comment on function public.list_expired_invoice_scan_objects(timestamptz, integer) is
+  'Objetos del bucket invoice-scans anteriores a p_before sin fila ni URL de subida en 24 h; reserva sus carpetas para la purga (cron, service role). 20261019c, redefinida en 20261103a (REP20-02).';
+
+revoke all on function public.list_expired_invoice_scan_objects(timestamptz, integer) from public, anon, authenticated;
+grant execute on function public.list_expired_invoice_scan_objects(timestamptz, integer) to service_role;
+
+create or replace function public.release_invoice_scan_object_claims(p_names text[])
+returns void
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  delete from public.invoice_scan_upload_grants g
+  using (
+    select distinct split_part(n, '/', 1) as folder_store, split_part(n, '/', 2) as folder_sha
+    from unnest(coalesce(p_names, '{}'::text[])) as n
+  ) r
+  where g.store_id = r.folder_store
+    and g.image_sha256 = r.folder_sha
+    and g.purge_claimed_at is not null;
+$$;
+
+comment on function public.release_invoice_scan_object_claims(text[]) is
+  'Cron de purga: suelta la reserva de las carpetas de p_names, ya borrados de Storage (REP20-02, D78(b)).';
+
+revoke all on function public.release_invoice_scan_object_claims(text[]) from public, anon, authenticated;
+grant execute on function public.release_invoice_scan_object_claims(text[]) to service_role;
 
 commit;
 

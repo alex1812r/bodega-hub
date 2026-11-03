@@ -19,7 +19,6 @@ import { caracasDateToUtcRange, getCaracasIsoDate } from "@/shared/utils/caracas
 
 import type { InvoiceExtraction, InvoiceMatch, InvoiceScanLimits } from "../contracts";
 import {
-  type ExpiredScan,
   invoiceScanPagePaths,
   LIVE_INVOICE_SCAN_STATUSES,
   type LiveInvoiceScan,
@@ -459,38 +458,38 @@ export async function listFewShotExamples(
 }
 
 /**
- * Escaneos de todas las tiendas creados hace más de `olderThanDays` días, con
- * las rutas de todas sus páginas (cron con service role): como mucho `limit`,
- * los más antiguos primero. No borra nada: el llamador borra Storage y solo
- * entonces las filas con `deleteScansByIds`.
+ * Ids de los escaneos de todas las tiendas creados hace más de `olderThanDays`
+ * días (cron con service role): como mucho `limit`, los más antiguos primero.
+ * No borra nada: el llamador los borra con `deleteScansByIds`, que vuelve a
+ * mirar la antigüedad, y sus imágenes quedan para la fase de huérfanos.
  */
 export async function listExpiredScans(
   adminClient: AdminClient,
   olderThanDays: number,
   now: Date,
   limit: number,
-): Promise<ExpiredScan[]> {
+): Promise<string[]> {
   const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await adminClient
     .from("invoice_scans")
-    .select("id, storage_path, pages")
+    .select("id")
     .lt("created_at", cutoff)
     .order("created_at", { ascending: true })
     .limit(limit);
 
   throwIfSupabaseError(error);
 
-  return ((data ?? []) as { id: string; storage_path: string; pages: number }[]).map((row) => ({
-    id: row.id,
-    storagePaths: invoiceScanPagePaths(row.storage_path, row.pages),
-  }));
+  return ((data ?? []) as { id: string }[]).map((row) => row.id);
 }
 
 /**
  * Objetos del bucket `invoice-scans` subidos hace más de `olderThanDays` días
- * que no pertenecen a un escaneo vivo (RPC del parche 20261019c, solo service
- * role): sobre todo páginas subidas por `upload-url` que nunca llegaron a fila.
- * Como mucho `limit`, los más antiguos primero. No borra nada.
+ * sin fila en `invoice_scans` ni URL de subida emitida en las últimas 24 h
+ * (RPC de 20261019c, redefinida en 20261103a; solo service role): páginas de
+ * filas ya purgadas o subidas por `upload-url` que nunca llegaron a fila. Como
+ * mucho `limit`, los más antiguos primero. No borra nada, pero la RPC reserva
+ * sus carpetas para la purga: hasta `releaseScanObjectClaims` (o 15 min),
+ * `recordScanUpload` las rechaza y `upload-url` no las reutiliza.
  */
 export async function listExpiredScanObjects(
   adminClient: AdminClient,
@@ -509,16 +508,51 @@ export async function listExpiredScanObjects(
   return ((data ?? []) as { name: string }[]).map((row) => row.name);
 }
 
-/** Borra las filas indicadas (cron con service role). Devuelve cuántas se borraron. */
-export async function deleteScansByIds(adminClient: AdminClient, ids: readonly string[]): Promise<number> {
+/** Suelta la reserva de la purga sobre las carpetas de `names`, ya borrados de Storage. */
+export async function releaseScanObjectClaims(adminClient: AdminClient, names: readonly string[]): Promise<void> {
+  const { error } = await adminClient.rpc("release_invoice_scan_object_claims", { p_names: [...names] });
+
+  throwIfSupabaseError(error);
+}
+
+/**
+ * Anota que `upload-url` o el POST del escaneo van a usar la carpeta de ese hash
+ * en la tienda de la sesión (RPC de 20261103a, service role). false si la purga
+ * tiene reservada esa carpeta: sus objetos se están borrando y no se pueden reutilizar.
+ */
+export async function recordScanUpload(ctx: InvoiceScanContext, sha256: string): Promise<boolean> {
+  const { data, error } = await createAdminSupabaseClient().rpc("record_invoice_scan_upload", {
+    p_sha256: sha256,
+    p_store_id: ctx.storeId,
+  });
+
+  throwIfSupabaseError(error);
+
+  return data === true;
+}
+
+/**
+ * Borra las filas indicadas que sigan creadas hace más de `olderThanDays` días
+ * (cron con service role). La antigüedad se vuelve a comprobar en la misma
+ * sentencia: una fila que un reescaneo reservó tras la lista (`created_at` =
+ * hoy) no se borra. Devuelve cuántas se borraron.
+ */
+export async function deleteScansByIds(
+  adminClient: AdminClient,
+  ids: readonly string[],
+  olderThanDays: number,
+  now: Date,
+): Promise<number> {
   if (ids.length === 0) {
     return 0;
   }
 
+  const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await adminClient
     .from("invoice_scans")
     .delete()
     .in("id", [...ids])
+    .lt("created_at", cutoff)
     .select("id");
 
   throwIfSupabaseError(error);

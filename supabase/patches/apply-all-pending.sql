@@ -938,10 +938,11 @@ notify pgrst, 'reload schema';
 -- revision muestra "No se pudo comprobar...", sin bloquear), y correr verify-patches.sql (filas "(20261026a").
 -- -----------------------------------------------------------------------------
 -- 20261103a — escaneo de factura: un unico predicado de permiso de compra (REP20-01; caos p21 A M-p21A-1, D78(a)):
---             user_can_create_purchase, current_user_can_create_purchase y discard_invoice_scan_by_user
+--             user_can_create_purchase, current_user_can_create_purchase y discard_invoice_scan_by_user; y purga
+--             sin TOCTOU (REP20-02; B-p21A-1, D78(b))
 -- -----------------------------------------------------------------------------
 -- Ejecutar: supabase/patches/20261103a-invoice-scan-purchase-permission.sql
--- Requiere 20261019a, 20261019b, 20261019k, 20261019m, 20261019o, 20261019q y 20261026a (va despues de 26a).
+-- Requiere 20261019a, 20261019b, 20261019c, 20261019k, 20261019m, 20261019o, 20261019q y 20261026a (va despues de 26a).
 -- Idempotente, una transaccion. user_can_create_purchase(p_user_id) (solo service_role) y
 -- current_user_can_create_purchase() (usuario del JWT): purchases.create efectivo como getEffectivePermissions (activo;
 -- admin siempre; almacen salvo denegacion; vendedor/contador con concesion y sin denegacion). reserve_invoice_scan da
@@ -950,7 +951,11 @@ notify pgrst, 'reload schema';
 -- el predicado (mismos mensajes, firmas y grants). Politicas de lectura de invoice_scans y supplier_product_aliases: rol
 -- de antes O el predicado. discard_invoice_scan_by_user(p_store_id, p_id, p_user_id) (nueva, solo service_role): PT403
 -- sin el permiso, fuera de la tienda o si no es el creador ni admin; delega en discard_invoice_scan(p_store_id, p_id).
--- No toca stock ni dinero.
--- OJO: reaplicar 19a, 19b, 19k, 19m, 19o, 19q o 26a devuelve su version con el rol solo: volver a aplicar este parche
--- despues y correr verify-patches.sql (filas "(20261103a").
--- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP20-01 (sin el, el descarte del BFF nuevo da 500 por PGRST202).
+-- REP20-02: tabla invoice_scan_upload_grants (URL de subida emitida y reserva de la purga por carpeta <store>/<sha>),
+-- record_invoice_scan_upload y release_invoice_scan_object_claims (nuevas, solo service_role) y
+-- list_expired_invoice_scan_objects redefinida (misma firma): no lista la carpeta de una fila ni la de una URL emitida
+-- en 24 h y reserva lo que devuelve. No toca stock ni dinero.
+-- OJO: reaplicar 19a, 19b, 19c, 19k, 19m, 19o, 19q o 26a devuelve su version anterior (rol solo; 19c, la lista sin
+-- reserva): volver a aplicar este parche despues y correr verify-patches.sql (filas "(20261103a").
+-- ORDEN: aplicar el parche ANTES de desplegar el BFF de REP20-01/REP20-02 (sin el, el descarte y upload-url del BFF
+-- nuevo dan 500 por PGRST202).

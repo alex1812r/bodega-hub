@@ -26,7 +26,6 @@ import { INVOICE_SCAN_CLAIM_TTL_MS } from "./confirmScan.server";
 import {
   DISCARD_CLAIMED_MESSAGE,
   DISCARD_NOT_ALLOWED_MESSAGES,
-  type ExpiredScan,
   INVALID_SCAN_DATA_MESSAGE,
   INVOICE_SCAN_PAYLOAD_MAX_BYTES,
   INVOICE_SCAN_STALE_ATTEMPT_MESSAGE,
@@ -102,6 +101,7 @@ export function resetMockScanStore() {
   scans().clear();
   attempts().clear();
   claims().clear();
+  uploadGrants().clear();
 }
 
 function hasActiveClaim(id: string, now: number) {
@@ -468,21 +468,78 @@ export async function listExpiredScans(
   olderThanDays: number,
   now: Date,
   limit: number,
-): Promise<ExpiredScan[]> {
+): Promise<string[]> {
   const cutoff = now.getTime() - olderThanDays * 24 * 60 * 60 * 1000;
 
   return [...scans().values()]
     .filter((scan) => new Date(scan.createdAt).getTime() < cutoff)
     .sort((a, b) => byNewest(b, a))
     .slice(0, limit)
-    .map((scan) => ({ id: scan.id, storagePaths: invoiceScanPagePaths(scan.storagePath, scan.pages) }));
+    .map((scan) => scan.id);
 }
 
-export async function deleteScansByIds(_adminClient: unknown, ids: readonly string[]): Promise<number> {
+/** Paridad con `scans.server.ts`: solo borra las que siguen vencidas (D78(b)). */
+export async function deleteScansByIds(
+  _adminClient: unknown,
+  ids: readonly string[],
+  olderThanDays: number,
+  now: Date,
+): Promise<number> {
+  const cutoff = now.getTime() - olderThanDays * 24 * 60 * 60 * 1000;
+
   return ids.filter((id) => {
+    const scan = scans().get(id);
+
+    if (!scan || new Date(scan.createdAt).getTime() >= cutoff) {
+      return false;
+    }
+
     claims().delete(id);
     return scans().delete(id);
   }).length;
+}
+
+/** Como `invoice_scan_upload_grants` (20261103a): vida de la URL emitida y de la reserva de la purga. */
+const UPLOAD_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
+const PURGE_CLAIM_TTL_MS = 15 * 60 * 1000;
+
+type MockUploadGrant = { issuedAt: number | null; purgeClaimedAt: number | null };
+
+/** Por carpeta `<store>/<sha>`: última URL de subida emitida y reserva de la purga. */
+function uploadGrants() {
+  return mockState("invoice-scan:upload-grants", () => new Map<string, MockUploadGrant>());
+}
+
+function objectFolder(path: string) {
+  const [storeId, sha256] = path.split("/");
+
+  return `${storeId}/${sha256}`;
+}
+
+function isFresh(at: number | null, ttlMs: number, now: number) {
+  return at !== null && at >= now - ttlMs;
+}
+
+/** Paridad con `record_invoice_scan_upload` (20261103a). */
+export async function recordScanUpload(ctx: InvoiceScanContext, sha256: string): Promise<boolean> {
+  const now = Date.now();
+  const folder = `${ctx.storeId}/${sha256}`;
+
+  if (isFresh(uploadGrants().get(folder)?.purgeClaimedAt ?? null, PURGE_CLAIM_TTL_MS, now)) {
+    return false;
+  }
+
+  uploadGrants().set(folder, { issuedAt: now, purgeClaimedAt: null });
+  return true;
+}
+
+/** Paridad con `release_invoice_scan_object_claims` (20261103a). */
+export async function releaseScanObjectClaims(_adminClient: unknown, names: readonly string[]): Promise<void> {
+  for (const folder of new Set(names.map(objectFolder))) {
+    if (typeof uploadGrants().get(folder)?.purgeClaimedAt === "number") {
+      uploadGrants().delete(folder);
+    }
+  }
 }
 
 /** Fecha de subida de cada objeto del bucket (equivale a `storage.objects.created_at`). */
@@ -499,9 +556,10 @@ export function seedScanObjectForTest(path: string, createdAt: string = new Date
 }
 
 /**
- * Paridad con `list_expired_invoice_scan_objects` (20261019c): objetos subidos
- * antes del corte que no están en la carpeta `<store>/<sha>/` de un escaneo vivo
- * (creado en o después del corte), los más antiguos primero.
+ * Paridad con `list_expired_invoice_scan_objects` (20261019c, redefinida en
+ * 20261103a): objetos subidos antes del corte sin fila en su carpeta
+ * `<store>/<sha>/` ni URL de subida emitida en las últimas 24 h, los más
+ * antiguos primero. Reserva sus carpetas para la purga.
  */
 export async function listExpiredScanObjects(
   _adminClient: unknown,
@@ -510,20 +568,33 @@ export async function listExpiredScanObjects(
   limit: number,
 ): Promise<string[]> {
   const cutoff = now.getTime() - olderThanDays * 24 * 60 * 60 * 1000;
-  const liveFolders = new Set(
-    [...scans().values()]
-      .filter((scan) => new Date(scan.createdAt).getTime() >= cutoff)
-      .map((scan) => `${scan.storeId}/${scan.imageSha256}`),
-  );
+  const clock = Date.now();
+  const scanFolders = new Set([...scans().values()].map((scan) => `${scan.storeId}/${scan.imageSha256}`));
 
-  return [...objectDates().entries()]
+  for (const [folder, grant] of uploadGrants()) {
+    if (!isFresh(grant.issuedAt, UPLOAD_GRANT_TTL_MS, clock) && !isFresh(grant.purgeClaimedAt, PURGE_CLAIM_TTL_MS, clock)) {
+      uploadGrants().delete(folder);
+    }
+  }
+
+  const expired = [...objectDates().entries()]
     .filter(([path, createdAt]) => {
-      const [storeId, sha256] = path.split("/");
-      return new Date(createdAt).getTime() < cutoff && !liveFolders.has(`${storeId}/${sha256}`);
+      const folder = objectFolder(path);
+      return (
+        new Date(createdAt).getTime() < cutoff &&
+        !scanFolders.has(folder) &&
+        !isFresh(uploadGrants().get(folder)?.issuedAt ?? null, UPLOAD_GRANT_TTL_MS, clock)
+      );
     })
     .sort(([, a], [, b]) => a.localeCompare(b))
     .slice(0, limit)
     .map(([path]) => path);
+
+  for (const folder of new Set(expired.map(objectFolder))) {
+    uploadGrants().set(folder, { issuedAt: uploadGrants().get(folder)?.issuedAt ?? null, purgeClaimedAt: clock });
+  }
+
+  return expired;
 }
 
 /** Paridad con `removeInvoiceObjects`: borra los objetos indicados del bucket en memoria. */

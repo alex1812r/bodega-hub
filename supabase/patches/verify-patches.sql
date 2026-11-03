@@ -3401,4 +3401,40 @@ select
       to_regprocedure('public.invoice_duplicate_candidates(text, text[], text, uuid, integer, text[], text[])')
     )
   ), false)
+union all
+select
+  'invoice_scan_upload_grants: RLS activa y sin privilegios para anon ni authenticated (20261103a, REP20-02 D78(b))',
+  coalesce((
+    select c.relrowsecurity
+      and not has_table_privilege('anon', c.oid, 'select, insert, update, delete')
+      and not has_table_privilege('authenticated', c.oid, 'select, insert, update, delete')
+    from pg_class c where c.oid = to_regclass('public.invoice_scan_upload_grants')
+  ), false)
+union all
+select
+  'record_invoice_scan_upload(uuid, text) y release_invoice_scan_object_claims(text[]): security definer, search_path vacio, solo service_role; la anotacion no pisa una reserva de la purga de menos de 15 min (20261103a, REP20-02 D78(b))',
+  coalesce((
+    select count(*) = 2
+      and bool_and(p.prosecdef
+        and p.proconfig @> array['search_path=""']
+        and has_function_privilege('service_role', p.oid, 'execute')
+        and not has_function_privilege('authenticated', p.oid, 'execute')
+        and not has_function_privilege('anon', p.oid, 'execute'))
+      and bool_or(p.proname = 'record_invoice_scan_upload'
+        and p.prosrc ilike '%on conflict (store_id, image_sha256) do update%where g.purge_claimed_at is null%or g.purge_claimed_at < now() - interval ''15 minutes''%return found%')
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.record_invoice_scan_upload(uuid, text)'),
+      to_regprocedure('public.release_invoice_scan_object_claims(text[])')
+    )
+  ), false)
+union all
+select
+  'list_expired_invoice_scan_objects: volatile, excluye la carpeta de cualquier fila y la de una URL emitida en 24 h y reserva lo que devuelve en la misma sentencia (20261019c, redefinida en 20261103a, REP20-02 D78(b))',
+  coalesce((
+    select p.provolatile = 'v'
+      and p.prosrc ilike '%from public.invoice_scans s%from public.invoice_scan_upload_grants g%g.issued_at >= now() - interval ''24 hours''%insert into public.invoice_scan_upload_grants%on conflict (store_id, image_sha256) do update%join claimed k%'
+      and p.prosrc not ilike '%s.created_at >= p_before%'
+    from pg_proc p where p.oid = to_regprocedure('public.list_expired_invoice_scan_objects(timestamptz, integer)')
+  ), false)
 order by 1;
