@@ -10,6 +10,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import {
   completeScan,
+  discardInvalidCachedScan,
   discardScan,
   failScan,
   findConfirmedScanByPurchase,
@@ -73,7 +74,7 @@ function fakeClient(results: Result[]) {
     const builder: Record<string, unknown> = {
       then: (resolve: (value: Result) => unknown) => Promise.resolve(result).then(resolve),
     };
-    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "order", "limit", "range"]) {
+    for (const method of ["select", "insert", "update", "delete", "eq", "gte", "in", "lt", "not", "or", "order", "limit", "range"]) {
       builder[method] = (...args: unknown[]) => {
         chain.push([method, ...args]);
         return builder;
@@ -278,10 +279,15 @@ describe("scans.server · completeScan / failScan / discardScan por RPC service 
     ]);
   });
 
-  it("discardScan llama a discard_invoice_scan con la tienda; null (404) si no hay fila o el id no es uuid", async () => {
+  it("discardScan llama a discard_invoice_scan_by_user con la tienda y el usuario; null (404) si no hay fila o el id no es uuid", async () => {
     const calls = useRpcClient(ok(dbRow({ status: "discarded" })));
     expect(await discardScan(ctx, scanId)).toMatchObject({ status: "discarded" });
-    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId, p_store_id: ctx.storeId }]);
+    // REP20-01 (D78(a)): la RPC decide con el usuario (permiso de compra, creador o admin).
+    expect(calls[0]).toEqual([
+      "rpc",
+      "discard_invoice_scan_by_user",
+      { p_id: scanId, p_store_id: ctx.storeId, p_user_id: ctx.userId },
+    ]);
 
     useRpcClient(ok(null));
     expect(await discardScan(ctx, scanId)).toBeNull();
@@ -296,6 +302,19 @@ describe("scans.server · completeScan / failScan / discardScan por RPC service 
     useRpcClient({ data: null, error: { code: "PT409", message } });
 
     await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "CONFLICT", message, status: 409 });
+  });
+
+  it("discardScan propaga el 403 de la RPC (PT403) si el usuario no creó el escaneo ni es admin", async () => {
+    const message = "Solo quien escaneó esta factura o un administrador de la tienda puede descartarla.";
+    useRpcClient({ data: null, error: { code: "PT403", message } });
+
+    await expect(discardScan(ctx, scanId)).rejects.toMatchObject({ code: "FORBIDDEN", message, status: 403 });
+  });
+
+  it("discardInvalidCachedScan reemplaza una lectura en caché fuera del contrato con la RPC de tienda, sin usuario", async () => {
+    const calls = useRpcClient(ok(dbRow({ status: "discarded" })));
+    expect(await discardInvalidCachedScan(ctx, scanId)).toMatchObject({ status: "discarded" });
+    expect(calls[0]).toEqual(["rpc", "discard_invoice_scan", { p_id: scanId, p_store_id: ctx.storeId }]);
   });
 
   it("saveMatch llama a save_invoice_scan_match con la tienda y devuelve la fila; null si ya no está extracted (QA REP7-01 F2)", async () => {
@@ -408,13 +427,8 @@ type AdminClient = Parameters<typeof listExpiredScans>[0];
 describe("scans.server · purga a 90 días", () => {
   const sha = "a".repeat(64);
 
-  it("listExpiredScans lee sin borrar y deriva las rutas de todas las páginas", async () => {
-    const { calls, client } = fakeClient([
-      ok([
-        { id: "a", pages: 3, storage_path: `s1/${sha}/p1.png` },
-        { id: "b", pages: 1, storage_path: "s2/legacy.jpg" },
-      ]),
-    ]);
+  it("listExpiredScans lee sin borrar los ids de los escaneos vencidos y sin uso desde el corte", async () => {
+    const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
 
     const result = await listExpiredScans(
       client as unknown as AdminClient,
@@ -423,28 +437,32 @@ describe("scans.server · purga a 90 días", () => {
       100,
     );
 
-    expect(result).toEqual([
-      { id: "a", storagePaths: [`s1/${sha}/p1.png`, `s1/${sha}/p2.png`, `s1/${sha}/p3.png`] },
-      { id: "b", storagePaths: ["s2/legacy.jpg"] },
-    ]);
+    expect(result).toEqual(["a", "b"]);
     expect(calls[0]).toEqual([
       ["from", "invoice_scans"],
-      ["select", "id, storage_path, pages"],
+      ["select", "id"],
       ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
+      ["or", "last_used_at.is.null,last_used_at.lt.2026-07-17T12:00:00.000Z"],
+      ["or", "claimed_at.is.null,claimed_at.lt.2026-07-17T12:00:00.000Z"],
       ["order", "created_at", { ascending: true }],
       ["limit", 100],
     ]);
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
   });
 
-  it("deleteScansByIds borra solo los ids indicados y cuenta las filas", async () => {
+  it("deleteScansByIds borra solo los ids indicados que siguen vencidos y sin uso (mismo DELETE) y cuenta las filas", async () => {
     const { calls, client } = fakeClient([ok([{ id: "a" }, { id: "b" }])]);
 
-    expect(await deleteScansByIds(client as unknown as AdminClient, ["a", "b"])).toBe(2);
+    expect(
+      await deleteScansByIds(client as unknown as AdminClient, ["a", "b"], 90, new Date("2026-10-15T12:00:00.000Z")),
+    ).toBe(2);
     expect(calls[0]).toEqual([
       ["from", "invoice_scans"],
       ["delete"],
       ["in", "id", ["a", "b"]],
+      ["lt", "created_at", "2026-07-17T12:00:00.000Z"],
+      ["or", "last_used_at.is.null,last_used_at.lt.2026-07-17T12:00:00.000Z"],
+      ["or", "claimed_at.is.null,claimed_at.lt.2026-07-17T12:00:00.000Z"],
       ["select", "id"],
     ]);
   });
@@ -452,7 +470,7 @@ describe("scans.server · purga a 90 días", () => {
   it("deleteScansByIds sin ids no consulta", async () => {
     const { client } = fakeClient([]);
 
-    expect(await deleteScansByIds(client as unknown as AdminClient, [])).toBe(0);
+    expect(await deleteScansByIds(client as unknown as AdminClient, [], 90, new Date())).toBe(0);
     expect(client.from).not.toHaveBeenCalled();
   });
 

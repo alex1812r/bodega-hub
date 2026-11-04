@@ -25,7 +25,7 @@ import { purchaseSuppliersQueryKeys } from "@/modules/purchases/hooks/usePurchas
 import type { EntityFetcher, ProductEntityOption } from "@/shared/components/EntityAutocomplete";
 
 import { REVIEW_TAX_RATES } from "../reviewFixtures";
-import { InvoiceReviewPanel } from "./InvoiceReviewPanel";
+import { type InvoiceLoadStatus, InvoiceReviewPanel } from "./InvoiceReviewPanel";
 import { type Arrival, type CASES, chunkOf, type FixtureId, type ReviewCase, type SourceId } from "./InvoiceReviewPanel.rep16-02.cases";
 import { DUPLICATE_MATCH, ESTADOS_ROWS, type Fixture, FIXTURES, LAST_COST_REF, SEARCH_PRODUCTS } from "./InvoiceReviewPanel.rep16-02.fixtures";
 
@@ -53,7 +53,9 @@ type Runtime = {
   fixture: Fixture;
   queryClient: QueryClient;
   systemRateVes: number | undefined;
-  asked: Record<Exclude<SourceId, "rate">, number>;
+  asked: Record<Exclude<SourceId, "rate" | "load">, number>;
+  /** REP20-03: «Cargar en la compra» que la página tiene en curso o fallida. */
+  load: InvoiceLoadStatus | null;
   supplier: Deferred<"ok" | "fail">;
   purchase: Deferred<"ok" | "fail">;
   duplicates: Deferred<InvoiceDuplicateMatch[]>;
@@ -134,6 +136,7 @@ export function CaseHost() {
                 context={context}
                 duplicateFetcher={duplicateFetcher}
                 lastUnitCostFetcher={lastUnitCostFetcher}
+                loadStatus={state.load}
                 onDiscard={onDiscard}
                 onLoad={onLoad}
                 onRescan={onRescan}
@@ -349,6 +352,7 @@ function newRuntime(fixture: Fixture, rateAtMount: boolean): Runtime {
     duplicates: deferred(),
     fixture,
     lastCost: deferred(),
+    load: null,
     purchase: deferred(),
     queryClient,
     seq,
@@ -382,6 +386,11 @@ export async function release(arrival: Arrival, adopted: () => boolean = rateAdo
     runtime = { ...state, systemRateVes: state.fixture.systemRateVes };
     emit();
     return adopted;
+  }
+  if (source === "load") {
+    runtime = { ...state, load: "failed" };
+    emit();
+    return () => true;
   }
   await until(`petición de ${source}`, () => state.asked[source] > 0);
   switch (source) {
@@ -507,6 +516,13 @@ export async function measureArrival(arrival: Arrival, scope: Scope, adopted?: (
   const confirmed = await release(arrival, adopted);
   await settle(`${arrival.source}:${arrival.outcome}`, confirmed, () => sampleInto(tracked, moves));
   return moves.size > 0 ? `tras ${arrival.source}:${arrival.outcome} se movieron ${moves.size} controles: ${describeMoves(moves)}` : null;
+}
+
+/** REP20-03: la página empieza «Cargar en la compra» (el gesto del usuario en «Cargar») y espera la respuesta. */
+export async function startLoad() {
+  runtime = { ...current(), load: "loading" };
+  emit();
+  await settle("cargando en la compra");
 }
 
 /** Suelta una llegada sin medirla (lo que prepara un escenario) y espera a que el panel quede quieto. */

@@ -8,6 +8,7 @@ import { flushSync } from "react-dom";
 import type { RestockDraft } from "@/modules/inventory/restock";
 import { InvoiceScanModal } from "@/modules/invoice-scan/client/components/InvoiceScanModal";
 import type { InvoiceScanResponse } from "@/modules/invoice-scan/contracts";
+import { canLoadInvoiceIntoPurchase, INVOICE_SCAN_LOAD_FORBIDDEN_MESSAGE } from "@/modules/invoice-scan/scanAccess";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -31,7 +32,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
-import { InvoiceReviewPanel } from "./invoice-scan/components/InvoiceReviewPanel";
+import { type InvoiceLoadStatus, InvoiceReviewPanel } from "./invoice-scan/components/InvoiceReviewPanel";
 import {
   applyInvoiceReviewDraft,
   buildInvoiceScanSubmission,
@@ -182,7 +183,7 @@ export function PurchaseCreatePage() {
   // Clave del pago inicial: una por intento de compra, ligada a la clave de este.
   const [initialPaymentKey] = useState(() => new InitialPaymentKey());
   const { showToast } = useToast();
-  const { can, isLoading: permissionsLoading } = usePermission();
+  const { can, isLoading: permissionsLoading, role } = usePermission();
   // Un pago de compra lo registra quien ve y gestiona pagos (regla de `POST /api/payments`).
   const canPayNow = can("payments.manage") && can("payments.view");
   // Sin ese permiso no hay sección "Pagar ahora" ni se piden sus métodos (responde 403).
@@ -256,8 +257,11 @@ export function PurchaseCreatePage() {
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
   // Compra ya creada: ni se vuelve a guardar el borrador ni se pregunta al salir.
   const [confirmed, setConfirmed] = useState(false);
-  // Escaneo de factura (SCN-07): solo quien puede crear compras lo ve.
-  const canScanInvoice = can("purchases.create");
+  // Escaneo de factura (SCN-07): solo quien puede crear compras lo ve, y solo lo usa quien además
+  // puede cargar la factura en la compra (D80); a los demás se les explica por qué no.
+  const canCreatePurchase = can("purchases.create");
+  const canScanInvoice =
+    canCreatePurchase && role !== undefined && canLoadInvoiceIntoPurchase(role, can);
   const [invoiceScanOpen, setInvoiceScanOpen] = useState(false);
   // Preparando, subiendo o leyendo: el guardia nombra el escaneo.
   const [invoiceScanBusy, setInvoiceScanBusy] = useState(false);
@@ -284,7 +288,8 @@ export function PurchaseCreatePage() {
   const [invoiceReplaceRequest, setInvoiceReplaceRequest] = useState<InvoiceReviewDraft | null>(
     null,
   );
-  const [isLoadingInvoice, setIsLoadingInvoice] = useState(false);
+  // «Cargar en la compra» en curso o fallida: el panel lo muestra en una caja reservada (D78(c)).
+  const [invoiceLoad, setInvoiceLoad] = useState<InvoiceLoadStatus | null>(null);
   const invoiceLoadingRef = useRef(false);
   const scanParamHandledRef = useRef(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
@@ -864,6 +869,7 @@ export function PurchaseCreatePage() {
       } else if (!(await handleRestoreDraft("saved"))) {
         return;
       }
+      setInvoiceLoad(null);
       setScannedInvoice(response);
     } finally {
       setIsResumingReview(false);
@@ -1142,6 +1148,7 @@ export function PurchaseCreatePage() {
 
   /** La factura leída abre su revisión en la página, en lugar del formulario. */
   function onInvoiceScanned(response: InvoiceScanResponse) {
+    setInvoiceLoad(null);
     setScannedInvoice(response);
     setInvoiceScanOpen(false);
   }
@@ -1157,7 +1164,7 @@ export function PurchaseCreatePage() {
     }
 
     invoiceLoadingRef.current = true;
-    setIsLoadingInvoice(true);
+    setInvoiceLoad("loading");
 
     try {
       const nextSupplierId = reviewDraft.supplier.contactId;
@@ -1215,8 +1222,10 @@ export function PurchaseCreatePage() {
         setPendingRestock(null);
       }
       setFormError(null);
+      setInvoiceLoad(null);
       setScannedInvoice(null);
     } catch (error) {
+      setInvoiceLoad("failed");
       showToast({
         description: requestErrorMessage(error),
         title: "No pudimos cargar la factura en la compra",
@@ -1224,7 +1233,6 @@ export function PurchaseCreatePage() {
       });
     } finally {
       invoiceLoadingRef.current = false;
-      setIsLoadingInvoice(false);
     }
   }
 
@@ -1406,27 +1414,26 @@ export function PurchaseCreatePage() {
           onScanInvoice={
             canScanInvoice && !reviewingInvoice ? () => setInvoiceScanOpen(true) : undefined
           }
+          scanInvoiceDisabledReason={
+            canCreatePurchase && !canScanInvoice ? INVOICE_SCAN_LOAD_FORBIDDEN_MESSAGE : undefined
+          }
         />
       </div>
 
       {scannedInvoice ? (
-        <>
-          {isLoadingInvoice ? (
-            <LoadingState title="Cargando la factura en la compra..." variant="inline" />
-          ) : null}
-          <InvoiceReviewPanel
-            canCreateProduct={canCreateProduct}
-            context={reviewContext}
-            key={scannedInvoice.scanId}
-            onDiscard={() => discardScannedInvoice(scannedInvoice)}
-            onLoad={handleInvoiceLoad}
-            onRescan={() => {
-              discardScannedInvoice(scannedInvoice);
-              setInvoiceScanOpen(true);
-            }}
-            response={scannedInvoice}
-          />
-        </>
+        <InvoiceReviewPanel
+          canCreateProduct={canCreateProduct}
+          context={reviewContext}
+          key={scannedInvoice.scanId}
+          loadStatus={invoiceLoad}
+          onDiscard={() => discardScannedInvoice(scannedInvoice)}
+          onLoad={handleInvoiceLoad}
+          onRescan={() => {
+            discardScannedInvoice(scannedInvoice);
+            setInvoiceScanOpen(true);
+          }}
+          response={scannedInvoice}
+        />
       ) : (
       <>
       {resumeReviewResponse ? (

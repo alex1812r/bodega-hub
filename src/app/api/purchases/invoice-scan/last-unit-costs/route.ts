@@ -7,6 +7,7 @@ import { requireStorePermission } from "@/lib/api/requirePermission";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { loadLastUnitCostRefs } from "@/modules/invoice-scan/server/loadMatchContext";
 import { listMockLastUnitCostRefs } from "@/modules/invoice-scan/server/matchContext.mock-server";
+import { assertCanLoadInvoiceIntoPurchase } from "@/modules/invoice-scan/scanAccess";
 
 /** Productos que se pueden consultar a la vez (como `GET /api/purchases/last-costs`). */
 const MAX_PRODUCT_IDS = 50;
@@ -30,11 +31,13 @@ const querySchema = z.object({
 /**
  * D41-a: último costo por unidad de stock (REF) de productos elegidos en la revisión del escaneo
  * fuera de los candidatos (buscador o alta), con la semántica de `InvoiceLineMatch.lastUnitCostRef`
- * (D38). Solo ids en la URL, nunca texto de la factura (D35). Se autoriza con `purchases.create`.
+ * (D38). Solo ids en la URL, nunca texto de la factura (D35). Se autoriza con `purchases.create`
+ * y, como el escaneo (D80), con poder cargar la factura en la compra: son costos de proveedor.
  */
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "purchases.create");
+    assertCanLoadInvoiceIntoPurchase(auth);
     const searchParams = new URL(request.url).searchParams;
     const { productIds, supplierId } = querySchema.parse({
       productIds: searchParams.get("productIds") ?? undefined,

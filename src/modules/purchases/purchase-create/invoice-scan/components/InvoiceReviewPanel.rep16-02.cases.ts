@@ -16,7 +16,8 @@
  * Puro (sin DOM): lo comprueba `InvoiceReviewPanel.rep16-02.cases.test.ts` (jest).
  */
 
-export type SourceId = "supplier" | "purchase" | "duplicates" | "rate" | "candidates" | "lastCost";
+/** REP20-03 (D78(c)): `load` es la respuesta de la página a «Cargar en la compra» (solo `fail`: si carga, el panel se va). */
+export type SourceId = "supplier" | "purchase" | "duplicates" | "rate" | "candidates" | "lastCost" | "load";
 
 /**
  * `ok`: llega con el valor normal. `fail`: error de red (500 o promesa rechazada). `match`/`none`: duplicados con un

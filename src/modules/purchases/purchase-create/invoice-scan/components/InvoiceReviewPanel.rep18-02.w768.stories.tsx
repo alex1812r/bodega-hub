@@ -37,3 +37,4 @@ export const Refresco: Story = { play: appearPlay("refresco", "w768") };
 export const UltimoCosto: Story = { play: appearPlay("ultimoCosto", "w768") };
 export const Duplicados: Story = { play: appearPlay("duplicados", "w768") };
 export const CompraDuplicada: Story = { play: appearPlay("compraDuplicada", "w768") };
+export const LlegadaConVisorAbierto: Story = { play: appearPlay("visor", "w768") };

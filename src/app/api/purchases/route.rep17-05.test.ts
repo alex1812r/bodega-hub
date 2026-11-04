@@ -10,6 +10,7 @@
 
 import { registerMockInvoiceScan, resetMockInvoiceScans } from "@/modules/invoice-scan/server/confirmScan.mock-server";
 import { deleteScansByIds } from "@/modules/invoice-scan/server/scans.mock-server";
+import { INVOICE_SCAN_RETENTION_DAYS } from "@/modules/invoice-scan/server/scans.types";
 import { createdMockPurchases } from "@/modules/purchases/services/purchaseMockStore";
 
 import { POST } from "./route";
@@ -72,6 +73,11 @@ function createdCount() {
   return createdMockPurchases().size;
 }
 
+/** La purga, pasado el plazo de retención. */
+function purgeScan() {
+  return deleteScansByIds(null, [SCAN_ID], INVOICE_SCAN_RETENTION_DAYS, new Date(Date.now() + (INVOICE_SCAN_RETENTION_DAYS + 1) * 86_400_000));
+}
+
 describe("REP17-05 · B-p18A-1: replay de POST /api/purchases tras purgarse el escaneo", () => {
   beforeEach(() => {
     resetMockInvoiceScans();
@@ -84,7 +90,7 @@ describe("REP17-05 · B-p18A-1: replay de POST /api/purchases tras purgarse el e
     expect(first.status).toBe(201);
     const original = (await first.json()) as { data: { id: string } };
 
-    await deleteScansByIds(null, [SCAN_ID]);
+    await purgeScan();
 
     const replay = await post(body(PURCHASE_KEY));
     const replayed = (await replay.json()) as { data: { id: string; invoiceScan?: { confirmed: boolean } } };
@@ -95,7 +101,7 @@ describe("REP17-05 · B-p18A-1: replay de POST /api/purchases tras purgarse el e
   });
 
   it("sin compra previa con la clave, el escaneo purgado sigue en 400 y no crea nada", async () => {
-    await deleteScansByIds(null, [SCAN_ID]);
+    await purgeScan();
     const before = createdCount();
 
     const response = await post(body(OTHER_KEY));

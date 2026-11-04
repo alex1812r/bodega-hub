@@ -16,8 +16,11 @@ import { GET } from "./route";
 
 const HASH = "a".repeat(64);
 
-/** Cliente service role falso: `from("invoice_scans")` devuelve `liveScan` y `storage` firma subidas. */
-function adminClient(liveScan: Record<string, unknown> | null = null, existing: readonly string[] = []) {
+/**
+ * Cliente service role falso: `from("invoice_scans")` devuelve `liveScan`, `storage` firma subidas y
+ * `record_invoice_scan_upload` devuelve `recorded` (false: la purga tiene reservada la carpeta).
+ */
+function adminClient(liveScan: Record<string, unknown> | null = null, existing: readonly string[] = [], recorded = true) {
   const createSignedUploadUrl = jest.fn(async (path: string) =>
     existing.includes(path)
       ? {
@@ -39,9 +42,10 @@ function adminClient(liveScan: Record<string, unknown> | null = null, existing: 
     maybeSingle: async () => ({ data: liveScan, error: null }),
     select: () => query,
   };
-  const client = { from: jest.fn(() => query), storage: { from: storageFrom } };
+  const rpc = jest.fn(async () => ({ data: recorded, error: null }));
+  const client = { from: jest.fn(() => query), rpc, storage: { from: storageFrom } };
   (createAdminSupabaseClient as jest.Mock).mockReturnValue(client);
-  return { client, createSignedUploadUrl, storageFrom };
+  return { client, createSignedUploadUrl, rpc, storageFrom };
 }
 
 const ALMACEN_PROFILE = {
@@ -241,6 +245,19 @@ describe("GET /api/purchases/invoice-scan/upload-url", () => {
       storagePaths: paths,
       uploads: [{ page: 2, path: paths[1], signedUrl: `https://firma/${paths[1]}`, token: `t-${paths[1]}` }],
     });
+  });
+
+  it("en supabase anota la emisión antes de firmar y responde 503 sin firmar si la purga reservó la carpeta (REP20-02)", async () => {
+    process.env.API_DATA_SOURCE = "supabase";
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue(ALMACEN_PROFILE);
+    const { client, createSignedUploadUrl, rpc } = adminClient(null, [`${DEFAULT_STORE_ID}/${HASH}/p1.jpg`], false);
+
+    const response = await GET(request(`sha256=${HASH}&pages=1&types=image/jpeg`));
+
+    expect(response.status).toBe(503);
+    expect(rpc).toHaveBeenCalledWith("record_invoice_scan_upload", { p_sha256: HASH, p_store_id: DEFAULT_STORE_ID });
+    expect(client.from).not.toHaveBeenCalled();
+    expect(createSignedUploadUrl).not.toHaveBeenCalled();
   });
 
   it("en mock tampoco firma si ya hay un escaneo vivo con ese hash en la tienda (M3)", async () => {

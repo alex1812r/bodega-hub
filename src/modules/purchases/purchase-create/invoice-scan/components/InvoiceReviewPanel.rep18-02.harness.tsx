@@ -17,6 +17,9 @@
  * del usuario: en «candidatos» el toque en menos de 1 s debe elegir. Lo que un refresco con la lista abierta pone donde
  * había otra opción («refresco») sí debe quedar sin efecto.
  *
+ * REP20-03 (D78(d)): «llegada con el visor abierto»: la tasa llega con el panel inerte bajo el visor y el usuario lo cierra;
+ * lo que apareció no actúa en el segundo siguiente al cierre.
+ *
  * El último costo no hace aparecer controles (las opciones se muestran mientras se consulta, REP15-01): su caso queda
  * como cobertura con 0 controles aparecidos.
  *
@@ -29,7 +32,7 @@
  */
 import { expect } from "storybook/test";
 
-import { clickAt, openCdpSession, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
+import { clickAt, openCdpSession, pressKeys, settleCdpAcks, tapAt } from "./InvoiceReviewPanel.cdpInput";
 import type { Arrival } from "./InvoiceReviewPanel.rep16-02.cases";
 import { type Fixture, FIXTURES } from "./InvoiceReviewPanel.rep16-02.fixtures";
 import {
@@ -294,6 +297,11 @@ export type AppearCase = {
   firstListing?: boolean;
   /** Suelta la llegada y devuelve cuándo está confirmada (por defecto `release(arrival, adopted)`). */
   releaseArrival?: () => Promise<() => boolean>;
+  /**
+   * Desde cuándo cuenta el segundo de la guarda si no es la vuelta de `releaseArrival` (`performance.now()`): el visor
+   * cuenta desde la tecla que lo cierra, no desde que el arnés lo ve cerrado.
+   */
+  arrivedAt?: () => number;
 };
 
 export async function toPage(page: Page) {
@@ -320,14 +328,15 @@ async function mountOnce(browser: Browser, input: Input, appearCase: AppearCase,
     await toPage(appearCase.page);
     const grid = recordGrid();
     const confirmed = await (appearCase.releaseArrival?.() ?? release(appearCase.arrival, appearCase.adopted));
-    const arrivedAt = performance.now();
+    const arrivedAt = appearCase.arrivedAt?.() ?? performance.now();
     await settle(`${appearCase.arrival.source}:${appearCase.arrival.outcome}`, confirmed);
     const appeared = appearedSince(grid);
     const pending = appeared.filter((item) => !tested.has(item.key));
     const failures: string[] = [];
-    const wait = arrivedAt + TAP_FROM_MS - performance.now();
-    if (pending.length > 0 && wait > 0) {
-      await pause(wait);
+    // REP20-09: por frames y no con un temporizador: tras un toque, Chrome bajo carga aplaza los temporizadores 0,5–0,9 s
+    // (la espera de 300 ms dejaba el toque pasado el segundo, inconcluso).
+    while (pending.length > 0 && performance.now() < arrivedAt + TAP_FROM_MS) {
+      await frame();
     }
     for (const item of pending) {
       const elapsed = performance.now() - arrivedAt;
@@ -468,6 +477,67 @@ function refreshCase(): AppearCase {
   };
 }
 
+/** Lo que tarda el usuario en cerrar el visor tras la llegada (el caso `visor2` de la pasada 21). */
+const VIEWER_CLOSE_MS = 200;
+
+const viewerOpen = () => [...document.querySelectorAll('[role="dialog"]')].some(isVisible);
+
+/**
+ * REP20-03 (B-p21B-2, D78(d)): la tasa llega con el visor «Ver factura» abierto (modal por debajo de `lg`: el panel queda
+ * inerte debajo) y el usuario lo cierra con Escape VIEWER_CLOSE_MS después. Lo que difiere de cuando se abrió el visor
+ * («Por unidad» en L1) no actúa en el segundo siguiente al cierre (los toques se cuentan desde el cierre).
+ * REP20-09: el cierre es el keydown de Escape, anterior al que hace el producto (en el siguiente turno, al desmontarse el
+ * visor). Contar desde que vuelven `pressKeys` (el keyup) y `settle` lo retrasaba 150–260 ms bajo carga: el toque caía
+ * pasado el segundo desde el cierre, ya sin guarda, y se contaba como fallo. El cierre lo espera el `settle` del montaje
+ * (uno solo: dos seguidos bajo carga dejaban el toque fuera del segundo, inconcluso).
+ */
+function viewerCase(): AppearCase {
+  let browser: Browser | null = null;
+  let closedAt: number | null = null;
+  return {
+    arrivedAt: () => {
+      if (closedAt === null) {
+        throw new Error("Sin Escape que cierre el visor");
+      }
+      return closedAt;
+    },
+    arrival: RATE,
+    fixture: FIXTURES.tasa3,
+    id: "tasa 900 con el visor abierto, cerrado con Escape",
+    page: { row: 1 },
+    prepare: async (opened) => {
+      browser = opened;
+      const open = [...panel().querySelectorAll("button")].find((button) => /Ver factura/.test(button.textContent ?? "") && isVisible(button));
+      if (!open) {
+        throw new Error("Sin «Ver factura» a la vista (desde lg el visor va al lado)");
+      }
+      open.click();
+      await settle("abrir el visor", viewerOpen);
+    },
+    releaseArrival: async () => {
+      if (!browser) {
+        throw new Error("Sin navegador");
+      }
+      const confirmed = await release(RATE);
+      await settle("tasa con el visor abierto", confirmed);
+      await pause(VIEWER_CLOSE_MS);
+      closedAt = null;
+      const onEscape = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          closedAt ??= performance.now();
+        }
+      };
+      window.addEventListener("keydown", onEscape, true);
+      try {
+        await pressKeys(browser, "{Escape}");
+      } finally {
+        window.removeEventListener("keydown", onEscape, true);
+      }
+      return () => !viewerOpen();
+    },
+  };
+}
+
 export const APPEAR_CASES = {
   /** M-p19B-1: «Esperando la tasa del día…» en la reserva de L1 y llega 900: aparece «Por unidad». */
   tasa900: { arrival: RATE, fixture: FIXTURES.tasa3, id: "tasa 900 (tasa3)", page: { row: 1 }, prepare: nothing },
@@ -525,6 +595,7 @@ export const APPEAR_CASES = {
       await arrive({ outcome: "ok", source: "supplier" });
     },
   },
+  visor: viewerCase(),
 } satisfies Record<string, AppearCase>;
 
 export type AppearCaseId = keyof typeof APPEAR_CASES;

@@ -9,6 +9,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { toInvoiceDuplicateMatches } from "@/modules/invoice-scan/server/duplicates";
 import { loadContactTaxIds, loadPreviousScans } from "@/modules/invoice-scan/server/loadMatchContext";
 import { listMockContactTaxIds, listMockPreviousScans } from "@/modules/invoice-scan/server/matchContext.mock-server";
+import { assertCanLoadInvoiceIntoPurchase } from "@/modules/invoice-scan/scanAccess";
 
 const MAX_ID_LENGTH = 64;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -66,11 +67,13 @@ const bodySchema = z
  * elegido, el contacto leído o el RIF (leído o guardado en los contactos de la tienda de ambos
  * lados), con la regla de `matched.duplicateOfScanId`. Por
  * POST porque el número es texto de la factura y no va en la URL (D35). Se autoriza con
- * `purchases.create`.
+ * `purchases.create` y, como el escaneo (D80), con poder cargar la factura en la compra: lee RIF
+ * de los contactos proveedores.
  */
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "purchases.create");
+    assertCanLoadInvoiceIntoPurchase(auth);
     const query = bodySchema.parse(await readJsonBody(request));
     const keys = { number: query.number, date: query.date, total: query.total };
 
