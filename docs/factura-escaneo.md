@@ -19,7 +19,7 @@ El modelo de IA **propone**; no escribe nada en productos, vínculos ni compras.
 
 ### 1. Cliente
 
-- Botón **"Escanear factura"** en la cabecera de `/purchases/create` y en el vacío de `/purchases` (abre `/purchases/create?scan=1`). Solo con `purchases.create`.
+- Botón **"Escanear factura"** en la cabecera de `/purchases/create` y en el vacío de `/purchases` (abre `/purchases/create?scan=1`). Solo con `purchases.create` y, además, con poder cargar la factura en la compra (D80, REP20-08): `products.view` efectivo y acceso a contactos de tipo proveedor, la condición de `GET /api/suppliers/[id]/products` (`canReadSupplierProducts` en `src/shared/auth/supplierProductsAccess.ts`, que el escaneo usa como `canLoadInvoiceIntoPurchase` de `src/modules/invoice-scan/scanAccess.ts`). Quien crea compras sin cumplirla (el vendedor siempre; el contador sin `products.view`) ve el botón desactivado con el motivo debajo, y `?scan=1` no le abre el escaneo. Es estado de la sesión, cargada antes de montar la página: no es una llegada (D77).
 - `InvoiceScanModal`: arrastrar, elegir archivo o tomar foto. Acepta JPG, PNG, WebP y PDF (cada página del PDF se rasteriza con `pdfjs-dist`).
 - Preparación (`prepareInvoiceFile.ts`, `prepareInvoice.core.ts`): rotación EXIF, lado mayor ≤ 1600 px y ≤ 1 MB por página, como mucho 10 páginas, todas del mismo formato. Avisos de calidad (foto borrosa o muy oscura) con "Repetir foto" o "Escanear igual".
 - El sha256 se calcula sobre los bytes ya procesados. Muestra la cuota del día (`GET /api/purchases/invoice-scan/limits`).
@@ -27,7 +27,7 @@ El modelo de IA **propone**; no escribe nada en productos, vínculos ni compras.
 
 ### 2. BFF (`scanService.ts`)
 
-1. Sesión real con `purchases.create`; la tienda sale siempre de la sesión. Recalcula el hash, comprueba por los bytes que cada página es la imagen declarada y valida que las rutas sean `<store_id>/<sha256>/p<n>.<ext>` de esa tienda.
+1. Sesión real con `purchases.create`; la tienda sale siempre de la sesión. Sin poder cargar la factura en la compra (D80) responde 403 «No puedes escanear facturas: para cargarlas en la compra hace falta ver los productos de los proveedores…» antes de leer el cuerpo, reservar, cobrar cuota o llamar al modelo. La misma comprobación (`assertCanLoadInvoiceIntoPurchase`) la hacen `upload-url` (no firma una subida que el POST rechazaría), `duplicates` (lee RIF de contactos proveedores) y `last-unit-costs` (costos de proveedor); `limits`, el descarte y `GET …/[id]` no la exigen. Recalcula el hash, comprueba por los bytes que cada página es la imagen declarada y valida que las rutas sean `<store_id>/<sha256>/p<n>.<ext>` de esa tienda.
    - Una página con el lado mayor por encima de 1600 px responde 400 "La imagen supera 1.600 px en su lado mayor. Vuelve a subirla desde la app para que se reduzca." (CIE-07; sin `sharp` el servidor no redimensiona). En multipart se rechaza antes de subir, reservar o cobrar: no queda objeto ni fila. Con `storagePaths` se valida tras descargar y antes de reservar: el objeto ya subido con la URL firmada se queda en el bucket hasta la purga.
    - Con datos en Supabase y sin ninguna key de IA responde 503 "El escaneo de facturas no está configurado: falta la key del proveedor de IA." antes de reservar: sin fila, sin cupo y sin caché (CIE-08). El mock solo se usa con `INVOICE_SCAN_PROVIDER=mock` o con datos mock.
 2. Reserva atómica (`reserve_invoice_scan`, lock por tienda):
