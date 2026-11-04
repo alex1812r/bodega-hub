@@ -30,8 +30,9 @@ const INVALID_MULTIPART_MESSAGE = "No pudimos leer las páginas enviadas. Vuelve
 export async function POST(request: Request) {
   try {
     const dataSource = resolveDataSource();
-    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2).
-    const ctx = await requireInvoiceScanSession(request, "purchases.create", dataSource);
+    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2). D80: y poder cargar
+    // la factura en la compra, antes de cobrar la página y de llamar al modelo.
+    const ctx = await requireInvoiceScanSession(request, "purchases.create", dataSource, { loadIntoPurchase: true });
 
     const contentType = request.headers.get("content-type") ?? "";
     let input: ScanInvoiceInput;

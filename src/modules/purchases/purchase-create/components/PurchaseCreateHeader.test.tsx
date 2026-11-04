@@ -75,3 +75,16 @@ describe("PurchaseCreateHeader · Escanear factura (SCN-07)", () => {
     expect(onScanInvoice).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("PurchaseCreateHeader · Escanear factura sin poder cargarla (REP20-08, D80)", () => {
+  const reason = "No puedes escanear facturas: falta ver los productos de los proveedores.";
+
+  it("con scanInvoiceDisabledReason el botón sale desactivado y el motivo lo describe", () => {
+    render(<PurchaseCreateHeader scanInvoiceDisabledReason={reason} />);
+
+    const button = screen.getByRole("button", { name: "Escanear factura" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(reason);
+    expect(screen.getByText(reason)).toBeVisible();
+  });
+});

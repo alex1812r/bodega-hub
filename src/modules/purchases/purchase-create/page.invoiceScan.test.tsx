@@ -18,6 +18,7 @@ import type { InvoiceReviewDraft } from "./invoice-scan/reviewDraft";
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockCan = jest.fn();
+let mockRole = "almacen";
 let mockReviewDraft: InvoiceReviewDraft;
 let mockExchangeRate: { data: { rateVes: number } | undefined; error: Error | null };
 
@@ -57,6 +58,7 @@ jest.mock("../../../shared/auth/usePermission", () => ({
     can: (permission: string) => mockCan(permission),
     isLoading: false,
     profile: { storeId: "store-1", user: { id: "user-1" } },
+    role: mockRole,
   }),
 }));
 jest.mock("../../../shared/hooks/useTaxRates", () => ({
@@ -237,6 +239,7 @@ jest.mock("./invoice-scan/components/InvoiceReviewPanel", () => ({
 }));
 
 import { jsonResponse, createQueryWrapper } from "@/modules/inventory/utils/requestAttempt.testUtils";
+import { INVOICE_SCAN_LOAD_FORBIDDEN_MESSAGE } from "@/modules/invoice-scan/scanAccess";
 import { ToastProvider } from "@/shared/components/Toast";
 import Link from "next/link";
 
@@ -413,6 +416,7 @@ beforeEach(() => {
   mockReplace.mockReset();
   mockCan.mockReset();
   mockCan.mockReturnValue(true);
+  mockRole = "almacen";
   mockReviewDraft = makeLoadedReviewDraft();
   mockExchangeRate = { data: { rateVes: 510 }, error: null };
   window.localStorage.clear();
@@ -501,6 +505,43 @@ describe("PurchaseCreatePage · Escanear factura (SCN-07)", () => {
     expect(reviewGuard).toHaveTextContent("Revisión de factura en curso");
     expect(reviewGuard).toHaveTextContent("Si sales ahora, se pierde lo que revisaste de la factura.");
     expect(reviewGuard).not.toHaveTextContent("Escaneo de factura en curso");
+  });
+});
+
+describe("PurchaseCreatePage · Escanear factura exige poder cargarla en la compra (REP20-08, D80)", () => {
+  const reason = () => screen.queryByText(INVOICE_SCAN_LOAD_FORBIDDEN_MESSAGE);
+
+  it.each([
+    ["vendedor con purchases.create (no ve proveedores)", "vendedor", () => true],
+    ["contador con purchases.create y sin products.view", "contador", (permission: string) => permission !== "products.view"],
+  ])("%s: el botón está desactivado con el motivo y no abre el escaneo", (_name, role, can) => {
+    mockRole = role;
+    mockCan.mockImplementation(can);
+    renderPage();
+
+    const button = scanButton();
+    expect(button).toBeDisabled();
+    expect(reason()).toBeInTheDocument();
+    expect(button).toHaveAccessibleDescription(INVOICE_SCAN_LOAD_FORBIDDEN_MESSAGE);
+
+    fireEvent.click(button as HTMLElement);
+    expect(screen.queryByTestId("invoice-scan-modal")).not.toBeInTheDocument();
+  });
+
+  it("?scan=1 para un vendedor con purchases.create no abre el escaneo, pero limpia la URL", async () => {
+    mockRole = "vendedor";
+    window.history.replaceState(null, "", "/purchases/create?scan=1");
+    renderPage();
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/purchases/create", { scroll: false }));
+    expect(screen.queryByTestId("invoice-scan-modal")).not.toBeInTheDocument();
+  });
+
+  it("almacén, que sí puede cargarla, tiene el botón activo y sin motivo", () => {
+    renderPage();
+
+    expect(scanButton()).toBeEnabled();
+    expect(reason()).not.toBeInTheDocument();
   });
 });
 

@@ -7,6 +7,9 @@
  * descartar escaneos y firmar subidas de cualquier tienda (caos-4 M2): aquí,
  * en modo supabase, se exige una sesión real de Supabase (cookie o Bearer) cuyo
  * usuario sea el del contexto. En modo mock la demo sigue valiendo.
+ *
+ * `loadIntoPurchase` (D80): las rutas que crean un escaneo (POST y upload-url) exigen además poder
+ * cargar la factura en la compra; el 403 sale antes de reservar cuota y de llamar al modelo.
  */
 import { ApiError, unauthenticatedError } from "@/lib/api/apiError";
 import type { ApiDataSource } from "@/lib/api/dataSource";
@@ -14,6 +17,7 @@ import { isDemoAuthEnabled, requireStorePermission } from "@/lib/api/requirePerm
 import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
 import type { Permission } from "@/shared/auth/permissions";
 
+import { assertCanLoadInvoiceIntoPurchase } from "../scanAccess";
 import type { InvoiceScanContext } from "./scans.types";
 
 export const INVOICE_SCAN_REAL_SESSION_MESSAGE =
@@ -23,11 +27,16 @@ export async function requireInvoiceScanSession(
   request: Request,
   permission: Permission,
   dataSource: ApiDataSource,
+  options: { loadIntoPurchase?: boolean } = {},
 ): Promise<InvoiceScanContext> {
   const auth = await requireStorePermission(request, permission);
 
   if (!auth.userId) {
     throw unauthenticatedError();
+  }
+
+  if (options.loadIntoPurchase) {
+    assertCanLoadInvoiceIntoPurchase(auth);
   }
 
   // Sin demo activa, requirePermission solo acepta la sesión real: no hace

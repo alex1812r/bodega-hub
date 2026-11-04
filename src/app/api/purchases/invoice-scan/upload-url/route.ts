@@ -67,8 +67,9 @@ const uploadUrlQuerySchema = z
 export async function GET(request: Request) {
   try {
     const dataSource = resolveDataSource();
-    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2).
-    const auth = await requireInvoiceScanSession(request, "purchases.create", dataSource);
+    // Con datos en Supabase exige una sesión real, no la demo (caos-4 M2). D80: sin poder cargar
+    // la factura en la compra el POST la rechazaría; no se firma una subida inutilizable.
+    const auth = await requireInvoiceScanSession(request, "purchases.create", dataSource, { loadIntoPurchase: true });
     const params = new URL(request.url).searchParams;
     const query = uploadUrlQuerySchema.parse({
       pages: params.get("pages") ?? undefined,
